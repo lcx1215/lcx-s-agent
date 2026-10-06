@@ -242,6 +242,8 @@ const IntradayReviewCandidateSchema = z
       })
       .strict()
       .optional(),
+    plannedQuantity: z.number().finite().positive().optional(),
+    plannedNotional: z.number().finite().positive().optional(),
     intradayOwnedQuantity: z.number().finite(),
     brokerPositionQuantity: z.number().finite(),
     executionQuote: z
@@ -393,6 +395,10 @@ const FinanceIntradayOutcomeBase = z
     receiptId: Text.optional(),
     reasons: z.array(Text),
     tradeDecisionReview: FinanceIntradayDecisionReviewReceiptSchema.optional(),
+    tradeDecisionReviewHistory: z
+      .array(FinanceIntradayDecisionReviewReceiptSchema)
+      .max(1)
+      .optional(),
     executionFailure: z
       .object({
         stage: z.enum([

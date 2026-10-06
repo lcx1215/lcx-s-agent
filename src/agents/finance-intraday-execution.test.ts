@@ -47,6 +47,7 @@ import {
   readFinanceStrategyRuleLedger,
   retireFinanceStrategyRule,
 } from "./finance-strategy-rule-ledger.js";
+import * as strategyRules from "./finance-strategy-rule-ledger.js";
 import { openFinanceThesis } from "./finance-thesis-ledger.js";
 import {
   FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
@@ -2442,6 +2443,170 @@ describe("intraday decision execution bridge", () => {
   });
 
   it.each([
+    { mode: "approve", calls: 2, gate: true },
+    { mode: "first_used_two", calls: 1, gate: false },
+    { mode: "veto", calls: 2, gate: false },
+    { mode: "failed", calls: 2, gate: false },
+    { mode: "wrong_candidate", calls: 2, gate: false },
+    { mode: "second_drift", calls: 2, gate: false },
+    { mode: "resize", calls: 1, gate: false },
+    { mode: "inside_resize", calls: 1, gate: false },
+    { mode: "deadline", calls: 2, gate: false },
+    { mode: "post_refresh_deadline", calls: 2, gate: false },
+    { mode: "calendar_deadline", calls: 2, gate: false },
+    { mode: "cancel", calls: 2, gate: false },
+    { mode: "over_budget", calls: 2, gate: false },
+  ])("bounds quote re-review on the original candidate ($mode)", async ({ mode, calls, gate }) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-rereview-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: `rereview-${mode}`,
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "a".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    let clock = Date.parse("2026-09-18T15:00:02.000Z");
+    const abort = new AbortController();
+    const quoteProvider = vi.fn(async () => {
+      const n = quoteProvider.mock.calls.length;
+      if (mode === "post_refresh_deadline" && n === 3) {
+        clock += 60_000;
+      }
+      const ask =
+        n === 1
+          ? 501
+          : mode === "resize" || mode === "inside_resize"
+            ? 499
+            : mode === "second_drift" && n === 3
+              ? 502
+              : 501.2;
+      return {
+        referencePrice: ask,
+        bidPrice: mode === "inside_resize" ? (n === 1 ? 490 : 499) : ask - 2,
+        askPrice: ask,
+        referencePriceAt: new Date(clock).toISOString(),
+        sourceUrlOrArtifact: "fixture://quote",
+        feed: "iex",
+        priceBasis: "ask" as const,
+        maxAgeMs: 30_000,
+      };
+    });
+    let reviewerCalls = 0;
+    const reviewer = vi.fn<FinanceTradeDecisionReviewer>(async (request, _signal, options) => {
+      const second = ++reviewerCalls === 2;
+      expect(options?.maxModelCalls).toBe(second ? 1 : 2);
+      clock += second && mode === "deadline" ? 60_000 : 1_000;
+      if (second && mode === "cancel") {
+        abort.abort();
+      }
+      if (second && mode === "failed") {
+        return {
+          status: "failed",
+          attempted: true,
+          provider: "fixture-provider",
+          modelId: "fixture-model",
+          latencyMs: 5,
+          providerCallObserved: false,
+          adapterAttested: false,
+          failureCode: "process_error",
+          modelCalls: 1,
+        };
+      }
+      const result = await approvingReviewer()(request);
+      return {
+        ...result,
+        quoteApprovalPolicy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
+        modelCalls: mode === "first_used_two" || (second && mode === "over_budget") ? 2 : 1,
+        decisions: [
+          {
+            ...result.decisions[0],
+            candidateId:
+              second && mode === "wrong_candidate" ? "other" : request.candidates[0].candidateId,
+            decision: second && mode === "veto" ? "veto" : "approve",
+          },
+        ],
+      };
+    });
+    const runOrder = vi.fn(async () => ({
+      ok: false as const,
+      stage: "place" as const,
+      refusals: ["fixture shared gate refuses"],
+    }));
+    if (mode === "calendar_deadline") {
+      const originalRead = strategyRules.readFinanceStrategyRuleLedger;
+      vi.spyOn(strategyRules, "readFinanceStrategyRuleLedger").mockImplementation(
+        async (...args) => {
+          const value = await originalRead(...args);
+          if (reviewerCalls === 2 && quoteProvider.mock.calls.length >= 3) {
+            clock += 60_000;
+          }
+          return value;
+        },
+      );
+    }
+    const params = {
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: async () => ({
+          accountId: "paper-account",
+          venue: "alpaca:paper" as const,
+          observedAt: "2026-09-18T15:00:01.000Z",
+          expiresAt: "2026-09-18T15:02:00.000Z",
+          equity: 100_000,
+          positions: [],
+        }),
+        executionQuoteProvider: quoteProvider,
+        prepareExecutionQuote: quoteProvider,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: reviewer,
+      now: () => clock,
+      signal: abort.signal,
+      runOrder,
+    };
+    const result = await executeFinanceIntradayDecision(params);
+    expect(result.status).toBe("refused");
+    expect(
+      "tradeDecisionReviewHistory" in result ? (result.tradeDecisionReviewHistory?.length ?? 0) : 0,
+    ).toBe(calls === 2 ? 1 : 0);
+    expect(reviewer).toHaveBeenCalledTimes(calls);
+    expect(runOrder).toHaveBeenCalledTimes(gate ? 1 : 0);
+    const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+    expect(stored?.tradeDecisionReviewHistory?.length ?? 0).toBe(calls === 2 ? 1 : 0);
+    if (calls === 2) {
+      const first = stored!.tradeDecisionReviewHistory![0];
+      const last = stored!.tradeDecisionReview!;
+      expect(first.request.candidates[0].plannedQuantity).toBe(
+        last.request.candidates[0].plannedQuantity,
+      );
+      expect(first.request.candidates[0].candidateId).toBe(last.request.candidates[0].candidateId);
+      expect(first.request.candidates[0].stopPrice).toBe(last.request.candidates[0].stopPrice);
+      expect(first.executionQuoteValidation?.status).toBe("refused");
+      expect(last.request.candidates[0].executionQuote.askPrice).toBe(501.2);
+      if (gate) {
+        expect(last.executionQuoteValidation?.status).toBe("unchanged");
+      }
+    }
+    expect((await executeFinanceIntradayDecision(params)).status).toBe("already_terminal");
+    expect(reviewer).toHaveBeenCalledTimes(calls);
+    expect(runOrder).toHaveBeenCalledTimes(gate ? 1 : 0);
+  });
+
+  it.each([
     { name: "same prices, newer observation", bid: 499, ask: 501, reachesGate: true },
     { name: "both sides improve", bid: 499.2, ask: 500.8, reachesGate: true },
     { name: "ask only improves", bid: 499, ask: 500.8, reachesGate: true },
@@ -2609,7 +2774,15 @@ describe("intraday decision execution bridge", () => {
         runOrder,
       });
       expect(result.status).toBe("refused");
-      expect(reviewer).toHaveBeenCalledTimes(1);
+      const reviewCount = [
+        "ask worsens by any amount",
+        "bid worsens by any amount",
+        "upward shift is outside reviewed range",
+        "downward shift is outside reviewed range",
+      ].includes(fixture.name)
+        ? 2
+        : 1;
+      expect(reviewer).toHaveBeenCalledTimes(reviewCount);
       expect(quoteProvider).toHaveBeenCalledTimes(2);
       expect(runOrder).toHaveBeenCalledTimes(fixture.reachesGate ? 1 : 0);
       const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
@@ -2666,7 +2839,7 @@ describe("intraday decision execution bridge", () => {
         runOrder,
       });
       expect(repeat.status).toBe("already_terminal");
-      expect(reviewer).toHaveBeenCalledTimes(1);
+      expect(reviewer).toHaveBeenCalledTimes(reviewCount);
       expect(runOrder).toHaveBeenCalledTimes(fixture.reachesGate ? 1 : 0);
     },
   );

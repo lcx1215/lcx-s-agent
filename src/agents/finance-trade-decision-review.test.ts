@@ -21,6 +21,7 @@ import {
   isValidFinanceTradeDecisionReviewResult,
   type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewRequest,
+  type FinanceTradeDecisionReviewHostOptions,
 } from "./finance-trade-decision-review.js";
 import type { FinanceTradeReviewFinancialCapability } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError } from "./logical-agent-model-router.js";
@@ -1257,6 +1258,15 @@ it.each([
       expect(prompt).toContain("never substitute them for exact or full-cost net profit");
       expect(result.decisions?.[0].rationale).toContain(`[${bounds.lower},${bounds.upper}]`);
       expect(second.invoke).toHaveBeenCalledTimes(1);
+      expect(
+        await reviewer(intradayRequest, AbortSignal.timeout(1000), { maxModelCalls: 1 }),
+      ).toMatchObject({
+        status: "failed",
+        attempted: false,
+        modelCalls: 0,
+        failureCode: "call_budget_exhausted",
+      });
+      expect(factory).toHaveBeenCalledTimes(2);
       await appendFinanceIntradayDecision(directory, {
         signalId: intradayRequest.signalAnchor,
         instrument: "SPY",
@@ -1316,3 +1326,259 @@ it.each(["cyclic", "bigint"])(
     expect(model.invoke).toHaveBeenCalledTimes(1);
   },
 );
+
+describe("candidate-wide reviewer call budget", () => {
+  const approval = (packet: FinanceTradeDecisionReviewRequest = intradayRequest) => ({
+    schemaVersion: packet.schemaVersion,
+    decisions: [
+      {
+        candidateId: packet.candidates[0].candidateId,
+        decision: "approve",
+        rationale: "Review the exact host plan.",
+      },
+    ],
+  });
+
+  it("uses fresh adapters for a one-call quote re-review, but never resets the shared native pool", async () => {
+    const models: LogicalAgentModelAdapter[] = [];
+    const factory = vi.fn<typeof createConfiguredFinanceModelAdapter>((_cfg, options) => {
+      const base = adapter(approval());
+      const model: LogicalAgentModelAdapter = {
+        ...base,
+        invoke: vi.fn(async (call, signal) => {
+          options!.callBudget!.reserve();
+          return base.invoke(call, signal);
+        }),
+      };
+      models.push(model);
+      return model;
+    });
+    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: factory });
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "completed",
+      modelCalls: 1,
+    });
+    expect(
+      await reviewer(intradayRequest, new AbortController().signal, { maxModelCalls: 1 }),
+    ).toMatchObject({ status: "completed", modelCalls: 1 });
+    expect(factory.mock.calls[0][1]!.callBudget).toBe(factory.mock.calls[1][1]!.callBudget);
+    expect(factory.mock.calls[0][1]!.callBudget!.snapshot()).toEqual({
+      limit: 2,
+      reserved: 2,
+      remaining: 0,
+    });
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "failed",
+      attempted: false,
+      modelCalls: 0,
+      failureCode: "call_budget_exhausted",
+    });
+    expect(models).toHaveLength(2);
+    expect(models[0].invoke).toHaveBeenCalledTimes(1);
+    expect(models[1].invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds actual configured-adapter transport to two requests across re-entry", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "fixture-shared-budget",
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(approval()) } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const cfg: OpenClawConfig = {
+      agents: { defaults: { model: { primary: "fixture/selected" } } },
+      models: {
+        providers: {
+          fixture: {
+            api: "openai-completions",
+            baseUrl: "https://fixture.invalid/v1",
+            apiKey: "fixture-credential",
+            models: [
+              {
+                id: "selected",
+                name: "Selected",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 1000000,
+                maxTokens: 384000,
+              },
+            ],
+          },
+        },
+      },
+    };
+    const reviewer = createFinanceTradeDecisionReviewer(cfg);
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "completed",
+      modelCalls: 1,
+      providerCallObserved: true,
+    });
+    expect(
+      await reviewer(intradayRequest, new AbortController().signal, { maxModelCalls: 1 }),
+    ).toMatchObject({ status: "completed", modelCalls: 1, providerCallObserved: true });
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "failed",
+      attempted: false,
+      failureCode: "call_budget_exhausted",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps injected adapters at two calls even when they never reserve or report misleading output metadata", async () => {
+    const model = adapter(approval());
+    const factory = vi.fn(() => model);
+    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: factory });
+    for (let call = 0; call < 4; call++) {
+      const result = await reviewer(intradayRequest, new AbortController().signal, {
+        maxModelCalls: 1,
+      });
+      expect(result.status).toBe(call < 2 ? "completed" : "failed");
+      expect(result.modelCalls).toBe(call < 2 ? 1 : 0);
+    }
+    expect(model.invoke).toHaveBeenCalledTimes(2);
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables new evidence on a trusted one-call re-review", async () => {
+    const model = adapter({
+      schemaVersion: intradayRequest.schemaVersion,
+      evidenceRequests: [
+        { candidateId: intradayRequest.candidates[0].candidateId, action: "daily_closes" },
+      ],
+      hypothesis: "Request fresh evidence.",
+    });
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: () => model,
+        evidenceScope: { directory: "/fixture", accountId: "paper", instruments: ["SPY"] },
+      },
+    );
+    const result = await reviewer(intradayRequest, new AbortController().signal, {
+      maxModelCalls: 1,
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      failureCode: "output_invalid",
+      modelCalls: 1,
+    });
+    expect(vi.mocked(model.invoke).mock.calls[0][0].payload).not.toHaveProperty(
+      "evidenceToolsAvailable",
+    );
+    expect(result).not.toHaveProperty("toolEvidence");
+    expect(model.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    null,
+    { maxModelCalls: 0 },
+    { maxModelCalls: 3 },
+    { maxModelCalls: 1.5 },
+    { maxModelCalls: "1" },
+    { maxModelCalls: 1, resetBudget: true },
+  ])("rejects malformed host options before dispatch: %j", async (options) => {
+    const model = adapter(approval());
+    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model });
+    expect(
+      await reviewer(
+        intradayRequest,
+        new AbortController().signal,
+        options as FinanceTradeDecisionReviewHostOptions,
+      ),
+    ).toMatchObject({
+      status: "failed",
+      attempted: false,
+      modelCalls: 0,
+      failureCode: "prompt_input_invalid",
+    });
+    expect(model.invoke).not.toHaveBeenCalled();
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "completed",
+      modelCalls: 1,
+    });
+  });
+
+  it("does not dispatch or spend the local budget when already cancelled", async () => {
+    const model = adapter(approval());
+    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model });
+    const controller = new AbortController();
+    controller.abort();
+    expect(await reviewer(intradayRequest, controller.signal)).toMatchObject({
+      status: "failed",
+      attempted: false,
+      modelCalls: 0,
+      failureCode: "process_error",
+    });
+    expect(model.invoke).not.toHaveBeenCalled();
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "completed",
+      modelCalls: 1,
+    });
+  });
+
+  it.each(["provider", "modelId"] as const)(
+    "refuses a changed %s on the re-review without dispatch",
+    async (field) => {
+      const first = adapter(approval());
+      const changed = { ...adapter(approval()), [field]: "changed" };
+      const factory = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(changed);
+      const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: factory });
+      expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+        status: "completed",
+        modelCalls: 1,
+      });
+      expect(
+        await reviewer(intradayRequest, new AbortController().signal, { maxModelCalls: 1 }),
+      ).toMatchObject({
+        status: "failed",
+        attempted: false,
+        modelCalls: 0,
+        failureCode: "process_error",
+      });
+      expect(changed.invoke).not.toHaveBeenCalled();
+    },
+  );
+
+  it("discloses host preflight sizing while rejecting model sizing edits", async () => {
+    const packet: FinanceIntradayTradeDecisionReviewRequest = {
+      ...intradayRequest,
+      candidates: [{ ...intradayRequest.candidates[0], plannedQuantity: 2, plannedNotional: 1002 }],
+    };
+    let prompt = "";
+    const model = adapter(approval(packet));
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: (_cfg, options) => ({
+          ...model,
+          invoke: async (call, signal) => {
+            prompt = options!.buildPrompt!(call.payload);
+            return model.invoke(call, signal);
+          },
+        }),
+      },
+    );
+    expect(await reviewer(packet, new AbortController().signal)).toMatchObject({
+      status: "completed",
+    });
+    expect(prompt).toContain('"plannedQuantity":2');
+    expect(prompt).toContain('"plannedNotional":1002');
+    expect(prompt).toContain("do not grant model sizing authority");
+    const forged = adapter({
+      ...approval(packet),
+      decisions: [{ ...approval(packet).decisions[0], plannedQuantity: 20 }],
+    });
+    expect(
+      await createFinanceTradeDecisionReviewer({}, { adapterFactory: () => forged })(
+        packet,
+        new AbortController().signal,
+      ),
+    ).toMatchObject({ status: "failed", failureCode: "output_contract" });
+  });
+});
