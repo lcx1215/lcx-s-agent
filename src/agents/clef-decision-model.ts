@@ -97,14 +97,31 @@ function assertJson(value: unknown, depth = 0, seen = new Set<object>()): void {
     throw new Error("invalid_request");
   }
   seen.add(value);
-  for (const child of Object.values(value)) {
-    assertJson(child, depth + 1, seen);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+    // A JSON request contains data, not code whose value can change between validation and use.
+    if (!Object.hasOwn(descriptor, "value")) {
+      throw new Error("invalid_request");
+    }
+    assertJson(descriptor.value, depth + 1, seen);
   }
   seen.delete(value);
 }
 
 /** Reject rather than silently truncate state, invent options or accept authority fields. */
-export function parseClefRequest(value: unknown): ClefRequest {
+export function parseClefRequest(input: unknown): ClefRequest {
+  let serialized: string;
+  let value: unknown;
+  try {
+    assertJson(input);
+    serialized = JSON.stringify(input);
+    value = JSON.parse(serialized) as unknown;
+    assertJson(value);
+  } catch {
+    throw new Error("invalid_request");
+  }
+  if (Buffer.byteLength(serialized) > CLEF_POLICY.maxRequestBytes) {
+    throw new Error("request_budget_exceeded");
+  }
   if (
     !object(value) ||
     Object.keys(value).some((key) => !["state", "questions"].includes(key)) ||
@@ -115,11 +132,7 @@ export function parseClefRequest(value: unknown): ClefRequest {
   ) {
     throw new Error("invalid_request");
   }
-  assertJson(value);
-  if (
-    Buffer.byteLength(JSON.stringify(value.state)) > CLEF_POLICY.maxStateBytes ||
-    Buffer.byteLength(JSON.stringify(value)) > CLEF_POLICY.maxRequestBytes
-  ) {
+  if (Buffer.byteLength(JSON.stringify(value.state)) > CLEF_POLICY.maxStateBytes) {
     throw new Error("request_budget_exceeded");
   }
   const entries = Object.entries(value.questions);

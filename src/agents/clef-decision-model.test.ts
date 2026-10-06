@@ -184,6 +184,105 @@ describe("Clef bounded contract", () => {
 });
 
 describe("Clef Workers AI transport", () => {
+  it.each(["late_throw", "late_oversize"])(
+    "rejects a %s accessor without reading it or contacting the provider",
+    async (mode) => {
+      let reads = 0;
+      const state = {
+        get gap() {
+          reads++;
+          if (reads >= 4) {
+            if (mode === "late_throw") {
+              throw new Error("private-input-secret test-only-token");
+            }
+            return "界".repeat(CLEF_POLICY.maxStateBytes);
+          }
+          return "Fill fees missing";
+        },
+      };
+      const result = await evaluateClef({ ...request, state }, config());
+      expect(result).toEqual({
+        status: "fallback_to_agent",
+        reason: "invalid_request",
+        evidence: { providerCallObserved: false },
+      });
+      expect(reads).toBe(0);
+      expect(fetchWithSsrFGuard).not.toHaveBeenCalled();
+    },
+  );
+
+  it("sanitizes serialization exceptions before dispatch", async () => {
+    const input = new Proxy(request, {
+      get(target, property, receiver) {
+        if (property === "toJSON") {
+          throw new Error("private-input-secret test-only-token");
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(await evaluateClef(input, config())).toEqual({
+      status: "fallback_to_agent",
+      reason: "invalid_request",
+      evidence: { providerCallObserved: false },
+    });
+    expect(fetchWithSsrFGuard).not.toHaveBeenCalled();
+  });
+
+  it("validates responses against the same independent JSON snapshot used for dispatch", async () => {
+    const input = {
+      state: { gap: "Fill fees missing" },
+      questions: {
+        route: {
+          type: "choice",
+          instructions: "Which evidence route helps?",
+          criteria: { ledger: "Ledger evidence", claims: "Claim evidence" },
+        },
+      },
+    };
+    const snapshot = parseClefRequest(input);
+    expect(snapshot).toEqual(input);
+    expect(snapshot).not.toBe(input);
+    expect(snapshot.questions).not.toBe(input.questions);
+    expect(snapshot.state).not.toBe(input.state);
+    vi.mocked(fetchWithSsrFGuard).mockImplementation(async ({ init }) => {
+      input.state.gap = "界".repeat(CLEF_POLICY.maxStateBytes);
+      input.questions.route.criteria.ledger = "mutated after dispatch";
+      input.questions.route.instructions = "mutated instructions";
+      Reflect.deleteProperty(input.questions.route.criteria, "claims");
+      if (typeof init?.body !== "string") {
+        throw new Error("expected JSON request body");
+      }
+      expect(JSON.parse(init.body)).toEqual({ model: "clef-flash", ...snapshot });
+      return {
+        response: new Response(
+          JSON.stringify({
+            success: true,
+            result: {
+              model: "clef-flash",
+              answers: {
+                route: {
+                  type: "choice",
+                  choice: "ledger",
+                  confidence: 0.8,
+                  probabilities: { ledger: 0.8, claims: 0.2 },
+                },
+              },
+            },
+          }),
+        ),
+        finalUrl: "https://api.cloudflare.com",
+        release: async () => {},
+      };
+    });
+    const result = await evaluateClef(input, config());
+    expect(result).toMatchObject({
+      status: "completed_requires_review",
+      answers: { route: { choice: "ledger" } },
+      evidence: { providerCallObserved: true },
+    });
+    expect(fetchWithSsrFGuard).toHaveBeenCalledOnce();
+  });
+
   it("validates direct callers before creating request evidence or calling the network", async () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
