@@ -418,11 +418,13 @@ export function createFinanceModelWorkflow(
           if (
             call.role === "formatting" &&
             error instanceof ModelAdapterError &&
-            error.code === "output_truncated"
+            (error.code === "output_truncated" || error.code === "output_invalid")
           ) {
             rejected.set(
               key,
-              "Previous formatting response was truncated. Return a smaller complete JSON object matching the existing schema; preserve all evidence IDs, claims, uncertainty, and required fields. Add no text outside JSON.",
+              error.code === "output_invalid"
+                ? "Previous formatting response could not be parsed as valid JSON. Return a complete valid JSON object matching the existing schema; preserve all evidence IDs, claims, uncertainty, and required fields. Add no text outside JSON."
+                : "Previous formatting response was truncated. Return a smaller complete JSON object matching the existing schema; preserve all evidence IDs, claims, uncertainty, and required fields. Add no text outside JSON.",
             );
           }
           if (

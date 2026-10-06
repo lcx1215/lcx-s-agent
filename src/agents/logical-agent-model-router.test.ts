@@ -679,114 +679,132 @@ it("permits only one contract repair across fallback adapters and retains failur
   expect(invoked).toEqual(["small", "small", "reviewer"]);
 });
 
-it("retries one truncated affinity-bound formatting call with the same author only", async () => {
-  const invoked: string[] = [];
-  let formattingAttempts = 0;
-  const router = new LogicalAgentModelRouter(
-    routing({
-      adapters: [
-        adapter("small", {
-          invoke: async ({ role }) => {
-            invoked.push(`${role}:small`);
-            if (role === "formatting" && formattingAttempts++ === 0) {
-              throw new ModelAdapterError("output_truncated");
-            }
-            return role;
+it.each(["output_truncated", "output_invalid"] as const)(
+  "repairs %s formatting with the same author only",
+  async (code) => {
+    const invoked: string[] = [];
+    let formattingAttempts = 0;
+    const router = new LogicalAgentModelRouter(
+      routing({
+        adapters: [
+          adapter("small", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:small`);
+              if (role === "formatting" && formattingAttempts++ === 0) {
+                throw new ModelAdapterError(code);
+              }
+              return role;
+            },
+          }),
+          adapter("reviewer", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:reviewer`);
+              return role;
+            },
+          }),
+        ],
+        roles: {
+          research_draft: { ...policy, primary: "small" },
+          formatting: {
+            ...policy,
+            primary: "reviewer",
+            fallback: ["small"],
+            sameModelAsRole: "research_draft",
+            retryAffinityTruncationOnce: true,
           },
-        }),
-        adapter("reviewer", {
-          invoke: async ({ role }) => {
-            invoked.push(`${role}:reviewer`);
-            return role;
-          },
-        }),
-      ],
-      roles: {
-        research_draft: { ...policy, primary: "small" },
-        formatting: {
-          ...policy,
-          primary: "reviewer",
-          fallback: ["small"],
-          sameModelAsRole: "research_draft",
-          retryAffinityTruncationOnce: true,
         },
-      },
-    }),
-  );
-  const invoke = (role: "research_draft" | "formatting") =>
-    router.invoke({
-      role,
-      taskId: role,
-      correlationId: "affinity-truncation-retry",
-      payload: {},
-      capabilities: {
-        allowedTools: [],
-        allowedSideEffects: ["local_compute"],
-        forbiddenSideEffects: [],
-      },
-      signal: new AbortController().signal,
-      dispatch: async (fn) => fn(),
-      record: () => {},
-    });
-
-  await invoke("research_draft");
-  await expect(invoke("formatting")).resolves.toBe("formatting");
-  expect(invoked).toEqual(["research_draft:small", "formatting:small", "formatting:small"]);
-});
-
-it("fails after the single affinity-bound truncation retry without switching authors", async () => {
-  const invoked: string[] = [];
-  const router = new LogicalAgentModelRouter(
-    routing({
-      adapters: [
-        adapter("small", {
-          invoke: async ({ role }) => {
-            invoked.push(`${role}:small`);
-            if (role === "formatting") {
-              throw new ModelAdapterError("output_truncated");
-            }
-            return role;
-          },
-        }),
-        adapter("reviewer", {
-          invoke: async ({ role }) => {
-            invoked.push(`${role}:reviewer`);
-            return role;
-          },
-        }),
-      ],
-      roles: {
-        research_draft: { ...policy, primary: "small" },
-        formatting: {
-          ...policy,
-          primary: "small",
-          fallback: ["reviewer"],
-          sameModelAsRole: "research_draft",
-          retryAffinityTruncationOnce: true,
+      }),
+    );
+    const invoke = (role: "research_draft" | "formatting") =>
+      router.invoke({
+        role,
+        taskId: role,
+        correlationId: "affinity-truncation-retry",
+        payload: {},
+        capabilities: {
+          allowedTools: [],
+          allowedSideEffects: ["local_compute"],
+          forbiddenSideEffects: [],
         },
-      },
-    }),
-  );
-  const invoke = (role: "research_draft" | "formatting") =>
-    router.invoke({
-      role,
-      taskId: role,
-      correlationId: "affinity-truncation-exhausted",
-      payload: {},
-      capabilities: {
-        allowedTools: [],
-        allowedSideEffects: ["local_compute"],
-        forbiddenSideEffects: [],
-      },
-      signal: new AbortController().signal,
-      dispatch: async (fn) => fn(),
-      record: () => {},
-    });
+        signal: new AbortController().signal,
+        dispatch: async (fn) => fn(),
+        record: () => {},
+      });
 
-  await invoke("research_draft");
-  await expect(invoke("formatting")).rejects.toThrow("output_truncated");
-  expect(invoked).toEqual(["research_draft:small", "formatting:small", "formatting:small"]);
-});
+    await invoke("research_draft");
+    await expect(invoke("formatting")).resolves.toBe("formatting");
+    expect(invoked).toEqual(["research_draft:small", "formatting:small", "formatting:small"]);
+  },
+);
+
+it.each([
+  "output_truncated",
+  "output_invalid",
+  "provider_payment_required",
+  "provider_auth",
+  "runtime_timeout",
+] as const)(
+  "bounds affinity-bound formatting failure %s without switching authors",
+  async (code) => {
+    const invoked: string[] = [];
+    const router = new LogicalAgentModelRouter(
+      routing({
+        adapters: [
+          adapter("small", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:small`);
+              if (role === "formatting") {
+                throw new ModelAdapterError(code);
+              }
+              return role;
+            },
+          }),
+          adapter("reviewer", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:reviewer`);
+              return role;
+            },
+          }),
+        ],
+        roles: {
+          research_draft: { ...policy, primary: "small" },
+          formatting: {
+            ...policy,
+            primary: "small",
+            fallback: ["reviewer"],
+            sameModelAsRole: "research_draft",
+            retryAffinityTruncationOnce: true,
+          },
+        },
+      }),
+    );
+    const invoke = (role: "research_draft" | "formatting") =>
+      router.invoke({
+        role,
+        taskId: role,
+        correlationId: "affinity-truncation-exhausted",
+        payload: {},
+        capabilities: {
+          allowedTools: [],
+          allowedSideEffects: ["local_compute"],
+          forbiddenSideEffects: [],
+        },
+        signal: new AbortController().signal,
+        dispatch: async (fn) => fn(),
+        record: () => {},
+      });
+
+    await invoke("research_draft");
+    await expect(invoke("formatting")).rejects.toThrow(
+      code === "output_truncated" || code === "output_invalid" ? code : "model_affinity_constraint",
+    );
+    expect(invoked).toEqual(
+      code === "output_truncated" || code === "output_invalid"
+        ? ["research_draft:small", "formatting:small", "formatting:small"]
+        : ["research_draft:small", "formatting:small"],
+    );
+  },
+);
 
 it("includes exactly one opted-in structural repair in the outer task deadline", () => {
   const base = { ...policy, timeoutMs: 120_000, fallback: ["reviewer"] };

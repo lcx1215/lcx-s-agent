@@ -511,7 +511,8 @@ export class LogicalAgentModelRouter {
         const retryContract =
           reason === "output_contract" && policy.retryOutputContractOnce && !contractRepairUsed;
         const retryTruncatedAffinity =
-          reason === "output_truncated" &&
+          (reason === "output_truncated" ||
+            (params.role === "formatting" && reason === "output_invalid")) &&
           policy.retryAffinityTruncationOnce &&
           !contractRepairUsed;
         const retryTruncatedOutput =
@@ -528,7 +529,7 @@ export class LogicalAgentModelRouter {
           // through capability, separation, affinity, dispatch and budget checks.
           targets.splice(index + 1, 0, id);
         }
-        // A truncated affinity-bound rewrite gets exactly one same-author repair.
+        // An affinity-bound truncated or syntactically invalid rewrite gets one same-author repair.
         // Do not try another adapter if the repair itself fails validation or truncates.
         if (isAffinityTruncationRetryAttempt) {
           throw new Error(`model routing ${outcome}: ${reason}`, { cause: error });

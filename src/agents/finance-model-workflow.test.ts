@@ -704,71 +704,90 @@ it("repairs a truncated final review locally without rerunning the quality DAG",
   expect(finalCalls[1].payload.repairFeedback[0]).toContain("Previous final review was truncated");
 });
 
-it("adds bounded schema-preserving feedback to the single same-author formatting retry", async () => {
-  const calls: Array<{ role: string; model: string; payload: unknown }> = [];
-  const artifact = {
-    kind: "artifact",
-    artifact: {
-      answer: "A supplied observation.",
-      claims: [
-        { id: "c1", text: "A supplied observation.", status: "supported", evidenceIds: ["e1"] },
-      ],
-    },
-  };
-  const workflow = createFinanceModelWorkflow(cfg, {
-    maxCalls: 3,
-    slotModels: { fast: "a/fast", reasoning: "a/reason", review: "b/review" },
-    adapterFactory: (_config, options) => ({
-      id: options!.modelRef!,
-      provider: "test",
-      modelId: options!.modelRef!,
-      mode: "deterministic",
-      capabilities: ["quality_harness"],
-      requiredTools: [],
-      requiredSideEffects: [],
-      invoke: async (call) => {
-        options!.callBudget!.reserve();
-        calls.push({ role: call.role, model: options!.modelRef!, payload: call.payload });
-        if (
-          call.role === "formatting" &&
-          calls.filter((item) => item.role === "formatting").length === 1
-        ) {
-          throw new ModelAdapterError("output_truncated");
-        }
-        return artifact;
+it.each([
+  ["output_truncated", 3],
+  ["output_invalid", 3],
+  ["output_invalid", 2],
+] as const)(
+  "adds bounded schema-preserving feedback for %s formatting repair",
+  async (code, maxCalls) => {
+    const calls: Array<{ role: string; model: string; payload: unknown }> = [];
+    const artifact = {
+      kind: "artifact",
+      artifact: {
+        answer: "A supplied observation.",
+        claims: [
+          { id: "c1", text: "A supplied observation.", status: "supported", evidenceIds: ["e1"] },
+        ],
       },
-    }),
-  });
-  const router = new LogicalAgentModelRouter(workflow.routing);
-  const capabilities = {
-    allowedTools: [],
-    allowedSideEffects: [],
-    forbiddenSideEffects: [],
-  } as const;
-  const invoke = (role: "research_draft" | "formatting") =>
-    router.invoke({
-      role,
-      taskId: role,
-      correlationId: "formatting-truncation-feedback",
-      payload: {
-        ...request,
-        agentId: role,
-        stage: role === "research_draft" ? "draft" : "format",
-        evidence: [{ id: "e1" }],
-      },
-      capabilities,
-      signal: new AbortController().signal,
-      dispatch: async (fn) => fn(),
-      record: () => {},
+    };
+    const workflow = createFinanceModelWorkflow(cfg, {
+      maxCalls,
+      slotModels: { fast: "a/fast", reasoning: "a/reason", review: "b/review" },
+      adapterFactory: (_config, options) => ({
+        id: options!.modelRef!,
+        provider: "test",
+        modelId: options!.modelRef!,
+        mode: "deterministic",
+        capabilities: ["quality_harness"],
+        requiredTools: [],
+        requiredSideEffects: [],
+        invoke: async (call) => {
+          options!.callBudget!.reserve();
+          calls.push({ role: call.role, model: options!.modelRef!, payload: call.payload });
+          if (
+            call.role === "formatting" &&
+            calls.filter((item) => item.role === "formatting").length === 1
+          ) {
+            throw new ModelAdapterError(code);
+          }
+          return artifact;
+        },
+      }),
     });
+    const router = new LogicalAgentModelRouter(workflow.routing);
+    const capabilities = {
+      allowedTools: [],
+      allowedSideEffects: [],
+      forbiddenSideEffects: [],
+    } as const;
+    const invoke = (role: "research_draft" | "formatting") =>
+      router.invoke({
+        role,
+        taskId: role,
+        correlationId: "formatting-truncation-feedback",
+        payload: {
+          ...request,
+          agentId: role,
+          stage: role === "research_draft" ? "draft" : "format",
+          evidence: [{ id: "e1" }],
+        },
+        capabilities,
+        signal: new AbortController().signal,
+        dispatch: async (fn) => fn(),
+        record: () => {},
+      });
 
-  await invoke("research_draft");
-  await expect(invoke("formatting")).resolves.toEqual(artifact);
-  const formattingCalls = calls.filter((item) => item.role === "formatting");
-  expect(formattingCalls.map((item) => item.model)).toEqual(["a/reason", "a/reason"]);
-  expect(formattingCalls[1]?.payload).toMatchObject({
-    repairFeedback: [expect.stringContaining("Previous formatting response was truncated")],
-  });
-  expect(workflow.routing.roles?.formatting?.retryAffinityTruncationOnce).toBe(true);
-  expect(workflow.callBudget.snapshot()).toEqual({ limit: 3, reserved: 3, remaining: 0 });
-});
+    await invoke("research_draft");
+    if (maxCalls === 2) {
+      await expect(invoke("formatting")).rejects.toThrow("call_budget_exhausted");
+      expect(calls.map((call) => call.role)).toEqual(["research_draft", "formatting"]);
+      expect(workflow.callBudget.snapshot()).toEqual({ limit: 2, reserved: 2, remaining: 0 });
+      return;
+    }
+    await expect(invoke("formatting")).resolves.toEqual(artifact);
+    const formattingCalls = calls.filter((item) => item.role === "formatting");
+    expect(formattingCalls.map((item) => item.model)).toEqual(["a/reason", "a/reason"]);
+    expect(formattingCalls[1]?.payload).toMatchObject({
+      repairFeedback: [
+        expect.stringContaining(
+          code === "output_invalid"
+            ? "could not be parsed as valid JSON"
+            : "Previous formatting response was truncated",
+        ),
+      ],
+    });
+    expect(workflow.routing.roles?.formatting?.retryAffinityTruncationOnce).toBe(true);
+    expect(workflow.callBudget.snapshot()).toEqual({ limit: 3, reserved: 3, remaining: 0 });
+  },
+);
