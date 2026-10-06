@@ -457,3 +457,70 @@ it("allows exactly one of two real processes to recover a previous-boot lock", a
   }
   expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
 }, 20000);
+
+it.each([false, true])(
+  "rolls back its owner/PID when guard release fails (recovery: %s)",
+  (recover) => {
+    let oldBytes: Buffer | null = null;
+    if (recover) {
+      const lock = writeOldLock();
+      oldBytes = fs.readFileSync(path.join(lock, "owner.json"));
+    }
+    const rmdir = fs.rmdirSync;
+    vi.spyOn(fs, "rmdirSync").mockImplementation((file) => {
+      if (file === recoveryGuard()) {
+        expect(readFinanceSchedulerPid(directory)).toBe(process.pid);
+        throw Object.assign(new Error("guard release denied"), { code: "EACCES" });
+      }
+      return rmdir(file);
+    });
+    expect(() => acquireFinanceSchedulerLock(directory)).toThrow("guard release denied");
+    expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
+    expect(readFinanceSchedulerPid(directory)).toBeNull();
+    expect(fs.existsSync(recoveryGuard())).toBe(true);
+    expect(() => acquireFinanceSchedulerLock(directory)).toThrow("lock exists");
+    if (recover) {
+      const archiveRoot = path.join(directory, FINANCE_SCHEDULER_LOCK_ARCHIVE);
+      const archive = path.join(archiveRoot, fs.readdirSync(archiveRoot)[0]);
+      expect(fs.readFileSync(path.join(archive, "owner.json"))).toEqual(oldBytes);
+    }
+  },
+);
+
+it.each(["owner", "directory", "pid"])(
+  "preserves replacement %s when guard release fails",
+  (change) => {
+    const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+    const replacement = JSON.stringify({
+      pid: process.pid,
+      startedAt: "2000-01-01",
+      bootId: CURRENT_BOOT,
+      ownerId: "other-writer",
+    });
+    const rmdir = fs.rmdirSync;
+    vi.spyOn(fs, "rmdirSync").mockImplementation((file) => {
+      if (file === recoveryGuard()) {
+        if (change === "directory") {
+          fs.renameSync(lock, path.join(directory, "preserved-original"));
+          fs.mkdirSync(lock);
+        }
+        if (change === "pid") {
+          fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(DEAD_PID));
+        } else {
+          fs.writeFileSync(path.join(lock, "owner.json"), replacement);
+        }
+        throw new Error("guard release denied");
+      }
+      return rmdir(file);
+    });
+    expect(() => acquireFinanceSchedulerLock(directory)).toThrow("guard release denied");
+    expect(fs.existsSync(recoveryGuard())).toBe(true);
+    if (change === "pid") {
+      expect(readFinanceSchedulerPid(directory)).toBe(DEAD_PID);
+      expect(fs.existsSync(lock)).toBe(false);
+    } else {
+      expect(fs.readFileSync(path.join(lock, "owner.json"), "utf8")).toBe(replacement);
+      expect(readFinanceSchedulerPid(directory)).toBe(process.pid);
+    }
+  },
+);

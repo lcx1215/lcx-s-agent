@@ -185,51 +185,62 @@ export function acquireFinanceSchedulerLock(directory: string): () => void {
   }
   let ownedStat: fs.Stats | null = null;
   let ownerBytes: Buffer | null = null;
+  let pidWritten = false;
   try {
     try {
-      fs.mkdirSync(lockPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !bootId) {
-        throw lockBlocked(lockPath, error);
+      try {
+        fs.mkdirSync(lockPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !bootId) {
+          throw lockBlocked(lockPath, error);
+        }
+        recoverPreviousBootLock(directory, lockPath, bootId, expected);
+        fs.mkdirSync(lockPath);
       }
-      recoverPreviousBootLock(directory, lockPath, bootId, expected);
-      fs.mkdirSync(lockPath);
+      ownedStat = fs.lstatSync(lockPath);
+      // A marker-less starter must not enter another process's recovery window.
+      if (
+        !bootId &&
+        fs
+          .readdirSync(directory)
+          .some((entry) => entry.startsWith(FINANCE_SCHEDULER_RECOVERY_PREFIX))
+      ) {
+        throw lockBlocked(lockPath);
+      }
+      // Compatibility: do not overlap a scheduler started before the lock existed.
+      const legacyPid = readFinanceSchedulerPid(directory);
+      if (legacyPid !== null && financeSchedulerPidPresent(legacyPid)) {
+        throw new Error(`finance scheduler pid ${legacyPid} is still alive`);
+      }
+      const bytes = Buffer.from(
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+          ownerId: randomUUID(),
+          ...(bootId ? { bootId } : {}),
+        }),
+      );
+      fs.writeFileSync(path.join(lockPath, "owner.json"), bytes);
+      ownerBytes = bytes;
+      fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), `${process.pid}\n`);
+      pidWritten = true;
+    } finally {
+      if (guardPath && guardStat && sameDirectory(guardPath, guardStat)) {
+        fs.rmdirSync(guardPath);
+      }
     }
-    ownedStat = fs.lstatSync(lockPath);
-    // A marker-less starter must not enter another process's recovery window.
-    if (
-      !bootId &&
-      fs.readdirSync(directory).some((entry) => entry.startsWith(FINANCE_SCHEDULER_RECOVERY_PREFIX))
-    ) {
-      throw lockBlocked(lockPath);
-    }
-    // Compatibility: do not overlap a scheduler started before the lock existed.
-    const legacyPid = readFinanceSchedulerPid(directory);
-    if (legacyPid !== null && financeSchedulerPidPresent(legacyPid)) {
-      throw new Error(`finance scheduler pid ${legacyPid} is still alive`);
-    }
-    const bytes = Buffer.from(
-      JSON.stringify({
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        ownerId: randomUUID(),
-        ...(bootId ? { bootId } : {}),
-      }),
-    );
-    fs.writeFileSync(path.join(lockPath, "owner.json"), bytes);
-    ownerBytes = bytes;
-    fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), `${process.pid}\n`);
   } catch (error) {
+    // Guard release is part of acquisition: an error must not leave our new owner
+    // behind without a release callback. A leftover guard still fails closed.
     if (ownedStat && sameDirectory(lockPath, ownedStat)) {
       if (!ownerBytes || fs.readFileSync(path.join(lockPath, "owner.json")).equals(ownerBytes)) {
+        if (pidWritten && readFinanceSchedulerPid(directory) === process.pid) {
+          fs.rmSync(path.join(directory, FINANCE_SCHEDULER_PID), { force: true });
+        }
         fs.rmSync(lockPath, { recursive: true });
       }
     }
     throw error;
-  } finally {
-    if (guardPath && guardStat && sameDirectory(guardPath, guardStat)) {
-      fs.rmdirSync(guardPath);
-    }
   }
   const acquiredStat = ownedStat;
   const acquiredOwner = ownerBytes;
