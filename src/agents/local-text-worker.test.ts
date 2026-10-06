@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalTextWorker, readLocalTextWorkerSnapshot } from "./local-text-worker.js";
@@ -203,6 +206,62 @@ runpy.run_path(worker_path, run_name='__main__')`;
     const next = await w.invoke("new", 10, 2000, new AbortController().signal);
     expect(JSON.parse(next.text).echo).toBe("new");
   });
+  it("automatically replaces a live worker with a broken input pipe without replaying requests", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "lcx-worker-pipe-"));
+    const marker = path.join(directory, "generation");
+    const calls = path.join(directory, "calls.jsonl");
+    const script = `const fs=require('node:fs');
+      const [marker,calls]=process.argv.slice(1);
+      const first=!fs.existsSync(marker);
+      fs.writeFileSync(marker, String(process.pid));
+      if(first){fs.closeSync(0);console.log(JSON.stringify({ready:true}));setInterval(()=>{},1000);}
+      else {console.log(JSON.stringify({ready:true}));
+        require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+          const r=JSON.parse(line);fs.appendFileSync(calls,JSON.stringify(r.prompt)+'\\n');
+          console.log(JSON.stringify({id:r.id,text:r.prompt,weightsLoaded:true}));
+        });}
+    `;
+    const w = new LocalTextWorker(process.execPath, ["-e", script, marker, calls]);
+    workers.push(w);
+    try {
+      w.start();
+      await vi.waitFor(() => expect(w.snapshot().protocolReady).toBe(true));
+      const firstPid = w.snapshot().pid;
+      await expect(
+        w.invoke("failed-request", 10, 3000, new AbortController().signal),
+      ).rejects.toThrow("local_worker_input_failed");
+      expect(w.snapshot()).toMatchObject({
+        protocolReady: false,
+        weightsLoaded: false,
+        busy: false,
+        lastInferenceSucceededAt: null,
+        lastFailure: { code: "local_worker_input_failed" },
+      });
+      await vi.waitFor(
+        () => {
+          expect(w.snapshot().pid).not.toBe(firstPid);
+          expect(w.snapshot().protocolReady).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      expect(w.snapshot().inferenceEvidence).toBe("not_inference_proven");
+      const next = await w.invoke("new-request", 10, 2000, new AbortController().signal);
+      expect(next.text).toBe("new-request");
+      expect(next.pid).not.toBe(firstPid);
+      expect(
+        (await readFile(calls, "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toEqual(["new-request"]);
+      await w.stop();
+      expect(w.snapshot()).toMatchObject({ pid: null, protocolReady: false, busy: false });
+    } finally {
+      await w.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("kills a timed out process", async () => {
     const w = worker();
     await expect(w.invoke("hang", 10, 100, new AbortController().signal)).rejects.toThrow(

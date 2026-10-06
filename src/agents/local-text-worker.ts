@@ -160,9 +160,11 @@ export class LocalTextWorker {
       this.rejectPending(processFailure);
     });
     child.stdin.on("error", () => {
-      const error = new Error("local_worker_input_failed");
-      this.recordFailure(error);
-      this.rejectPending(error);
+      if (this.child === child) {
+        // A live process with a broken input pipe cannot serve another request.
+        this.resetProcessState();
+        void this.kill(new Error("local_worker_input_failed"));
+      }
     });
     child.once("close", () => {
       if (this.child === child) {
