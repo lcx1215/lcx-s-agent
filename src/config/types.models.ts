@@ -69,6 +69,8 @@ export type BedrockDiscoveryConfig = {
 
 export type ModelsConfig = {
   mode?: "merge" | "replace";
+  /** Skip implicit provider discovery; only models.providers seeds the generated catalog. */
+  discovery?: "implicit" | "configured_only";
   /**
    * Explicit egress proxy URL for model requests, e.g. "http://proxy.corp.example:3128".
    *

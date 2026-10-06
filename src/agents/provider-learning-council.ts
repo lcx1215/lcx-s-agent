@@ -166,20 +166,28 @@ function findAllowedLearningCouncilModel(
   return candidates.find((candidate) => Object.hasOwn(allowedModels, candidate));
 }
 
+const OPTIONAL_COUNCIL_MODEL_CANDIDATES = {
+  kimi: ["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"],
+  minimax: [
+    `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
+    `minimax/${resolveMinimaxDefaultTextModelId()}`,
+  ],
+} as const;
+
+function resolveOptionalCouncilModel(
+  role: "kimi" | "minimax",
+  cfg: OpenClawConfig,
+): string | undefined {
+  return (
+    process.env[`OPENCLAW_LEARNING_COUNCIL_${role.toUpperCase()}_MODEL`]?.trim() ||
+    findAllowedLearningCouncilModel(cfg, OPTIONAL_COUNCIL_MODEL_CANDIDATES[role])
+  );
+}
+
 export function resolveLearningCouncilDisabledRoles(cfg: OpenClawConfig): LearningCouncilRole[] {
-  // A council role whose provider family is absent from the runtime config is
-  // retired, not failed: skip it instead of burning a gateway call and forcing
-  // the artifact into degraded status. An explicit env override still wins.
-  if (
-    process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL?.trim() ||
-    findAllowedLearningCouncilModel(cfg, [
-      `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
-      `minimax/${resolveMinimaxDefaultTextModelId()}`,
-    ]) !== undefined
-  ) {
-    return [];
-  }
-  return ["minimax"];
+  // Unselected optional roles are retired, not failed. Trusted env overrides
+  // explicitly select a replacement model and retain priority over the allowlist.
+  return (["kimi", "minimax"] as const).filter((role) => !resolveOptionalCouncilModel(role, cfg));
 }
 
 function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: OpenClawConfig): string {
@@ -190,17 +198,13 @@ function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: OpenClawCon
   }
   switch (role) {
     case "kimi":
-      return (
-        findAllowedLearningCouncilModel(cfg, ["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"]) ??
-        "moonshot/kimi-k2.5"
-      );
-    case "minimax":
-      return (
-        findAllowedLearningCouncilModel(cfg, [
-          `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
-          `minimax/${resolveMinimaxDefaultTextModelId()}`,
-        ]) ?? `minimax/${resolveMinimaxDefaultTextModelId()}`
-      );
+    case "minimax": {
+      const model = resolveOptionalCouncilModel(role, cfg);
+      if (!model) {
+        throw new Error(`learning council role ${role} is retired: no model explicitly selected`);
+      }
+      return model;
+    }
     case "deepseek":
       return (
         // The extraction lane is latency-sensitive inside the External reply loop.
@@ -1089,7 +1093,7 @@ function buildMiniMaxSystemPrompt(params: {
 }
 
 function resolveDistilledOperatingPack(params: {
-  kimi: LearningCouncilRoleRun;
+  kimi?: LearningCouncilRoleRun;
   minimax?: LearningCouncilRoleRun;
   deepseek: LearningCouncilRoleRun;
   rescues: LearningCouncilRescueRun[];
@@ -1110,7 +1114,7 @@ function resolveDistilledOperatingPack(params: {
 
   const rescueFor = (role: LearningCouncilRole) =>
     params.rescues.find((rescue) => rescue.targetRole === role && rescue.success)?.text ?? "";
-  const kimiSource = params.kimi.success ? params.kimi.text : rescueFor("kimi");
+  const kimiSource = params.kimi?.success ? params.kimi.text : rescueFor("kimi");
   const minimaxSource = params.minimax?.success ? params.minimax.text : rescueFor("minimax");
   const deepseekSource = params.deepseek.success ? params.deepseek.text : rescueFor("deepseek");
 
@@ -1616,9 +1620,9 @@ function renderRoleSection(
 }
 
 function actualCouncilModel(
-  result: Pick<LearningCouncilRoleRun, "actualProvider" | "actualModel">,
+  result: Pick<LearningCouncilRoleRun, "actualProvider" | "actualModel"> | undefined,
 ): string {
-  return result.actualProvider && result.actualModel
+  return result?.actualProvider && result.actualModel
     ? `${result.actualProvider}/${result.actualModel}`
     : "unknown";
 }
@@ -1818,7 +1822,7 @@ function mergeMiniMaxRuns(
 }
 
 function renderConsensus(params: {
-  kimi: LearningCouncilRoleRun;
+  kimi?: LearningCouncilRoleRun;
   minimax?: LearningCouncilRoleRun;
   deepseek: LearningCouncilRoleRun;
   rescues: LearningCouncilRescueRun[];
@@ -2023,33 +2027,38 @@ export async function runExternalLearningCouncil(params: {
     ? `${buildLanguageCoverageNote().join("\n")}\n`
     : "";
 
+  const disabledRoles = resolveLearningCouncilDisabledRoles(runtimeConfig);
+  const kimiDisabled = disabledRoles.includes("kimi");
+  const minimaxDisabled = disabledRoles.includes("minimax");
   const [kimi, deepseek] = await Promise.all([
-    runLearningCouncilRole({
-      cfg: runtimeConfig,
-      role: "kimi",
-      userMessage: params.userMessage,
-      routeAgentId: params.routeAgentId,
-      baseSessionKey,
-      timeoutSeconds: 420,
-      // kimi-k2.5 on Moonshot CN can consume the entire completion budget in
-      // reasoning_content when thinking is enabled, leaving assistant content empty.
-      // Keep Kimi's council lane in direct-answer mode so the synthesis section
-      // stays user-visible while DeepSeek and MiniMax still do heavier auditing.
-      thinking: "off",
-      extraSystemPrompt: [
-        languageCoveragePreamble.trim(),
-        learningAnchorContext.prompt,
-        buildKimiSystemPrompt({
-          kimiHeavy: directives.kimiHeavy,
-          internalizationFocus: directives.internalizationFocus,
-          antiShallowSummary: directives.antiShallowSummary,
-          durableLearningDiscipline: directives.durableLearningDiscipline,
-          broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+    kimiDisabled
+      ? undefined
+      : runLearningCouncilRole({
+          cfg: runtimeConfig,
+          role: "kimi",
+          userMessage: params.userMessage,
+          routeAgentId: params.routeAgentId,
+          baseSessionKey,
+          timeoutSeconds: 420,
+          // kimi-k2.5 on Moonshot CN can consume the entire completion budget in
+          // reasoning_content when thinking is enabled, leaving assistant content empty.
+          // Keep Kimi's council lane in direct-answer mode so the synthesis section
+          // stays user-visible while DeepSeek and MiniMax still do heavier auditing.
+          thinking: "off",
+          extraSystemPrompt: [
+            languageCoveragePreamble.trim(),
+            learningAnchorContext.prompt,
+            buildKimiSystemPrompt({
+              kimiHeavy: directives.kimiHeavy,
+              internalizationFocus: directives.internalizationFocus,
+              antiShallowSummary: directives.antiShallowSummary,
+              durableLearningDiscipline: directives.durableLearningDiscipline,
+              broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+            }),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         }),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    }),
     runLearningCouncilRole({
       cfg: runtimeConfig,
       role: "deepseek",
@@ -2076,11 +2085,10 @@ export async function runExternalLearningCouncil(params: {
     }),
   ]);
 
-  const disabledRoles = resolveLearningCouncilDisabledRoles(runtimeConfig);
-  const minimaxDisabled = disabledRoles.includes("minimax");
   const skippedRoles = disabledRoles.map((role) => ({
     role,
-    reason: "provider family absent from runtime config (role retired, not failed)",
+    reason:
+      "no model explicitly selected in allowlist or trusted env override (role retired, not failed)",
   }));
 
   const minimaxPrimary = minimaxDisabled
@@ -2097,7 +2105,7 @@ export async function runExternalLearningCouncil(params: {
           learningAnchorContext.prompt,
           buildMiniMaxSystemPrompt({
             userMessage: params.userMessage,
-            kimiText: kimi.text || kimi.error || "kimi run unavailable",
+            kimiText: kimi?.text || kimi?.error || "kimi run unavailable",
             kimiModel: actualCouncilModel(kimi),
             deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
             deepseekModel: actualCouncilModel(deepseek),
@@ -2129,7 +2137,7 @@ export async function runExternalLearningCouncil(params: {
             learningAnchorContext.prompt,
             buildMiniMaxSystemPrompt({
               userMessage: params.userMessage,
-              kimiText: kimi.text || kimi.error || "kimi run unavailable",
+              kimiText: kimi?.text || kimi?.error || "kimi run unavailable",
               kimiModel: actualCouncilModel(kimi),
               deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
               deepseekModel: actualCouncilModel(deepseek),
@@ -2154,13 +2162,21 @@ export async function runExternalLearningCouncil(params: {
     failed: LearningCouncilRole;
     helper: LearningCouncilRole | undefined;
   }> = [
-    {
-      failed: "kimi",
-      helper: deepseek.success ? "deepseek" : minimax?.success ? "minimax" : undefined,
-    },
+    ...(kimiDisabled
+      ? []
+      : [
+          {
+            failed: "kimi" as const,
+            helper: deepseek.success
+              ? ("deepseek" as const)
+              : minimax?.success
+                ? ("minimax" as const)
+                : undefined,
+          },
+        ]),
     {
       failed: "deepseek",
-      helper: kimi.success ? "kimi" : minimax?.success ? "minimax" : undefined,
+      helper: kimi?.success ? "kimi" : minimax?.success ? "minimax" : undefined,
     },
     ...(minimaxDisabled
       ? []
@@ -2169,7 +2185,7 @@ export async function runExternalLearningCouncil(params: {
             failed: "minimax" as const,
             helper: deepseek.success
               ? ("deepseek" as const)
-              : kimi.success
+              : kimi?.success
                 ? ("kimi" as const)
                 : undefined,
           },
@@ -2190,7 +2206,7 @@ export async function runExternalLearningCouncil(params: {
         userMessage: params.userMessage,
         routeAgentId: params.routeAgentId,
         baseSessionKey,
-        kimiText: kimi.text || kimi.error || "unavailable",
+        kimiText: kimi?.text || kimi?.error || "unavailable",
         minimaxText: minimax?.text || minimax?.error || "skipped: provider disabled",
         deepseekText: deepseek.text || deepseek.error || "unavailable",
       }),
@@ -2313,7 +2329,7 @@ export async function runExternalLearningCouncil(params: {
       sourceCoverageWarnings,
     }),
     "",
-    renderRoleSection(kimi),
+    ...(kimi ? [renderRoleSection(kimi)] : []),
     "",
     ...(minimax
       ? [

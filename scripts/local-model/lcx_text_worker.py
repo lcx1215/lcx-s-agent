@@ -12,14 +12,16 @@ parser.add_argument("--model", required=True)
 args = parser.parse_args()
 os.environ["HF_HUB_OFFLINE"] = "1"
 model = tokenizer = None
+protocol_stdout = sys.stdout
 
 
 def reply(value):
-    sys.stdout.write(json.dumps(value, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    protocol_stdout.write(json.dumps(value, ensure_ascii=False) + "\n")
+    protocol_stdout.flush()
 
 
-reply({"ready": True})
+# Protocol readiness only: weights stay cold until the first inference request.
+reply({"ready": True, "weightsLoaded": False})
 for line in sys.stdin:
     request_id = None
     try:
@@ -45,7 +47,9 @@ for line in sys.stdin:
                 mx.set_cache_limit(128 * 1024 * 1024)
                 mx.set_memory_limit(3 * 1024 * 1024 * 1024)
                 if model is None:
+                    reply({"id": request_id, "event": "loading", "weightsLoaded": False})
                     model, tokenizer = load(args.model)
+                    reply({"id": request_id, "event": "loaded", "weightsLoaded": True})
                 rendered = tokenizer.apply_chat_template(
                     [{"role": "user", "content": prompt}],
                     tokenize=False, add_generation_prompt=True, enable_thinking=False,
@@ -53,10 +57,10 @@ for line in sys.stdin:
                 output = generate(model, tokenizer, prompt=rendered, max_tokens=tokens,
                                   sampler=make_sampler(temp=0), verbose=False)
                 mx.clear_cache()
-            reply({"id": request_id, "text": output})
+            reply({"id": request_id, "text": output, "weightsLoaded": True})
     except Exception as error:
         # No source text, paths or environment values in failure messages.
         code = str(error) if isinstance(error, ValueError) and str(error) in {
             "input_limit", "token_limit", "local_model_busy"
         } else "local_inference_failed"
-        reply({"id": request_id, "error": code})
+        reply({"id": request_id, "error": code, "weightsLoaded": model is not None})

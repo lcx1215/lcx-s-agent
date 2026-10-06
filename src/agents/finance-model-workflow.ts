@@ -58,6 +58,32 @@ function financeRoleExecutionContract(
 }
 
 /** Configuration order supplies candidates, not a claim of measured model quality. */
+/** Canonical role declaration with compatibility for the historical fleet config. */
+export function resolveFinanceWorkflowSlotModels(
+  cfg?: OpenClawConfig,
+): FinanceWorkflowSlotModels | undefined {
+  const declared = cfg?.tools?.financeModelSlots;
+  if (declared) {
+    return declared;
+  }
+  const raw = cfg?.plugins?.entries?.["lcx-model-fleet"]?.config?.slotModels;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const slots = raw as Record<string, unknown>;
+  if (
+    typeof slots.fast !== "string" ||
+    !slots.fast.trim() ||
+    typeof slots.reasoning !== "string" ||
+    !slots.reasoning.trim() ||
+    typeof slots.review !== "string" ||
+    !slots.review.trim()
+  ) {
+    return undefined;
+  }
+  return { fast: slots.fast, reasoning: slots.reasoning, review: slots.review };
+}
+
 export function inspectFinanceModelWorkflow(
   cfg: OpenClawConfig,
   options: {
@@ -66,23 +92,23 @@ export function inspectFinanceModelWorkflow(
     slotModels?: FinanceWorkflowSlotModels;
   } = {},
 ) {
+  const slotModels = options.slotModels ?? resolveFinanceWorkflowSlotModels(cfg);
   const selection = cfg.agents?.defaults?.model;
   const primary =
-    options.slotModels?.fast ?? (typeof selection === "string" ? selection : selection?.primary);
+    slotModels?.fast ?? (typeof selection === "string" ? selection : selection?.primary);
   if (!primary) {
     throw new Error("finance workflow requires a configured primary model");
   }
   const models = [
     ...new Set(
-      options.slotModels
-        ? Object.values(options.slotModels)
+      slotModels
+        ? Object.values(slotModels)
         : [primary, ...(typeof selection === "object" ? (selection.fallbacks ?? []) : [])],
     ),
   ];
-  const reasoning =
-    options.slotModels?.reasoning ?? models.find((model) => model !== primary) ?? primary;
+  const reasoning = slotModels?.reasoning ?? models.find((model) => model !== primary) ?? primary;
   const review =
-    options.slotModels?.review ??
+    slotModels?.review ??
     models.find((model) => model.split("/")[0] !== reasoning.split("/")[0]) ??
     models.find((model) => model !== reasoning) ??
     reasoning;

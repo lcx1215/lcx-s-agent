@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { ToolsSchema } from "../config/zod-schema.agent-runtime.js";
 import {
   createFinanceModelWorkflow,
   inspectFinanceModelWorkflow,
+  resolveFinanceWorkflowSlotModels,
   validateFinanceWorkflowOutput,
 } from "./finance-model-workflow.js";
 import {
@@ -36,6 +38,70 @@ const review = {
   },
 };
 describe("ontology backed finance workflow", () => {
+  it("requires complete, nonempty trusted role slots", () => {
+    expect(
+      ToolsSchema.safeParse({
+        financeModelSlots: { fast: "a/fast", reasoning: "a/reason", review: "b/review" },
+      }).success,
+    ).toBe(true);
+    for (const slots of [
+      { fast: "a/fast" },
+      { fast: "", reasoning: "a/reason", review: "b/review" },
+      { fast: "a/fast", reasoning: "a/reason", review: "b/review", model: "unexpected" },
+    ]) {
+      expect(ToolsSchema.safeParse({ financeModelSlots: slots }).success).toBe(false);
+    }
+  });
+  it("uses declared core finance roles without replacing the primary agent", () => {
+    const configured: OpenClawConfig = {
+      agents: { defaults: { model: { primary: "a/pro", fallbacks: ["a/flash"] } } },
+      tools: { financeModelSlots: { fast: "a/flash", reasoning: "a/pro", review: "a/flash" } },
+    };
+    const manifest = inspectFinanceModelWorkflow(configured);
+    expect(manifest.slots).toMatchObject({
+      fast: "a/flash",
+      reasoning: "a/pro",
+      review: "a/flash",
+    });
+    expect(manifest.models).toEqual(["a/flash", "a/pro"]);
+    expect(manifest.distinctDraftAndReviewModels).toBe(true);
+    expect(configured.agents?.defaults?.model).toEqual({
+      primary: "a/pro",
+      fallbacks: ["a/flash"],
+    });
+    expect(
+      inspectFinanceModelWorkflow(configured, {
+        slotModels: { fast: "x/fast", reasoning: "x/reason", review: "y/review" },
+      }).slots,
+    ).toMatchObject({ fast: "x/fast", reasoning: "x/reason", review: "y/review" });
+  });
+  it("prefers core role slots while retaining a valid legacy fleet declaration", () => {
+    const legacy: OpenClawConfig = {
+      plugins: {
+        entries: {
+          "lcx-model-fleet": {
+            config: { slotModels: { fast: "a/fast", reasoning: "a/reason", review: "b/review" } },
+          },
+        },
+      },
+    };
+    expect(resolveFinanceWorkflowSlotModels(legacy)).toEqual({
+      fast: "a/fast",
+      reasoning: "a/reason",
+      review: "b/review",
+    });
+    expect(
+      resolveFinanceWorkflowSlotModels({
+        ...legacy,
+        tools: { financeModelSlots: { fast: "c/fast", reasoning: "c/reason", review: "d/review" } },
+      }),
+    ).toEqual({ fast: "c/fast", reasoning: "c/reason", review: "d/review" });
+    expect(
+      resolveFinanceWorkflowSlotModels({
+        plugins: { entries: { "lcx-model-fleet": { config: { slotModels: { fast: "" } } } } },
+      }),
+    ).toBeUndefined();
+  });
   it("honors persistent slots without turning unrelated fallbacks into authors", () => {
     const manifest = inspectFinanceModelWorkflow(cfg, {
       slotModels: { fast: "a/fast", reasoning: "a/fast", review: "b/review" },

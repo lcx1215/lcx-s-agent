@@ -488,6 +488,8 @@ export type McpToolsConfig = {
 };
 
 export type ToolsConfig = {
+  /** Explicit existing finance workflow roles; does not change the primary agent model. */
+  financeModelSlots?: { fast: string; reasoning: string; review: string };
   /** Base tool profile applied before allow/deny lists. */
   profile?: ToolProfileId;
   allow?: string[];

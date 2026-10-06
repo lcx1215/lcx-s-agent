@@ -2,6 +2,10 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Command } from "commander";
 import { isFailoverError } from "../agents/failover-error.js";
+import {
+  readLocalTextWorkerSnapshot,
+  type LocalTextWorkerSnapshot,
+} from "../agents/local-text-worker.js";
 import { startLocalSpecialistService } from "../agents/tools/local-specialist-tool.js";
 import { shouldRejectBrowserMutation } from "../browser/csrf.js";
 import { agentCommand } from "../commands/agent.js";
@@ -430,6 +434,8 @@ export type ServeHandlerOptions = {
   runtime?: typeof defaultRuntime;
   /** Injectable for tests; defaults to the real in-process agent loop. */
   runAgent?: ServeAgentRunner;
+  /** Host observation only; health probes must never start or invoke a worker. */
+  readLocalTextWorker?: () => LocalTextWorkerSnapshot | undefined;
 };
 
 export function createServeRequestHandler(options: ServeHandlerOptions) {
@@ -449,6 +455,7 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         sendJson(res, 405, { ok: false, error: "method not allowed" });
         return;
       }
+      const localTextWorker = (options.readLocalTextWorker ?? readLocalTextWorkerSnapshot)();
       sendJson(res, 200, {
         ok: true,
         service: SERVE_SERVICE_NAME,
@@ -458,6 +465,7 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         bind: config.bind,
         port: config.port,
         tokenRequired: config.token !== undefined,
+        ...(localTextWorker ? { localTextWorker } : {}),
       });
       return;
     }

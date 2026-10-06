@@ -94,6 +94,21 @@ checkpoint; they never advertise an accepted portfolio plan.
   and 143 respectively.
 - One scheduler writer may own a book at a time, including manual `--once` runs.
   `--status` is read-only. A live legacy PID also prevents a new writer.
+  New owners record a host boot UUID from macOS `kern.bootsessionuuid` or Linux
+  `/proc/sys/kernel/random/boot_id`. An existing process lock can recover only
+  when both UUIDs are valid and different, and both the owner PID and any legacy
+  PID are confirmed absent. Same-boot, marker-less, malformed or unreadable locks,
+  and denied/unknown PID probes require operator inspection. Missing boot evidence
+  allows an initial owner without a marker but never authorizes recovery.
+  Acquisition uses an atomic guard named for the current boot to serialize the
+  archive-to-new-owner handoff; a leftover guard from that boot blocks acquisition.
+  Previous-boot guards do not block a new boot with verified evidence.
+  The old lock directory, including owner and progress files, is atomically moved
+  into `daily-cycle-scheduler.lock-archive/` before the new owner is written.
+  Release checks the original directory and owner identity before removing it.
+  This recovers process ownership only: execution journals, unknown claims,
+  reconciliation gates and research attempt state remain unchanged. Interrupted
+  or uncertain execution is never automatically replayed by lock recovery.
 - `--detach` reports readiness only after the child has acquired ownership and
   read its state. Startup output goes to `daily-cycle-scheduler.log`. Readiness
   does not prove that a cycle has completed or that a login supervisor exists.

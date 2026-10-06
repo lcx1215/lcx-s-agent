@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
@@ -23,7 +26,14 @@ vi.mock("../runtime.js", () => ({
   defaultRuntime: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-import { __testing, resolveLearningCouncilTransport } from "./provider-learning-council.js";
+import { buildLearningCouncilArtifactJsonRelativePath } from "../hooks/bundled/lobster-brain-registry.js";
+import { resolveMinimaxDefaultTextModelId } from "./minimax-model-catalog.js";
+import {
+  __testing,
+  resolveLearningCouncilTransport,
+  resolveLearningCouncilDisabledRoles,
+  runExternalLearningCouncil,
+} from "./provider-learning-council.js";
 
 describe("learning council transport", () => {
   beforeEach(() => {
@@ -321,5 +331,89 @@ describe("council visible evidence labels", () => {
     expect(prompt).toContain("runtime model: replacement/model");
     expect(prompt).toContain("runtime model: unknown");
     expect(prompt).not.toContain("requested/model");
+  });
+});
+
+describe("council optional role retirement", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "");
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL", "");
+    vi.stubEnv("LCX_LEARNING_COUNCIL_TRANSPORT", "in-process");
+    hoisted.agentCommandMock.mockReset();
+    hoisted.gatewayMock.mockReset();
+  });
+  const cfg = {
+    agents: { defaults: { models: { "custom-api-deepseek-com/deepseek-v4-flash": {} } } },
+  };
+  it("retires unselected Kimi and MiniMax roles", () => {
+    expect(resolveLearningCouncilDisabledRoles(cfg)).toEqual(["kimi", "minimax"]);
+  });
+  it.each(["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"])(
+    "keeps explicitly allowed Kimi %s",
+    (model) => {
+      expect(
+        resolveLearningCouncilDisabledRoles({ agents: { defaults: { models: { [model]: {} } } } }),
+      ).toEqual(["minimax"]);
+    },
+  );
+  it.each(["minimax", "minimax-portal"])("keeps explicitly allowed %s", (provider) => {
+    expect(
+      resolveLearningCouncilDisabledRoles({
+        agents: {
+          defaults: { models: { [`${provider}/${resolveMinimaxDefaultTextModelId()}`]: {} } },
+        },
+      }),
+    ).toEqual(["kimi"]);
+  });
+  it("keeps trusted replacement overrides ahead of the allowlist", () => {
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "replacement/synthesis");
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL", "replacement/challenge");
+    expect(resolveLearningCouncilDisabledRoles(cfg)).toEqual([]);
+  });
+  it("never resolves the retired Kimi fallback on a direct role attempt", async () => {
+    await expect(__testing.runLearningCouncilRole({ ...roleParams, cfg })).rejects.toThrow(
+      /retired/u,
+    );
+    expect(hoisted.agentCommandMock).not.toHaveBeenCalled();
+  });
+  it("executes only the selected extraction model and records retired roles as skipped", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-retirement-"));
+    try {
+      hoisted.agentCommandMock.mockResolvedValue({
+        payloads: [{ text: "fixture answer" }],
+        meta: { agentMeta: { provider: "custom-api-deepseek-com", model: "deepseek-v4-flash" } },
+      });
+      const reply = await runExternalLearningCouncil({
+        cfg,
+        userMessage: "fixture",
+        routeAgentId: "main",
+        sessionKey: "fixture",
+        messageId: "retirement",
+        workspaceDir,
+      });
+      expect(hoisted.agentCommandMock).toHaveBeenCalledTimes(1);
+      expect(hoisted.agentCommandMock.mock.calls[0]?.[0]).toMatchObject({
+        model: "custom-api-deepseek-com/deepseek-v4-flash",
+      });
+      expect(hoisted.gatewayMock).not.toHaveBeenCalled();
+      expect(reply).toContain("本轮角色产出：deepseek；失败或未完成：无");
+      const artifact = JSON.parse(
+        await fs.readFile(
+          path.join(workspaceDir, buildLearningCouncilArtifactJsonRelativePath("retirement")),
+          "utf8",
+        ),
+      ) as {
+        status: string;
+        skippedRoles: Array<{ role: string }>;
+        roles: Array<{ role: string }>;
+        rescues: unknown[];
+      };
+      expect(artifact.status).toBe("full");
+      expect(artifact.skippedRoles.map((entry) => entry.role)).toEqual(["kimi", "minimax"]);
+      expect(artifact.roles.map((entry) => entry.role)).toEqual(["deepseek"]);
+      expect(artifact.rescues).toEqual([]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 });

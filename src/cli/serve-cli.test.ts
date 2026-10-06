@@ -2,6 +2,7 @@ import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FailoverError } from "../agents/failover-error.js";
+import { LocalTextWorker, type LocalTextWorkerSnapshot } from "../agents/local-text-worker.js";
 import { createDefaultDeps } from "./deps.js";
 import {
   DEFAULT_SERVE_PORT,
@@ -29,10 +30,15 @@ const pendingClosers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   await Promise.all(pendingClosers.splice(0).map((close) => close()));
+  vi.restoreAllMocks();
 });
 
 async function startServer(
-  options: { config?: Partial<ServeConfig>; runAgent?: ServeAgentRunner } = {},
+  options: {
+    config?: Partial<ServeConfig>;
+    runAgent?: ServeAgentRunner;
+    readLocalTextWorker?: () => LocalTextWorkerSnapshot | undefined;
+  } = {},
 ): Promise<StartedServer> {
   const runAgent = vi.fn(
     options.runAgent ?? (async () => ({ payloads: [{ text: "agent reply" }], meta: { ok: true } })),
@@ -46,6 +52,7 @@ async function startServer(
     },
     deps: {} as ReturnType<typeof createDefaultDeps>,
     runAgent: runAgent as unknown as ServeAgentRunner,
+    readLocalTextWorker: options.readLocalTextWorker,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
@@ -167,6 +174,34 @@ describe("GET /healthz", () => {
   it("rejects non-GET methods", async () => {
     const { url } = await startServer();
     expect((await fetch(`${url}/healthz`, { method: "POST" })).status).toBe(405);
+  });
+
+  it("exposes cold worker observations without starting or invoking inference", async () => {
+    const invoke = vi.spyOn(LocalTextWorker.prototype, "invoke");
+    const start = vi.spyOn(LocalTextWorker.prototype, "start");
+    const worker = new LocalTextWorker("unused", []);
+    const readLocalTextWorker = vi.fn(() => worker.snapshot());
+    const { url, runAgent } = await startServer({ readLocalTextWorker });
+    for (let probe = 0; probe < 2; probe++) {
+      const response = await fetch(`${url}/healthz`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        status: "ok",
+        localTextWorker: {
+          pid: null,
+          protocolReady: false,
+          weightsLoaded: false,
+          busy: false,
+          lastInferenceSucceededAt: null,
+          inferenceEvidence: "not_inference_proven",
+        },
+      });
+    }
+    expect(readLocalTextWorker).toHaveBeenCalledTimes(2);
+    expect(start).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
   });
 });
 

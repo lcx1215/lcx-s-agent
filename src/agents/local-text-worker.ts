@@ -11,6 +11,17 @@ import type {
   ModelCallObservation,
 } from "./logical-agent-model-router.js";
 
+export type LocalTextWorkerSnapshot = {
+  pid: number | null;
+  protocolReady: boolean;
+  weightsLoaded: boolean;
+  loading: boolean;
+  busy: boolean;
+  lastInferenceSucceededAt: string | null;
+  lastFailure: { code: string; at: string } | null;
+  inferenceEvidence: "not_inference_proven" | "inference_succeeded";
+};
+
 /** A single resident process owned by the host service; requests are never replayed. */
 export class LocalTextWorker {
   private child?: ChildProcessWithoutNullStreams;
@@ -23,6 +34,11 @@ export class LocalTextWorker {
   private supervised = false;
   private failures = 0;
   private stopping?: Promise<void>;
+  private protocolReady = false;
+  private weightsLoaded = false;
+  private loading = false;
+  private lastInferenceSucceededAt: string | null = null;
+  private lastFailure: LocalTextWorkerSnapshot["lastFailure"] = null;
   constructor(
     private readonly command: string,
     private readonly args: readonly string[],
@@ -33,10 +49,40 @@ export class LocalTextWorker {
     this.ensureProcess();
   }
 
+  /** Reads host observations only; never starts a process or loads/invokes a model. */
+  snapshot(): LocalTextWorkerSnapshot {
+    return {
+      pid: this.child?.pid ?? null,
+      protocolReady: this.protocolReady,
+      weightsLoaded: this.weightsLoaded,
+      loading: this.loading,
+      busy: this.pending !== undefined,
+      lastInferenceSucceededAt: this.lastInferenceSucceededAt,
+      lastFailure: this.lastFailure ? { ...this.lastFailure } : null,
+      inferenceEvidence: this.lastInferenceSucceededAt
+        ? "inference_succeeded"
+        : "not_inference_proven",
+    };
+  }
+
+  private resetProcessState(): void {
+    this.protocolReady = false;
+    this.weightsLoaded = false;
+    this.loading = false;
+    this.lastInferenceSucceededAt = null;
+  }
+
+  private recordFailure(error: Error): void {
+    if (error.message !== "local_worker_stopped") {
+      this.lastFailure = { code: error.message, at: new Date().toISOString() };
+    }
+  }
+
   private ensureProcess(): ChildProcessWithoutNullStreams {
     if (this.child) {
       return this.child;
     }
+    this.resetProcessState();
     if (this.restart) {
       clearTimeout(this.restart);
       this.restart = undefined;
@@ -46,6 +92,7 @@ export class LocalTextWorker {
       env: buildLocalModelProcessEnv(process.env, { HF_HUB_OFFLINE: "1", PYTHONUNBUFFERED: "1" }),
     });
     this.child = child;
+    let processFailure: Error | undefined;
     let buffered = "";
     child.stderr.resume();
     child.stdout.setEncoding("utf8");
@@ -65,19 +112,41 @@ export class LocalTextWorker {
             text?: string;
             error?: string;
             ready?: boolean;
+            event?: string;
+            weightsLoaded?: boolean;
           };
-          if (response.ready === true && !this.pending) {
-            this.setReferenced(false);
+          if (response.ready === true) {
+            this.protocolReady = true;
+            if (!this.pending) {
+              this.setReferenced(false);
+            }
           }
           if (this.pending && response.id === this.pending.id) {
+            if (response.event === "loading") {
+              this.loading = true;
+              this.weightsLoaded = false;
+              continue;
+            }
+            if (response.event === "loaded") {
+              this.loading = false;
+              this.weightsLoaded = true;
+              continue;
+            }
             const pending = this.pending;
             this.pending = undefined;
+            this.loading = false;
+            if (typeof response.weightsLoaded === "boolean") {
+              this.weightsLoaded = response.weightsLoaded;
+            }
             this.setReferenced(false);
             if (typeof response.text === "string") {
               this.failures = 0;
+              this.lastInferenceSucceededAt = new Date().toISOString();
               pending.resolve({ text: response.text, pid: child.pid ?? 0 });
             } else {
-              pending.reject(new Error("local_worker_inference_failed"));
+              const error = new Error("local_worker_inference_failed");
+              this.recordFailure(error);
+              pending.reject(error);
             }
           }
         } catch {
@@ -85,11 +154,23 @@ export class LocalTextWorker {
         }
       }
     });
-    child.on("error", () => this.rejectPending(new Error("local_worker_unavailable")));
-    child.stdin.on("error", () => this.rejectPending(new Error("local_worker_input_failed")));
+    child.on("error", () => {
+      processFailure = new Error("local_worker_unavailable");
+      this.recordFailure(processFailure);
+      this.rejectPending(processFailure);
+    });
+    child.stdin.on("error", () => {
+      const error = new Error("local_worker_input_failed");
+      this.recordFailure(error);
+      this.rejectPending(error);
+    });
     child.once("close", () => {
       if (this.child === child) {
         this.child = undefined;
+        this.resetProcessState();
+      }
+      if (!this.stopping && !processFailure) {
+        this.recordFailure(new Error("local_worker_exited"));
       }
       this.rejectPending(new Error("local_worker_exited"));
       if (this.supervised) {
@@ -133,6 +214,7 @@ export class LocalTextWorker {
     if (this.stopping) {
       return this.stopping;
     }
+    this.recordFailure(error);
     this.rejectPending(error);
     const child = this.child;
     if (!child) {
@@ -196,6 +278,11 @@ export class LocalTextWorker {
 }
 
 const workers = new Map<string, LocalTextWorker>();
+/** The host's primary resident worker, if assembled; this never creates one. */
+export function readLocalTextWorkerSnapshot(): LocalTextWorkerSnapshot | undefined {
+  return workers.values().next().value?.snapshot();
+}
+
 export function localTextWorker(runtime: LocalTextModelRuntimeConfig): LocalTextWorker {
   const key = `${runtime.pythonPath}\0${runtime.modelId}`;
   let worker = workers.get(key);

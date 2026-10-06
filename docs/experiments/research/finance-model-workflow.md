@@ -108,3 +108,14 @@ classification quality did not justify automatic use. The existing Qwen3-0.6B
 training/LoRA lane and Qwen3-VL image adapter retain their roles. Model weight
 downloads are separate from the Git checkout and record source revision and
 SHA-256 verification; a cached model alone is not an active route.
+
+## Explicit model roles
+
+Declare `tools.financeModelSlots` with `fast`, `reasoning`, and `review` model
+references in trusted host configuration. These select the existing workflow
+slots for simple extraction, complex reasoning, and independent review. They do
+not replace the primary agent or grant execution authority. Explicit per-run
+slots take precedence; historical fleet slot configuration remains compatible.
+A distinct author and reviewer preserve model diversity, without proving quality.
+Auxiliary local text and structured decision tools remain on-demand tools;
+financial arithmetic and execution gates remain deterministic.

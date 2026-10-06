@@ -3,7 +3,7 @@ import { resolvePluginTools } from "../plugins/tools.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
 import { withArtifactResultRecording } from "./artifact-result-recording.js";
-import type { FinanceWorkflowSlotModels } from "./finance-model-workflow.js";
+import { resolveFinanceWorkflowSlotModels } from "./finance-model-workflow.js";
 import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "./finance-realtime-source-registry.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
@@ -99,28 +99,6 @@ import { createSubagentsTool } from "./tools/subagents-tool.js";
 import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
-
-function resolveModelFleetSlotModels(
-  config?: OpenClawConfig,
-): FinanceWorkflowSlotModels | undefined {
-  const raw = config?.plugins?.entries?.["lcx-model-fleet"]?.config?.slotModels;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return undefined;
-  }
-  const slots = raw as Record<string, unknown>;
-  if (
-    typeof slots.fast !== "string" ||
-    typeof slots.reasoning !== "string" ||
-    typeof slots.review !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    fast: slots.fast,
-    reasoning: slots.reasoning,
-    review: slots.review,
-  };
-}
 
 export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
@@ -281,7 +259,7 @@ export function createOpenClawTools(options?: {
     createFinanceResearchRunTool({
       workspaceDir,
       config: options?.config,
-      slotModels: resolveModelFleetSlotModels(options?.config),
+      slotModels: resolveFinanceWorkflowSlotModels(options?.config),
     }),
     createFinancePositionLedgerReadTool({ workspaceDir }),
     createFinanceBarLedgerTool({ workspaceDir }),
