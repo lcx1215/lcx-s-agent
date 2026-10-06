@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recordAgentArtifact } from "../agents/artifact-result-recording.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { backfillOwnerArtifacts } from "./artifact-owner-backfill.js";
@@ -16,6 +16,7 @@ beforeEach(async () => {
   config = { agents: { defaults: { workspace: root, memorySearch: { store: { path: dbPath } } } } };
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(root, { recursive: true, force: true });
 });
 async function write(relativePath: string, value: unknown) {
@@ -189,4 +190,59 @@ it("blocks aliases in root ancestors before reading any original file", async ()
   expect(receipt.scanned).toBe(0);
   expect(receipt.registered).toBe(0);
   expect(receipt.gaps.some((g) => g.reason === "artifact_backfill_alias_blocked")).toBe(true);
+});
+
+it("defers expired recovery without opening the store or changing original history", async () => {
+  const original = await write("state/lcx-central-agent-runs/one.json", { runId: "one" });
+  const receipt = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    deadlineMs: Date.now() - 1,
+  });
+  expect(receipt).toMatchObject({
+    status: "partial",
+    registered: 0,
+    scanned: 0,
+    truncated: true,
+    gaps: [{ relativePath: "", reason: "artifact_backfill_deadline_reached" }],
+  });
+  await expect(fs.stat(dbPath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await fs.readFile(path.join(root, "state/lcx-central-agent-runs/one.json"), "utf8")).toBe(
+    original,
+  );
+});
+
+it("stops between registrations and a later default pass recovers idempotently", async () => {
+  await write("state/lcx-central-agent-runs/1.json", { runId: "one" });
+  await write("state/lcx-central-agent-runs/2.json", { runId: "two" });
+  const deadline = Date.now() + 60000;
+  let expired = false;
+  const realNow = Date.now.bind(Date);
+  vi.spyOn(Date, "now").mockImplementation(() => (expired ? deadline : realNow()));
+  const register = Reflect.get(ArtifactStore.prototype, "register");
+  vi.spyOn(ArtifactStore.prototype, "register").mockImplementation(
+    async function (this: ArtifactStore, input) {
+      const result = await register.call(this, input);
+      expired = true;
+      return result;
+    },
+  );
+  const first = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    deadlineMs: deadline,
+  });
+  expect(first).toMatchObject({ status: "partial", registered: 1, scanned: 1, truncated: true });
+  expect(first.gaps).toEqual([{ relativePath: "", reason: "artifact_backfill_deadline_reached" }]);
+  expect(first.coverage[0].status).toBe("partial");
+  vi.restoreAllMocks();
+  const second = await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir: root });
+  expect(second).toMatchObject({
+    status: "complete",
+    registered: 1,
+    unchanged: 1,
+    truncated: false,
+  });
 });

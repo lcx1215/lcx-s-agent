@@ -482,7 +482,8 @@ async function writeLatest(
     capabilityDrain: readonly string[];
     receiptPersistenceDurationMs: number | null;
     continuation?: CentralCycleContinuation;
-    artifactBackfill: OwnerArtifactBackfillReceipt;
+    artifactBackfill?: OwnerArtifactBackfillReceipt;
+    artifactBackfillDeferredReason: string | null;
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -524,6 +525,7 @@ async function writeLatest(
     evidenceComplete: meta.evidenceWriteFailures.length === 0,
     evidenceWriteFailures: meta.evidenceWriteFailures,
     artifactBackfill: meta.artifactBackfill,
+    artifactBackfillDeferredReason: meta.artifactBackfillDeferredReason,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -581,16 +583,11 @@ async function main(): Promise<void> {
   const recordEvidenceFailure = (target: string, error: unknown): void => {
     evidenceWriteFailures.push({ target, reason: String(error).slice(0, 300) });
   };
-  // Reuse the resident owner's cadence to recover previously persisted results after index failure.
-  const artifactBackfill = await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir });
-  if (artifactBackfill.status !== "complete") {
-    recordEvidenceFailure(
-      "artifact_backfill",
-      new Error(
-        `status=${artifactBackfill.status}; gaps=${artifactBackfill.gapCount}; truncated=${artifactBackfill.truncated}`,
-      ),
-    );
-  }
+  // Recovery indexing must not consume the first decision's time budget.
+  let artifactBackfill: OwnerArtifactBackfillReceipt | undefined;
+  let artifactBackfillDeferredReason: string | null = dryRun
+    ? "dry_run_no_recovery"
+    : "no_persisted_cycle";
   // thread-store resume: recover prior cycles so the brain inherits context.
   let history = await loadPersistedReceipts();
   while (Date.now() < deadline && runs < maxCycles) {
@@ -628,8 +625,10 @@ async function main(): Promise<void> {
       receipt = failedCycleReceipt(perception, runs, error, perceptionBuildMs);
     }
     const receiptPersistenceStartedAt = performance.now();
+    let cyclePersisted = false;
     try {
       await settle(receipt);
+      cyclePersisted = true;
     } catch (error) {
       recordEvidenceFailure("jsonl", error);
     }
@@ -663,6 +662,26 @@ async function main(): Promise<void> {
     history = history.concat(receipt).slice(-200);
     runs += 1;
     lastContinuation = nextCycleContinuation(receipt, runs, maxCycles, resumable.at(-1));
+    if (!artifactBackfill && cyclePersisted && !dryRun && Date.now() >= deadline) {
+      artifactBackfillDeferredReason = "run_deadline_exhausted";
+    }
+    if (!artifactBackfill && cyclePersisted && !dryRun && Date.now() < deadline) {
+      artifactBackfillDeferredReason = null;
+      artifactBackfill = await backfillOwnerArtifacts({
+        config,
+        agentId: "main",
+        workspaceDir,
+        deadlineMs: deadline,
+      });
+      if (artifactBackfill.status !== "complete") {
+        recordEvidenceFailure(
+          "artifact_backfill",
+          new Error(
+            `status=${artifactBackfill.status}; gaps=${artifactBackfill.gapCount}; truncated=${artifactBackfill.truncated}`,
+          ),
+        );
+      }
+    }
     if (dryRun || !lastContinuation.run) {
       break;
     }
@@ -683,6 +702,7 @@ async function main(): Promise<void> {
       droppedNonDecisionCycles,
       evidenceWriteFailures,
       artifactBackfill,
+      artifactBackfillDeferredReason,
       capabilityDrain: dispatchedCapabilities(lastReceipt, CENTRAL_CAPABILITY_IDS),
       receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
       ...(lastContinuation ? { continuation: lastContinuation } : {}),
@@ -748,6 +768,7 @@ async function main(): Promise<void> {
     evidenceComplete: evidenceWriteFailures.length === 0,
     evidenceWriteFailures,
     artifactBackfill,
+    artifactBackfillDeferredReason,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

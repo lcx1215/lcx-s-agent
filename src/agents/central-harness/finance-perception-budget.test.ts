@@ -164,3 +164,112 @@ it("delivers account-bound unknown economics into the actual finance brain promp
   });
   expect(observed).toBe(true);
 });
+
+it("projects critical source-timed finance facts after backlog pressure without changing the original", () => {
+  const finance = {
+    schemaVersion: "lcx_finance_automatic_lifecycle_feedback_v2",
+    status: "present",
+    observedAt: "2026-10-06T17:10:00.000Z",
+    nextTask: "inspect_finance_position_management",
+    scheduler: {
+      runtime: { status: "responsive", placementEnabled: true },
+      history: "中".repeat(2600),
+    },
+    intradayExecution: {
+      status: "present",
+      candidates: 43,
+      placed: 2,
+      uncertain: 1,
+      missingOutcome: 1,
+    },
+    positionManagement: {
+      status: "present",
+      needsInspection: true,
+      accounts: [
+        {
+          accountId: "paper-a",
+          snapshotRef: "snapshot-a",
+          observedAt: "2026-10-06T17:09:00.000Z",
+          freshness: "stale",
+          uncoveredCount: 3,
+        },
+      ],
+    },
+    economicFeedback: {
+      status: "present",
+      asOf: "2026-10-06T17:10:00.000Z",
+      accounts: [
+        {
+          accountId: "paper-a",
+          venue: "alpaca:paper",
+          snapshotRef: "snapshot-a",
+          netMatchedPnl: null,
+          issues: ["fees_not_allocated_to_closed_lots"],
+        },
+      ],
+    },
+  };
+  const original = structuredClone(finance);
+  const input = {
+    observedAt: "2026-10-07T00:00:00Z",
+    ownerTotals: {},
+    boundaries: [],
+    backlog: [{ note: "x".repeat(5500) }],
+    controlRoom: { financeAutomaticLifecycle: finance },
+  };
+  const bounded = boundPerception(input);
+  const projected = bounded.perception.controlRoom.financeAutomaticLifecycle;
+  expect(projected).toMatchObject({
+    observedAt: finance.observedAt,
+    nextTask: finance.nextTask,
+    scheduler: { runtime: { status: "responsive", placementEnabled: true } },
+    intradayExecution: { uncertain: 1, missingOutcome: 1 },
+    positionManagement: { accounts: [{ freshness: "stale", uncoveredCount: 3 }] },
+    economicFeedback: {
+      accounts: [
+        {
+          accountId: "paper-a",
+          snapshotRef: "snapshot-a",
+          netMatchedPnl: null,
+          issues: ["fees_not_allocated_to_closed_lots"],
+        },
+      ],
+    },
+    budgetProjection: {
+      kind: "critical_finance_facts",
+      omittedFields: expect.arrayContaining(["scheduler.history"]),
+    },
+  });
+  expect(Buffer.byteLength(JSON.stringify(projected))).toBeLessThanOrEqual(2048);
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
+  expect(boundPerception(bounded.perception).perception).toEqual(bounded.perception);
+  expect(finance).toEqual(original);
+  expect(buildCentralBrainPrompt(bounded.perception)).toContain('"netMatchedPnl":null');
+});
+
+it("names omitted detail and keeps missing economics unknown rather than inventing a passing zero", () => {
+  const bounded = boundPerception({
+    observedAt: "now",
+    ownerTotals: {},
+    boundaries: [],
+    backlog: [],
+    controlRoom: {
+      financeAutomaticLifecycle: {
+        nextTask: "inspect_costs",
+        economicFeedback: { status: "unavailable", reason: "fees未知" },
+        positionManagement: { status: "unavailable" },
+        history: "中".repeat(5000),
+      },
+    },
+  });
+  expect(bounded.perception.controlRoom.financeAutomaticLifecycle).toMatchObject({
+    economicFeedback: { status: "unavailable", reason: "fees未知" },
+    positionManagement: { status: "unavailable" },
+    budgetProjection: {
+      omittedFieldCount: expect.any(Number),
+      omittedFields: expect.arrayContaining(["history"]),
+    },
+  });
+  expect(JSON.stringify(bounded.perception)).not.toContain("netMatchedPnl");
+  expect(bounded.report.overBudget).toBe(false);
+});

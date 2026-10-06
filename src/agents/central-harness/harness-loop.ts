@@ -953,6 +953,157 @@ function boundObjectSection(
   return { value: kept, dropped };
 }
 
+/** A fallback for known lifecycle fields, never a replacement for the original feedback. */
+function projectFinanceBudgetFacts(
+  source: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (
+    !isPlainRecord(source.scheduler) &&
+    !isPlainRecord(source.intradayExecution) &&
+    !isPlainRecord(source.positionManagement) &&
+    !isPlainRecord(source.economicFeedback) &&
+    typeof source.nextTask !== "string"
+  ) {
+    return undefined;
+  }
+  const omitted = new Set<string>();
+  const pick = (value: unknown, keys: readonly string[], prefix: string) => {
+    const result: Record<string, unknown> = {};
+    if (!isPlainRecord(value)) {
+      return result;
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (
+        keys.includes(key) &&
+        (item === null ||
+          typeof item === "boolean" ||
+          (typeof item === "number" && Number.isFinite(item)) ||
+          (typeof item === "string" && jsonBytes(item) <= 240))
+      ) {
+        result[key] = item;
+      } else {
+        omitted.add(`${prefix}${key}`);
+      }
+    }
+    return result;
+  };
+  const result = pick(source, ["schemaVersion", "status", "observedAt", "nextTask", "reason"], "");
+  const sections: readonly [string, readonly string[]][] = [
+    [
+      "intradayExecution",
+      [
+        "status",
+        "scope",
+        "newestSignalAt",
+        "candidates",
+        "placed",
+        "refused",
+        "uncertain",
+        "missingOutcome",
+        "needsExecutionInspection",
+      ],
+    ],
+    ["positionManagement", ["status", "needsInspection", "omittedAccounts", "reason"]],
+    ["economicFeedback", ["status", "asOf", "omittedAccounts", "reason"]],
+  ];
+  if (isPlainRecord(source.scheduler)) {
+    result.scheduler = {
+      runtime: pick(
+        source.scheduler.runtime,
+        [
+          "status",
+          "phase",
+          "pidPresent",
+          "placementEnabled",
+          "venue",
+          "executionPolicyStatus",
+          "executionPolicyAuthorizationMode",
+          "executionPolicyExpiresAt",
+        ],
+        "scheduler.runtime.",
+      ),
+    };
+    for (const key of Object.keys(source.scheduler)) {
+      if (key !== "runtime") {
+        omitted.add(`scheduler.${key}`);
+      }
+    }
+  }
+  for (const [section, keys] of sections) {
+    const original = source[section];
+    if (!isPlainRecord(original)) {
+      continue;
+    }
+    const projected = pick(original, keys, `${section}.`);
+    if (Array.isArray(original.accounts)) {
+      const accountKeys =
+        section === "positionManagement"
+          ? [
+              "accountId",
+              "venue",
+              "snapshotRef",
+              "observedAt",
+              "freshness",
+              "uncoveredCount",
+              "outsideActiveRuleCount",
+              "unresolvedOrderCount",
+              "needsInspection",
+            ]
+          : ["accountId", "venue", "snapshotRef", "status", "netMatchedPnl", "costScope", "basis"];
+      projected.accounts = original.accounts.slice(0, 1).map((account) => {
+        const selected = pick(account, accountKeys, `${section}.accounts.`);
+        if (isPlainRecord(account) && Array.isArray(account.issues)) {
+          selected.issues = account.issues
+            .filter(
+              (issue): issue is string => typeof issue === "string" && jsonBytes(issue) <= 160,
+            )
+            .slice(0, 2);
+        }
+        return selected;
+      });
+      omitted.add(`${section}.accounts.details_or_additional_accounts`);
+    }
+    result[section] = projected;
+  }
+  for (const key of Object.keys(result)) {
+    omitted.delete(key);
+  }
+  const annotate = () => {
+    result.budgetProjection = {
+      kind: "critical_finance_facts",
+      originalBytes: jsonBytes(source),
+      omittedFieldCount: omitted.size,
+      omittedFields: [...omitted].toSorted().slice(0, 6),
+      detailReaders: ["finance_position_ledger_read", "finance_strategy_rule_ledger_read"],
+      boundary: "partial_observation_not_execution_readiness; omitted_costs_remain_unknown",
+    };
+  };
+  annotate();
+  // Account details are optional; never coerce absent measurements into zero or passing verdicts.
+  for (const section of [
+    "economicFeedback",
+    "positionManagement",
+    "scheduler",
+    "intradayExecution",
+  ]) {
+    if (jsonBytes(result) <= 2048) {
+      break;
+    }
+    const details = result[section];
+    if (isPlainRecord(details) && Object.hasOwn(details, "accounts")) {
+      result[section] = Object.fromEntries(
+        Object.entries(details).filter(([key]) => key !== "accounts"),
+      );
+      omitted.add(`${section}.accounts`);
+    } else {
+      delete result[section];
+      omitted.add(section);
+    }
+    annotate();
+  }
+  return jsonBytes(result) <= 2048 ? result : undefined;
+}
+
 /**
  * Bound the perception handed to the brain to a byte budget.
  *
@@ -998,7 +1149,18 @@ export function boundPerception(
       (key !== "financeAutomaticLifecycle" && bytes > CENTRAL_PERCEPTION_KEY_BUDGET_BYTES) ||
       jsonBytes({ ...perception, controlRoom: candidate }) > budget
     ) {
-      dropped.push({ key, bytes });
+      const financeFacts =
+        key === "financeAutomaticLifecycle" && isPlainRecord(item)
+          ? projectFinanceBudgetFacts(item)
+          : undefined;
+      if (
+        financeFacts &&
+        jsonBytes({ ...perception, controlRoom: { ...value, [key]: financeFacts } }) <= budget
+      ) {
+        value[key] = financeFacts;
+      } else {
+        dropped.push({ key, bytes });
+      }
     } else {
       value[key] = item;
     }

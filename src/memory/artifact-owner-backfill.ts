@@ -65,6 +65,8 @@ export async function backfillOwnerArtifacts(input: {
   agentId: string;
   workspaceDir: string;
   limit?: number;
+  /** Cooperative run budget; finish the current bounded operation, then stop. */
+  deadlineMs?: number;
 }): Promise<OwnerArtifactBackfillReceipt> {
   const receipt: OwnerArtifactBackfillReceipt = {
     status: "complete",
@@ -89,6 +91,28 @@ export async function backfillOwnerArtifacts(input: {
     }
     receipt.status = "partial";
   };
+  let deadlineReached = false;
+  const stopForDeadline = (coverage?: Coverage): boolean => {
+    if (input.deadlineMs === undefined || Date.now() < input.deadlineMs) {
+      return false;
+    }
+    if (!deadlineReached) {
+      gap("", "artifact_backfill_deadline_reached");
+    }
+    deadlineReached = true;
+    receipt.truncated = true;
+    if (coverage) {
+      coverage.status = "partial";
+    }
+    return true;
+  };
+  if (input.deadlineMs !== undefined && !Number.isFinite(input.deadlineMs)) {
+    gap("", "artifact_backfill_deadline_invalid");
+    return receipt;
+  }
+  if (stopForDeadline()) {
+    return receipt;
+  }
   const memory = resolveMemorySearchConfig(input.config, input.agentId);
   if (!memory?.enabled) {
     gap("", "artifact_backfill_memory_disabled");
@@ -102,8 +126,14 @@ export async function backfillOwnerArtifacts(input: {
   let store: ArtifactStore | undefined;
   try {
     const workspace = await fs.realpath(input.workspaceDir);
+    if (stopForDeadline()) {
+      return receipt;
+    }
     store = ArtifactStore.open({ dbPath: memory.store.path, workspaceDir: workspace });
     for (const owner of ROOTS) {
+      if (stopForDeadline()) {
+        break;
+      }
       const coverage: Coverage = {
         ...owner,
         status: "complete",
@@ -114,6 +144,9 @@ export async function backfillOwnerArtifacts(input: {
       };
       receipt.coverage.push(coverage);
       const visit = async (relativeDir: string, depth: number): Promise<void> => {
+        if (stopForDeadline(coverage)) {
+          return;
+        }
         if (receipt.scanned >= limit) {
           receipt.truncated = true;
           coverage.status = "partial";
@@ -122,6 +155,9 @@ export async function backfillOwnerArtifacts(input: {
         let entries;
         try {
           await rejectAliases(workspace, relativeDir);
+          if (stopForDeadline(coverage)) {
+            return;
+          }
           entries = await fs.readdir(path.join(workspace, relativeDir), { withFileTypes: true });
         } catch (error) {
           if (error instanceof Error && "code" in error && error.code === "ENOENT" && depth === 0) {
@@ -138,6 +174,9 @@ export async function backfillOwnerArtifacts(input: {
           return;
         }
         for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
+          if (stopForDeadline(coverage)) {
+            return;
+          }
           if (entry.name.startsWith(".") || entry.name.includes(".pending-")) {
             coverage.excluded++;
             continue;
@@ -171,11 +210,17 @@ export async function backfillOwnerArtifacts(input: {
           coverage.scanned++;
           try {
             await rejectAliases(workspace, relativePath);
+            if (stopForDeadline(coverage)) {
+              return;
+            }
             const original = await readFileWithinRoot({
               rootDir: workspace,
               relativePath,
               maxBytes: AGENT_ARTIFACT_MAX_BYTES,
             });
+            if (stopForDeadline(coverage)) {
+              return;
+            }
             if (original.realPath !== path.join(workspace, relativePath)) {
               throw new ArtifactStoreError("artifact_backfill_alias_blocked");
             }
@@ -247,6 +292,9 @@ export async function backfillOwnerArtifacts(input: {
             ) {
               throw new ArtifactStoreError("artifact_backfill_source_refs_invalid");
             }
+            if (stopForDeadline(coverage)) {
+              return;
+            }
             const registered = await store!.register({
               id,
               owner: envelope ? String(record.owner) : owner.owner,
@@ -277,7 +325,7 @@ export async function backfillOwnerArtifacts(input: {
       };
       await visit(owner.root, 0);
     }
-    if (receipt.truncated) {
+    if (receipt.truncated && !deadlineReached) {
       gap("", "artifact_backfill_limit_or_depth_reached");
     }
   } catch (error) {

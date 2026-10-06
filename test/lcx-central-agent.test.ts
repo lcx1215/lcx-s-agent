@@ -2205,5 +2205,77 @@ describe("central host task focus", () => {
     const receipt = JSON.parse(await fsp.readFile(summary.latestRunPath, "utf8"));
     expect(receipt.task).toEqual({ objective: "Inspect learning gaps", focus: "general" });
     expect(receipt.financePerception).toBeUndefined();
+    expect(summary.artifactBackfillDeferredReason).toBe("dry_run_no_recovery");
+    expect(summary.artifactBackfill).toBeUndefined();
+    const latest = JSON.parse(
+      await fsp.readFile(
+        path.join(userHome, ".openclaw/workspace/state/lcx-central-agent-latest.json"),
+        "utf8",
+      ),
+    );
+    expect(latest.artifactBackfillDeferredReason).toBe("dry_run_no_recovery");
+  });
+  it("actual unavailable brain still restores the index after its non-dry-run receipt is durable", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-failed-brain-"));
+    centralTestRoots.push(userHome);
+    const workspace = path.join(userHome, ".openclaw/workspace");
+    const originalPath = path.join(workspace, "state/lcx-central-agent-runs/original.json");
+    await fsp.mkdir(path.dirname(originalPath), { recursive: true });
+    const original = JSON.stringify({
+      runId: "old",
+      observedAt: "2026-01-01T00:00:00Z",
+      note: "preserve original",
+    });
+    await fsp.writeFile(originalPath, original);
+    const configPath = path.join(userHome, "isolated-config.json");
+    await fsp.writeFile(
+      configPath,
+      JSON.stringify({
+        models: { mode: "replace", discovery: "configured_only", providers: {} },
+        agents: {
+          defaults: {
+            workspace,
+            model: { primary: "offline-unavailable/model" },
+            memorySearch: { store: { path: path.join(userHome, "memory.sqlite") } },
+          },
+        },
+      }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        "--objective",
+        "Inspect local recovery",
+        "--max-cycles",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        timeout: 60000,
+        env: {
+          ...process.env,
+          LCX_USER_HOME: userHome,
+          OPENCLAW_STATE_DIR: path.join(userHome, ".openclaw"),
+          OPENCLAW_CONFIG_PATH: configPath,
+        },
+      },
+    );
+    expect(result.status).toBe(0);
+    const summary = JSON.parse(result.stdout);
+    expect(summary.brainOutcome).toBe("blocked");
+    expect(summary.artifactBackfillDeferredReason).toBeNull();
+    expect(summary.artifactBackfill).toMatchObject({ status: "complete", truncated: false });
+    expect(summary.artifactBackfill.scanned).toBeGreaterThanOrEqual(2);
+    const durable = await fsp.readFile(
+      path.join(workspace, "logs/lcx-central-agent-log-latest.jsonl"),
+      "utf8",
+    );
+    expect(JSON.parse(durable.trim()).brainCall.outcome).toBe("blocked");
+    expect(await fsp.readFile(originalPath, "utf8")).toBe(original);
   });
 });
