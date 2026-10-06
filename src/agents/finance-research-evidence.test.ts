@@ -1363,3 +1363,262 @@ it("keeps the primary failed node and critical quality reason ahead of generic s
   });
   expect(Number(result.omittedSourceGaps)).toBeGreaterThan(0);
 });
+
+const codedQualityCall = (reason = "output_invalid", attempt = 1) => ({
+  attempt,
+  reason,
+  outcome: "failed",
+  adapterInvoked: true,
+  providerCallObserved: true,
+});
+const qualityFailureReceipt = (stages: readonly unknown[]) => ({
+  status: "needs_review",
+  plan: { asOf: "2026-10-05T21:40:59.405Z" },
+  moduleExecution: {
+    nodes: Array.from({ length: 8 }, (_, index) => ({
+      nodeId: `module-${index}`,
+      moduleId: "quant",
+      status: "succeeded",
+    })),
+    replanFeedback: { status: "completed", nextAction: "none", remainingSoftReplans: 1 },
+  },
+  quality: {
+    attempts: [
+      {
+        stages,
+        feedback: Array.from({ length: 12 }, (_, index) => `final_artifact_missing_${index}`),
+      },
+    ],
+  },
+  gates: [{ id: "quality", passed: false, reason: "quality status=quality-failed; passed=false" }],
+  missingEvidence: [],
+});
+const projectHistorical = (receipt: unknown) =>
+  buildFinanceHistoricalResearchFeedback({
+    receipt,
+    sourceRef: "dated.json",
+    sourceSha256: "a".repeat(64),
+  });
+
+it("retains actual root formatting calls without relabeling successful modules or blocked dependants", () => {
+  const stages = [
+    {
+      taskId: "formatting",
+      status: "failed",
+      error: "PRIVATE_ERROR https://secret.invalid/token",
+      modelCalls: [
+        codedQualityCall(),
+        {
+          ...codedQualityCall("model_affinity_constraint", 2),
+          outcome: "rejected",
+          adapterInvoked: false,
+          providerCallObserved: false,
+        },
+      ],
+    },
+    ...Array.from({ length: 6 }, (_, index) => ({
+      taskId: `evidence_batch_review_${index + 1}`,
+      status: "blocked",
+      error: "PRIVATE_ERROR",
+      modelCalls: [],
+    })),
+  ];
+  const result = projectHistorical(qualityFailureReceipt(stages));
+  expect(result).toMatchObject({
+    status: "present",
+    failures: [],
+    omittedFailures: 0,
+    qualityFailures: [
+      {
+        taskId: "formatting",
+        status: "failed",
+        calls: [
+          codedQualityCall(),
+          {
+            ...codedQualityCall("model_affinity_constraint", 2),
+            outcome: "rejected",
+            adapterInvoked: false,
+            providerCallObserved: false,
+          },
+        ],
+        omittedCalls: 0,
+      },
+    ],
+    omittedQualityFailures: 0,
+  });
+  expect(JSON.stringify(result)).not.toMatch(
+    /PRIVATE_ERROR|secret.invalid|token|evidence_batch_review/,
+  );
+  expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+});
+
+it.each([
+  "provider_auth",
+  "provider_payment_required",
+  "provider_rate_limit",
+  "call_budget_exhausted",
+])("preserves fixed call reason and actual non-invocation flags (%s)", (reason) => {
+  expect(
+    projectHistorical(
+      qualityFailureReceipt([
+        {
+          taskId: "research_draft",
+          status: "failed",
+          modelCalls: [
+            {
+              ...codedQualityCall(reason),
+              outcome: "rejected",
+              adapterInvoked: false,
+              providerCallObserved: false,
+            },
+          ],
+        },
+      ]),
+    ),
+  ).toMatchObject({
+    qualityFailures: [
+      {
+        taskId: "research_draft",
+        calls: [
+          { reason, outcome: "rejected", adapterInvoked: false, providerCallObserved: false },
+        ],
+      },
+    ],
+  });
+});
+
+it.each([
+  "unknown_task",
+  "unknown_code",
+  "raw_error",
+  "missing_flags",
+  "invalid_attempt",
+  "completed",
+  "blocked",
+  "mismatched_task",
+])("does not invent quality failure evidence from malformed or unsupported stages (%s)", (mode) => {
+  const stage = {
+    taskId: mode === "unknown_task" ? "PRIVATE_ERROR https://secret.invalid" : "formatting",
+    status: mode === "blocked" ? "blocked" : "failed",
+    error: "PRIVATE_ERROR https://secret.invalid",
+    modelCalls:
+      mode === "raw_error"
+        ? []
+        : [
+            {
+              ...codedQualityCall(
+                mode === "unknown_code" ? "PRIVATE_ERROR https://secret.invalid" : "output_invalid",
+              ),
+              ...(mode === "missing_flags" ? { providerCallObserved: undefined } : {}),
+              ...(mode === "invalid_attempt" ? { attempt: 0 } : {}),
+              ...(mode === "completed" ? { outcome: "completed" } : {}),
+              ...(mode === "mismatched_task" ? { taskId: "unknown_task" } : {}),
+            },
+          ],
+  };
+  const result = projectHistorical(qualityFailureReceipt([stage]));
+  expect(result.qualityFailures).toBeUndefined();
+  expect(result.omittedQualityFailures).toBeUndefined();
+  expect(JSON.stringify(result)).not.toMatch(/PRIVATE_ERROR|secret.invalid/);
+});
+
+it("uses only the latest actual attempt and omits optional failures when quality gate passed", () => {
+  const receipt = qualityFailureReceipt([
+    { taskId: "formatting", status: "failed", modelCalls: [codedQualityCall()] },
+  ]);
+  const success = {
+    stages: [
+      {
+        taskId: "formatting",
+        status: "succeeded",
+        modelCalls: [{ ...codedQualityCall(), outcome: "completed" }],
+      },
+    ],
+    feedback: [],
+  };
+  expect(
+    projectHistorical({ ...receipt, quality: { attempts: [...receipt.quality.attempts, success] } })
+      .qualityFailures,
+  ).toBeUndefined();
+  const passed = projectHistorical({
+    ...receipt,
+    gates: [{ id: "quality", passed: true }],
+    missingEvidence: ["disclosed noncritical gap"],
+    status: "completed",
+  });
+  expect(passed.status).toBe("no_gap");
+  expect(passed.qualityFailures).toBeUndefined();
+});
+
+it("prioritizes coded root failure within the UTF8 budget and counts omitted whole details", () => {
+  const receipt = qualityFailureReceipt([
+    {
+      taskId: "formatting",
+      status: "failed",
+      modelCalls: [
+        codedQualityCall(),
+        {
+          ...codedQualityCall("model_affinity_constraint", 2),
+          outcome: "rejected",
+          adapterInvoked: false,
+          providerCallObserved: false,
+        },
+        codedQualityCall("provider_rate_limit", 3),
+      ],
+    },
+    { taskId: "final_precheck", status: "failed", modelCalls: [codedQualityCall("provider_auth")] },
+    { taskId: "unknown-task", status: "failed", modelCalls: [codedQualityCall()] },
+    { taskId: "evidence_batch_review_1", status: "blocked", modelCalls: [] },
+  ]);
+  const result = projectHistorical({
+    ...receipt,
+    missingEvidence: Array.from({ length: 4 }, () => "中".repeat(40)),
+    quality: {
+      attempts: [
+        {
+          ...receipt.quality.attempts[0],
+          feedback: Array.from({ length: 4 }, () => "中".repeat(120)),
+        },
+      ],
+    },
+  });
+  expect(result).toMatchObject({
+    status: "present",
+    qualityFailures: expect.arrayContaining([
+      {
+        taskId: "formatting",
+        calls: [
+          codedQualityCall(),
+          {
+            ...codedQualityCall("model_affinity_constraint", 2),
+            outcome: "rejected",
+            adapterInvoked: false,
+            providerCallObserved: false,
+          },
+        ],
+        status: "failed",
+        omittedCalls: 1,
+      },
+    ]),
+  });
+  expect(Number(result.omittedQualityFailures)).toBe(1);
+  expect(Number(result.omittedQualityFeedback)).toBeGreaterThan(0);
+  expect(Number(result.omittedSourceGaps)).toBeGreaterThan(0);
+  expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+});
+
+it("keeps a valid actual call ordinal without adding an artificial model-attempt limit", () => {
+  const result = projectHistorical(
+    qualityFailureReceipt([
+      {
+        taskId: "formatting",
+        status: "failed",
+        modelCalls: [codedQualityCall("output_invalid", Number.MAX_SAFE_INTEGER)],
+      },
+    ]),
+  );
+  expect(result).toMatchObject({
+    qualityFailures: [{ calls: [{ attempt: Number.MAX_SAFE_INTEGER, reason: "output_invalid" }] }],
+  });
+  expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+});

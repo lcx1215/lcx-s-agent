@@ -18,7 +18,8 @@ import type {
   FinanceResearchBatchEvidencePacket,
   FinanceResearchBatchJob,
 } from "./finance-research-batch-runner.js";
-import type { QualityHarnessArtifact } from "./quality-harness-contract.js";
+import type { ModelCallReceipt } from "./logical-agent-model-router.js";
+import { STAGE_BY_AGENT_ID, type QualityHarnessArtifact } from "./quality-harness-contract.js";
 
 type FinanceEvidenceRecord = Record<string, unknown>;
 
@@ -1321,6 +1322,79 @@ export function buildFinanceResearchModelEvidence(
   return result;
 }
 
+// Same fixed model-call vocabulary as the quality harness; unknown codes never become evidence.
+const HISTORICAL_QUALITY_FAILURE_REASONS = new Set<NonNullable<ModelCallReceipt["reason"]>>([
+  "input_constraint",
+  "capability_constraint",
+  "role_scope_constraint",
+  "model_separation_constraint",
+  "model_separation_unproven",
+  "model_affinity_constraint",
+  "model_affinity_unproven",
+  "adapter_input_constraint",
+  "output_contract",
+  "adapter_error",
+  "prompt_input_invalid",
+  "prompt_budget_exceeded",
+  "output_invalid",
+  "output_truncated",
+  "process_error",
+  "output_limit",
+  "runtime_timeout",
+  "provider_auth",
+  "provider_payment_required",
+  "provider_rate_limit",
+  "call_budget_exhausted",
+  "cancelled",
+  "deadline",
+]);
+
+function historicalQualityFailure(stage: FinanceEvidenceRecord) {
+  const taskId = stage.taskId;
+  if (
+    typeof taskId !== "string" ||
+    !(
+      Object.hasOwn(STAGE_BY_AGENT_ID, taskId) ||
+      /^evidence_batch_(?:extract_[2-6]|review_[1-6])$/u.test(taskId)
+    )
+  ) {
+    return undefined;
+  }
+  const sourceCalls = Array.isArray(stage.modelCalls) ? stage.modelCalls : [];
+  const calls = sourceCalls
+    .filter(isEvidenceRecord)
+    .flatMap((call) => {
+      if (
+        (call.outcome !== "failed" && call.outcome !== "rejected") ||
+        (call.taskId !== undefined && call.taskId !== taskId) ||
+        typeof call.reason !== "string" ||
+        !HISTORICAL_QUALITY_FAILURE_REASONS.has(
+          call.reason as NonNullable<ModelCallReceipt["reason"]>,
+        ) ||
+        typeof call.attempt !== "number" ||
+        !Number.isSafeInteger(call.attempt) ||
+        call.attempt < 1 ||
+        typeof call.adapterInvoked !== "boolean" ||
+        typeof call.providerCallObserved !== "boolean"
+      ) {
+        return [];
+      }
+      return [
+        {
+          attempt: call.attempt,
+          reason: call.reason,
+          outcome: call.outcome,
+          adapterInvoked: call.adapterInvoked,
+          providerCallObserved: call.providerCallObserved,
+        },
+      ];
+    })
+    .slice(0, 2);
+  return calls.length
+    ? { taskId, status: "failed" as const, calls, omittedCalls: sourceCalls.length - calls.length }
+    : undefined;
+}
+
 /** Historical workflow diagnostics only; not market facts, readiness or execution authority. */
 export function buildFinanceHistoricalResearchFeedback(params: {
   receipt: unknown;
@@ -1366,6 +1440,16 @@ export function buildFinanceHistoricalResearchFeedback(params: {
     gates.some((gate) => gate.id === "quality") && Array.isArray(lastAttempt?.feedback)
       ? lastAttempt.feedback.filter((value): value is string => typeof value === "string")
       : [];
+  const failedQualityStages =
+    gates.some((gate) => gate.id === "quality") && Array.isArray(lastAttempt?.stages)
+      ? lastAttempt.stages.filter(isEvidenceRecord).filter((stage) => stage.status === "failed")
+      : [];
+  const qualityFailures = failedQualityStages
+    .flatMap((stage) => {
+      const failure = historicalQualityFailure(stage);
+      return failure ? [failure] : [];
+    })
+    .slice(0, 2);
   const actionableSourceGaps = receipt.status === "needs_review" || receipt.status === "blocked";
   const result = {
     status:
@@ -1408,6 +1492,12 @@ export function buildFinanceHistoricalResearchFeedback(params: {
     omittedFailedGates: Math.max(0, gates.length - 4),
     qualityFeedback: qualityFeedback.slice(0, 4).map(text),
     omittedQualityFeedback: Math.max(0, qualityFeedback.length - 4),
+    ...(qualityFailures.length
+      ? {
+          qualityFailures,
+          omittedQualityFailures: Math.max(0, failedQualityStages.length - qualityFailures.length),
+        }
+      : {}),
     sourceGaps: gaps.filter((item) => Buffer.byteLength(item, "utf8") <= 120).slice(0, 4),
     omittedSourceGaps:
       gaps.length -
@@ -1421,12 +1511,21 @@ export function buildFinanceHistoricalResearchFeedback(params: {
     } else if (result.failures.length > 1) {
       result.failures.pop();
       result.omittedFailures += 1;
-    } else if (result.qualityFeedback.length > 1) {
+    } else if (result.qualityFeedback.length > (qualityFailures.length ? 0 : 1)) {
       result.qualityFeedback.pop();
       result.omittedQualityFeedback += 1;
     } else if (result.failedGates.length > 1) {
       result.failedGates.pop();
       result.omittedFailedGates += 1;
+    } else if (result.qualityFailures && result.qualityFailures.length > 1) {
+      result.qualityFailures.pop();
+      result.omittedQualityFailures = (result.omittedQualityFailures ?? 0) + 1;
+    } else if (
+      result.qualityFailures?.[0]?.calls.length &&
+      result.qualityFailures[0].calls.length > 1
+    ) {
+      result.qualityFailures[0].calls.pop();
+      result.qualityFailures[0].omittedCalls += 1;
     } else {
       return {
         status: "omitted",
