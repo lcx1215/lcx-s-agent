@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
-import { openFinanceModelCheckpoints } from "./finance-model-checkpoints.js";
+import {
+  FinanceModelStageFailure,
+  FinanceModelStageUncertainError,
+  openFinanceModelCheckpoints,
+} from "./finance-model-checkpoints.js";
 import { ModelAdapterError } from "./logical-agent-model-router.js";
 
 const directories: string[] = [];
@@ -89,7 +93,7 @@ describe("finance model checkpoints", () => {
       first.stage("quality", async () => {
         throw new Error("interrupted");
       }),
-    ).rejects.toThrow("interrupted");
+    ).rejects.toMatchObject({ stage: "quality", cause: new Error("interrupted") });
     first.close();
     const resumed = openFinanceModelCheckpoints(opts, {});
     try {
@@ -290,4 +294,51 @@ describe("finance model checkpoints", () => {
       store.close();
     }
   });
+});
+
+it.each(["committee", "quality"] as const)(
+  "retains %s entered-stage cause and leaves failed execution reserved",
+  async (stage) => {
+    const opts = await options();
+    const owner = openFinanceModelCheckpoints(opts, {});
+    const cause = new Error("original private detail");
+    try {
+      await expect(
+        owner.stage(stage, async () => {
+          throw cause;
+        }),
+      ).rejects.toMatchObject({ stage, cause });
+      expect(owner.summary().reservedModelCalls).toBe(0);
+    } finally {
+      owner.close();
+    }
+    const resumed = openFinanceModelCheckpoints(opts, {});
+    let reran = false;
+    try {
+      await expect(
+        resumed.stage(stage, async () => {
+          reran = true;
+          return "fake";
+        }),
+      ).rejects.toBeInstanceOf(FinanceModelStageUncertainError);
+      expect(reran).toBe(false);
+    } finally {
+      resumed.close();
+    }
+  },
+);
+
+it("does not reinterpret existing stage uncertainty as an entered-stage execution failure", async () => {
+  const owner = openFinanceModelCheckpoints(await options(), {});
+  const uncertainty = new FinanceModelStageUncertainError("quality");
+  try {
+    await expect(
+      owner.stage("committee", async () => {
+        throw uncertainty;
+      }),
+    ).rejects.toBe(uncertainty);
+    expect(uncertainty).not.toBeInstanceOf(FinanceModelStageFailure);
+  } finally {
+    owner.close();
+  }
 });

@@ -1262,6 +1262,7 @@ export function compactFinanceResearchFailure(error: FinanceResearchRunFailure) 
     failure: {
       reason: error.reason,
       failureClass: error.failureClass,
+      ...(error.enteredStage ? { enteredStage: error.enteredStage } : {}),
       runId: error.runId,
       checkpointPath: error.checkpointPath,
       startedAt: error.startedAt,

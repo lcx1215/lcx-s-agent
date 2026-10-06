@@ -10,6 +10,7 @@ import {
   compactFinanceResearchFailure,
   parseArgs,
 } from "../../scripts/operator/lcx-finance-research-run.ts";
+import { FinanceModelStageFailure } from "../../src/agents/finance-model-checkpoints.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 import { ModelAdapterError } from "../../src/agents/logical-agent-model-router.ts";
 
@@ -79,14 +80,17 @@ describe("research CLI checkpoint budget", () => {
   });
   it("wires both existing checkpoint owners and records completion", async () => {
     const budget = { ...(await fixture()), runTimeoutMs: 10000 };
+    let deliveredSignal: AbortSignal | undefined;
     const execute: typeof runFinanceResearchRun = async (options) => {
       expect(options.batchOptions?.checkpoint?.path).toBe(options.modelCheckpoint?.path);
       expect(options.modelCheckpoint?.maxModelCalls).toBe(2);
+      deliveredSignal = options.signal;
       expect(options.signal?.aborted).toBe(false);
       return runFinanceResearchRun({ ...options, modelCheckpoint: undefined });
     };
     await runCheckpointedFinanceResearch(input, budget, execute);
     expect(await status()).toMatchObject({ status: "completed", reason: "planned" });
+    expect(deliveredSignal?.aborted).toBe(false);
   });
   it("records provider-blocked returned research and permits a fresh run to recover", async () => {
     const budget = { ...(await fixture()), runTimeoutMs: 10000 };
@@ -220,4 +224,105 @@ it("exposes a failed scheduler summary with the durable checkpoint, never a cand
   });
   expect(summary).not.toHaveProperty("portfolioPlanWritten");
   expect(summary).not.toHaveProperty("written");
+});
+
+it.each(["committee", "quality"] as const)(
+  "cancels cooperative work after %s fails while preserving its original cause",
+  async (stage) => {
+    const budget = { ...(await fixture()), runTimeoutMs: 10000 };
+    let childStopped = false;
+    let deliveredSignal: AbortSignal | undefined;
+    const original = new Error("fetch failed secret-url-and-token");
+    let failure: unknown;
+    try {
+      await runCheckpointedFinanceResearch(input, budget, async (options) => {
+        deliveredSignal = options.signal;
+        options.signal!.addEventListener(
+          "abort",
+          () => {
+            childStopped = true;
+          },
+          { once: true },
+        );
+        throw new FinanceModelStageFailure(stage, original);
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(FinanceResearchRunFailure);
+    expect(failure).toMatchObject({
+      reason: "research_run_failed",
+      failureClass: "network",
+      enteredStage: stage,
+    });
+    expect(deliveredSignal?.aborted).toBe(true);
+    expect(childStopped).toBe(true);
+    const saved = await status();
+    expect(saved).toMatchObject({
+      status: "failed",
+      reason: "research_run_failed",
+      failureClass: "network",
+      enteredStage: stage,
+    });
+    const summary = compactFinanceResearchFailure(failure as FinanceResearchRunFailure);
+    expect(summary.failure).toMatchObject({ enteredStage: stage, failureClass: "network" });
+    expect(JSON.stringify([saved, summary])).not.toContain("secret-url-and-token");
+  },
+);
+
+it.each([
+  ["provider_payment_required", "provider_billing"],
+  ["provider_auth", "provider_access"],
+  ["runtime_timeout", "timeout"],
+] as const)(
+  "preserves %s classification through the entered-stage wrapper",
+  async (code, failureClass) => {
+    const budget = { ...(await fixture()), runTimeoutMs: 10000 };
+    await expect(
+      runCheckpointedFinanceResearch(input, budget, async () => {
+        throw new FinanceModelStageFailure("quality", new ModelAdapterError(code));
+      }),
+    ).rejects.toMatchObject({
+      reason: "research_run_failed",
+      failureClass,
+      enteredStage: "quality",
+    });
+    expect(await status()).toMatchObject({
+      status: "failed",
+      failureClass,
+      enteredStage: "quality",
+    });
+  },
+);
+
+it("preserves caller cancellation instead of reclassifying failure cleanup as a deadline", async () => {
+  const budget = { ...(await fixture()), runTimeoutMs: 10000 };
+  const parent = new AbortController();
+  await expect(
+    runCheckpointedFinanceResearch({ ...input, signal: parent.signal }, budget, async () => {
+      parent.abort();
+      throw new FinanceModelStageFailure("committee", new Error("original"));
+    }),
+  ).rejects.toMatchObject({ reason: "research_run_cancelled", failureClass: "cancelled" });
+  expect(await status()).toMatchObject({ status: "aborted", reason: "research_run_cancelled" });
+});
+
+it("cancels cooperative work even when terminal checkpoint persistence fails", async () => {
+  const budget = { ...(await fixture()), runTimeoutMs: 10000 };
+  let childStopped = false;
+  await expect(
+    runCheckpointedFinanceResearch(input, budget, async (options) => {
+      options.signal!.addEventListener(
+        "abort",
+        () => {
+          childStopped = true;
+        },
+        { once: true },
+      );
+      // Simulate loss of the writable checkpoint directory after the running record.
+      await fs.rm(directory, { recursive: true, force: true });
+      throw new FinanceModelStageFailure("quality", new Error("original failure"));
+    }),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+  expect(childStopped).toBe(true);
 });

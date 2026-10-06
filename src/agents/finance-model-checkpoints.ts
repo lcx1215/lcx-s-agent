@@ -14,6 +14,17 @@ export class FinanceModelStageUncertainError extends Error {
   }
 }
 
+/** Entered-stage failure retains the original cause, without claiming a completed result. */
+export class FinanceModelStageFailure extends Error {
+  constructor(
+    readonly stage: "committee" | "quality",
+    cause: unknown,
+  ) {
+    super("finance_model_stage_failed", { cause });
+    this.name = "FinanceModelStageFailure";
+  }
+}
+
 export function financeModelRoutingIdentity(routing: LogicalAgentModelRouting | undefined) {
   if (!routing) {
     return null;
@@ -178,7 +189,15 @@ export function openFinanceModelCheckpoints(
       if (reservation.status !== "reserved") {
         throw new FinanceModelStageUncertainError(name);
       }
-      const result = await execute();
+      let result: T;
+      try {
+        result = await execute();
+      } catch (error) {
+        if (error instanceof FinanceModelStageUncertainError) {
+          throw error;
+        }
+        throw new FinanceModelStageFailure(name, error);
+      }
       store.complete(stageKey, reservation.token, result);
       return result;
     },

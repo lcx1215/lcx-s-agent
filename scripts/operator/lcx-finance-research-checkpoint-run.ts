@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { FinanceModelStageFailure } from "../../src/agents/finance-model-checkpoints.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 
 export class FinanceResearchRunFailure extends Error {
   readonly failureClass: FinanceResearchFailureClass;
+  readonly enteredStage?: "committee" | "quality";
 
   constructor(
     readonly reason:
@@ -18,7 +20,11 @@ export class FinanceResearchRunFailure extends Error {
   ) {
     super(reason, { cause });
     this.name = "FinanceResearchRunFailure";
-    this.failureClass = classifyFinanceResearchFailure(reason, cause);
+    this.enteredStage = cause instanceof FinanceModelStageFailure ? cause.stage : undefined;
+    this.failureClass = classifyFinanceResearchFailure(
+      reason,
+      cause instanceof FinanceModelStageFailure ? cause.cause : cause,
+    );
   }
 }
 
@@ -110,7 +116,12 @@ export async function runCheckpointedFinanceResearch(
     executionFingerprint: `cli-research-v1:${runId}`,
   };
   const startedAt = new Date().toISOString();
-  const record = (status: string, reason?: string, failureClass?: FinanceResearchFailureClass) => {
+  const record = (
+    status: string,
+    reason?: string,
+    failureClass?: FinanceResearchFailureClass,
+    enteredStage?: "committee" | "quality",
+  ) => {
     const temporary = path.join(directory, "run.json.tmp");
     writeFileSync(
       temporary,
@@ -122,6 +133,7 @@ export async function runCheckpointedFinanceResearch(
           status,
           reason,
           ...(failureClass ? { failureClass } : {}),
+          ...(enteredStage ? { enteredStage } : {}),
           checkpointPath: checkpoint.path,
           runTimeoutMs: budget.runTimeoutMs,
           maxModelCalls: budget.maxModelCalls,
@@ -178,13 +190,16 @@ export async function runCheckpointedFinanceResearch(
     record("completed", receipt.status, providerFailure);
     return receipt;
   } catch (error) {
+    const wasAborted = signal.aborted;
     const reason = controller.signal.aborted
       ? "research_run_deadline_exceeded"
       : signal.aborted
         ? "research_run_cancelled"
         : "research_run_failed";
     const failure = new FinanceResearchRunFailure(reason, runId, checkpoint.path, startedAt, error);
-    record(signal.aborted ? "aborted" : "failed", reason, failure.failureClass);
+    // Classify the original failure before cancelling any still-running cooperative work.
+    controller.abort(new Error("research_run_failure_cleanup"));
+    record(wasAborted ? "aborted" : "failed", reason, failure.failureClass, failure.enteredStage);
     throw failure;
   } finally {
     clearTimeout(timer);
