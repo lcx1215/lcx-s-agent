@@ -29,6 +29,21 @@ adapter has an empty role scope and rejects direct invocation before model
 loading. Isolated model evaluations may use the low-level adapter, but that does
 not qualify it for production research or final review.
 
+## Task selection
+
+Use local inference for bounded, repetitive fixed-label classification or
+source-complete quote extraction when it reduces the supervising agent's work.
+Prefer a batch over repeated one-record tool round trips. Trivial copying,
+whitespace normalization, deduplication and arithmetic use deterministic tools.
+Core hypotheses, allocation decisions and final judgments stay with the primary
+reasoning model and the existing gates. Optional structured routing tools serve
+ambiguous tool choices; they are not a mandatory extra stage.
+
+Measure end-to-end latency, primary-model rounds, failure rate and retained
+source quality against processing the same records directly. Local inference
+having zero provider API calls does not make the supervising model free. A
+successful single task proves functionality, not a general efficiency advantage.
+
 ## Batch contract
 
 Use `local_specialist` with either `text` or `records`, never both:
