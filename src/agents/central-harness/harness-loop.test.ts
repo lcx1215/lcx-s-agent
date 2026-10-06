@@ -305,6 +305,98 @@ describe("scope-bound evidence retention", () => {
   });
 });
 
+describe("governance result pointer budget", () => {
+  it("removes even an empty result-pointer shell at the previous exact decision budget", () => {
+    const finance = {
+      intradayExecution: { uncertain: 1, missingOutcome: 1 },
+      positionManagement: { status: "stale", needsInspection: true },
+      economicFeedback: { accounts: [{ netMatchedPnl: null, costScope: "fees_not_allocated" }] },
+    };
+    const original: CentralPerception = {
+      ...perception,
+      backlog: [{ note: "x".repeat(8038) }],
+      controlRoom: {
+        runtimeFreshness: { note: "r".repeat(1705) },
+        learningWorkflow: { note: "l".repeat(500) },
+        governanceDigest: { status: "present", nextAction: "inspect actual evidence" },
+        financeAutomaticLifecycle: finance,
+      },
+    };
+    const budget = Buffer.byteLength(JSON.stringify(original));
+    const expanded = {
+      ...original,
+      controlRoom: {
+        ...original.controlRoom,
+        governanceDigest: {
+          ...(original.controlRoom.governanceDigest as Record<string, unknown>),
+          ownerResults: [{ ownerId: "fixture", artifactId: `artifact-${"a".repeat(64)}` }],
+          ownerResultsOmitted: 0,
+        },
+      },
+    };
+    const bounded = boundPerception(expanded, budget);
+    expect(bounded.perception).toEqual(original);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(bounded.report.droppedSections[0].droppedKeys).toContainEqual({
+      key: "governanceDigest.ownerResults",
+      bytes: Buffer.byteLength(JSON.stringify(expanded.controlRoom.governanceDigest.ownerResults)),
+    });
+  });
+  it("drops optional pointers before hiding critical finance facts under backlog pressure", () => {
+    const finance = {
+      observedAt: "2026-10-06T19:19:42Z",
+      intradayExecution: { status: "present", uncertain: 1, missingOutcome: 1 },
+      positionManagement: { status: "stale", needsInspection: true },
+      economicFeedback: {
+        status: "present",
+        accounts: [{ netMatchedPnl: null, costScope: "fees_not_allocated" }],
+      },
+      detail: "x".repeat(6000),
+    };
+    const owners = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`owner${i}`, "executed"]),
+    );
+    const input: CentralPerception = {
+      ...perception,
+      task: { objective: "x".repeat(600), focus: "finance" },
+      ownerTotals: owners,
+      backlog: [{ note: "x".repeat(8038) }],
+      controlRoom: {
+        runtimeFreshness: { note: "r".repeat(500) },
+        learningWorkflow: { note: "l".repeat(500) },
+        financeAutomaticLifecycle: finance,
+        governanceDigest: {
+          status: "present",
+          nextAction: "inspect actual evidence",
+          note: "g".repeat(250),
+          ownerResults: Array.from({ length: 4 }, (_, i) => ({
+            ownerId: `owner${i}`,
+            status: "registered",
+            artifactId: `artifact-${"a".repeat(64)}`,
+            sourceSha256: "a".repeat(64),
+            sourceObservedAt: "2026-10-06T19:19:42Z",
+            sourceTimeBasis: "payload.checkedAt",
+          })),
+          ownerResultsOmitted: 2,
+        },
+      },
+    };
+    const bounded = boundPerception(input);
+    expect(bounded.report.overBudget).toBe(false);
+    const projected = bounded.perception.controlRoom.financeAutomaticLifecycle;
+    expect(projected).toMatchObject({
+      intradayExecution: { uncertain: 1, missingOutcome: 1 },
+      positionManagement: { status: "stale", needsInspection: true },
+      economicFeedback: { accounts: [{ netMatchedPnl: null, costScope: "fees_not_allocated" }] },
+    });
+    const digest = bounded.perception.controlRoom.governanceDigest as Record<string, unknown>;
+    expect((digest.ownerResults as unknown[]).length).toBeLessThan(4);
+    expect(digest.ownerResultsOmitted).toBeGreaterThan(2);
+    expect(boundPerception(bounded.perception).perception).toEqual(bounded.perception);
+    expect(input.controlRoom.financeAutomaticLifecycle).toBe(finance);
+  });
+});
+
 describe("bounded central coordination", () => {
   const propose = (actions: { ownerId: string; args?: Record<string, unknown> }[]) => ({
     propose: async () => ({

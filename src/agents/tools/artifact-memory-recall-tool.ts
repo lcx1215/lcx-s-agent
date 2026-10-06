@@ -1,6 +1,10 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
-import { ArtifactStore, ArtifactStoreError } from "../../memory/artifact-store.js";
+import {
+  ARTIFACT_TEXT_PREVIEW_MAX_BYTES,
+  ArtifactStore,
+  ArtifactStoreError,
+} from "../../memory/artifact-store.js";
 import { resolveAgentWorkspaceDir } from "../agent-scope.js";
 import { resolveMemorySearchConfig } from "../memory-search.js";
 import type { AnyAgentTool } from "./common.js";
@@ -25,7 +29,7 @@ const ArtifactRecallSchema = Type.Object(
     field: Type.Optional(
       Type.String({
         description:
-          "Optional RFC6901 JSON Pointer on a verified, complete bounded JSON text result, such as /value/beta.",
+          "Optional RFC6901 JSON Pointer on a verified JSON source up to the existing artifact size limit; return a selected field within 64 KiB, such as /value/beta. Large selected fields require a narrower pointer.",
       }),
     ),
     owner: Type.Optional(Type.String()),
@@ -128,6 +132,10 @@ export function createArtifactMemoryRecallTool(options: {
         if (action === "search" && args.cursor !== undefined && typeof args.cursor !== "string") {
           throw new ArtifactStoreError("artifact_cursor_invalid");
         }
+        const field =
+          action === "read"
+            ? readStringParam(args, "field", { allowEmpty: true, trim: false })
+            : undefined;
         const result =
           action === "search"
             ? store.search({
@@ -137,7 +145,9 @@ export function createArtifactMemoryRecallTool(options: {
                 asOf: readStringParam(args, "asOf"),
                 limit: readNumberParam(args, "limit"),
               })
-            : await store.read(readStringParam(args, "id", { required: true }));
+            : await store.read(readStringParam(args, "id", { required: true }), {
+                completeJsonText: field !== undefined,
+              });
         if (signal?.aborted) {
           throw new ArtifactStoreError("artifact_recall_cancelled");
         }
@@ -167,7 +177,6 @@ export function createArtifactMemoryRecallTool(options: {
             throw new ArtifactStoreError("artifact_after_cutoff");
           }
         }
-        const field = readStringParam(args, "field", { allowEmpty: true, trim: false });
         const source = {
           sourceSha256: result.artifact.sha256,
           sourceObservedAt: result.artifact.observedAt,
@@ -175,7 +184,18 @@ export function createArtifactMemoryRecallTool(options: {
         };
         if (field !== undefined) {
           const selectedValue = selectJsonField(result.text, result.truncated, field);
-          const selected = preview(JSON.stringify(selectedValue));
+          const encoded = JSON.stringify(selectedValue);
+          if (Buffer.byteLength(encoded) > ARTIFACT_TEXT_PREVIEW_MAX_BYTES) {
+            throw new ArtifactStoreError("artifact_field_budget_exceeded");
+          }
+          const selected = preview(encoded);
+          const fieldResult = { ...result };
+          const sourceTextOmitted =
+            result.text !== undefined &&
+            Buffer.byteLength(result.text) > ARTIFACT_TEXT_PREVIEW_MAX_BYTES;
+          if (sourceTextOmitted) {
+            delete fieldResult.text;
+          }
           return jsonResult({
             available: true,
             authority: "local_read",
@@ -185,7 +205,8 @@ export function createArtifactMemoryRecallTool(options: {
             selectedPreview: selected.preview,
             selectedPreviewTruncated: selected.truncated,
             field,
-            ...result,
+            ...fieldResult,
+            ...(sourceTextOmitted ? { sourceTextOmittedForField: true } : {}),
           });
         }
         const text = preview(result.text ?? "");

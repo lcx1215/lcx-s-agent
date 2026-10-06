@@ -258,7 +258,7 @@ export function projectGovernanceDigest(
           .map((entry) => entry.slice(0, 80))
           .slice(0, 6)
       : [];
-  return {
+  const digest: Record<string, unknown> = {
     status: "present",
     ok: state.ok === true,
     checkedAt: boundedString(state.checkedAt, 40),
@@ -279,6 +279,62 @@ export function projectGovernanceDigest(
       blocked: reader.blocked === true,
     },
   };
+  const owners = isPresentObject(state.owners as Record<string, unknown>)
+    ? (state.owners as Record<string, unknown>)
+    : {};
+  const failures = new Set(listSlice(summary.structuralOwnerFailures));
+  const entries = Object.entries(owners).toSorted(
+    ([a], [b]) => Number(failures.has(b)) - Number(failures.has(a)),
+  );
+  const results: Record<string, unknown>[] = [];
+  let candidates = 0;
+  for (const [ownerId, value] of entries) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || ownerId.length > 80) {
+      continue;
+    }
+    const owner = value as Record<string, unknown>;
+    const evidence = owner.artifactEvidence;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+      continue;
+    }
+    const ref = evidence as Record<string, unknown>;
+    if (!["registered", "unchanged", "unavailable"].includes(String(ref.status))) {
+      continue;
+    }
+    candidates += 1;
+    const result: Record<string, unknown> = {
+      ownerId,
+      status: ref.status,
+      sourceObservedAt: boundedString(owner.sourceObservedAt, 40),
+      sourceTimeBasis: boundedString(ref.sourceTimeBasis, 40),
+    };
+    if (
+      ref.status !== "unavailable" &&
+      typeof ref.id === "string" &&
+      /^artifact-[a-f0-9]{64}$/u.test(ref.id) &&
+      typeof ref.sha256 === "string" &&
+      /^[a-f0-9]{64}$/u.test(ref.sha256)
+    ) {
+      result.artifactId = ref.id;
+      result.sourceSha256 = ref.sha256;
+    } else {
+      result.status = "unavailable";
+      result.reason = boundedString(ref.reason, 100) ?? "owner_artifact_binding_missing";
+    }
+    const candidate = {
+      ...digest,
+      ownerResults: [...results, result],
+      ownerResultsOmitted: entries.length,
+    };
+    if (results.length < 4 && Buffer.byteLength(JSON.stringify(candidate)) <= 2048) {
+      results.push(result);
+    }
+  }
+  if (candidates > 0) {
+    digest.ownerResults = results;
+    digest.ownerResultsOmitted = candidates - results.length;
+  }
+  return digest;
 }
 
 /**

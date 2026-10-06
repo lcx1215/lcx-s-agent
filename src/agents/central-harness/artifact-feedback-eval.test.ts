@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { requireNodeSqlite } from "../../memory/sqlite.js";
+import { recordAgentArtifact } from "../artifact-result-recording.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { compactReceipts, runCentralHarnessCycle } from "./harness-loop.js";
 import { createCentralToolRegistry } from "./tool-registry.js";
@@ -126,6 +127,121 @@ describe("database artifact feedback through existing production entries (offlin
           ? "measure scaling bottleneck"
           : "retain baseline";
       expect(decision).toBe(beta === 7 ? "measure scaling bottleneck" : "retain baseline");
+    },
+  );
+});
+
+describe("original owner artifact read changes the next bounded decision (offline scripted)", () => {
+  it.each([false, true])(
+    "consumes the exact current result even after context loss (ready=%s)",
+    async (ready) => {
+      const host = await fixture();
+      const owner = "commercialAcceptance";
+      const observedAt = "2026-10-07T03:00:00.000Z";
+      const full = {
+        ok: ready,
+        summary: { readyForCommercialRelease: ready },
+        details: "retained-original".repeat(10000),
+      };
+      const artifact = await recordAgentArtifact({
+        ...host,
+        agentId: "main",
+        owner,
+        runId: `owner-${ready}`,
+        observedAt,
+        value: full,
+      });
+      expect(artifact.status).toBe("registered");
+      // A generic older hit with the opposite result must not substitute for the exact owner result.
+      await recordAgentArtifact({
+        ...host,
+        agentId: "main",
+        owner: "unrelated",
+        runId: "old",
+        observedAt: "2026-09-01T00:00:00.000Z",
+        value: { summary: { readyForCommercialRelease: !ready } },
+      });
+      const fullRegistry = createCentralToolRegistry(host);
+      const allowed = new Set(["artifact_memory_recall"]);
+      const registry = new Map([...fullRegistry].filter(([id]) => allowed.has(id)));
+      const read = await runCentralHarnessCycle({
+        perception: {
+          observedAt,
+          ownerTotals: {},
+          controlRoom: {
+            governanceDigest: {
+              ownerResults: [
+                { ownerId: owner, artifactId: artifact.id, sourceObservedAt: observedAt },
+              ],
+            },
+          },
+          backlog: [],
+          boundaries: ["offline_scripted", "no_execution_authority"],
+        },
+        registry,
+        capabilityOwnerIds: allowed,
+        planOnly: true,
+        brain: {
+          propose: async () => ({
+            kind: "proposed",
+            provider: "fixture",
+            modelId: "scripted",
+            plan: {
+              note: "offline exact owner result read",
+              actions: [
+                {
+                  ownerId: "artifact_memory_recall",
+                  args: {
+                    action: "read",
+                    id: artifact.id,
+                    field: "/value/summary/readyForCommercialRelease",
+                    asOf: observedAt,
+                  },
+                },
+              ],
+            },
+          }),
+        },
+      });
+      expect(read.steps[0].status).toBe("ran_ok");
+      expect(read.steps[0].outcome?.selectedValue).toBe(ready);
+      expect(read.steps[0].outcome?.sourceSha256).toBe(artifact.sha256);
+      const next = await runCentralHarnessCycle({
+        perception: {
+          observedAt,
+          ownerTotals: {},
+          controlRoom: {},
+          backlog: compactReceipts([read], 10, allowed),
+          boundaries: ["offline_scripted", "no_execution_authority"],
+        },
+        registry,
+        capabilityOwnerIds: allowed,
+        planOnly: true,
+        brain: {
+          propose: async (perception) => {
+            const value = (
+              perception.backlog[0].outcomes as Array<{ outcome?: Record<string, unknown> }>
+            )[0].outcome?.selectedValue;
+            return {
+              kind: "proposed",
+              provider: "fixture",
+              modelId: "scripted",
+              plan: {
+                actions: [],
+                note:
+                  value === true
+                    ? "ready outcome consumed; no owner rerun"
+                    : "blocked outcome consumed; retain exact unmet release condition",
+              },
+            };
+          },
+        },
+      });
+      expect(next.actionsProposed).toBe(0);
+      expect(next.brainCall.note).toContain(
+        ready ? "ready outcome consumed" : "blocked outcome consumed",
+      );
+      expect(next.brainCall.modelCall).toBeUndefined();
     },
   );
 });

@@ -151,7 +151,7 @@ describe("representative coordination acceptance (offline, no model intelligence
     ]);
     expect(absent.steps[0].outcome).toMatchObject({
       ok: false,
-      error: "unreadable file: absent.json",
+      error: "finance_research_read_unavailable",
     });
     expect(await fs.readFile(path.join(dir, "measurement.json"), "utf8")).toBe(source);
   });

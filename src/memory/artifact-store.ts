@@ -6,7 +6,9 @@ import { assertNoPathAliasEscape } from "../infra/path-alias-guards.js";
 import { ensureMemoryIndexCoreSchema } from "./memory-schema.js";
 import { requireNodeSqlite } from "./sqlite.js";
 
-const TEXT_LIMIT = 64 * 1024;
+export const ARTIFACT_TEXT_PREVIEW_MAX_BYTES = 64 * 1024;
+export const ARTIFACT_JSON_SOURCE_MAX_BYTES = 16 * 1024 * 1024;
+const TEXT_LIMIT = ARTIFACT_TEXT_PREVIEW_MAX_BYTES;
 type Database = InstanceType<ReturnType<typeof requireNodeSqlite>["DatabaseSync"]>;
 
 export class ArtifactStoreError extends Error {
@@ -288,7 +290,7 @@ export class ArtifactStore {
     }
   }
 
-  private async inspect(relativePath: string, mimeType: string) {
+  private async inspect(relativePath: string, mimeType: string, textLimit = TEXT_LIMIT) {
     const safePath = allowedPath(relativePath);
     try {
       await assertNoPathAliasEscape({
@@ -320,8 +322,8 @@ export class ArtifactStore {
           const part = chunk.subarray(0, result.bytesRead);
           hash.update(part);
           bytes += part.length;
-          if (prefixBytes < TEXT_LIMIT) {
-            const head = Buffer.from(part.subarray(0, TEXT_LIMIT - prefixBytes));
+          if (prefixBytes < textLimit) {
+            const head = Buffer.from(part.subarray(0, textLimit - prefixBytes));
             prefixes.push(head);
             prefixBytes += head.length;
           }
@@ -344,7 +346,7 @@ export class ArtifactStore {
         if (current.ino !== after.ino || current.dev !== after.dev) {
           throw new ArtifactStoreError("artifact_changed_during_read");
         }
-        const truncated = bytes > TEXT_LIMIT;
+        const truncated = bytes > textLimit;
         const text = textMime(mimeType)
           ? decodePrefix(Buffer.concat(prefixes), truncated)
           : undefined;
@@ -527,7 +529,10 @@ export class ArtifactStore {
     };
   }
 
-  async read(id: string): Promise<{
+  async read(
+    id: string,
+    options: { completeJsonText?: boolean } = {},
+  ): Promise<{
     artifact: ArtifactRecord;
     text?: string;
     truncated: boolean;
@@ -542,7 +547,11 @@ export class ArtifactStore {
       throw new ArtifactStoreError("artifact_not_registered");
     }
     const artifact = JSON.parse(row.record_json) as ArtifactRecord;
-    const inspected = await this.inspect(artifact.relativePath, artifact.mimeType);
+    const inspected = await this.inspect(
+      artifact.relativePath,
+      artifact.mimeType,
+      options.completeJsonText ? ARTIFACT_JSON_SOURCE_MAX_BYTES : TEXT_LIMIT,
+    );
     if (artifact.sha256 !== inspected.sha256 || artifact.bytes !== inspected.bytes) {
       throw new ArtifactStoreError("artifact_original_hash_mismatch");
     }

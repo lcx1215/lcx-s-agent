@@ -201,7 +201,7 @@ it("selects a precise quant result through RFC6901 after source hash verificatio
       .details,
   ).toMatchObject({ gap: "artifact_original_hash_mismatch" });
 });
-it("names truncated JSON field reads and preserves full original references", async () => {
+it("reads a narrow field beyond the original preview without exposing the large source", async () => {
   await seed();
   const store = ArtifactStore.open({ dbPath, workspaceDir: root });
   await fs.writeFile(
@@ -224,7 +224,29 @@ it("names truncated JSON field reads and preserves full original references", as
   const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
   expect(
     (await tool.execute("field", { action: "read", id: "longjson", field: "/beta" })).details,
-  ).toMatchObject({ available: false, gap: "artifact_field_text_unavailable" });
+  ).toMatchObject({
+    available: true,
+    selectedValue: 0.38,
+    sourceTextOmittedForField: true,
+  });
+  expect(
+    (await tool.execute("field-no-large-text", { action: "read", id: "longjson", field: "/beta" }))
+      .details,
+  ).not.toHaveProperty("text");
+  expect(
+    (await tool.execute("large-field", { action: "read", id: "longjson", field: "/data" })).details,
+  ).toMatchObject({ available: false, gap: "artifact_field_budget_exceeded" });
+  expect(
+    (await tool.execute("ordinary-preview", { action: "read", id: "longjson" })).details,
+  ).toMatchObject({ available: true, truncated: true });
+  await fs.writeFile(
+    path.join(root, "state/runs/long.json"),
+    JSON.stringify({ data: "x".repeat(70000), beta: 0.39 }),
+  );
+  expect(
+    (await tool.execute("changed-tail", { action: "read", id: "longjson", field: "/beta" }))
+      .details,
+  ).toMatchObject({ available: false, gap: "artifact_original_hash_mismatch" });
 });
 
 it("applies asOf to direct registered-id reads and named invalid timestamps", async () => {
@@ -451,4 +473,30 @@ it("names a cursor omitted by the original decision budget rather than truncatin
   expect(receipt.steps[0].outcome?.hasMore).toBe(true);
   expect(receipt.steps[0].outcome).not.toHaveProperty("nextCursor");
   expect(receipt.steps[0].outcomeDroppedKeys).toContain("nextCursor");
+});
+
+it("keeps the existing source bound for selected-field reads", async () => {
+  await seed();
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  await fs.writeFile(
+    path.join(root, "state/runs/oversize.json"),
+    JSON.stringify({ data: "x".repeat(16 * 1024 * 1024), beta: 0.38 }),
+  );
+  try {
+    await store.register({
+      id: "oversize",
+      owner: "math",
+      runId: "r",
+      observedAt: "2026-10-04T10:00:00Z",
+      relativePath: "state/runs/oversize.json",
+      mimeType: "application/json",
+      summary: "existing full source limit",
+    });
+  } finally {
+    store.close();
+  }
+  const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
+  expect(
+    (await tool.execute("bounded", { action: "read", id: "oversize", field: "/beta" })).details,
+  ).toMatchObject({ available: false, gap: "artifact_field_text_unavailable" });
 });

@@ -3,8 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  recordAgentArtifact,
+  type ArtifactRecordingReceipt,
+} from "../../src/agents/artifact-result-recording.js";
 import { readFinancePositionLedger } from "../../src/agents/finance-position-ledger.ts";
 import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.ts";
+import type { OpenClawConfig } from "../../src/config/config.js";
+import { loadConfig } from "../../src/config/io.js";
 import {
   readGlobalEvidenceProjectionForAdapter,
   type GlobalEvidenceProjectionRead,
@@ -884,6 +890,57 @@ function buildOwnerRunReceipt(params: {
   });
 }
 
+let ownerArtifactRecordingConfig: OpenClawConfig | null | undefined;
+
+/** Archive the original owner result without changing its verdict or same-cycle payload. */
+async function captureOwnerRun(run: OwnerRun, payload: Record<string, unknown>): Promise<OwnerRun> {
+  // Central already records its immutable cycles under the original central_harness identity.
+  if (!run.parsed || run.id === "centralAgent") {
+    return run;
+  }
+  let sourceObservedAt = run.runReceipt.checkedAt;
+  let sourceTimeBasis = "runReceipt.checkedAt";
+  for (const key of ["checkedAt", "observedAt", "generatedAt", "updatedAt"]) {
+    const original = payload[key];
+    if (typeof original === "string" && Number.isFinite(Date.parse(original))) {
+      sourceObservedAt = new Date(original).toISOString();
+      sourceTimeBasis = `payload.${key}`;
+      break;
+    }
+  }
+  let artifactEvidence: ArtifactRecordingReceipt;
+  try {
+    if (ownerArtifactRecordingConfig === undefined) {
+      try {
+        ownerArtifactRecordingConfig = loadConfig();
+      } catch {
+        ownerArtifactRecordingConfig = null;
+      }
+    }
+    artifactEvidence = ownerArtifactRecordingConfig
+      ? await recordAgentArtifact({
+          config: ownerArtifactRecordingConfig,
+          agentId: "main",
+          workspaceDir: DEFAULT_WORKSPACE_DIR,
+          owner: run.id,
+          runId: run.runReceipt.runId,
+          observedAt: sourceObservedAt,
+          value: payload,
+        })
+      : { status: "unavailable", reason: "governance_artifact_config_unavailable" };
+  } catch {
+    artifactEvidence = { status: "unavailable", reason: "governance_artifact_capture_unavailable" };
+  }
+  return {
+    ...run,
+    compact: {
+      ...run.compact,
+      artifactEvidence: { ...artifactEvidence, sourceTimeBasis },
+      sourceObservedAt,
+    },
+  };
+}
+
 async function runOwner(
   command: OwnerCommand,
   params: { parentRunId?: string; phase?: LcxRunPhase; snapshot: LcxRunSnapshot },
@@ -899,14 +956,17 @@ async function runOwner(
       maxBuffer: EXEC_MAX_BUFFER,
     });
     const payload = JSON.parse(stdout) as Record<string, unknown>;
-    return ownerRunFromPayload(command, payload, {
-      commandText: renderedCommand,
-      durationMs: durationMs(),
-      exitCode: 0,
-      parentRunId: params.parentRunId,
-      snapshot: params.snapshot,
-      phase: params.phase,
-    });
+    return captureOwnerRun(
+      ownerRunFromPayload(command, payload, {
+        commandText: renderedCommand,
+        durationMs: durationMs(),
+        exitCode: 0,
+        parentRunId: params.parentRunId,
+        snapshot: params.snapshot,
+        phase: params.phase,
+      }),
+      payload,
+    );
   } catch (error) {
     const details = error as {
       code?: number;
@@ -916,15 +976,18 @@ async function runOwner(
     };
     try {
       const payload = JSON.parse(details.stdout ?? "") as Record<string, unknown>;
-      return ownerRunFromPayload(command, payload, {
-        commandText: renderedCommand,
-        durationMs: durationMs(),
-        exitCode: typeof details.code === "number" ? details.code : 1,
-        parentRunId: params.parentRunId,
-        snapshot: params.snapshot,
-        phase: params.phase,
-        error: details.stderr?.trim() || details.message,
-      });
+      return captureOwnerRun(
+        ownerRunFromPayload(command, payload, {
+          commandText: renderedCommand,
+          durationMs: durationMs(),
+          exitCode: typeof details.code === "number" ? details.code : 1,
+          parentRunId: params.parentRunId,
+          snapshot: params.snapshot,
+          phase: params.phase,
+          error: details.stderr?.trim() || details.message,
+        }),
+        payload,
+      );
     } catch {
       const exitCode = typeof details.code === "number" ? details.code : 1;
       return {
@@ -1790,13 +1853,16 @@ const problemRadarBuildDurationMs = Math.max(
   0,
   Math.round(performance.now() - problemRadarBuildStartedAt),
 );
-const problemRadarOwnerRun = ownerRunFromPayload(problemRadarCommand, problemRadarPayload, {
-  commandText: `in-process ${problemRadarCommand.script} --json (same-cycle owner receipts)`,
-  receiptCommandLabel: `in-process ${problemRadarCommand.script} --json (same-cycle owner receipts)`,
-  exitCode: 0,
-  parentRunId: governanceRunId,
-  snapshot: governanceSnapshot,
-});
+const problemRadarOwnerRun = await captureOwnerRun(
+  ownerRunFromPayload(problemRadarCommand, problemRadarPayload, {
+    commandText: `in-process ${problemRadarCommand.script} --json (same-cycle owner receipts)`,
+    receiptCommandLabel: `in-process ${problemRadarCommand.script} --json (same-cycle owner receipts)`,
+    exitCode: 0,
+    parentRunId: governanceRunId,
+    snapshot: governanceSnapshot,
+  }),
+  problemRadarPayload,
+);
 const acceptanceSharedSnapshots: Partial<CommercialAcceptanceInputs> = {
   problemRadar: toCommercialAcceptanceOwnerSnapshot(
     problemRadarOwnerRun,
@@ -1855,10 +1921,8 @@ const commercialAcceptancePayload = {
     exclusiveProbeCount: 6,
   },
 };
-const commercialAcceptanceOwnerRun = ownerRunFromPayload(
-  commercialAcceptanceCommand,
-  commercialAcceptancePayload,
-  {
+const commercialAcceptanceOwnerRun = await captureOwnerRun(
+  ownerRunFromPayload(commercialAcceptanceCommand, commercialAcceptancePayload, {
     commandText: `in-process ${commercialAcceptanceCommand.script} --json (same-cycle snapshots; exclusive probes only)`,
     receiptCommandLabel: `in-process ${commercialAcceptanceCommand.script} --json (same-cycle snapshots; exclusive probes only)`,
     durationMs: acceptanceDurationMs,
@@ -1867,7 +1931,8 @@ const commercialAcceptanceOwnerRun = ownerRunFromPayload(
     exitCode: builtCommercialAcceptance.summary.failed > 0 ? 1 : 0,
     parentRunId: governanceRunId,
     snapshot: governanceSnapshot,
-  },
+  }),
+  commercialAcceptancePayload,
 );
 const ownerFanoutDurationMs = Math.max(0, Math.round(performance.now() - ownerFanoutStartedAt));
 const ownerById = new Map(

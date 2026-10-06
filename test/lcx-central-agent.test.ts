@@ -1501,6 +1501,61 @@ describe("governance digest folds the hour's verdict into the budgeted brain vie
     );
   });
 
+  it("binds already-run owner results to exact artifacts without exceeding the existing key budget", () => {
+    const owners = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [
+        `owner${i}`,
+        {
+          sourceObservedAt: "2026-09-18T08:00:00.000Z",
+          artifactEvidence: {
+            status: "registered",
+            id: `artifact-${String(i).padStart(64, "0")}`,
+            sha256: String(i).padStart(64, "0"),
+            sourceTimeBasis: "payload.checkedAt",
+          },
+        },
+      ]),
+    );
+    const digest = projectGovernanceDigest({ ...governanceState, owners });
+    const refs = digest.ownerResults as Array<Record<string, unknown>>;
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs.length).toBeLessThanOrEqual(4);
+    expect(digest.ownerResultsOmitted).toBe(12 - refs.length);
+    expect(refs[0]).toMatchObject({
+      ownerId: "owner0",
+      status: "registered",
+      sourceObservedAt: "2026-09-18T08:00:00.000Z",
+      artifactId: `artifact-${"0".repeat(64)}`,
+    });
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+    );
+    expect(governanceState).not.toHaveProperty("ownerResults");
+  });
+  it("preserves recording failures instead of manufacturing an owner result", () => {
+    const digest = projectGovernanceDigest({
+      ...governanceState,
+      owners: {
+        trainingPlan: {
+          sourceObservedAt: "2026-09-18T08:00:00.000Z",
+          artifactEvidence: {
+            status: "unavailable",
+            reason: "artifact_database_unavailable",
+            sourceTimeBasis: "runReceipt.checkedAt",
+          },
+        },
+      },
+    });
+    expect(digest.ownerResults).toEqual([
+      expect.objectContaining({
+        ownerId: "trainingPlan",
+        status: "unavailable",
+        reason: "artifact_database_unavailable",
+      }),
+    ]);
+    expect((digest.ownerResults as Record<string, unknown>[])[0]).not.toHaveProperty("artifactId");
+  });
+
   it("names a missing governance surface instead of pretending the pass ran", () => {
     expect(projectGovernanceDigest({})).toEqual({
       status: "unavailable",

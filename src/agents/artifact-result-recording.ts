@@ -7,11 +7,15 @@ import { readFileWithinRoot, writeFileWithinRoot } from "../infra/fs-safe.js";
 import { assertNoPathAliasEscape } from "../infra/path-alias-guards.js";
 import { isPathInside } from "../infra/path-guards.js";
 import { logWarn } from "../logger.js";
-import { ArtifactStore, ArtifactStoreError } from "../memory/artifact-store.js";
+import {
+  ARTIFACT_JSON_SOURCE_MAX_BYTES,
+  ArtifactStore,
+  ArtifactStoreError,
+} from "../memory/artifact-store.js";
 import { resolveMemorySearchConfig } from "./memory-search.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
-export const AGENT_ARTIFACT_MAX_BYTES = 16 * 1024 * 1024;
+export const AGENT_ARTIFACT_MAX_BYTES = ARTIFACT_JSON_SOURCE_MAX_BYTES;
 export type ArtifactRecordingReceipt = Readonly<{
   status: "registered" | "unchanged" | "unavailable";
   reason: string;
@@ -178,6 +182,9 @@ export async function recordAgentArtifact(
       owner: input.owner,
       runId: input.runId,
       value: input.value,
+      ...(input.observedAt !== undefined
+        ? { observedAt: new Date(input.observedAt).toISOString() }
+        : {}),
       ...(input.sourceReceiptRefs ? { sourceReceiptRefs: [...input.sourceReceiptRefs] } : {}),
     };
     if (input.value === undefined) {

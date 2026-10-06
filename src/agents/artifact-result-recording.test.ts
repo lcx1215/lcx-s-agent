@@ -57,6 +57,7 @@ describe("host-owned artifact result recording", () => {
     const before = await fs.readFile(originalPath);
     expect(JSON.parse(before.toString())).toEqual({
       schemaVersion: "lcx_agent_artifact_v1",
+      observedAt,
       owner: "quant_math",
       runId: "run-a",
       value,

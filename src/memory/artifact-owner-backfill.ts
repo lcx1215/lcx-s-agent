@@ -259,9 +259,7 @@ export async function backfillOwnerArtifacts(input: {
               validTime(record.observedAt) ??
               validTime(record.updatedAt) ??
               validTime(record.generatedAt);
-            let observedAt = envelope
-              ? original.stat.mtime.toISOString()
-              : (observed ?? original.stat.mtime.toISOString());
+            let observedAt = observed ?? original.stat.mtime.toISOString();
             if (envelope) {
               try {
                 // A production caller may have provided a source observation time instead of mtime.

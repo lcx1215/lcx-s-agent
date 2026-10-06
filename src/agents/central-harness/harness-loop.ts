@@ -1142,7 +1142,47 @@ export function boundPerception(
       .map((key) => [key, controlRoom[key]] as const),
     ...Object.entries(controlRoom).filter(([key]) => !priorityKeys.includes(key)),
   ];
-  for (const [key, item] of entries) {
+  for (const [key, originalItem] of entries) {
+    let item = originalItem;
+    // Result pointers are optional. Reserve the existing decision facts before
+    // adding them so an expanded governance digest cannot hide finance risks.
+    if (key === "governanceDigest" && isPlainRecord(item) && Array.isArray(item.ownerResults)) {
+      const ownerResults = [...item.ownerResults];
+      const digest = item;
+      let omitted = typeof item.ownerResultsOmitted === "number" ? item.ownerResultsOmitted : 0;
+      const finance = controlRoom.financeAutomaticLifecycle;
+      const projection = isPlainRecord(finance) ? projectFinanceBudgetFacts(finance) : undefined;
+      const facts = projection && jsonBytes(projection) < jsonBytes(finance) ? projection : finance;
+      const learning = controlRoom.learningWorkflow;
+      const reserved = {
+        ...(learning !== undefined && jsonBytes(learning) <= CENTRAL_PERCEPTION_KEY_BUDGET_BYTES
+          ? { learningWorkflow: learning }
+          : {}),
+        ...(facts ? { financeAutomaticLifecycle: facts } : {}),
+      };
+      while (
+        ownerResults.length > 0 &&
+        jsonBytes({ ...perception, controlRoom: { ...value, [key]: item, ...reserved } }) > budget
+      ) {
+        ownerResults.pop();
+        omitted += 1;
+        item = { ...digest, ownerResults: [...ownerResults], ownerResultsOmitted: omitted };
+      }
+      if (
+        ownerResults.length === 0 &&
+        jsonBytes({ ...perception, controlRoom: { ...value, [key]: item, ...reserved } }) > budget
+      ) {
+        item = Object.fromEntries(
+          Object.entries(digest).filter(
+            ([field]) => !["ownerResults", "ownerResultsOmitted"].includes(field),
+          ),
+        );
+        dropped.push({
+          key: "governanceDigest.ownerResults",
+          bytes: jsonBytes(digest.ownerResults),
+        });
+      }
+    }
     const bytes = jsonBytes(item);
     const candidate = { ...value, [key]: item };
     if (

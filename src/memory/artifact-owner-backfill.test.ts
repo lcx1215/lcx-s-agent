@@ -246,3 +246,39 @@ it("stops between registrations and a later default pass recovers idempotently",
     truncated: false,
   });
 });
+
+it("recovers an explicitly observed source age after the file landed but DB indexing failed", async () => {
+  const blockedDb = path.join(root, "blocked-db");
+  await fs.mkdir(blockedDb);
+  const failedConfig = {
+    agents: { defaults: { workspace: root, memorySearch: { store: { path: blockedDb } } } },
+  };
+  const { recordAgentArtifact } = await import("../agents/artifact-result-recording.js");
+  const oldTime = "2026-09-01T08:00:00.000Z";
+  const value = { checkedAt: oldTime, summary: { costUnknown: true } };
+  const failed = await recordAgentArtifact({
+    config: failedConfig,
+    agentId: "main",
+    workspaceDir: root,
+    owner: "problemRadar",
+    runId: "index-failed-original",
+    observedAt: oldTime,
+    value,
+  });
+  expect(failed.status).toBe("unavailable");
+  expect(failed.relativePath).toEqual(expect.any(String));
+  const source = path.join(root, failed.relativePath!);
+  const now = new Date();
+  await fs.utimes(source, now, now);
+  const recovery = await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir: root });
+  expect(recovery.status).toBe("complete");
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  try {
+    const read = await store.read(failed.id!);
+    expect(read.artifact.observedAt).toBe(oldTime);
+    expect(read.artifact.sha256).toBe(failed.sha256);
+    expect(JSON.parse(read.text!).value).toEqual(value);
+  } finally {
+    store.close();
+  }
+});
