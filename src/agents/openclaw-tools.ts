@@ -16,6 +16,7 @@ import { createCanvasTool } from "./tools/canvas-tool.js";
 import { createCodexCodingHarnessTool } from "./tools/codex-coding-harness-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
+import { createDecisionModelTool } from "./tools/decision-model-tool.js";
 import { createEchoApiCliHealthTool } from "./tools/echoapi-cli-health-tool.js";
 import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-article-extract-capability-input-tool.js";
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
@@ -251,6 +252,7 @@ export function createOpenClawTools(options?: {
       config: options?.config,
     }),
     createQuantMathTool(),
+    createDecisionModelTool({ sandboxed: options?.sandboxed }),
     createQuantLabTool(),
     createReviewTierTool(),
     createReviewPanelTool({

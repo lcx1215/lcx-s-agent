@@ -228,6 +228,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "decision_model_evaluate",
+    label: "decision_model_evaluate",
+    description:
+      "Optional host-configured Clef classification and ambiguous routing among declared choices; advisory only, primary agent and existing execution gates remain authoritative",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     // The registered tool is `finance_data_gateway_snapshot`; `finance_data_gateway` is the
     // ontology concept it maps to (`lcx-ontology.ts`). The catalog must carry the tool id — an
     // entry under the concept name never matches, so the tool was absent from every profile
