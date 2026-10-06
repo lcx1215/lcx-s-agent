@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
+import { readFinancePositionLedger } from "./finance-position-ledger.js";
 import {
   financeRuleReadinessSection,
   readFinanceRuleReadinessState,
@@ -47,6 +48,39 @@ const rule: FinanceStrategyRule = {
 };
 
 describe("finance rule readiness state with source conflicts", () => {
+  it("accepts only an exact book and cutoff read without creating a missing ledger", async () => {
+    const directory = await storeDirectory();
+    const asOf = "2026-09-20T00:00:00.000Z";
+    const baseline = await readFinanceRuleReadinessState({ directory, asOf, rules: [rule] });
+    const read = vi.fn(() => readFinancePositionLedger(directory, { asOf }));
+    expect(
+      await readFinanceRuleReadinessState({
+        directory,
+        asOf,
+        rules: [rule],
+        positionObservation: { directory, asOf, read },
+      }),
+    ).toEqual(baseline);
+    expect(read).toHaveBeenCalledTimes(1);
+    for (const scope of [
+      { directory: `${directory}-other`, asOf },
+      { directory, asOf: "2026-09-19T00:00:00.000Z" },
+    ]) {
+      const wrongRead = vi.fn(async () => {
+        throw new Error("wrong book or cutoff");
+      });
+      expect(
+        await readFinanceRuleReadinessState({
+          directory,
+          asOf,
+          rules: [rule],
+          positionObservation: { ...scope, read: wrongRead },
+        }),
+      ).toEqual(baseline);
+      expect(wrongRead).not.toHaveBeenCalled();
+    }
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
   it("removes conflicting dates from measures and reports a readiness block", async () => {
     const directory = await storeDirectory();
     await appendFinanceBars(directory, {

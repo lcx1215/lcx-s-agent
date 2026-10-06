@@ -8,6 +8,8 @@ import {
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
+import type { FinanceBrokerReconciliationObservation } from "./finance-position-management-feedback.js";
+import type { FinancePositionLedgerObservation } from "./finance-rule-readiness-state.js";
 
 function uniqueBrokerActivities(activities: readonly Record<string, unknown>[]) {
   const identities = new Map<string, Record<string, unknown>>();
@@ -403,11 +405,24 @@ export function summarizeFinanceBrokerFillsByInstrument(
   }));
 }
 
-export async function readFinanceBrokerProfitFeedback(directory: string, asOf: string) {
+export async function readFinanceBrokerProfitFeedback(
+  directory: string,
+  asOf: string,
+  observations: {
+    positionObservation?: FinancePositionLedgerObservation;
+    reconciliationObservation?: FinanceBrokerReconciliationObservation;
+  } = {},
+) {
   try {
     const [latest, positions, decisions] = await Promise.all([
-      readFinanceLatestBrokerReconciliations(directory),
-      readFinancePositionLedger(directory, { asOf }),
+      observations.reconciliationObservation?.directory === directory &&
+      observations.reconciliationObservation.asOf === asOf
+        ? observations.reconciliationObservation.read()
+        : readFinanceLatestBrokerReconciliations(directory),
+      observations.positionObservation?.directory === directory &&
+      observations.positionObservation.asOf === asOf
+        ? observations.positionObservation.read()
+        : readFinancePositionLedger(directory, { asOf }),
       readFinanceIntradayDecisions(directory),
     ]);
     const accounts = await Promise.all(

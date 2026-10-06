@@ -12,6 +12,13 @@ import {
 import { financePositionLedgerPath, financeReadinessThresholdsPath } from "./finance-state-dir.js";
 import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
 
+/** A verified read shared only within one observation, never across books or cutoffs. */
+export type FinancePositionLedgerObservation = Readonly<{
+  directory: string;
+  asOf: string;
+  read: () => ReturnType<typeof readFinancePositionLedger>;
+}>;
+
 export type FinanceRuleReadinessState = Readonly<{
   readiness: FinanceRuleReadiness;
   dataStores: Readonly<{
@@ -48,6 +55,7 @@ export async function readFinanceRuleReadinessState(params: {
   directory: string;
   asOf: string;
   rules: readonly FinanceStrategyRule[];
+  positionObservation?: FinancePositionLedgerObservation;
 }): Promise<FinanceRuleReadinessState> {
   const thresholdsFile = financeReadinessThresholdsPath(params.directory);
   let thresholds: FinanceReadinessThresholds | null = null;
@@ -80,7 +88,10 @@ export async function readFinanceRuleReadinessState(params: {
   let markSource: FinanceRuleReadinessState["markSource"] = null;
   try {
     const [positions, databasePresent] = await Promise.all([
-      readFinancePositionLedger(params.directory, { asOf: params.asOf }),
+      params.positionObservation?.directory === params.directory &&
+      params.positionObservation.asOf === params.asOf
+        ? params.positionObservation.read()
+        : readFinancePositionLedger(params.directory, { asOf: params.asOf }),
       fs.access(financePositionLedgerPath(params.directory)).then(
         () => true,
         () => false,

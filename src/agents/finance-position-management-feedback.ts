@@ -3,6 +3,13 @@ import { brokerSymbol } from "./finance-broker-reconciliation.js";
 import { readFinanceLatestBrokerReconciliations } from "./finance-position-ledger.js";
 import { classifyFinanceProtectionOrders } from "./finance-protection-coordination.js";
 
+/** Shared latest read; asOf binds its consumer clock without changing head/superseded semantics. */
+export type FinanceBrokerReconciliationObservation = Readonly<{
+  directory: string;
+  asOf: string;
+  read: () => ReturnType<typeof readFinanceLatestBrokerReconciliations>;
+}>;
+
 const quantity = z
   .union([z.string().trim().min(1), z.number()])
   .transform(Number)
@@ -18,9 +25,14 @@ export async function readFinancePositionManagementFeedback(params: {
   directory: string;
   observedAt: string;
   rules: readonly { ruleId: string; state: string; instruments: readonly string[] }[];
+  reconciliationObservation?: FinanceBrokerReconciliationObservation;
 }) {
   try {
-    const read = await readFinanceLatestBrokerReconciliations(params.directory);
+    const read =
+      params.reconciliationObservation?.directory === params.directory &&
+      params.reconciliationObservation.asOf === params.observedAt
+        ? await params.reconciliationObservation.read()
+        : await readFinanceLatestBrokerReconciliations(params.directory);
     const accounts = read.records.map((record) => {
       const snapshot = snapshotSchema.parse(record.snapshot);
       const age = Date.parse(params.observedAt) - Date.parse(snapshot.observedAt);

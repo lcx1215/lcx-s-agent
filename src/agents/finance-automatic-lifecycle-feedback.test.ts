@@ -1,16 +1,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
 import { buildFinanceAutomaticLifecycleFeedback } from "./finance-automatic-lifecycle-feedback.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
 import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
+import * as positionLedger from "./finance-position-ledger.js";
 import { FINANCE_SCHEDULER_LOCK, FINANCE_SCHEDULER_PID } from "./finance-scheduler-lock.js";
 import { writeFinanceSchedulerState } from "./finance-scheduler-state.js";
-import { financeResearchScoredPath } from "./finance-state-dir.js";
+import { financePositionLedgerPath, financeResearchScoredPath } from "./finance-state-dir.js";
 import { runFinanceTuningLifecycle } from "./finance-tuning-lifecycle.js";
 
 let directory: string;
@@ -19,7 +21,89 @@ beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-lifecycle-feedback-"));
 });
 
-afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+it("shares each verified read once per observation and sees new source on the next call", async () => {
+  const observedAt = "2026-10-06T10:00:00Z";
+  const appendSnapshot = (at: string, positions: readonly Record<string, unknown>[]) =>
+    appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "synthetic",
+      venue: "alpaca:paper",
+      query: `reconciliation:${at}`,
+      cursor: "",
+      payload: [{ observedAt: at, positions, openOrders: [] }],
+    });
+  await appendSnapshot(observedAt, []);
+  const positions = vi.spyOn(positionLedger, "readFinancePositionLedger");
+  const reconciliations = vi.spyOn(positionLedger, "readFinanceLatestBrokerReconciliations");
+  const first = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(positions).toHaveBeenCalledExactlyOnceWith(directory, { asOf: observedAt });
+  expect(reconciliations).toHaveBeenCalledExactlyOnceWith(directory);
+  expect(first).toMatchObject({
+    positionManagement: { accounts: [{ observedAt, positionCount: 0 }] },
+  });
+  // Latest recon semantics intentionally retain a future snapshot and classify it,
+  // instead of silently switching this observational reader to an asOf query.
+  const nextAt = "2026-10-06T10:01:00Z";
+  await appendSnapshot(nextAt, [{ symbol: "SPY", qty: "1" }]);
+  const second = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(positions).toHaveBeenCalledTimes(2);
+  expect(reconciliations).toHaveBeenCalledTimes(2);
+  expect(second).toMatchObject({
+    positionManagement: {
+      accounts: [{ observedAt: nextAt, positionCount: 1, freshness: "stale" }],
+    },
+    economicFeedback: { accounts: [{ status: "snapshot_outside_cutoff" }] },
+  });
+});
+
+it("shares failed chain reads without unhandled rejections or hiding consumer gaps", async () => {
+  fs.writeFileSync(financePositionLedgerPath(directory), "not a sqlite ledger");
+  const positions = vi.spyOn(positionLedger, "readFinancePositionLedger");
+  const reconciliations = vi.spyOn(positionLedger, "readFinanceLatestBrokerReconciliations");
+  const result = await buildFinanceAutomaticLifecycleFeedback({
+    directory,
+    observedAt: "2026-10-06T10:00:00Z",
+  });
+  expect(positions).toHaveBeenCalledTimes(1);
+  expect(reconciliations).toHaveBeenCalledTimes(1);
+  expect(result).toMatchObject({
+    status: "present",
+    currentReadiness: { dataStores: { positions: { present: false } } },
+    positionManagement: { status: "unavailable", needsInspection: false },
+    economicFeedback: { status: "unavailable" },
+  });
+});
+
+it("retains native broker hash validation when consumers share a tampered chain", async () => {
+  const observedAt = "2026-10-06T10:00:00Z";
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "synthetic",
+    venue: "alpaca:paper",
+    query: `reconciliation:${observedAt}`,
+    cursor: "",
+    payload: [{ observedAt, positions: [], openOrders: [] }],
+  });
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financePositionLedgerPath(directory));
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET ref=? WHERE sequence=1").run("0".repeat(64));
+  } finally {
+    db.close();
+  }
+  const recon = vi.spyOn(positionLedger, "readFinanceLatestBrokerReconciliations");
+  expect(await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt })).toMatchObject({
+    positionManagement: { status: "unavailable", reason: "broker history chain mismatch" },
+    economicFeedback: { status: "unavailable", reason: "broker history chain mismatch" },
+  });
+  expect(recon).toHaveBeenCalledTimes(1);
+});
 
 it("preserves file and resident until-revoked authorization metadata in lifecycle feedback", async () => {
   const observedAt = "2026-09-23T12:00:00.000Z";

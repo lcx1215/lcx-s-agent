@@ -1,9 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { buildFinanceAutomaticLifecycleFeedback } from "./finance-automatic-lifecycle-feedback.js";
-import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  readFinanceLatestBrokerReconciliations,
+} from "./finance-position-ledger.js";
 import { readFinancePositionManagementFeedback } from "./finance-position-management-feedback.js";
 let directory: string;
 const at = "2026-09-27T10:00:00.000Z";
@@ -44,6 +47,42 @@ const rules = [
   { ruleId: "spy", state: "active", instruments: ["SPY"] },
   { ruleId: "old-btc", state: "retired", instruments: ["BTC/USD"] },
 ];
+
+it("uses only a same-book exact-clock shared read and keeps standalone semantics", async () => {
+  await snapshot();
+  const baseline = await readFinancePositionManagementFeedback({
+    directory,
+    observedAt: at,
+    rules,
+  });
+  const read = vi.fn(() => readFinanceLatestBrokerReconciliations(directory));
+  expect(
+    await readFinancePositionManagementFeedback({
+      directory,
+      observedAt: at,
+      rules,
+      reconciliationObservation: { directory, asOf: at, read },
+    }),
+  ).toEqual(baseline);
+  expect(read).toHaveBeenCalledTimes(1);
+  for (const scope of [
+    { directory: `${directory}-other`, asOf: at },
+    { directory, asOf: "2026-09-27T09:59:00Z" },
+  ]) {
+    const wrongRead = vi.fn(async () => {
+      throw new Error("wrong observation must not be used");
+    });
+    expect(
+      await readFinancePositionManagementFeedback({
+        directory,
+        observedAt: at,
+        rules,
+        reconciliationObservation: { ...scope, read: wrongRead },
+      }),
+    ).toEqual(baseline);
+    expect(wrongRead).not.toHaveBeenCalled();
+  }
+});
 it("brings uncovered and out-of-scope holdings into Harness feedback without granting ownership", async () => {
   await snapshot();
   const result = await readFinancePositionManagementFeedback({ directory, observedAt: at, rules });

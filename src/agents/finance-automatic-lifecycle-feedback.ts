@@ -7,6 +7,10 @@ import {
   FINANCE_PAPER_EXECUTION_BLOCK_REASON,
   readFinancePaperPromotions,
 } from "./finance-paper-promotion.js";
+import {
+  readFinanceLatestBrokerReconciliations,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
 import { readFinancePositionManagementFeedback } from "./finance-position-management-feedback.js";
 import { readFinanceRuleReadinessState } from "./finance-rule-readiness-state.js";
 import { readFinanceSchedulerDatabaseRuns } from "./finance-scheduler-ledger.js";
@@ -356,6 +360,20 @@ export async function buildFinanceAutomaticLifecycleFeedback(
   const state = params.directory
     ? { directory: params.directory, source: "explicit" as const }
     : resolveFinanceStateDir();
+  // Each reader verifies the original chain once for this call. Lazy promises preserve
+  // the consumers' own failure handling and expire with this observation.
+  let positions: ReturnType<typeof readFinancePositionLedger> | undefined;
+  let reconciliations: ReturnType<typeof readFinanceLatestBrokerReconciliations> | undefined;
+  const positionObservation = {
+    directory: state.directory,
+    asOf: observedAt,
+    read: () => (positions ??= readFinancePositionLedger(state.directory, { asOf: observedAt })),
+  };
+  const reconciliationObservation = {
+    directory: state.directory,
+    asOf: observedAt,
+    read: () => (reconciliations ??= readFinanceLatestBrokerReconciliations(state.directory)),
+  };
   try {
     const [rules, proposals, promotions, samples] = await Promise.all([
       readFinanceStrategyRuleLedger(state.directory, { asOf: observedAt }),
@@ -374,6 +392,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         directory: state.directory,
         asOf: observedAt,
         rules: rules.ledger.rules,
+        positionObservation,
       });
       const activeReadinessRules = snapshot.readiness.rules.filter(
         (rule) => rule.state === "active",
@@ -438,8 +457,12 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       directory: state.directory,
       observedAt,
       rules: rules.ledger.rules,
+      reconciliationObservation,
     });
-    const profitFeedback = await readFinanceBrokerProfitFeedback(state.directory, observedAt);
+    const profitFeedback = await readFinanceBrokerProfitFeedback(state.directory, observedAt, {
+      positionObservation,
+      reconciliationObservation,
+    });
     const economicFeedback =
       profitFeedback.accounts !== undefined
         ? {

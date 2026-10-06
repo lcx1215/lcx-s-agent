@@ -1,15 +1,63 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   readFinanceBrokerInstrumentFeedback,
+  readFinanceBrokerProfitFeedback,
   summarizeFinanceBrokerFills,
   summarizeFinanceBrokerFillsByInstrument,
   attributeFinanceBrokerFills,
 } from "./finance-broker-profit-feedback.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
-import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  readFinanceLatestBrokerReconciliations,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
+
+it("preserves profit and source metadata when using exact observation reads", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "profit-shared-observation-"));
+  const asOf = "2026-10-06T10:00:00Z";
+  try {
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "synthetic",
+      venue: "alpaca:paper",
+      query: `reconciliation:${asOf}`,
+      cursor: "",
+      payload: [{ observedAt: asOf, positions: [], openOrders: [], status: "reconciled" }],
+    });
+    const baseline = await readFinanceBrokerProfitFeedback(directory, asOf);
+    const positionRead = vi.fn(() => readFinancePositionLedger(directory, { asOf }));
+    const reconciliationRead = vi.fn(() => readFinanceLatestBrokerReconciliations(directory));
+    expect(
+      await readFinanceBrokerProfitFeedback(directory, asOf, {
+        positionObservation: { directory, asOf, read: positionRead },
+        reconciliationObservation: { directory, asOf, read: reconciliationRead },
+      }),
+    ).toEqual(baseline);
+    expect(positionRead).toHaveBeenCalledTimes(1);
+    expect(reconciliationRead).toHaveBeenCalledTimes(1);
+    for (const scope of [
+      { directory: `${directory}-other`, asOf },
+      { directory, asOf: "2026-10-06T09:59:00Z" },
+    ]) {
+      const wrongRead = vi.fn(async () => {
+        throw new Error("wrong shared observation");
+      });
+      expect(
+        await readFinanceBrokerProfitFeedback(directory, asOf, {
+          positionObservation: { ...scope, read: wrongRead },
+          reconciliationObservation: { ...scope, read: wrongRead },
+        }),
+      ).toEqual(baseline);
+      expect(wrongRead).not.toHaveBeenCalled();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 const fill = (id: string, side: string, qty: string, price: string) => ({
   id,
   activity_type: "FILL",
