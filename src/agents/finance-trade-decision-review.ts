@@ -372,6 +372,7 @@ function reviewPrompt(payload: unknown): string {
         ]
       : []),
     "Use only the supplied decision packet. Do not use external or unstated market facts.",
+    "The deterministic opportunity context binds quote arithmetic to exact packet paths in sourceBindings. Its measurementCoverage lists inputs not supplied in the initial packet: not_supplied means unknown, not zero, negligible, or an upper bound. A later completed tool result may add evidence only within its own source and time scope; a historical volume or fee is not this candidate's current liquidity or full round-trip cost. Preserve these distinctions in the rationale and costRiskAssessment; they do not by themselves require a veto.",
     "Separate observed inputs from hypotheses in rationale and expectationGap. An observed volume change or measured slippage needs an exact supplied packet field or completed tool result. When those inputs are absent, describe them as conditions to verify or leave them null; origin=model_hypothesis does not establish that they occurred. A narrow bid/ask spread does not measure fill slippage or establish a continuation probability.",
     "Focus on decision-changing evidence: a supported catalyst or contradiction, thesis/stop invalidation, horizon mismatch, and execution cost or liquidity risk. Do not repeat broad market research, recompute bookkeeping, or invent numerical gates; deterministic controllers own calculations and capital authorization. Keep the rationale concise and cite the relevant packet facts.",
     "Challenge the strongest concrete economic doubt in this candidate. Use the supplied conditional upside/stop fractions and session time to assess the proposed mechanism and its stated horizon; session close is not a declared holding deadline, and a target is not a forecast or a requirement to hit it before close. If a specific uncertainty could change your judgment, frame a testable question and choose a relevant available tool within the existing evidence budget. Daily history can describe historical scale, not the probability of an intraday target. In the final rationale, connect the relevant result or explicit missing input to your judgment; if the packet already suffices, decide directly. Do not invent expected value, a mandatory tool call or a new numerical gate.",
@@ -462,6 +463,9 @@ export function createFinanceTradeDecisionReviewer(
       evidenceInstrumentScope: _untrustedScope,
       evidenceHypothesis: _untrustedHypothesis,
       evidenceFinancialCapabilities: _untrustedFinancialCapabilities,
+      opportunityContext: _untrustedOpportunityContext,
+      measurementCoverage: _untrustedMeasurementCoverage,
+      sourceBindings: _untrustedSourceBindings,
       ...trustedPacket
     } = reviewRequest as FinanceTradeDecisionReviewRequest & {
       evidenceResults?: unknown;
@@ -475,6 +479,9 @@ export function createFinanceTradeDecisionReviewer(
       evidenceInstrumentScope?: unknown;
       evidenceHypothesis?: unknown;
       evidenceFinancialCapabilities?: unknown;
+      opportunityContext?: unknown;
+      measurementCoverage?: unknown;
+      sourceBindings?: unknown;
     };
     const allowEvidence =
       evidenceExecutor !== undefined &&

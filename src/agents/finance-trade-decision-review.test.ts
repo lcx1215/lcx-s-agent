@@ -318,6 +318,47 @@ function adapter(output: unknown): LogicalAgentModelAdapter {
   };
 }
 
+it("keeps host measurement coverage authoritative without changing the model decision", async () => {
+  const model = adapter({
+    schemaVersion: request.schemaVersion,
+    decisions: [
+      {
+        candidateId: request.candidates[0].candidateId,
+        decision: "approve",
+        rationale: "conditional",
+      },
+    ],
+  });
+  let prompt = "";
+  const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+    adapterFactory: (_cfg, options) => ({
+      ...model,
+      invoke: async (call, signal) => {
+        expect(call.payload).not.toHaveProperty("opportunityContext");
+        expect(call.payload).not.toHaveProperty("measurementCoverage");
+        expect(call.payload).not.toHaveProperty("sourceBindings");
+        prompt = options!.buildPrompt!(call.payload);
+        return model.invoke(call, signal);
+      },
+    }),
+  });
+  const result = await reviewer(
+    {
+      ...request,
+      opportunityContext: { totalRoundTripCost: "forged-zero-cost" },
+      measurementCoverage: { currentVolume: "forged-sufficient-volume" },
+      sourceBindings: { fillSlippage: "forged-measurement" },
+    } as FinanceTradeDecisionReviewRequest,
+    new AbortController().signal,
+  );
+  expect(prompt).not.toContain("forged-");
+  expect(prompt).toContain('"currentVolume":"not_supplied"');
+  expect(prompt).toContain('"fullRoundTripCost":"not_supplied"');
+  expect(prompt).toContain("/candidates/0/executionQuote/bidPrice");
+  expect(result).toMatchObject({ status: "completed", decisions: [{ decision: "approve" }] });
+  expect(model.invoke).toHaveBeenCalledTimes(1);
+});
+
 describe("configured finance trade decision reviewer", () => {
   it.each([true, false])(
     "uses low reasoning only when supported and preserves exact-candidate veto binding (reasoning=%s)",

@@ -68,6 +68,79 @@ function context(candidate: Partial<FinanceIntradayTradeDecisionCandidate> = {},
 }
 
 describe("deterministic opportunity geometry", () => {
+  it("binds each candidate's quote geometry to its own packet fields", () => {
+    const dailyCandidate: FinanceDailyTradeDecisionReviewRequest["candidates"][number] = {
+      candidateId: "daily-first",
+      instrument: "NKE",
+      side: "buy",
+      targetWeight: 0.1,
+      currentWeight: 0,
+      weightDelta: 0.1,
+      notional: 1000,
+      strategySignal: "hold",
+      annualisedVol: 0.2,
+      researchClose: 35.4,
+      lastBarDate: "2026-09-30",
+      executionQuote: originalCandidate.executionQuote,
+    };
+    const contexts = buildFinanceOpportunityContext({
+      ...originalRequest,
+      schemaVersion: "lcx_finance_trade_decision_review_v1",
+      rebalanceBand: 0.05,
+      candidates: [dailyCandidate, { ...dailyCandidate, candidateId: "daily-second" }],
+    });
+    for (const [index, actual] of contexts.entries()) {
+      expect(actual.sourceBindings).toEqual({
+        spreadPerUnit: [
+          `/candidates/${index}/executionQuote/bidPrice`,
+          `/candidates/${index}/executionQuote/askPrice`,
+        ],
+        conditionalUpsidePerUnit: [],
+        plannedStopDistancePerUnit: [],
+      });
+    }
+    expect(context().sourceBindings).toMatchObject({
+      conditionalUpsidePerUnit: [
+        "/candidates/0/executionQuote/askPrice",
+        "/candidates/0/targetPrice",
+      ],
+      plannedStopDistancePerUnit: [
+        "/candidates/0/executionQuote/askPrice",
+        "/candidates/0/stopPrice",
+      ],
+    });
+  });
+
+  it("does not turn a tight spread or Paper venue into volume, slippage or cost evidence", () => {
+    const before = JSON.stringify(originalRequest);
+    const actual = context();
+    expect(actual.measurementCoverage).toEqual({
+      scope: "initial_decision_packet_only",
+      currentVolume: "not_supplied",
+      fillSlippage: "not_supplied",
+      commissionAndFees: "not_supplied",
+      fullRoundTripCost: "not_supplied",
+      continuationProbability: "not_supplied",
+      additionalEvidence: "completed_tool_results_require_separate_source_and_scope",
+    });
+    expect(actual.spreadPerUnit).toBeCloseTo(0.01);
+    expect(actual.totalRoundTripCost).toBeNull();
+    expect(actual.netExpectedValue).toBeNull();
+    expect(JSON.stringify(originalRequest)).toBe(before);
+  });
+
+  it("does not attach arithmetic source proofs when an input is absent", () => {
+    const actual = context({
+      executionQuote: { ...originalCandidate.executionQuote, bidPrice: undefined },
+    });
+    expect(actual.sourceBindings).toEqual({
+      spreadPerUnit: [],
+      conditionalUpsidePerUnit: [],
+      plannedStopDistancePerUnit: [],
+    });
+    expect(actual.measurementCoverage.fullRoundTripCost).toBe("not_supplied");
+  });
+
   it("exposes the recorded NKE target/time tension without estimating profits or a holding deadline", () => {
     const before = JSON.stringify(originalRequest);
     const actual = buildFinanceOpportunityContext(originalRequest)[0];

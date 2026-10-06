@@ -34,7 +34,8 @@ function finiteOrNull(value: number): number | null {
 
 /** Quote arithmetic is supplied separately so model conjecture cannot masquerade as measurement. */
 export function buildFinanceOpportunityContext(request: FinanceTradeDecisionReviewRequest) {
-  return request.candidates.map((candidate) => {
+  return request.candidates.map((candidate, index) => {
+    const source = `/candidates/${index}`;
     const { bidPrice: bid, askPrice: ask } = candidate.executionQuote;
     const quoteValid =
       typeof bid === "number" &&
@@ -73,6 +74,26 @@ export function buildFinanceOpportunityContext(request: FinanceTradeDecisionRevi
       candidateId: candidate.candidateId,
       origin: "packet_arithmetic" as const,
       quoteObservedAt: candidate.executionQuote.referencePriceAt,
+      // Bind arithmetic to this candidate's original inputs; a quote is not a fill measurement.
+      sourceBindings: {
+        spreadPerUnit: quoteValid
+          ? [`${source}/executionQuote/bidPrice`, `${source}/executionQuote/askPrice`]
+          : [],
+        conditionalUpsidePerUnit:
+          upside !== null ? [`${source}/executionQuote/askPrice`, `${source}/targetPrice`] : [],
+        plannedStopDistancePerUnit:
+          stopDistance !== null ? [`${source}/executionQuote/askPrice`, `${source}/stopPrice`] : [],
+      },
+      measurementCoverage: {
+        scope: "initial_decision_packet_only" as const,
+        currentVolume: "not_supplied" as const,
+        fillSlippage: "not_supplied" as const,
+        commissionAndFees: "not_supplied" as const,
+        fullRoundTripCost: "not_supplied" as const,
+        continuationProbability: "not_supplied" as const,
+        // Later tool evidence has its own source/cutoff; historical fees are not current costs.
+        additionalEvidence: "completed_tool_results_require_separate_source_and_scope" as const,
+      },
       spreadPerUnit: spread,
       spreadBps: quoteValid ? ((ask - bid) / ((ask + bid) / 2)) * 10000 : null,
       conditionalUpsidePerUnit: upside,
