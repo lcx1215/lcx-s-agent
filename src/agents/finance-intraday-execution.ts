@@ -4,6 +4,7 @@ import {
   runFinanceAlpacaOrder,
   type FinanceAlpacaRunRequest,
 } from "./finance-alpaca-run.js";
+import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   executionQuoteIssue,
@@ -491,6 +492,12 @@ export async function executeFinanceIntradayDecision(params: {
         ? "deadline_exceeded"
         : "unexpected",
     elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    ...(!signal.aborted &&
+    !(error instanceof PreparationDeadlineError) &&
+    (stage === "initial_quote" || stage === "refresh_quote") &&
+    error instanceof AlpacaSafetyQuoteReadError
+      ? { quote: { reason: error.reason, ...error.diagnostic } }
+      : {}),
   });
   const now = params.now ?? Date.now;
   let tradeDecisionReview: FinanceIntradayDecisionReviewReceipt | undefined;

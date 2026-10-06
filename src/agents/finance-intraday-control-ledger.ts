@@ -7,6 +7,7 @@ import {
   ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS,
   ALPACA_SAFETY_DIAGNOSTIC_STAGES,
   ALPACA_SAFETY_FAILURE_CODES,
+  ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES,
 } from "./finance-alpaca-safety-provider.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
@@ -410,8 +411,23 @@ const FinanceIntradayOutcomeBase = z
         ]),
         category: z.enum(["deadline_exceeded", "cancelled", "unexpected"]),
         elapsedMs: z.number().int().nonnegative(),
+        quote: z
+          .object({
+            reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
+            stage: z.enum(ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES).optional(),
+            httpStatus: z.number().int().min(100).max(599).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
+      .refine(
+        (failure) =>
+          failure.quote === undefined ||
+          ((failure.stage === "initial_quote" || failure.stage === "refresh_quote") &&
+            failure.category === "unexpected"),
+        { message: "quote diagnostics require an unexpected preparation quote failure" },
+      )
       .optional(),
   })
   .strict();

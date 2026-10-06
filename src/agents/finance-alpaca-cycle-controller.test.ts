@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createFinanceAlpacaCycleController } from "./finance-alpaca-cycle-controller.js";
+import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import {
   placeFinanceOrder,
@@ -1172,5 +1173,24 @@ it("runs the controller ownership guard inside the shared safety facts path befo
     "execution_safety_facts_unavailable",
   );
   expect(validateFacts).toHaveBeenCalledOnce();
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it("propagates typed safe quote GET evidence rather than an order rejection", async () => {
+  const f = await fixture();
+  f.read.mockResolvedValueOnce({ status: 429, body: "PRIVATE_BODY https://secret.invalid/token" });
+  const error = await f.controller
+    .executionQuoteProvider(
+      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+      AbortSignal.timeout(5000),
+    )
+    .catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(AlpacaSafetyQuoteReadError);
+  expect(error).toMatchObject({
+    reason: "alpaca_safety_snapshot_read_unavailable",
+    diagnostic: { stage: "quote_snapshot", httpStatus: 429 },
+  });
+  expect(JSON.stringify(error)).not.toMatch(/PRIVATE_BODY|secret.invalid|token/);
+  expect(f.read).toHaveBeenCalledTimes(1);
   expect(f.execute).not.toHaveBeenCalled();
 });

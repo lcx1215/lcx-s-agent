@@ -341,3 +341,86 @@ it("accepts safe optional preparation diagnostics and rejects arbitrary provider
     } as never),
   ).rejects.toThrow();
 });
+
+it("round-trips strict quote diagnostics and preserves terminal idempotency", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "quote-diagnostic-ledger-"));
+  temporary.push(directory);
+  const outcome = {
+    signalId: "quote-get-failure",
+    status: "refused" as const,
+    reasons: ["intraday_execution_unexpected_error"],
+    executionFailure: {
+      stage: "initial_quote" as const,
+      category: "unexpected" as const,
+      elapsedMs: 44750,
+      quote: {
+        reason: "alpaca_safety_snapshot_read_unavailable" as const,
+        stage: "quote_snapshot" as const,
+        httpStatus: 429,
+      },
+    },
+  };
+  expect((await appendFinanceIntradayOutcome(directory, outcome)).appended).toBe(true);
+  expect(await readFinanceIntradayOutcome(directory, outcome.signalId)).toEqual(outcome);
+  expect((await appendFinanceIntradayOutcome(directory, outcome)).appended).toBe(false);
+  await expect(
+    appendFinanceIntradayOutcome(directory, {
+      ...outcome,
+      executionFailure: {
+        ...outcome.executionFailure,
+        quote: { ...outcome.executionFailure.quote, httpStatus: 503 },
+      },
+    }),
+  ).rejects.toThrow();
+});
+
+it.each([
+  "raw",
+  "status0",
+  "status600",
+  "fraction",
+  "nan",
+  "reason",
+  "stage",
+  "account",
+  "dispatch",
+  "cancelled",
+] as const)("rejects unsafe or non-quote diagnostic fields (%s)", async (mode) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "quote-invalid-ledger-"));
+  temporary.push(directory);
+  const quote = {
+    reason: "alpaca_safety_snapshot_read_unavailable",
+    stage: "quote_snapshot",
+    httpStatus: 429,
+    ...(mode === "raw" ? { message: "PRIVATE_BODY" } : {}),
+    ...(mode === "status0"
+      ? { httpStatus: 0 }
+      : mode === "status600"
+        ? { httpStatus: 600 }
+        : mode === "fraction"
+          ? { httpStatus: 429.1 }
+          : mode === "nan"
+            ? { httpStatus: Number.NaN }
+            : {}),
+    ...(mode === "reason" ? { reason: "PRIVATE_BODY" } : {}),
+    ...(mode === "stage" ? { stage: "account_snapshot" } : {}),
+  };
+  await expect(
+    appendFinanceIntradayOutcome(directory, {
+      signalId: mode,
+      status: "refused",
+      reasons: ["intraday_execution_unexpected_error"],
+      executionFailure: {
+        stage:
+          mode === "account"
+            ? "account_book"
+            : mode === "dispatch"
+              ? "order_dispatch"
+              : "initial_quote",
+        category: mode === "cancelled" ? "cancelled" : "unexpected",
+        elapsedMs: 1,
+        quote,
+      },
+    } as never),
+  ).rejects.toThrow();
+});

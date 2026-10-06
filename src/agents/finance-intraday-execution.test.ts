@@ -10,6 +10,7 @@ import {
   compileFinanceAlpacaOrderIntent,
   type runFinanceAlpacaOrder,
 } from "./finance-alpaca-run.js";
+import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceDailyAccountBook } from "./finance-daily-cycle.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
@@ -167,6 +168,123 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
+  it.each(["initial", "refresh", "spoof", "account", "cancelled"] as const)(
+    "persists only trusted preparation quote evidence (%s)",
+    async (mode) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "quote-diagnostic-execution-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: `quote-${mode}`,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          stopPrice: 99,
+          targetPrice: 102,
+          datasetHeadRef: "c".repeat(64),
+          strategyRule: "opening_range_breakout_long_next_bar_v1",
+          strategyBinding,
+        })
+      ).record;
+      const typed = new AlpacaSafetyQuoteReadError("alpaca_safety_snapshot_read_unavailable", {
+        stage: "quote_snapshot",
+        httpStatus: 503,
+      });
+      const caller = new AbortController();
+      const account = {
+        accountId: "paper-account",
+        venue: "alpaca:paper" as const,
+        observedAt: "2026-09-18T15:00:01.000Z",
+        expiresAt: "2026-09-18T15:01:01.000Z",
+        equity: 100_000,
+        positions: [],
+      };
+      const quote = {
+        referencePrice: 100,
+        referencePriceAt: account.observedAt,
+        bidPrice: 99.9,
+        askPrice: 100,
+        maxAgeMs: 30_000,
+        sourceUrlOrArtifact: "fixture://quote",
+      };
+      const reviewer = approvingReviewer();
+      const runOrder = vi.fn();
+      const createSafetyContext = vi.fn();
+      const quoteProvider = vi.fn(async () => {
+        if (mode === "refresh") {
+          return quote;
+        }
+        if (mode === "cancelled") {
+          caller.abort(new Error("PRIVATE_BODY"));
+        }
+        if (mode === "spoof") {
+          throw Object.assign(new Error("PRIVATE_BODY"), {
+            name: "AlpacaSafetyQuoteReadError",
+            reason: typed.reason,
+            diagnostic: typed.diagnostic,
+          });
+        }
+        throw typed;
+      });
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: async () => {
+            if (mode === "account") {
+              throw typed;
+            }
+            return account;
+          },
+          executionQuoteProvider: quoteProvider,
+          ...(mode === "refresh"
+            ? {
+                prepareExecutionQuote: async () => {
+                  throw typed;
+                },
+              }
+            : {}),
+          createSafetyContext,
+        },
+        caps: { maxOrderNotional: 5000, maxInstrumentNotional: 10000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        signal: caller.signal,
+        now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+        runOrder: runOrder as never,
+      });
+      const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+      expect(stored).toEqual(result.outcome);
+      expect(stored?.executionFailure).toMatchObject({
+        stage:
+          mode === "account"
+            ? "account_book"
+            : mode === "refresh"
+              ? "refresh_quote"
+              : "initial_quote",
+        category: mode === "cancelled" ? "cancelled" : "unexpected",
+        elapsedMs: expect.any(Number),
+      });
+      if (mode === "initial" || mode === "refresh") {
+        expect(stored?.executionFailure?.quote).toEqual({
+          reason: typed.reason,
+          ...typed.diagnostic,
+        });
+      } else {
+        expect(stored?.executionFailure?.quote).toBeUndefined();
+      }
+      expect(JSON.stringify(stored)).not.toMatch(/PRIVATE_BODY|secret.invalid/);
+      expect(stored?.executionSafetyFailure).toBeUndefined();
+      expect(reviewer).toHaveBeenCalledTimes(mode === "refresh" ? 1 : 0);
+      expect(runOrder).not.toHaveBeenCalled();
+      expect(createSafetyContext).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     { mode: "full", refused: true },
     { mode: "available", refused: false },

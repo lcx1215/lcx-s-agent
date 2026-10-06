@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import {
   readAlpacaPaperSafetyQuote,
+  AlpacaSafetyQuoteReadError,
   readAlpacaPaperSafetyFacts,
   type AlpacaSafetyProviderOptions,
 } from "./finance-alpaca-safety-provider.js";
@@ -798,4 +799,115 @@ it("reports overflowed aggregate values explicitly as null", async () => {
   expect(result.accountArithmetic?.values.positionGross).toBeNull();
   expect(result.accountArithmetic?.values.accountGross).toBeNull();
   expect(result.accountArithmetic?.failedConditions).toContain("gross_above_equity");
+});
+
+it.each([401, 429, 503, 100, 599, 0, 600, 401.5, Number.NaN])(
+  "retains only actual legal quote HTTP status %s",
+  async (status) => {
+    const f = fixture();
+    f.read.mockResolvedValue({ status, body: "PRIVATE_BODY https://secret.invalid/token" });
+    const result = await readAlpacaPaperSafetyQuote({ ...f.options, diagnostics: true });
+    const valid = Number.isInteger(status) && status >= 100 && status <= 599;
+    expect(result).toEqual({
+      ok: false,
+      reason: "alpaca_safety_snapshot_read_unavailable",
+      diagnostic: { stage: "quote_snapshot", ...(valid ? { httpStatus: status } : {}) },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|secret.invalid|token|FAKE/);
+    expect(await readAlpacaPaperSafetyQuote({ ...f.options, diagnostics: false })).toEqual({
+      ok: false,
+      reason: "alpaca_safety_snapshot_read_unavailable",
+    });
+  },
+);
+
+it.each(["transport", "json", "oversize", "shape", "values", "future", "stale"] as const)(
+  "reports bounded quote diagnostics without raw content (%s)",
+  async (mode) => {
+    const f = fixture();
+    if (mode === "transport") {
+      f.read.mockRejectedValue(
+        Object.assign(new Error("PRIVATE_BODY https://secret.invalid/token"), {
+          name: "AlpacaSafetyProviderFailure",
+          code: "alpaca_safety_quote_expired",
+          httpStatus: 429,
+        }),
+      );
+    }
+    if (mode === "json") {
+      f.read.mockResolvedValue({ status: 200, body: "PRIVATE_BODY" });
+    }
+    if (mode === "oversize") {
+      f.read.mockResolvedValue({ status: 200, body: "x".repeat(2 * 1024 * 1024 + 1) });
+    }
+    if (mode === "shape") {
+      f.read.mockResolvedValue({ status: 200, body: "{}" });
+    }
+    if (mode === "values") {
+      f.quote.bp = 0;
+    }
+    if (mode === "future") {
+      f.quote.t = new Date(Date.now() + 60_000).toISOString();
+    }
+    if (mode === "stale") {
+      f.quote.t = "2020-01-01T00:00:00Z";
+    }
+    const result = await readAlpacaPaperSafetyQuote({ ...f.options, diagnostics: true });
+    expect(result).toEqual({
+      ok: false,
+      reason:
+        mode === "transport"
+          ? "alpaca_safety_snapshot_read_unavailable"
+          : mode === "json" || mode === "oversize"
+            ? "alpaca_safety_snapshot_response_invalid"
+            : mode === "stale"
+              ? "alpaca_safety_quote_expired"
+              : "alpaca_safety_facts_inconsistent",
+      diagnostic: {
+        stage:
+          mode === "transport" || mode === "json" || mode === "oversize"
+            ? "quote_snapshot"
+            : mode === "stale"
+              ? "quote_freshness"
+              : "quote_values",
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|secret.invalid|token|FAKE|429/);
+  },
+);
+
+it("preserves an ignored-reader quote timeout and parent cancellation without retries", async () => {
+  const f = fixture();
+  const caller = new AbortController();
+  const deadline = new AbortController();
+  const spy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  f.read.mockImplementation(async () => new Promise(() => {}));
+  try {
+    const timeout = readAlpacaPaperSafetyQuote({ ...f.options, diagnostics: true });
+    deadline.abort();
+    expect(await timeout).toEqual({
+      ok: false,
+      reason: "alpaca_safety_cancelled_or_timed_out",
+      diagnostic: { stage: "quote_snapshot" },
+    });
+    const before = f.read.mock.calls.length;
+    caller.abort(new Error("PRIVATE_BODY"));
+    expect(
+      await readAlpacaPaperSafetyQuote({ ...f.options, diagnostics: true }, caller.signal),
+    ).toMatchObject({ ok: false, reason: "alpaca_safety_cancelled_or_timed_out" });
+    expect(f.read).toHaveBeenCalledTimes(before);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("sanitizes typed quote failure fields before host propagation", () => {
+  const error = new AlpacaSafetyQuoteReadError("alpaca_safety_snapshot_read_unavailable", {
+    stage: "quote_snapshot",
+    httpStatus: 600,
+    message: "PRIVATE_BODY",
+  } as never);
+  expect(error.reason).toBe("alpaca_safety_snapshot_read_unavailable");
+  expect(error.diagnostic).toEqual({ stage: "quote_snapshot" });
+  expect(JSON.stringify(error)).not.toContain("PRIVATE_BODY");
 });

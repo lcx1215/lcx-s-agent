@@ -118,15 +118,55 @@ export function isAlpacaSafetyFailureCode(value: unknown): value is AlpacaSafety
   );
 }
 
+export const ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES = [
+  "quote_snapshot",
+  "quote_values",
+  "quote_freshness",
+] as const;
+export type AlpacaSafetyQuoteDiagnostic = Readonly<{
+  stage: (typeof ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES)[number];
+  httpStatus?: number;
+}>;
+
+function safeHttpStatus(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined;
+}
+
+/** Safe GET quote evidence; never an order rejection or an execution attempt. */
+export class AlpacaSafetyQuoteReadError extends Error {
+  readonly reason: AlpacaSafetyFailureCode;
+  readonly diagnostic?: AlpacaSafetyQuoteDiagnostic;
+  constructor(reason: AlpacaSafetyFailureCode, diagnostic?: AlpacaSafetyQuoteDiagnostic) {
+    const safeReason = isAlpacaSafetyFailureCode(reason)
+      ? reason
+      : "alpaca_safety_facts_inconsistent";
+    super(safeReason);
+    this.name = "AlpacaSafetyQuoteReadError";
+    this.reason = safeReason;
+    if (diagnostic && ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES.includes(diagnostic.stage)) {
+      const httpStatus = safeHttpStatus(diagnostic.httpStatus);
+      this.diagnostic = Object.freeze({
+        stage: diagnostic.stage,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+      });
+    }
+  }
+}
+
 class AlpacaSafetyProviderFailure extends Error {
-  constructor(readonly code: AlpacaSafetyFailureCode) {
+  constructor(
+    readonly code: AlpacaSafetyFailureCode,
+    readonly httpStatus?: number,
+  ) {
     super(code);
     this.name = "AlpacaSafetyProviderFailure";
   }
 }
 
-function refuse(code: AlpacaSafetyFailureCode): never {
-  throw new AlpacaSafetyProviderFailure(code);
+function refuse(code: AlpacaSafetyFailureCode, httpStatus?: number): never {
+  throw new AlpacaSafetyProviderFailure(code, safeHttpStatus(httpStatus));
 }
 
 const PAPER = "https://paper-api.alpaca.markets";
@@ -173,7 +213,7 @@ async function readJson(
   }
   signal.throwIfAborted();
   if (response.status !== 200) {
-    refuse("alpaca_safety_snapshot_read_unavailable");
+    refuse("alpaca_safety_snapshot_read_unavailable", response.status);
   }
   if (Buffer.byteLength(response.body) > 2 * 1024 * 1024) {
     refuse("alpaca_safety_snapshot_response_invalid");
@@ -272,7 +312,14 @@ function latestQuote(value: unknown, instrument: string): Record<string, unknown
 export async function readAlpacaPaperSafetyQuote(
   options: Pick<
     AlpacaSafetyProviderOptions,
-    "instrument" | "side" | "stockFeed" | "credentials" | "read" | "timeoutMs" | "maxAgeMs"
+    | "instrument"
+    | "side"
+    | "stockFeed"
+    | "credentials"
+    | "read"
+    | "timeoutMs"
+    | "maxAgeMs"
+    | "diagnostics"
   >,
   callerSignal?: AbortSignal,
 ): Promise<
@@ -285,7 +332,7 @@ export async function readAlpacaPaperSafetyQuote(
       observedAt: string;
       source: string;
     }
-  | { ok: false; reason: AlpacaSafetyFailureCode }
+  | { ok: false; reason: AlpacaSafetyFailureCode; diagnostic?: AlpacaSafetyQuoteDiagnostic }
 > {
   options = { ...options, credentials: { ...options.credentials } };
   const start = Date.now();
@@ -310,16 +357,16 @@ export async function readAlpacaPaperSafetyQuote(
     ...(callerSignal ? [callerSignal] : []),
   ]);
   const headers = safetyHeaders(options.credentials);
+  let failureStage: AlpacaSafetyQuoteDiagnostic["stage"] = "quote_snapshot";
   const run = async () => {
-    const quote = latestQuote(
-      await readJson(
-        options.read,
-        latestQuoteUrl(options.instrument, options.stockFeed),
-        headers,
-        signal,
-      ),
-      options.instrument,
+    const response = await readJson(
+      options.read,
+      latestQuoteUrl(options.instrument, options.stockFeed),
+      headers,
+      signal,
     );
+    failureStage = "quote_values";
+    const quote = latestQuote(response, options.instrument);
     const bidPrice = numeric(quote.bp);
     const askPrice = numeric(quote.ap);
     const observedAt = string(quote.t);
@@ -365,6 +412,22 @@ export async function readAlpacaPaperSafetyQuote(
         : error instanceof AlpacaSafetyProviderFailure
           ? error.code
           : "alpaca_safety_facts_inconsistent",
+      ...(options.diagnostics
+        ? {
+            diagnostic: {
+              stage:
+                error instanceof AlpacaSafetyProviderFailure &&
+                error.code === "alpaca_safety_quote_expired"
+                  ? ("quote_freshness" as const)
+                  : failureStage,
+              ...(!signal.aborted &&
+              error instanceof AlpacaSafetyProviderFailure &&
+              error.httpStatus !== undefined
+                ? { httpStatus: error.httpStatus }
+                : {}),
+            },
+          }
+        : {}),
     };
   } finally {
     if (abort) {

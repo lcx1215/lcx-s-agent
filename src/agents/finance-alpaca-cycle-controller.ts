@@ -5,6 +5,7 @@ import { z } from "zod";
 import { readAlpacaPaperTerminalOrder } from "./finance-alpaca-execution-adapter.js";
 import {
   readAlpacaPaperSafetyQuote,
+  AlpacaSafetyQuoteReadError,
   readAlpacaPaperSafetyFacts,
   type AlpacaSafetyQuoteBinding,
 } from "./finance-alpaca-safety-provider.js";
@@ -402,13 +403,14 @@ export function createFinanceAlpacaCycleController(options: {
         stockFeed: options.feed,
         credentials,
         read,
+        diagnostics: true,
         timeoutMs: 20000,
         maxAgeMs: options.maxAgeMs,
       },
       signal,
     );
     if (!observed.ok) {
-      throw new Error(observed.reason);
+      throw new AlpacaSafetyQuoteReadError(observed.reason, observed.diagnostic);
     }
     const key = `${request.instrument}:${request.side}`;
     const previous = quoteBindings.get(key);
