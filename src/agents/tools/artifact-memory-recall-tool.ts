@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
+  ARTIFACT_JSON_SOURCE_MAX_BYTES,
   ARTIFACT_TEXT_PREVIEW_MAX_BYTES,
   ArtifactStore,
   ArtifactStoreError,
@@ -9,6 +10,8 @@ import { resolveAgentWorkspaceDir } from "../agent-scope.js";
 import { resolveMemorySearchConfig } from "../memory-search.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+
+const TEXT_PAGE_MAX_BYTES = 2048;
 
 const ArtifactRecallSchema = Type.Object(
   {
@@ -30,6 +33,22 @@ const ArtifactRecallSchema = Type.Object(
       Type.String({
         description:
           "Optional RFC6901 JSON Pointer on a verified JSON source up to the existing artifact size limit; return a selected field within 64 KiB, such as /value/beta. Large selected fields require a narrower pointer.",
+      }),
+    ),
+    textOffset: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        maximum: ARTIFACT_JSON_SOURCE_MAX_BYTES,
+        description:
+          "Read a bounded UTF8 text page instead of a JSON field. Start at 0, then copy nextTextOffset; offsets refer to the returned text projection. Cannot combine with field.",
+      }),
+    ),
+    textLimit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: TEXT_PAGE_MAX_BYTES,
+        description:
+          "Maximum UTF8 bytes per text page (default 2048); encoded text is also bounded.",
       }),
     ),
     owner: Type.Optional(Type.String()),
@@ -84,7 +103,7 @@ export function createArtifactMemoryRecallTool(options: {
     label: "Artifact Memory Recall",
     name: "artifact_memory_recall",
     description:
-      "Search registered owner results and conclusions, or read an original by its registered ID with source-time and SHA verification. Local read only. field must be an exact RFC6901 JSON Pointer, such as /value/status; dot/bracket paths are invalid. sourceAvailable=true retains a verified original or usable fragment even when the requested field is unavailable. Use truncated previews as partial context; recover a narrower field when exact evidence is required. Binary results provide original references, not inferred media meaning.",
+      "Search registered owner results and conclusions, or read an original by its registered ID with source-time and SHA verification. Local read only. field must be an exact RFC6901 JSON Pointer, such as /value/status; dot/bracket paths are invalid. sourceAvailable=true retains a verified original or usable fragment even when the requested field is unavailable. For non-JSON or incomplete text, read textOffset=0 then nextTextOffset with the same ID and asOf; use textLimit for narrower pages. Truncated text remains partial evidence. Binary results provide original references, not inferred media meaning.",
     parameters: ArtifactRecallSchema,
     execute: async (_toolCallId, input, signal) => {
       const args = (input ?? {}) as Record<string, unknown>;
@@ -118,6 +137,24 @@ export function createArtifactMemoryRecallTool(options: {
         if (action !== "search" && action !== "read") {
           throw new ArtifactStoreError("artifact_action_invalid");
         }
+        const textPageRequested = args.textOffset !== undefined || args.textLimit !== undefined;
+        const textOffset = args.textOffset === undefined ? 0 : args.textOffset;
+        const textLimit = args.textLimit === undefined ? TEXT_PAGE_MAX_BYTES : args.textLimit;
+        if (
+          textPageRequested &&
+          (action !== "read" ||
+            args.field !== undefined ||
+            typeof textOffset !== "number" ||
+            !Number.isSafeInteger(textOffset) ||
+            textOffset < 0 ||
+            textOffset > ARTIFACT_JSON_SOURCE_MAX_BYTES ||
+            typeof textLimit !== "number" ||
+            !Number.isSafeInteger(textLimit) ||
+            textLimit < 1 ||
+            textLimit > TEXT_PAGE_MAX_BYTES)
+        ) {
+          throw new ArtifactStoreError("artifact_text_page_invalid");
+        }
         if (signal?.aborted) {
           throw new ArtifactStoreError("artifact_recall_cancelled");
         }
@@ -146,7 +183,7 @@ export function createArtifactMemoryRecallTool(options: {
                 limit: readNumberParam(args, "limit"),
               })
             : await store.read(readStringParam(args, "id", { required: true }), {
-                completeJsonText: field !== undefined,
+                completeJsonText: field !== undefined || textPageRequested,
               });
         if (signal?.aborted) {
           throw new ArtifactStoreError("artifact_recall_cancelled");
@@ -182,6 +219,65 @@ export function createArtifactMemoryRecallTool(options: {
           sourceObservedAt: result.artifact.observedAt,
           ...(result.artifact.cutoff ? { sourceCutoff: result.artifact.cutoff } : {}),
         };
+        if (textPageRequested) {
+          // Validation above fixes numeric bounds; all bytes still come through
+          // the original store's full SHA, cutoff and mixed-media projection.
+          const offset = textOffset as number;
+          const limit = textLimit as number;
+          const bytes = result.text === undefined ? undefined : Buffer.from(result.text);
+          const pageSource = {
+            authority: "local_read",
+            action,
+            artifactId: result.artifact.id,
+            format: result.format,
+            ...source,
+            textOffset: offset,
+            sourceTextTruncated: result.truncated,
+            textProjection: result.textProjection ?? "original_utf8_text",
+          };
+          if (!bytes || (result.truncated && offset >= bytes.length)) {
+            return jsonResult({
+              available: false,
+              ...pageSource,
+              sourceAvailable: true,
+              gap: bytes ? "artifact_text_source_limit_reached" : "artifact_text_unavailable",
+            });
+          }
+          if (offset > bytes.length || (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80)) {
+            throw new ArtifactStoreError("artifact_text_offset_invalid");
+          }
+          let end = Math.min(bytes.length, offset + limit);
+          let textPage: string;
+          while (true) {
+            while (end > offset && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+              end--;
+            }
+            if (end === offset && offset < bytes.length) {
+              throw new ArtifactStoreError("artifact_text_page_too_small");
+            }
+            textPage = bytes.subarray(offset, end).toString("utf8");
+            const encodedBytes = Buffer.byteLength(JSON.stringify(textPage));
+            if (encodedBytes <= TEXT_PAGE_MAX_BYTES) {
+              break;
+            }
+            // Bound escape-heavy text too; continuation starts at the actual
+            // retained byte boundary, so shrinking a page never skips content.
+            end = offset + Math.floor(((end - offset) * TEXT_PAGE_MAX_BYTES) / encodedBytes);
+          }
+          return jsonResult({
+            available: true,
+            ...pageSource,
+            sourceBytes: result.artifact.bytes,
+            availableTextBytes: bytes.length,
+            textPage,
+            textPageBytes: end - offset,
+            hasMore: end < bytes.length,
+            nextTextOffset: end < bytes.length ? end : null,
+            ...(result.truncated && end === bytes.length
+              ? { gap: "artifact_text_source_limit_reached" }
+              : {}),
+          });
+        }
         if (field !== undefined) {
           const unavailableField = (gap: string, selectedText?: string) => {
             const fragment = preview(selectedText ?? result.text ?? "");

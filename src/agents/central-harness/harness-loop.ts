@@ -376,7 +376,10 @@ async function runCycle(
         const decisionDigest = compactCentralStepOutcome(step.ownerId, digestSource);
         const outcomeBudget =
           step.ownerId === "finance_bar_ledger" ||
-          (step.ownerId === "artifact_memory_recall" && typeof step.args.field === "string") ||
+          (step.ownerId === "artifact_memory_recall" &&
+            (typeof step.args.field === "string" ||
+              typeof step.args.textOffset === "number" ||
+              typeof step.args.textLimit === "number")) ||
           (step.ownerId === "finance_position_ledger_read" &&
             ["receipt", "order", "fill", "fee"].includes(String(step.args.historyKind)))
             ? CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES

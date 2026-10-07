@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { ArtifactStore } from "../../memory/artifact-store.js";
-import { runCentralHarnessCycle } from "../central-harness/harness-loop.js";
+import {
+  boundPerception,
+  compactReceipts,
+  runCentralHarnessCycle,
+} from "../central-harness/harness-loop.js";
 import type { CentralToolSpec } from "../central-harness/types.js";
 import { createArtifactMemoryRecallTool } from "./artifact-memory-recall-tool.js";
 
@@ -150,6 +154,27 @@ it.each([
       expect(read.format).toBe("binary");
       expect(read).not.toHaveProperty("textPreview");
     }
+    const page = (
+      await tool.execute("partial-text-page", {
+        action: "read",
+        id: "partial-source",
+        textOffset: 0,
+      })
+    ).details;
+    expect(page).toMatchObject(
+      ext === "json"
+        ? { available: true, textPage: bytes.toString("utf8"), sourceSha256 }
+        : {
+            available: false,
+            sourceAvailable: true,
+            format: "binary",
+            gap: "artifact_text_unavailable",
+            sourceSha256,
+          },
+    );
+    if (ext === "png") {
+      expect(page).not.toHaveProperty("textPage");
+    }
     expect(await fs.readFile(path.join(root, relativePath))).toEqual(bytes);
     await fs.writeFile(path.join(root, relativePath), "changed fragment");
     const changed = (
@@ -228,6 +253,192 @@ it.each(["/missing", "/data"])(
     expect(invalid).not.toHaveProperty("sourceAvailable");
   },
 );
+
+it.each(["text/plain", "text/csv", "application/json"])(
+  "recovers a useful %s tail beyond the original preview through the same reader",
+  async (mimeType) => {
+    await seed();
+    const prefix = "unrelated heading\n".repeat(5000);
+    const tail = "费用,数量\nBTC,0.000001\n缺少订单关联，但保留有用片段";
+    const text = prefix + tail;
+    const relativePath = "state/runs/fragment.txt";
+    await fs.writeFile(path.join(root, relativePath), text);
+    const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+    let sha256: string;
+    try {
+      const result = await store.register({
+        id: "text-fragment",
+        owner: "fragment-intake",
+        runId: "partial-text",
+        observedAt: "2026-10-04T10:00:00Z",
+        relativePath,
+        mimeType,
+        summary: "tail evidence remains incomplete",
+      });
+      sha256 = result.artifact.sha256;
+    } finally {
+      store.close();
+    }
+    const args = {
+      action: "read",
+      id: "text-fragment",
+      textOffset: Buffer.byteLength(prefix),
+      textLimit: 512,
+    };
+    const receipt = await digestRecallTool(
+      createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root }),
+      args,
+    );
+    const step = receipt.steps[0];
+    expect(step).toMatchObject({
+      status: "ran_ok",
+      observedOk: true,
+      outcome: {
+        available: true,
+        sourceSha256: sha256,
+        artifactId: "text-fragment",
+        textOffset: args.textOffset,
+        textPage: tail,
+        nextTextOffset: null,
+        sourceTextTruncated: false,
+      },
+    });
+    expect(step.outcome).not.toHaveProperty("text");
+    expect(step.outcome).not.toHaveProperty("artifact");
+    expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(4096);
+    const backlog = compactReceipts([receipt], 10, new Set(["artifact_memory_recall"]));
+    expect(
+      boundPerception({
+        observedAt: receipt.observedAt,
+        ownerTotals: {},
+        controlRoom: {},
+        backlog,
+        boundaries: [],
+      }).report.overBudget,
+    ).toBe(false);
+    expect(backlog[0].outcomes[0].outcome?.textPage).toBe(tail);
+    const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
+    expect(
+      (await tool.execute("future-text", { ...args, asOf: "2026-10-04T09:59:59Z" })).details,
+    ).toMatchObject({ available: false, gap: "artifact_after_cutoff" });
+    await fs.writeFile(path.join(root, relativePath), text + "changed");
+    const changed = (await tool.execute("changed-text", args)).details;
+    expect(changed).toMatchObject({ available: false, gap: "artifact_original_hash_mismatch" });
+    expect(changed).not.toHaveProperty("textPage");
+  },
+);
+
+it("pages UTF8 text without omissions, replacement characters or unbounded escape expansion", async () => {
+  await seed();
+  const text = '证据😀\n"\u0001'.repeat(200);
+  await fs.writeFile(path.join(root, "state/runs/unicode.txt"), text);
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  try {
+    await store.register({
+      id: "unicode-text",
+      owner: "partial",
+      runId: "utf8",
+      observedAt: "2026-10-04T10:00:00Z",
+      relativePath: "state/runs/unicode.txt",
+      mimeType: "text/plain",
+      summary: "source text only",
+    });
+  } finally {
+    store.close();
+  }
+  const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
+  let offset: number | null = 0;
+  let recovered = "";
+  while (offset !== null) {
+    const result = (
+      await tool.execute("page", { action: "read", id: "unicode-text", textOffset: offset })
+    ).details as { available: boolean; textPage: string; nextTextOffset: number | null };
+    expect(result.available).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result.textPage))).toBeLessThanOrEqual(2048);
+    expect(result.textPage).not.toContain("�");
+    if (result.nextTextOffset !== null) {
+      expect(result.nextTextOffset).toBeGreaterThan(offset);
+    }
+    recovered += result.textPage;
+    offset = result.nextTextOffset;
+  }
+  expect(recovered).toBe(text);
+  expect(
+    (
+      await tool.execute("small", {
+        action: "read",
+        id: "unicode-text",
+        textOffset: 0,
+        textLimit: 1,
+      })
+    ).details,
+  ).toMatchObject({ available: false, gap: "artifact_text_page_too_small" });
+  expect(
+    (await tool.execute("middle", { action: "read", id: "unicode-text", textOffset: 1 })).details,
+  ).toMatchObject({ available: false, gap: "artifact_text_offset_invalid" });
+});
+
+it.each([
+  { textOffset: -1 },
+  { textOffset: 1.5 },
+  { textOffset: "0" },
+  { textOffset: 16 * 1024 * 1024 + 1 },
+  { textLimit: 0 },
+  { textLimit: 2049 },
+  { textOffset: 0, field: "/value" },
+  { action: "search", textOffset: 0 },
+])("rejects invalid or conflicting text page arguments %j", async (extra) => {
+  await seed();
+  const result = (
+    await createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root }).execute(
+      "invalid-page",
+      { action: "read", id: "real-result", ...extra },
+    )
+  ).details;
+  expect(result).toMatchObject({ available: false, gap: "artifact_text_page_invalid" });
+  expect(result).not.toHaveProperty("textPage");
+});
+
+it("keeps mixed-media redaction and reports the offset projection explicitly", async () => {
+  await seed();
+  const text = JSON.stringify({
+    schemaVersion: "lcx_agent_artifact_v1",
+    metadata: "useful image label",
+    content: [{ type: "image", mimeType: "image/png", data: "private-base64-content" }],
+  });
+  await fs.writeFile(path.join(root, "state/runs/media.json"), text);
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  let sha256: string;
+  try {
+    const result = await store.register({
+      id: "mixed-media",
+      owner: "partial",
+      runId: "media",
+      observedAt: "2026-10-04T10:00:00Z",
+      relativePath: "state/runs/media.json",
+      mimeType: "application/json",
+      summary: "original media retained",
+    });
+    sha256 = result.artifact.sha256;
+  } finally {
+    store.close();
+  }
+  const result = (
+    await createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root }).execute("page", {
+      action: "read",
+      id: "mixed-media",
+      textOffset: 0,
+    })
+  ).details as Record<string, unknown>;
+  expect(result).toMatchObject({
+    available: true,
+    sourceSha256: sha256,
+    textProjection: "metadata_and_text",
+  });
+  expect(result.textPage).toContain("useful image label");
+  expect(result.textPage).not.toContain("private-base64-content");
+  expect(await fs.readFile(path.join(root, "state/runs/media.json"), "utf8")).toBe(text);
+});
 
 it("puts a compact pointer and UTF8 text preview before large details", async () => {
   await seed();
@@ -628,4 +839,28 @@ it("keeps the existing source bound for selected-field reads", async () => {
   expect(
     (await tool.execute("bounded", { action: "read", id: "oversize", field: "/beta" })).details,
   ).toMatchObject({ available: false, gap: "artifact_field_text_unavailable" });
+  expect(
+    (
+      await tool.execute("text-head", {
+        action: "read",
+        id: "oversize",
+        textOffset: 0,
+        textLimit: 32,
+      })
+    ).details,
+  ).toMatchObject({ available: true, sourceTextTruncated: true });
+  const limit = (
+    await tool.execute("text-limit", {
+      action: "read",
+      id: "oversize",
+      textOffset: 16 * 1024 * 1024,
+    })
+  ).details;
+  expect(limit).toMatchObject({
+    available: false,
+    sourceAvailable: true,
+    artifactId: "oversize",
+    gap: "artifact_text_source_limit_reached",
+  });
+  expect(limit).not.toHaveProperty("textPage");
 });
