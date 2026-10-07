@@ -31,28 +31,39 @@ export function createFinanceTradeResultRecallCapability(options: {
     toolName: "finance_trade_result_recall",
     moduleIds: ["portfolio_risk_gates", "technical_timing", "finance_learning_memory"],
     description:
-      "Read a prior execution result for this account, Paper venue and instrument, available before review cutoff. At most four verified originals searched; no current account facts, strategy edge, self-recall or new research.",
+      "Read a prior execution result for this account, Paper venue and instrument, preferring the same direction before review cutoff. At most four verified originals searched; no current account facts, strategy edge, self-recall or new research.",
     execute: async ({ candidate, asOf, accountId, venue }, signal) => {
       signal.throwIfAborted();
       const cutoff = typeof asOf === "string" ? Date.parse(asOf) : NaN;
       if (!Number.isFinite(cutoff) || !accountId || venue !== "alpaca:paper") {
         return unavailable("finance_recall_host_scope_missing");
       }
-      const found = record(
-        (
-          await tool.execute(
-            "trade-review-result-search",
-            {
-              action: "search",
-              owner: OWNER,
-              query: candidate.instrument,
-              asOf,
-              limit: SEARCH_LIMIT,
-            },
-            signal,
-          )
-        ).details,
-      );
+      const search = async (query: string) =>
+        record(
+          (
+            await tool.execute(
+              "trade-review-result-search",
+              {
+                action: "search",
+                owner: OWNER,
+                query,
+                asOf,
+                limit: SEARCH_LIMIT,
+              },
+              signal,
+            )
+          ).details,
+        );
+      // Bare symbols also match other trades' portfolio context. Prefer the
+      // producer's instrument/direction phrase; retain older summary formats.
+      let found = await search(`${candidate.instrument} ${candidate.side}`);
+      if (
+        found?.available === true &&
+        Array.isArray(found.artifacts) &&
+        found.artifacts.length === 0
+      ) {
+        found = await search(candidate.instrument);
+      }
       signal.throwIfAborted();
       if (found?.available !== true || !Array.isArray(found.artifacts)) {
         return unavailable(

@@ -87,6 +87,7 @@ async function seed(
     observedAt?: string;
     sourceTime?: string;
     reasons?: string[];
+    summary?: string;
   } = {},
 ) {
   const id = options.id ?? "prior-result";
@@ -136,7 +137,7 @@ async function seed(
         observedAt: options.observedAt ?? oldTime,
         relativePath,
         mimeType: "application/json",
-        summary: "AAA historical execution result",
+        summary: options.summary ?? "AAA historical execution result",
       })
     ).artifact;
   } finally {
@@ -158,6 +159,7 @@ function run() {
 }
 it("reads the verified prior result with exact source identity and no database mutation", async () => {
   const source = await seed();
+  const search = vi.spyOn(ArtifactStore.prototype, "search");
   const before = await fs.readFile(path.join(root, "memory.sqlite"));
   expect(await run()).toMatchObject({
     ok: true,
@@ -167,6 +169,45 @@ it("reads the verified prior result with exact source identity and no database m
     recordedResult: { outcome: "refused", reasons: ["spread_cost_exceeds_edge"] },
   });
   expect(await fs.readFile(path.join(root, "memory.sqlite"))).toEqual(before);
+  expect(search.mock.calls.map(([args]) => args.query)).toEqual(["AAA buy", "AAA"]);
+});
+it("finds the original operation before newer portfolio mentions consume the four-original budget", async () => {
+  const source = await seed({ summary: "AAA buy: refused" });
+  for (let index = 0; index < 4; index++) {
+    await seed({
+      id: `portfolio-mention-${index}`,
+      instrument: "BBB",
+      summary: "BBB buy: refused; AAA appears in portfolio context",
+      observedAt: asOf,
+    });
+  }
+  const read = vi.spyOn(ArtifactStore.prototype, "read");
+  const search = vi.spyOn(ArtifactStore.prototype, "search");
+  expect(await run()).toMatchObject({ ok: true, sourceArtifactId: source.id });
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(search.mock.calls.map(([args]) => args.query)).toEqual(["AAA buy"]);
+});
+it("retains the original account boundary and four reads when precise matches belong to another account", async () => {
+  await seed({ summary: "AAA buy: refused" });
+  for (let index = 0; index < 4; index++) {
+    await seed({
+      id: `foreign-${index}`,
+      accountId: "other-account",
+      summary: "AAA buy: refused",
+      observedAt: asOf,
+      reasons: ["foreign-private-reason"],
+    });
+  }
+  const read = vi.spyOn(ArtifactStore.prototype, "read");
+  const search = vi.spyOn(ArtifactStore.prototype, "search");
+  const result = await run();
+  expect(result).toMatchObject({
+    ok: false,
+    gap: "finance_recall_no_scoped_result_in_bounded_page",
+  });
+  expect(JSON.stringify(result)).not.toContain("foreign-private-reason");
+  expect(read).toHaveBeenCalledTimes(4);
+  expect(search).toHaveBeenCalledTimes(1);
 });
 it.each([
   { accountId: "other-account" },
