@@ -25,7 +25,11 @@ describe("LCX live fadeout audit", () => {
       repositoryModel: string;
       remoteBranchModel: string;
       summary: { failed: number; total: number; liveReferenceNeedsReview: number };
-      checks: Array<{ id: string; ok: boolean }>;
+      checks: Array<{
+        id: string;
+        ok: boolean;
+        evidence: { missing?: string[]; requiredTerms?: string[] };
+      }>;
       liveReferenceInventory: { totalMatches: number };
     };
 
@@ -45,6 +49,22 @@ describe("LCX live fadeout audit", () => {
     expect(payload.remoteBranchModel).toContain("GitHub/GitLab");
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(10);
+    const driftSkill = payload.checks.find(
+      (check) => check.id === "runtime_drift_skill_uses_unified_local_model",
+    );
+    expect(driftSkill).toMatchObject({ ok: true, evidence: { missing: [] } });
+    expect(driftSkill?.evidence.requiredTerms).toEqual(
+      expect.arrayContaining([
+        "actual source commit",
+        "gateway",
+        "serve",
+        "finance scheduler",
+        "current profile",
+        "not a whole-system failure",
+        "user-visible-observed",
+        "send messages or place orders",
+      ]),
+    );
     expect(payload.liveReferenceInventory.totalMatches).toBeGreaterThan(0);
     expect(payload.checks.map((check) => check.id)).toEqual(
       expect.arrayContaining([
