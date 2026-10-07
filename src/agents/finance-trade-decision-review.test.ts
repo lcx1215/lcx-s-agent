@@ -465,6 +465,12 @@ describe("configured finance trade decision reviewer", () => {
       expect(prompt).toContain("consumed their results");
       expect(prompt).toContain("no profit forecast or proof is a prerequisite");
       expect(prompt).toContain("Never force activity to satisfy a target");
+      expect(prompt).toContain("Use the smallest sufficient subset of capabilities");
+      expect(prompt).toContain("quantitative or mathematical tools first");
+      expect(prompt).toContain("Full research or all modules passing is not a prerequisite");
+      expect(prompt).toContain("Do not seek simulator-only advantages");
+      expect(prompt).toContain("IEX observations are not the consolidated market");
+      expect(prompt).toContain("never Live authority");
       expect(prompt).toContain("Never add candidates or change instrument");
       expect(prompt).not.toContain("If evidence is incomplete, contradictory, or not sufficient");
     }
