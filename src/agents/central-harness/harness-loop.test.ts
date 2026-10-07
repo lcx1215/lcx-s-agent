@@ -325,6 +325,70 @@ describe("scope-bound evidence retention", () => {
     expect(outcomes[0].argsSha256).not.toBe(outcomes[1].argsSha256);
   });
 
+  it("retains current scope results beyond the count window without growing the budget", async () => {
+    const first = await observe({ directory: "a", page: 1 }, 7, "2026-09-21T00:00:00Z");
+    const second = await observe({ directory: "b", page: 1 }, 11, "2026-09-21T01:00:00Z");
+    const idle = Array.from({ length: 20 }, (_, index) => ({
+      ...second,
+      runId: `idle-${index}`,
+      observedAt: new Date(Date.parse(second.observedAt) + (index + 1) * 60_000).toISOString(),
+      steps: [],
+    }));
+    const backlog = compactReceipts([first, second, ...idle], 10, capabilities);
+    const outcomes = backlog.flatMap((entry) => entry.outcomes);
+    expect(outcomes.map((item) => item.outcome?.value)).toEqual([7, 11]);
+    expect(outcomes.map((item) => item.sourceObservedAt)).toEqual([
+      first.observedAt,
+      second.observedAt,
+    ]);
+    expect(backlog).toHaveLength(10);
+    expect(backlog.at(-1)?.atMs).toBe(Date.parse(idle.at(-1)!.observedAt));
+    expect(backlog[0].backlogEntriesOmitted).toBe(12);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8_500);
+  });
+
+  it("retains the latest failure rather than resurrecting success across a count window", async () => {
+    const success = await observe({ page: 1 }, 19, perception.observedAt);
+    const failure: CentralRunReceipt = {
+      ...success,
+      runId: "failed",
+      steps: success.steps.map((step) => ({
+        ...step,
+        status: "ran_failed",
+        outcome: undefined,
+        failureReason: "source unavailable",
+      })),
+    };
+    const idle = Array.from({ length: 20 }, (_, index) => ({
+      ...success,
+      runId: `idle-${index}`,
+      steps: [],
+    }));
+    const backlog = compactReceipts([success, failure, ...idle], 10, capabilities);
+    const current = backlog
+      .flatMap((entry) => entry.outcomes)
+      .filter((step) => !step.outcomeDroppedKeys?.includes("outcome_superseded_in_backlog"));
+    expect(current).toHaveLength(1);
+    expect(current[0]).toMatchObject({ status: "ran_failed", reason: "source unavailable" });
+    expect(backlog.flatMap((entry) => entry.outcomes).every((step) => !step.outcome)).toBe(true);
+  });
+
+  it("drops no-op headers before current results when bytes, not count, are exhausted", async () => {
+    const read = await observe({ page: 1 }, 29, perception.observedAt);
+    const idle = Array.from({ length: 30 }, (_, index) => ({
+      ...read,
+      runId: `idle-${index}`,
+      steps: [],
+      brainCall: { ...read.brainCall, note: "n".repeat(600) },
+    }));
+    const backlog = compactReceipts([read, ...idle], 100, capabilities);
+    const results = backlog.flatMap((entry) => entry.outcomes);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ outcome: { value: 29 }, sourceObservedAt: read.observedAt });
+    expect(backlog[0].backlogEntriesOmitted).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8_500);
+  });
+
   it("canonicalizes argument order and supersedes only the older exact scope", async () => {
     const first = await observe({ directory: "a", page: 1 }, 7, perception.observedAt);
     const second = await observe({ page: 1, directory: "a" }, 13, perception.observedAt);

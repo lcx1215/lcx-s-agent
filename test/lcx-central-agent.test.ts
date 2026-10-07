@@ -1096,6 +1096,27 @@ describe("central resume selects matching evidence before truncation", () => {
     expect(recovered.argsSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("keeps the original artifact and scope after thirty-five matching no-op decisions", () => {
+    const pending = original();
+    const idle = Array.from({ length: 35 }, (_, index) =>
+      receipt({ runId: `idle-${index}`, task, steps: [] }),
+    );
+    const selected = selectPersistedReceipts(jsonl([pending, ...idle]), task);
+    expect(selected.receipts).toHaveLength(36);
+    const backlog = compactReceipts(selected.receipts, 10);
+    const outcomes = backlog.flatMap((entry) => entry.outcomes);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      sourceObservedAt: pending.observedAt,
+      args: pending.steps[0].args,
+      resultArtifact: pending.steps[0].resultArtifact,
+      outcome: pending.steps[0].outcome,
+    });
+    expect(backlog).toHaveLength(10);
+    expect(backlog[0].backlogEntriesOmitted).toBe(26);
+    expect(buildCentralBrainPrompt(perception({ backlog }))).toContain("original-result");
+  });
+
   it("skips forty other-task decisions before applying the same forty-receipt limit", () => {
     const pending = original();
     const unrelated = Array.from({ length: 40 }, (_, i) =>

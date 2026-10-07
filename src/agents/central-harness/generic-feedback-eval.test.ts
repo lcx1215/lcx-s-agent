@@ -120,6 +120,38 @@ function regressionArgs(scale: number) {
 }
 
 describe("generic capability feedback through the production loop (offline scripted replay)", () => {
+  it("consumes actual calculation results after twenty unrelated completed decisions", async () => {
+    const run = await fixture();
+    const args = regressionArgs(7);
+    const read = await run.act({ ownerId: "quant_math", args });
+    await run.act({
+      ownerId: "learning_distill",
+      args: { since: "2026-10-01T00:00:00.000Z" },
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await run.cycle(() => ({ actions: [], note: "no changed input" }));
+    }
+    const final = await run.cycle((perception) => {
+      const [evidence] = retained(perception, "quant_math");
+      expect(evidence?.args).toEqual(args);
+      expect(evidence?.sourceObservedAt).toBe(read.observedAt);
+      expect((perception.backlog as readonly CompactBacklogEntry[]).length).toBeLessThanOrEqual(10);
+      return {
+        actions: [],
+        note: JSON.stringify({
+          status: evidence?.outcome ? "resolved" : "unknown",
+          beta: evidence?.outcome?.beta,
+          evidenceKind: "offline_scripted_replay",
+        }),
+      };
+    });
+    expect(JSON.parse(final.brainCall.note ?? "{}")).toEqual({
+      status: "resolved",
+      beta: 7,
+      evidenceKind: "offline_scripted_replay",
+    });
+  });
+
   it.each([2, 7])(
     "consumes actual engineering calculation after a stopped cycle and unrelated learning work (scale=%s)",
     async (scale) => {

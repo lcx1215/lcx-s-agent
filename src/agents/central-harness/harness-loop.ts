@@ -696,14 +696,15 @@ export function compactReceipts(
   carrySuccessfulOutcomeOwnerIds: ReadonlySet<string> = new Set(),
 ): readonly CompactBacklogEntry[] {
   const bounded = Number.isSafeInteger(max) ? Math.max(1, Math.min(max, 200)) : 20;
-  const tail = receipts.slice(-bounded);
+  // Supersession is scope-bound across the admitted recovery receipts. Count
+  // pressure must not treat later no-op cycles as consumption of a tool result.
   const isLargeReadPage = (step: CentralStep): boolean =>
     step.ownerId === "finance_bar_ledger" ||
     (step.ownerId === "finance_position_ledger_read" && isPlainRecord(step.outcome?.history));
   const argumentIdentity = (step: CentralStep) =>
     JSON.stringify([step.ownerId, canonicalContinuationValue(step.args)]);
   const latestAttempts = new Map<string, CentralStep>();
-  for (const receipt of tail) {
+  for (const receipt of receipts) {
     for (const step of receipt.steps) {
       // A rejected proposal did not read the source and cannot replace its evidence.
       // A green check supersedes the failed attempt while retaining its actual result.
@@ -714,13 +715,13 @@ export function compactReceipts(
   }
   const isCurrentHistoryPage = (step: CentralStep): boolean =>
     isLargeReadPage(step) && latestAttempts.get(argumentIdentity(step)) === step;
-  const newestHistoryReceiptIndex = tail.findLastIndex((receipt) =>
+  const newestHistoryReceiptIndex = receipts.findLastIndex((receipt) =>
     receipt.steps.some(isCurrentHistoryPage),
   );
-  const newestHistoryStep = tail[newestHistoryReceiptIndex]?.steps
+  const newestHistoryStep = receipts[newestHistoryReceiptIndex]?.steps
     .filter(isCurrentHistoryPage)
     .at(-1);
-  const mapped: CompactBacklogEntry[] = tail.map((receipt, index) => {
+  const mapped: CompactBacklogEntry[] = receipts.map((receipt, index) => {
     // An unrelated action or a no-op does not consume another tool's evidence.
     // Keep only its newest attempt, with the original scope and observation clock.
     const carriesHistory = index === newestHistoryReceiptIndex;
@@ -794,8 +795,26 @@ export function compactReceipts(
     );
   const carriesFocusPage = (entry: CompactBacklogEntry): boolean =>
     entry.outcomes.some(isFocusPage);
-  while (mapped.length > 1 && jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit) {
-    const removeIndex = mapped.findIndex((entry) => !carriesFocusPage(entry));
+  const carriesCurrentAttempt = (entry: CompactBacklogEntry): boolean =>
+    entry.outcomes.some(
+      (outcome) =>
+        (outcome.status === "ran_ok" || outcome.status === "ran_failed") &&
+        !outcome.outcomeDroppedKeys?.includes("outcome_superseded_in_backlog") &&
+        !outcome.outcomeDroppedKeys?.includes("read_page_superseded_in_backlog"),
+    );
+  while (
+    mapped.length > 1 &&
+    (mapped.length > bounded || jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit)
+  ) {
+    let removeIndex = mapped.findIndex(
+      (entry) => !carriesFocusPage(entry) && !carriesCurrentAttempt(entry),
+    );
+    if (removeIndex < 0) {
+      removeIndex = mapped.findIndex((entry) => !carriesFocusPage(entry));
+    }
+    if (removeIndex < 0 && mapped.length > bounded) {
+      removeIndex = 0;
+    }
     if (removeIndex < 0) {
       break;
     }
