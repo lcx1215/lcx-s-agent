@@ -165,6 +165,70 @@ it.each([
   },
 );
 
+it.each(["/missing", "/data"])(
+  "keeps verified recovery evidence for an unavailable selected field %s",
+  async (field) => {
+    await seed();
+    const relativePath = "state/runs/large-field.json";
+    const selected = { reason: "usable partial evidence", detail: "证据".repeat(12000) };
+    await fs.writeFile(
+      path.join(root, relativePath),
+      JSON.stringify({ data: selected, beta: 0.38 }),
+    );
+    const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+    let sha256: string;
+    try {
+      const result = await store.register({
+        id: "large-field",
+        owner: "math",
+        runId: "partial-read",
+        observedAt: "2026-10-04T10:00:00Z",
+        relativePath,
+        mimeType: "application/json",
+        summary: "bounded partial recovery",
+      });
+      sha256 = result.artifact.sha256;
+    } finally {
+      store.close();
+    }
+    const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
+    const receipt = await digestRecallTool(tool, { action: "read", id: "large-field", field });
+    const step = receipt.steps[0];
+    expect(step).toMatchObject({
+      status: "ran_ok",
+      observedOk: false,
+      outcome: {
+        available: false,
+        sourceAvailable: true,
+        selectionComplete: false,
+        artifactId: "large-field",
+        sourceSha256: sha256,
+        field,
+        gap: field === "/data" ? "artifact_field_budget_exceeded" : "artifact_field_missing",
+      },
+    });
+    expect(step.outcome).not.toHaveProperty("selectedValue");
+    expect(step.outcome).not.toHaveProperty("text");
+    expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(4096);
+    if (field === "/data") {
+      expect(step.outcome).toMatchObject({ selectedPreviewTruncated: true });
+      expect(step.outcome?.selectedPreview).toContain("usable partial evidence");
+      expect(Buffer.byteLength(String(step.outcome?.selectedPreview))).toBeLessThanOrEqual(160);
+    } else {
+      expect(step.outcome?.textPreview).toContain("usable partial evidence");
+    }
+    expect(
+      (await tool.execute("narrow", { action: "read", id: "large-field", field: "/data/reason" }))
+        .details,
+    ).toMatchObject({ available: true, sourceSha256: sha256, selectedValue: selected.reason });
+    const invalid = (
+      await tool.execute("invalid", { action: "read", id: "large-field", field: "data.reason" })
+    ).details;
+    expect(invalid).toMatchObject({ available: false, gap: "artifact_field_invalid" });
+    expect(invalid).not.toHaveProperty("sourceAvailable");
+  },
+);
+
 it("puts a compact pointer and UTF8 text preview before large details", async () => {
   await seed();
   const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });

@@ -183,43 +183,53 @@ export function createArtifactMemoryRecallTool(options: {
           ...(result.artifact.cutoff ? { sourceCutoff: result.artifact.cutoff } : {}),
         };
         if (field !== undefined) {
+          const unavailableField = (gap: string, selectedText?: string) => {
+            const fragment = preview(selectedText ?? result.text ?? "");
+            return jsonResult({
+              available: false,
+              authority: "local_read",
+              action,
+              field,
+              gap,
+              sourceAvailable: true,
+              selectionComplete: false,
+              artifactId: result.artifact.id,
+              format: result.artifact.format,
+              ...source,
+              ...(selectedText !== undefined
+                ? {
+                    selectedPreview: fragment.preview,
+                    selectedPreviewTruncated: fragment.truncated,
+                  }
+                : result.text === undefined
+                  ? {}
+                  : {
+                      textPreview: fragment.preview,
+                      previewTruncated: fragment.truncated || result.truncated,
+                    }),
+            });
+          };
           let selectedValue: unknown;
           try {
             selectedValue = selectJsonField(result.text, result.truncated, field);
           } catch (error) {
             if (
               !(error instanceof ArtifactStoreError) ||
-              !["artifact_field_json_unavailable", "artifact_field_text_unavailable"].includes(
-                error.code,
-              )
+              ![
+                "artifact_field_json_unavailable",
+                "artifact_field_text_unavailable",
+                "artifact_field_missing",
+              ].includes(error.code)
             ) {
               throw error;
             }
             // The verified original remains useful even when this field cannot
             // be extracted. Retain a bounded fragment without inventing a value.
-            const fragment = preview(result.text ?? "");
-            return jsonResult({
-              available: false,
-              authority: "local_read",
-              action,
-              field,
-              gap: error.code,
-              sourceAvailable: true,
-              selectionComplete: false,
-              artifactId: result.artifact.id,
-              format: result.artifact.format,
-              ...source,
-              ...(result.text === undefined
-                ? {}
-                : {
-                    textPreview: fragment.preview,
-                    previewTruncated: fragment.truncated || result.truncated,
-                  }),
-            });
+            return unavailableField(error.code);
           }
           const encoded = JSON.stringify(selectedValue);
           if (Buffer.byteLength(encoded) > ARTIFACT_TEXT_PREVIEW_MAX_BYTES) {
-            throw new ArtifactStoreError("artifact_field_budget_exceeded");
+            return unavailableField("artifact_field_budget_exceeded", encoded);
           }
           const selected = preview(encoded);
           const fieldResult = { ...result };
