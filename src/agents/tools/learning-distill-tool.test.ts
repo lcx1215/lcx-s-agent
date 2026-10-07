@@ -483,6 +483,95 @@ describe("learning_distill scoped retained-card read", () => {
   });
 });
 
+describe("learning_distill independent note reads", () => {
+  async function refuseOpen(notePath: string) {
+    const canonicalPath = await fs.realpath(notePath);
+    const original = fs.open.bind(fs);
+    return vi.spyOn(fs, "open").mockImplementation(async (file, flags, mode) => {
+      if (String(file) === canonicalPath) {
+        throw new Error("untrusted file failure text must not be echoed");
+      }
+      return original(file, flags, mode);
+    });
+  }
+
+  it("filters unrelated Markdown before attempting to read it", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    await writeNote(memoryDir, "2026-09-10", "review-good");
+    const unrelated = path.join(memoryDir, "unrelated.md");
+    await fs.writeFile(unrelated, "Not a learning note.");
+    const opens = await refuseOpen(unrelated);
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    expect(await run(tool, memoryDir, stateDir)).toMatchObject({
+      ok: true,
+      status: "distilled",
+      scanned: 1,
+      sourceStatus: "complete",
+    });
+    expect(opens.mock.calls.some(([file]) => String(file).endsWith("/unrelated.md"))).toBe(false);
+  });
+
+  it("retains a readable note, names one failed source, and retries it on the next run", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const good = "2026-09-10-review-good.md";
+    const failed = "2026-09-11-review-failed.md";
+    await fs.writeFile(path.join(memoryDir, good), reviewNote("2026-09-10"));
+    await fs.writeFile(path.join(memoryDir, failed), reviewNote("2026-09-11"));
+    const sourceBytes = await fs.readFile(path.join(memoryDir, failed));
+    const opens = await refuseOpen(path.join(memoryDir, failed));
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    const result = await run(tool, memoryDir, stateDir);
+    expect(result).toMatchObject({
+      ok: true,
+      status: "distilled",
+      scanned: 2,
+      sourceStatus: "partial",
+      unparsed: [{ name: failed, reason: "learning_review_note_unreadable" }],
+      cards: [expect.objectContaining({ name: good })],
+    });
+    const latest = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+    const state = JSON.parse(await fs.readFile(latest, "utf8"));
+    expect(state.sourceStatus).toBe("partial");
+    expect(state.done).toEqual([good]);
+    expect(state.processed).toEqual([expect.objectContaining({ name: good })]);
+    expect((await tool.execute("read", { action: "read", cardName: good })).details).toMatchObject({
+      ok: true,
+      corePrinciple: "a principle",
+    });
+    opens.mockRestore();
+    expect(await run(tool, memoryDir, stateDir)).toMatchObject({
+      ok: true,
+      sourceStatus: "complete",
+      alreadyProcessed: 1,
+      cards: [expect.objectContaining({ name: failed })],
+    });
+    expect(await fs.readFile(path.join(memoryDir, failed))).toEqual(sourceBytes);
+  });
+
+  it("keeps the last readable state when every matching source fails to read", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const name = "2026-09-10-review-prior.md";
+    await fs.writeFile(path.join(memoryDir, name), reviewNote("2026-09-10"));
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await run(tool, memoryDir, stateDir);
+    const latest = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+    const before = await fs.readFile(latest);
+    const runsDir = path.join(stateDir, "learning-workflow", "runs");
+    const runs = await fs.readdir(runsDir);
+    await refuseOpen(path.join(memoryDir, name));
+    expect(await run(tool, memoryDir, stateDir)).toMatchObject({
+      ok: false,
+      status: "unreadable",
+      sourceStatus: "unavailable",
+      scanned: 1,
+      reason: "learning_distill_memory_unreadable",
+      unparsed: [{ name, reason: "learning_review_note_unreadable" }],
+    });
+    expect(await fs.readFile(latest)).toEqual(before);
+    expect(await fs.readdir(runsDir)).toEqual(runs);
+  });
+});
+
 describe("learning_distill writer-reader contract", () => {
   it("names an oversized card before it can enter the pending queue", async () => {
     const { memoryDir, stateDir } = await storeRoot();

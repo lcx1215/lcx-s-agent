@@ -116,6 +116,7 @@ export type LearningWorkflowState = Readonly<{
   updatedAt: string;
   lastDistilledAt: string;
   scanned: number;
+  sourceStatus?: "complete" | "partial";
   pending: number;
   distilled: number;
   alreadyProcessed: number;
@@ -364,7 +365,7 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
     name: "learning_distill",
     label: "Learning Distill",
     description:
-      "Distill pending learning-review notes (written by the learning-review hook) into durable keep cards: topic, core principle, mistake pattern, micro-drill, transfer hint, foundation template, replay flag, and the next-eval drill. Use action=read and an exact cardName (latestRetainedCardName discovers the latest) to read one retained lesson without writes. Choose field=problem or field=workingAnswer for the original session question or method; the default field=corePrinciple is a topic template, not the source-session method. Excerpts report sourceNoteSha256 and named truncation; retention alone is not validation or skill promotion. Read-only over the workspace memory directory; it writes only its own local workflow state under <workspace>/state (learning-workflow). It never edits a review note, never invents a verdict, and reports an absent memory tree as a named failure rather than an empty queue.",
+      "Distill pending learning-review notes (written by the learning-review hook) into durable keep cards: topic, core principle, mistake pattern, micro-drill, transfer hint, foundation template, replay flag, and the next-eval drill. Use action=read and an exact cardName (latestRetainedCardName discovers the latest) to read one retained lesson without writes. Choose field=problem or field=workingAnswer for the original session question or method; the default field=corePrinciple is a topic template, not the source-session method. Excerpts report sourceNoteSha256 and named truncation; retention alone is not validation or skill promotion. Read-only over the workspace memory directory; it writes only its own local workflow state under <workspace>/state (learning-workflow). It never edits a review note or invents a verdict. Only matching review notes are opened; per-note read failures are named in unparsed and sourceStatus is partial when usable notes remain. An absent memory tree or total read failure is reported explicitly; total read failure preserves the prior state.",
     parameters: LearningDistillSchema,
     execute: async (_toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -503,22 +504,28 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
         const dirents = await fs.readdir(memoryDir, { withFileTypes: true });
         const entries = await Promise.all(
           dirents
-            .filter((dirent) => dirent.isFile() && dirent.name.endsWith(".md"))
-            .map(async (dirent) => ({
-              name: dirent.name,
-              content: (
-                await readFileWithinRoot({
+            .filter((dirent) => dirent.isFile() && LEARNING_FILE_RE.test(dirent.name))
+            .map(async (dirent) => {
+              try {
+                callerSignal?.throwIfAborted();
+                const read = await readFileWithinRoot({
                   rootDir: memoryDir,
                   relativePath: dirent.name,
-                })
-              ).buffer.toString("utf8"),
-            })),
+                });
+                return { name: dirent.name, content: read.buffer.toString("utf8") };
+              } catch {
+                callerSignal?.throwIfAborted();
+                return { name: dirent.name, content: undefined };
+              }
+            }),
         );
-        // Only learning-review notes participate; other memory notes are ignored.
-        const reviewEntries = entries.filter((entry) => LEARNING_FILE_RE.test(entry.name));
-        scanned = reviewEntries.length;
-        for (const entry of reviewEntries) {
+        scanned = entries.length;
+        for (const entry of entries) {
           callerSignal?.throwIfAborted();
+          if (entry.content === undefined) {
+            unparsed.push({ name: entry.name, reason: "learning_review_note_unreadable" });
+            continue;
+          }
           const result = parseReviewSnapshot(entry.name, entry.content);
           if (!result.ok) {
             unparsed.push({ name: entry.name, reason: result.reason });
@@ -542,12 +549,26 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
           }
           parsedCards.push(card);
         }
+        // A read outage must not replace the last usable state with an empty queue.
+        if (entries.length > 0 && entries.every((entry) => entry.content === undefined)) {
+          return jsonResult({
+            ok: false,
+            status: "unreadable",
+            sourceStatus: "unavailable",
+            reason: "learning_distill_memory_unreadable",
+            scanned,
+            unparsed,
+          });
+        }
       } catch {
         callerSignal?.throwIfAborted();
         return jsonResult({
           ok: false,
           status: "unreadable",
           reason: "learning_distill_memory_unreadable",
+          sourceStatus: "unavailable",
+          scanned,
+          unparsed,
           memoryDir,
           action: "Make the memory tree readable, then retry.",
         });
@@ -610,11 +631,13 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
       const runId = `learning-distill-${Date.now()}-${randomUUID().slice(0, 4)}`;
       const runsDir = path.join(stateDir, LEARNING_WORKFLOW_RUNS_RELATIVE_DIR);
       const runPath = path.join(runsDir, `${runId}.json`);
+      const sourceStatus = unparsed.length > 0 ? "partial" : "complete";
       const state: LearningWorkflowState = {
         schemaVersion: LEARNING_DISTILL_SCHEMA_VERSION,
         updatedAt: nowIso,
         lastDistilledAt: nowIso,
         scanned,
+        sourceStatus,
         pending: distilled,
         distilled,
         alreadyProcessed,
@@ -664,6 +687,7 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
         ok: true,
         status: distilled > 0 ? "distilled" : "no_pending_learning_items",
         reason: "ok",
+        sourceStatus,
         memoryDir,
         stateDir,
         scanned,
