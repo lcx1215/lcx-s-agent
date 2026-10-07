@@ -12,6 +12,7 @@ import {
   receiptsForHostTask,
   projectGovernanceDigest,
   projectRuntimeFreshness,
+  selectPersistedReceipts,
 } from "../scripts/operator/lcx-central-agent.js";
 import {
   runCentralHarnessCycle,
@@ -1029,6 +1030,168 @@ describe("terminal cycles are evidence, not resumable context", () => {
     expect(compactReceipts(resumableReceipts([failed]), 10)).toEqual([]);
     // The same cycle stays visible as evidence: dropping it from context is not deleting it.
     expect(compactReceipts([failed], 10)[0].brainOutcome).toBe("failed");
+  });
+});
+
+describe("central resume selects matching evidence before truncation", () => {
+  const task = { objective: "consume pending owner result", focus: "general" as const };
+  const original = () =>
+    receipt({
+      runId: "pending-original",
+      task,
+      observedAt: "2026-10-07T01:00:00Z",
+      nextAction: "follow_up_on_owner_results",
+      steps: [
+        {
+          stepId: "source-step",
+          ownerId: "fixture-owner",
+          args: { account: "synthetic", instrument: "SPY", page: 1 },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { sourceRef: "original-result", findings: ["requires next decision"] },
+          resultArtifact: {
+            status: "registered",
+            reason: "original",
+            id: `artifact-${"a".repeat(64)}`,
+            sha256: "b".repeat(64),
+          },
+        },
+      ],
+    });
+  const jsonl = (rows: readonly unknown[]) => rows.map((row) => JSON.stringify(row)).join("\n");
+
+  it("keeps the original scoped result after forty failed cycles without renewing its source clock", () => {
+    const pending = original();
+    const failures = Array.from({ length: 40 }, (_, i) =>
+      receipt({
+        runId: `failed-${i}`,
+        task,
+        steps: [],
+        brainCall: {
+          provider: "offline",
+          modelId: "fixture",
+          outcome: "failed",
+          reason: "offline outage",
+        },
+        nextAction: "halt_and_report",
+      }),
+    );
+    const selected = selectPersistedReceipts(jsonl([pending, ...failures]), task);
+    expect(selected).toMatchObject({
+      scannedRows: 41,
+      droppedNonDecisionCycles: 40,
+      skippedOtherTaskCycles: 0,
+      invalidRows: 0,
+    });
+    expect(selected.receipts).toEqual([pending]);
+    const expected = compactReceipts([pending], 10)[0].outcomes[0];
+    const recovered = compactReceipts(selected.receipts, 10)[0].outcomes[0];
+    expect(recovered).toEqual(expected);
+    expect(recovered).toMatchObject({
+      sourceObservedAt: pending.observedAt,
+      args: pending.steps[0].args,
+      resultArtifact: pending.steps[0].resultArtifact,
+      outcome: pending.steps[0].outcome,
+    });
+    expect(recovered.argsSha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("skips forty other-task decisions before applying the same forty-receipt limit", () => {
+    const pending = original();
+    const unrelated = Array.from({ length: 40 }, (_, i) =>
+      receipt({
+        runId: `other-${i}`,
+        task: { objective: "other work", focus: "general" },
+      }),
+    );
+    const selected = selectPersistedReceipts(jsonl([pending, ...unrelated]), task);
+    expect(selected.receipts).toEqual([pending]);
+    expect(selected).toMatchObject({
+      scannedRows: 41,
+      skippedOtherTaskCycles: 40,
+      droppedNonDecisionCycles: 0,
+    });
+  });
+
+  it("keeps legacy resident tasks separate from explicit objectives and focus", () => {
+    const legacy = receipt({ runId: "legacy" });
+    const current = original();
+    const finance = receipt({ runId: "finance", task: { ...task, focus: "finance" } });
+    const raw = jsonl([legacy, current, finance]);
+    expect(selectPersistedReceipts(raw).receipts).toEqual([legacy]);
+    expect(selectPersistedReceipts(raw, task).receipts).toEqual([current]);
+    expect(selectPersistedReceipts(raw, finance.task).receipts).toEqual([finance]);
+  });
+
+  it("retains the latest forty matching completed receipts in original order", () => {
+    const rows = Array.from({ length: 41 }, (_, i) => receipt({ runId: `match-${i}`, task }));
+    const selected = selectPersistedReceipts(jsonl(rows), task);
+    expect(selected.receipts).toEqual(rows.slice(1));
+    expect(selected.scannedRows).toBe(40);
+  });
+
+  it("names malformed rows without letting them evict or crash valid result recovery", () => {
+    const pending = original();
+    const malformed = [
+      "{",
+      "null",
+      "{}",
+      JSON.stringify("not a receipt"),
+      JSON.stringify({ ...pending, steps: null }),
+      JSON.stringify({ ...pending, steps: [{ ...pending.steps[0], args: [] }] }),
+      JSON.stringify({ ...pending, steps: [{ ...pending.steps[0], failureReason: {} }] }),
+    ];
+    const selected = selectPersistedReceipts([jsonl([pending]), ...malformed].join("\n"), task);
+    expect(selected.receipts).toEqual([pending]);
+    expect(selected.invalidRows).toBe(malformed.length);
+  });
+
+  it.each(["step.status", "brainCall.outcome", "task.focus"])(
+    "rejects forty array-valued %s rows before they can consume the resume window",
+    (field) => {
+      const pending = original();
+      const malformed = Array.from({ length: 40 }, (_, i) => ({
+        ...pending,
+        runId: `array-value-${i}`,
+        ...(field === "step.status"
+          ? { steps: [{ ...pending.steps[0], status: ["ran_ok"] }] }
+          : field === "brainCall.outcome"
+            ? { brainCall: { ...pending.brainCall, outcome: ["completed"] } }
+            : { task: { ...task, focus: ["general"] } }),
+      }));
+      const selected = selectPersistedReceipts(jsonl([pending, ...malformed]), task);
+      expect(selected).toMatchObject({
+        receipts: [pending],
+        invalidRows: 40,
+        scannedRows: 41,
+        droppedNonDecisionCycles: 0,
+        skippedOtherTaskCycles: 0,
+      });
+    },
+  );
+
+  it("keeps failed owner attempts when the brain completed, without calling them successful", () => {
+    const attempted = receipt({
+      task,
+      runId: "failed-owner",
+      steps: [
+        {
+          stepId: "failure",
+          ownerId: "fixture-owner",
+          args: {},
+          status: "ran_failed",
+          failureReason: "owner crashed",
+        },
+      ],
+      nextAction: "follow_up_on_failed_dispatch",
+    });
+    const selected = selectPersistedReceipts(jsonl([attempted]), task);
+    expect(selected.receipts).toEqual([attempted]);
+    expect(compactReceipts(selected.receipts, 10)[0].outcomes[0]).toMatchObject({
+      status: "ran_failed",
+      reason: "owner crashed",
+    });
+    expect(selected.droppedNonDecisionCycles).toBe(0);
   });
 });
 

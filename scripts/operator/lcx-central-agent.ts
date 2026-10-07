@@ -558,23 +558,104 @@ export function receiptsForHostTask(
   );
 }
 
-async function loadPersistedReceipts(): Promise<CentralRunReceipt[]> {
-  try {
-    const raw = await fs.readFile(LOG_PATH, "utf8");
-    const out: CentralRunReceipt[] = [];
-    for (const line of raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .slice(-RESUME_WINDOW)) {
-      try {
-        out.push(JSON.parse(line) as CentralRunReceipt);
-      } catch {
-        /* Skip malformed tail; keep going on the well-formed part. */
-      }
+type CentralResumeRead = Readonly<{
+  receipts: readonly CentralRunReceipt[];
+  scannedRows: number;
+  invalidRows: number;
+  droppedNonDecisionCycles: number;
+  skippedOtherTaskCycles: number;
+}>;
+
+function isResumeReceipt(value: unknown): value is CentralRunReceipt {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== "lcx_central_agent_v1" ||
+    typeof value.runId !== "string" ||
+    typeof value.observedAt !== "string" ||
+    !Number.isFinite(Date.parse(value.observedAt)) ||
+    typeof value.nextAction !== "string" ||
+    !isRecord(value.brainCall) ||
+    typeof value.brainCall.outcome !== "string" ||
+    !["completed", "failed", "blocked", "skipped"].includes(value.brainCall.outcome) ||
+    !Array.isArray(value.steps)
+  ) {
+    return false;
+  }
+  if (
+    value.task !== undefined &&
+    (!isRecord(value.task) ||
+      typeof value.task.objective !== "string" ||
+      typeof value.task.focus !== "string" ||
+      !["general", "finance"].includes(value.task.focus))
+  ) {
+    return false;
+  }
+  return value.steps.every(
+    (step: unknown) =>
+      isRecord(step) &&
+      typeof step.ownerId === "string" &&
+      isRecord(step.args) &&
+      typeof step.status === "string" &&
+      ["approved", "blocked_by_gate", "ran_ok", "ran_failed", "skipped"].includes(step.status) &&
+      (step.outcome === undefined || isRecord(step.outcome)) &&
+      (step.gateReason === undefined || typeof step.gateReason === "string") &&
+      (step.failureReason === undefined || typeof step.failureReason === "string") &&
+      (step.outcomeDroppedKeys === undefined ||
+        (Array.isArray(step.outcomeDroppedKeys) &&
+          step.outcomeDroppedKeys.every((key: unknown) => typeof key === "string"))),
+  );
+}
+
+/** Failures and other tasks remain audit evidence but cannot spend this task's resume window. */
+export function selectPersistedReceipts(raw: string, task?: CentralHostTask): CentralResumeRead {
+  const receipts: CentralRunReceipt[] = [];
+  let scannedRows = 0;
+  let invalidRows = 0;
+  let droppedNonDecisionCycles = 0;
+  let skippedOtherTaskCycles = 0;
+  for (const line of raw.split("\n").toReversed()) {
+    if (!line.trim()) {
+      continue;
     }
-    return out;
+    scannedRows += 1;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      invalidRows += 1;
+      continue;
+    }
+    if (!isResumeReceipt(value)) {
+      invalidRows += 1;
+      continue;
+    }
+    if (value.brainCall.outcome !== "completed") {
+      droppedNonDecisionCycles += 1;
+      continue;
+    }
+    if (receiptsForHostTask([value], task).length === 0) {
+      skippedOtherTaskCycles += 1;
+      continue;
+    }
+    receipts.push(value);
+    if (receipts.length === RESUME_WINDOW) {
+      break;
+    }
+  }
+  return {
+    receipts: receipts.toReversed(),
+    scannedRows,
+    invalidRows,
+    droppedNonDecisionCycles,
+    skippedOtherTaskCycles,
+  };
+}
+
+async function loadPersistedReceipts(task?: CentralHostTask): Promise<CentralResumeRead> {
+  try {
+    return selectPersistedReceipts(await fs.readFile(LOG_PATH, "utf8"), task);
   } catch {
-    return [];
+    return selectPersistedReceipts("", task);
   }
 }
 
@@ -658,6 +739,7 @@ async function writeLatest(
     planOnly: boolean;
     runSnapshotPath?: string;
     droppedNonDecisionCycles: number;
+    resumeScan: Readonly<Record<string, unknown>>;
     evidenceWriteFailures: readonly EvidenceWriteFailure[];
     capabilityDrain: readonly string[];
     receiptPersistenceDurationMs: number | null;
@@ -695,6 +777,7 @@ async function writeLatest(
     supersededThisRun: pointer.superseded && receipt ? receipt.runId : null,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: meta.droppedNonDecisionCycles,
+    resumeScan: meta.resumeScan,
     /** Why this invocation stopped, from the TypeScript-authored receipt verdict. */
     continuation: meta.continuation ?? null,
     /** Byte budget actually applied to the brain's perception this cycle. */
@@ -773,13 +856,23 @@ async function main(): Promise<void> {
     ? "dry_run_no_recovery"
     : "no_persisted_cycle";
   // thread-store resume: recover prior cycles so the brain inherits context.
-  let history = await loadPersistedReceipts();
+  const loadedResume = await loadPersistedReceipts(task);
+  droppedNonDecisionCycles = loadedResume.droppedNonDecisionCycles;
+  const resumeScan = {
+    scope: "physical_log_suffix_until_40_matching_completed_receipts",
+    window: RESUME_WINDOW,
+    scannedRows: loadedResume.scannedRows,
+    invalidRows: loadedResume.invalidRows,
+    skippedOtherTaskCycles: loadedResume.skippedOtherTaskCycles,
+  };
+  let history = [...loadedResume.receipts];
   while (Date.now() < deadline && runs < maxCycles) {
     // context compaction: only the compacted tail reaches the brain, never raw history.
     // Terminal cycles are dropped first: a cycle whose brain call did not complete
     // carries no decision, so inheriting it would let an outage read as precedent.
     const completed = resumableReceipts(history);
-    droppedNonDecisionCycles = history.length - completed.length;
+    droppedNonDecisionCycles =
+      loadedResume.droppedNonDecisionCycles + history.length - completed.length;
     const resumable = receiptsForHostTask(completed, task);
     const perceptionBuildStartedAt = performance.now();
     const perception = await buildPerception(
@@ -885,6 +978,7 @@ async function main(): Promise<void> {
       planOnly,
       ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
       droppedNonDecisionCycles,
+      resumeScan,
       evidenceWriteFailures,
       artifactBackfill,
       artifactBackfillDeferredReason,
@@ -945,6 +1039,7 @@ async function main(): Promise<void> {
     runsDir: RUNS_DIR,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: droppedNonDecisionCycles,
+    resumeScan,
     /** Byte budget applied to the brain's perception, with every dropped key named. */
     contextBudget: lastReceipt?.contextBudget ?? null,
     stageDurationsMs: lastReceipt?.stageDurationsMs ?? null,
