@@ -2666,6 +2666,91 @@ describe("research module composition reaches actual model request boundaries", 
     }
   });
 
+  it.each(["schema_fields", "unknown_evidence", "unselected_module"] as const)(
+    "keeps bounded producer diagnostics without echoing model-authored material: %s",
+    async (defect) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-producer-diagnostic-"));
+      const untrusted = `private-model-material-${"x".repeat(12_000)}`;
+      try {
+        const result = await runFinanceResearchRun({
+          input: {
+            ask: "Review technical timing",
+            asOf: AS_OF,
+            targets,
+            executeModules: true,
+            moduleSelection: {
+              moduleIds: ["technical_timing"],
+              rationale: "Bounded timing review.",
+            },
+          },
+          workspaceDir: directory,
+          liveFetch: true,
+          qualityEnabled: false,
+          batchOptions: BATCH_OPTIONS,
+          modelInvoker: async (request) => {
+            const output = await modelInvoker(request);
+            const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
+            if (payload.stage !== "draft") {
+              return output;
+            }
+            const artifact = (
+              output as { artifact: { supportingAnalysis: Record<string, unknown> } }
+            ).artifact;
+            const causal = {
+              domain: "causal_map",
+              sourceArtifacts: [payload.evidence?.[0]?.id ?? "finance-batch-summary"],
+              evidenceCategories: ["causal_chain_evidence"],
+              evidenceSummary:
+                "Timestamped source evidence supports a conditional transmission hypothesis.",
+              baseCase: "conditional transmission persists",
+              bullCase: "supportive transmission persists",
+              bearCase: "the transmission reverses",
+              keyCausalChain: "observed input -> transmission mechanism -> conditional repricing",
+              upstreamDrivers: ["cited observed input"],
+              downstreamAssetImpacts: ["conditional repricing"],
+              confidenceOrConviction: "medium",
+              whatChangesMyMind: "a counter-observation breaks the mechanism",
+              noActionReason: "research grants no order authority",
+              riskGateNotes: "execution gates remain required",
+              allowedActionAuthority: "research_only",
+            };
+            artifact.supportingAnalysis.financeFrameworkProducerInputs =
+              defect === "schema_fields"
+                ? { causal_map: { ...causal, upstreamDrivers: 42, [untrusted]: "private value" } }
+                : defect === "unknown_evidence"
+                  ? { causal_map: { ...causal, sourceArtifacts: [untrusted] } }
+                  : { causal_map: causal, [untrusted]: {} };
+            return output;
+          },
+        });
+        const diagnostics = result.missingEvidence.filter((entry) =>
+          entry.startsWith("module_producer_input:"),
+        );
+        expect(diagnostics).toHaveLength(1);
+        expect(Buffer.byteLength(diagnostics[0])).toBeLessThan(512);
+        expect(diagnostics[0]).not.toContain("private-model-material");
+        expect(diagnostics[0]).not.toContain("private value");
+        if (defect === "schema_fields") {
+          expect(diagnostics[0]).toContain("upstreamDrivers:invalid_type");
+          expect(diagnostics[0]).toContain("unexpected_fields");
+        } else if (defect === "unknown_evidence") {
+          expect(diagnostics[0]).toContain(
+            "sourceArtifacts must use only listed sourceArtifactIds",
+          );
+        } else {
+          expect(diagnostics[0]).toContain("selectedModuleIds");
+        }
+        expect(result.status).not.toBe("candidate");
+        expect(result.moduleExecution?.requiredNodesSucceeded).toBe(false);
+        expect(
+          result.moduleExecution?.nodes.find((node) => node.moduleId === "causal_map")?.status,
+        ).toBe("blocked_missing_evidence");
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([
     "all",
     "optional_missing",

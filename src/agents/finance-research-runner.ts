@@ -45,6 +45,7 @@ import {
   type FinanceModuleExecutionReceipt,
 } from "./finance-module-execution.js";
 import {
+  describeFinanceProducerInputError,
   financeProducerInputContract,
   parseFinanceDomainProducerInputs,
   type FinanceDomainProducerInputs,
@@ -2796,9 +2797,12 @@ export async function runFinanceResearchRun(
           new Set(evidence.map((item) => item.id)),
         );
       } catch (error) {
-        producerInputIssues.push(
-          `module_producer_input:${error instanceof Error ? error.message : String(error)}`,
-        );
+        const failure =
+          error instanceof Error &&
+          /^upstream_research_draft_(missing|failed|blocked)$/u.test(error.message)
+            ? error.message
+            : describeFinanceProducerInputError(error);
+        producerInputIssues.push(`module_producer_input:${failure}`);
       }
       const executed = await (options.moduleExecutor ?? executeFinanceModuleComposition)({
         ask,
