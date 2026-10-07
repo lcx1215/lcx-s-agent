@@ -3,7 +3,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import vm from "node:vm";
+import ts from "typescript";
+import { describe, expect, it, vi } from "vitest";
+import {
+  boundaryFromFlags,
+  buildLcxRunReceipt,
+  createLcxRunId,
+  createLcxRunSnapshot,
+  type LcxRunReceipt,
+} from "../src/shared/lcx-run-receipt.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -191,6 +200,294 @@ async function runAutopilot() {
     protectedMemoryTouched: boolean;
   };
 }
+
+describe("offline same-cycle central handoff", () => {
+  type FixtureRun = {
+    id: string;
+    parsed: boolean;
+    ok: boolean;
+    command: string;
+    exitCode: number;
+    compact: Record<string, unknown>;
+    payload: Record<string, unknown>;
+    runReceipt: LcxRunReceipt;
+    error?: string;
+  };
+  const snapshot = createLcxRunSnapshot({
+    observedAt: "2026-10-07T03:00:00Z",
+    sourceCommit: "offline-source",
+    sourceBranch: "test",
+    authorityOwner: "lcx-governance-autopilot",
+  });
+  function owner(id: string, compact: Record<string, unknown> = {}): FixtureRun {
+    return {
+      id,
+      parsed: true,
+      ok: true,
+      command: `fixture:${id}`,
+      exitCode: 0,
+      compact,
+      payload: { ok: true, fullDetail: "not sent to the decision child" },
+      runReceipt: buildLcxRunReceipt({
+        runId: `offline-${id}`,
+        parentRunId: "offline-parent",
+        owner: id,
+        phase: "observe",
+        status: "passed",
+        checkedAt: snapshot.observedAt,
+        snapshot,
+        boundary: boundaryFromFlags({ scope: "offline" }),
+        evidence: [],
+        nextAction: "none",
+      }),
+    };
+  }
+  async function fixture(
+    options: {
+      beforeDirect?: () => Promise<void>;
+      beforeAcceptance?: () => Promise<void>;
+      failWrite?: boolean;
+      centralFails?: boolean;
+    } = {},
+  ) {
+    // Evaluate actual scheduling statements with isolated owners, never import/run the CLI.
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"),
+      "utf8",
+    );
+    const ast = ts.createSourceFile("autopilot.ts", source, ts.ScriptTarget.ESNext, true);
+    const declarationName = (statement: ts.Statement): string | undefined =>
+      ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations[0]?.name.getText(ast)
+        : undefined;
+    const first = ast.statements.findIndex(
+      (statement) => declarationName(statement) === "directOwnerCommands",
+    );
+    const last = ast.statements.findIndex(
+      (statement) => declarationName(statement) === "ownerById",
+    );
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(last).toBeGreaterThan(first);
+    const helpers = new Set([
+      "runCentralOwnerAfterSnapshots",
+      "buildOwnerRunReceipt",
+      "ownerRunStatus",
+      "ownerBoundary",
+      "ownerEvidence",
+      "ownerNextAction",
+      "ownerMap",
+      "toProblemRadarOwnerSnapshot",
+      "toCommercialAcceptanceOwnerSnapshot",
+    ]);
+    const functions = ast.statements
+      .filter(
+        (statement) =>
+          ts.isFunctionDeclaration(statement) && helpers.has(statement.name?.text ?? ""),
+      )
+      .map((statement) => statement.getText(ast))
+      .join("\n");
+    const commands = ast.statements.find(
+      (statement) => declarationName(statement) === "OWNER_COMMANDS",
+    );
+    if (!commands) {
+      throw new Error("original owner commands missing");
+    }
+    const sequence = ast.statements
+      .slice(first, last + 1)
+      .map((statement) => statement.getText(ast))
+      .join("\n");
+    const body = `const {fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId}=deps;
+      ${functions}
+      ${commands.getText(ast)}
+      const problemRadarCommand=OWNER_COMMANDS.find(command=>command.id==='problemRadar');
+      const commercialAcceptanceCommand=OWNER_COMMANDS.find(command=>command.id==='commercialAcceptance');
+      const centralAgentCommand=OWNER_COMMANDS.find(command=>command.id==='centralAgent');
+      const ownerFanoutStartedAt=performance.now();
+      return { run: async()=>{${sequence}; return [...ownerById.values()];},
+        handoff:(completed)=>runCentralOwnerAfterSnapshots(centralAgentCommand,completed,{parentRunId:governanceRunId,snapshot:governanceSnapshot}) };`;
+    const compiled = ts.transpileModule(body, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const events: string[] = [];
+    const inputPaths: string[] = [];
+    const temporaryDirectories: string[] = [];
+    const inputs: Record<string, unknown>[] = [];
+    const runOwner = vi.fn(async (command: { id: string; args?: string[] }) => {
+      events.push(`start:${command.id}`);
+      if (command.id === "centralAgent") {
+        const index = command.args?.indexOf("--governance-input") ?? -1;
+        expect(index).toBeGreaterThanOrEqual(0);
+        const inputPath = command.args?.[index + 1];
+        if (!inputPath) {
+          throw new Error("missing original handoff path");
+        }
+        inputPaths.push(inputPath);
+        expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        inputs.push(JSON.parse(await fs.readFile(inputPath, "utf8")));
+      } else {
+        await options.beforeDirect?.();
+      }
+      events.push(`done:${command.id}`);
+      const result = owner(command.id, {
+        artifactEvidence: { status: "registered", id: `artifact-${command.id}` },
+        sourceObservedAt: snapshot.observedAt,
+      });
+      if (command.id === "centralAgent" && options.centralFails) {
+        result.ok = false;
+        result.runReceipt = { ...result.runReceipt, status: "blocked" };
+      }
+      return result;
+    });
+    const evaluate = vm.runInThisContext(`(function(deps){${compiled}})`) as (
+      dependencies: Record<string, unknown>,
+    ) => {
+      run: () => Promise<FixtureRun[]>;
+      handoff: (owners: FixtureRun[]) => Promise<FixtureRun>;
+    };
+    const harness = evaluate({
+      fs: {
+        ...fs,
+        mkdtemp: async (prefix: string) => {
+          const directory = await fs.mkdtemp(prefix);
+          temporaryDirectories.push(directory);
+          return directory;
+        },
+        writeFile: options.failWrite
+          ? async () => {
+              throw new Error("isolated write denied");
+            }
+          : fs.writeFile,
+      },
+      os,
+      path,
+      runOwner,
+      buildLcxRunReceipt,
+      createLcxRunId,
+      boundaryFromFlags,
+      governanceSnapshot: snapshot,
+      governanceRunId: "offline-parent",
+      ownerRunFromPayload: (command: { id: string }) => owner(command.id),
+      captureOwnerRun: async (run: FixtureRun) => {
+        events.push(`captured:${run.id}`);
+        return run;
+      },
+      collectProblemRadarExclusiveSnapshots: async () => ({}),
+      collectCommercialAcceptanceExclusiveSnapshots: async () => {
+        await options.beforeAcceptance?.();
+        return {};
+      },
+      buildProblemClusterRadarFromSnapshots: async () => ({}),
+      combineCommercialAcceptanceSnapshots: () => ({}),
+      buildCommercialAcceptanceHarness: () => ({ summary: { failed: 0 } }),
+    });
+    return { ...harness, events, inputPaths, temporaryDirectories, inputs, runOwner };
+  }
+
+  it("waits for settled owners and both aggregations, then calls central exactly once", async () => {
+    let releaseDirect!: () => void;
+    let releaseAcceptance!: () => void;
+    const direct = new Promise<void>((resolve) => {
+      releaseDirect = resolve;
+    });
+    const acceptance = new Promise<void>((resolve) => {
+      releaseAcceptance = resolve;
+    });
+    const harness = await fixture({
+      beforeDirect: () => direct,
+      beforeAcceptance: () => acceptance,
+    });
+    const pending = harness.run();
+    await Promise.resolve();
+    expect(harness.events.some((event) => event === "start:centralAgent")).toBe(false);
+    releaseDirect();
+    await Promise.resolve();
+    expect(harness.events.some((event) => event === "start:centralAgent")).toBe(false);
+    releaseAcceptance();
+    const runs = await pending;
+    const centralIndex = harness.events.indexOf("start:centralAgent");
+    expect(centralIndex).toBeGreaterThan(harness.events.indexOf("captured:problemRadar"));
+    expect(centralIndex).toBeGreaterThan(harness.events.indexOf("captured:commercialAcceptance"));
+    expect(runs.map((run) => run.id)).toHaveLength(19);
+    expect(new Set(harness.runOwner.mock.calls.map(([command]) => command.id)).size).toBe(17);
+    expect(harness.runOwner).toHaveBeenCalledTimes(17);
+    const input = harness.inputs[0];
+    expect(input).toMatchObject({
+      schemaVersion: "lcx_central_governance_input_v1",
+      boundary: "same_cycle_completed_owners_only",
+      phase: "before_central_decision",
+      parentRunId: "offline-parent",
+      snapshot,
+    });
+    const byOwner = input.byOwner as Record<string, Record<string, unknown>>;
+    expect(Object.keys(byOwner)).toHaveLength(18);
+    expect(byOwner.centralAgent).toBeUndefined();
+    expect(Object.keys(byOwner.trainingPlan).toSorted()).toEqual([
+      "compact",
+      "id",
+      "ok",
+      "runReceipt",
+    ]);
+    expect(byOwner.trainingPlan.compact).toMatchObject({ sourceObservedAt: snapshot.observedAt });
+    expect(byOwner.trainingPlan.runReceipt).toMatchObject({ checkedAt: snapshot.observedAt });
+    expect(input.checkedAt).not.toBe(snapshot.observedAt);
+    await expect(fs.access(harness.inputPaths[0])).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("excludes a supplied central result while preserving original artifact refs", async () => {
+    const harness = await fixture();
+    const completed = owner("trainingPlan", {
+      sourceObservedAt: snapshot.observedAt,
+      artifactEvidence: { status: "registered", id: "artifact-original", sha256: "original-hash" },
+    });
+    await harness.handoff([completed, owner("centralAgent")]);
+    const input = harness.inputs[0];
+    expect(input.byOwner).toEqual({
+      trainingPlan: {
+        id: completed.id,
+        ok: completed.ok,
+        compact: completed.compact,
+        runReceipt: completed.runReceipt,
+      },
+    });
+    await expect(fs.access(harness.inputPaths[0])).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reports handoff write failure and oversized input without falling back to a central call", async () => {
+    for (const failWrite of [true, false]) {
+      const harness = await fixture({ failWrite });
+      const result = await harness.handoff([
+        owner("trainingPlan", { detail: failWrite ? "small" : "字".repeat(180000) }),
+      ]);
+      expect(result).toMatchObject({
+        parsed: false,
+        ok: false,
+        exitCode: 1,
+        runReceipt: { status: "failed" },
+      });
+      expect(result.error).toContain("central_governance_input_unavailable");
+      expect(result.error).toContain(failWrite ? "isolated write denied" : "512 KiB");
+      expect(harness.runOwner).not.toHaveBeenCalled();
+      for (const directory of harness.temporaryDirectories) {
+        await expect(fs.access(directory)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    }
+  });
+
+  it("preserves a central business failure while removing its handoff", async () => {
+    const harness = await fixture({ centralFails: true });
+    const result = await harness.handoff([owner("trainingPlan")]);
+    expect(result).toMatchObject({
+      parsed: true,
+      ok: false,
+      runReceipt: { status: "blocked" },
+      compact: { artifactEvidence: { id: "artifact-centralAgent" } },
+    });
+    expect(harness.runOwner).toHaveBeenCalledTimes(1);
+    await expect(fs.access(harness.temporaryDirectories[0])).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
 
 describe("LCX governance autopilot", () => {
   it("runs and persists the read-only governance owner stack", async () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,6 +35,7 @@ import type {
 } from "../../src/agents/central-harness/types.js";
 import { buildFinanceAutomaticLifecycleFeedback } from "../../src/agents/finance-automatic-lifecycle-feedback.js";
 import { loadConfig } from "../../src/config/io.js";
+import { readFileWithinRoot } from "../../src/infra/fs-safe.js";
 import {
   backfillOwnerArtifacts,
   type OwnerArtifactBackfillReceipt,
@@ -81,6 +83,12 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
     } else if (arg === "--max-cycles") {
       out.maxCycles = Number(args[i + 1]);
       i += 1;
+    } else if (arg === "--governance-input") {
+      const value = args[++i];
+      if (!value || value.startsWith("--")) {
+        throw new ParseError("--governance-input requires a path");
+      }
+      out.governanceInput = value;
     } else if (arg === "--objective" || arg === "--focus") {
       const value = args[i + 1];
       if (value === undefined || value.startsWith("--") || !value.trim()) {
@@ -100,7 +108,7 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
       out.json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new ParseError(
-        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json] [--objective TEXT] [--focus general|finance]",
+        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json] [--objective TEXT] [--focus general|finance] [--governance-input PATH]",
       );
     } else {
       throw new ParseError(`unknown argument: ${arg}`);
@@ -137,33 +145,122 @@ async function readLatest<T>(name: string, fallback: T): Promise<T> {
   }
 }
 
-function extractOwnerTotals(state: Record<string, unknown>): Record<string, unknown> {
-  const byOwner = state.byOwner as Record<string, unknown> | undefined;
-  if (byOwner && typeof byOwner === "object") {
-    const totals: Record<string, unknown> = {};
-    for (const [ownerId, run] of Object.entries(byOwner)) {
-      const r = run as Record<string, unknown>;
-      const compact = r?.compact as Record<string, unknown> | undefined;
-      totals[ownerId] = {
-        ok: r?.ok,
-        status: (r?.runReceipt as Record<string, unknown> | undefined)?.status,
-        ...(compact?.ok !== undefined ? { compactOk: compact.ok } : {}),
-      };
+/** Accept the original completed-owner handoff, never a fabricated final verdict. */
+export async function readCentralGovernanceInput(
+  inputPath: string,
+): Promise<Readonly<Record<string, unknown>>> {
+  try {
+    const resolved = path.resolve(inputPath);
+    const { buffer } = await readFileWithinRoot({
+      rootDir: path.dirname(resolved),
+      relativePath: path.basename(resolved),
+      maxBytes: 512 * 1024,
+    });
+    const value: unknown = JSON.parse(buffer.toString("utf8"));
+    if (
+      !isRecord(value) ||
+      value.schemaVersion !== "lcx_central_governance_input_v1" ||
+      value.boundary !== "same_cycle_completed_owners_only" ||
+      value.phase !== "before_central_decision" ||
+      typeof value.parentRunId !== "string" ||
+      !value.parentRunId.trim() ||
+      typeof value.checkedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.checkedAt)) ||
+      !isRecord(value.snapshot) ||
+      value.snapshot.authorityOwner !== "lcx-governance-autopilot" ||
+      typeof value.snapshot.snapshotId !== "string" ||
+      !value.snapshot.snapshotId ||
+      typeof value.snapshot.observedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.snapshot.observedAt)) ||
+      typeof value.snapshot.sourceCommit !== "string" ||
+      !value.snapshot.sourceCommit ||
+      Date.parse(value.checkedAt) < Date.parse(value.snapshot.observedAt) ||
+      !isRecord(value.byOwner) ||
+      Object.hasOwn(value.byOwner, "centralAgent") ||
+      Object.keys(value.byOwner).length === 0 ||
+      Object.keys(value.byOwner).length > 64
+    ) {
+      throw new Error("invalid handoff");
     }
-    return totals;
+    const owners: Record<string, unknown> = {};
+    const failures: string[] = [];
+    for (const [id, owner] of Object.entries(value.byOwner)) {
+      if (
+        !isRecord(owner) ||
+        owner.id !== id ||
+        !isRecord(owner.compact) ||
+        !isRecord(owner.runReceipt) ||
+        owner.runReceipt.owner !== id ||
+        owner.runReceipt.parentRunId !== value.parentRunId ||
+        !isRecord(owner.runReceipt.snapshot) ||
+        owner.runReceipt.snapshot.snapshotId !== value.snapshot.snapshotId ||
+        owner.runReceipt.snapshot.sourceCommit !== value.snapshot.sourceCommit ||
+        owner.runReceipt.snapshot.observedAt !== value.snapshot.observedAt ||
+        typeof owner.runReceipt.checkedAt !== "string" ||
+        !Number.isFinite(Date.parse(owner.runReceipt.checkedAt))
+      ) {
+        throw new Error("invalid owner binding");
+      }
+      owners[id] = owner.compact;
+      if (owner.runReceipt.status === "failed" || owner.runReceipt.status === "blocked") {
+        failures.push(id);
+      }
+    }
+    return {
+      ...value,
+      sourceSha256: createHash("sha256").update(buffer).digest("hex"),
+      owners,
+      summary: { structuralOwnerFailures: failures },
+    };
+  } catch {
+    // Explicit handoff failure must not silently revert to the previous cycle.
+    throw new ParseError("central_governance_input_unavailable_or_invalid");
   }
-  return {};
 }
 
-async function buildPerception(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function extractOwnerTotals(state: Record<string, unknown>): Record<string, unknown> {
+  const byOwner = isRecord(state.byOwner)
+    ? state.byOwner
+    : Object.fromEntries(
+        (Array.isArray(state.ownerCommands) ? state.ownerCommands : [])
+          .filter(
+            (owner): owner is Record<string, unknown> =>
+              isRecord(owner) && typeof owner.id === "string",
+          )
+          .map((owner) => [String(owner.id), owner]),
+      );
+  const totals: Record<string, unknown> = {};
+  for (const [ownerId, run] of Object.entries(byOwner)) {
+    if (!isRecord(run)) {
+      continue;
+    }
+    const compact = isRecord(run.compact)
+      ? run.compact
+      : isRecord(state.owners) && isRecord(state.owners[ownerId])
+        ? state.owners[ownerId]
+        : {};
+    totals[ownerId] = {
+      ok: run.ok,
+      status: isRecord(run.runReceipt) ? run.runReceipt.status : undefined,
+      ...(compact.ok !== undefined ? { compactOk: compact.ok } : {}),
+    };
+  }
+  return totals;
+}
+
+export async function buildPerception(
   backlog: readonly CompactBacklogEntry[],
   task?: CentralHostTask,
+  governanceInput?: Readonly<Record<string, unknown>>,
 ): Promise<CentralPerception> {
   const controlRoom = await readLatest<Record<string, unknown>>("lcx-control-room-latest.json", {});
-  const governance = await readLatest<Record<string, unknown>>(
-    "lcx-governance-autopilot-latest.json",
-    {},
-  );
+  const governance =
+    governanceInput ??
+    (await readLatest<Record<string, unknown>>("lcx-governance-autopilot-latest.json", {}));
   const learningWorkflow = await readLatest<Record<string, unknown>>(
     "lcx-learning-workflow-latest.json",
     {},
@@ -193,10 +290,25 @@ async function buildPerception(
       // Prioritize finance's actionable state within the bounded control-room section.
       ...(financeAutomaticLifecycle ? { financeAutomaticLifecycle } : {}),
       ...controlRoomProjection,
-      runtimeFreshness: projectRuntimeFreshness(
-        { controlRoom, governance, learningWorkflow },
-        observedAt,
-      ),
+      runtimeFreshness: {
+        ...projectRuntimeFreshness({ controlRoom, governance, learningWorkflow }, observedAt),
+        ...(governanceInput
+          ? {
+              sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
+              governanceInput: {
+                parentRunId: governanceInput.parentRunId,
+                snapshotId: isRecord(governanceInput.snapshot)
+                  ? governanceInput.snapshot.snapshotId
+                  : null,
+                sourceSha256: governanceInput.sourceSha256,
+                phase: governanceInput.phase,
+                ownerCount: isRecord(governanceInput.byOwner)
+                  ? Object.keys(governanceInput.byOwner).length
+                  : 0,
+              },
+            }
+          : {}),
+      },
       ...(learningWorkflow && typeof learningWorkflow === "object"
         ? { learningWorkflow: projectLearningWorkflow(learningWorkflow) }
         : {}),
@@ -258,8 +370,9 @@ export function projectGovernanceDigest(
           .map((entry) => entry.slice(0, 80))
           .slice(0, 6)
       : [];
+  const beforeDecision = state.phase === "before_central_decision";
   const digest: Record<string, unknown> = {
-    status: "present",
+    status: beforeDecision ? "pre_decision" : "present",
     ok: state.ok === true,
     checkedAt: boundedString(state.checkedAt, 40),
     cycleStatus: boundedString(receipt.status, 40),
@@ -279,6 +392,17 @@ export function projectGovernanceDigest(
       blocked: reader.blocked === true,
     },
   };
+  if (beforeDecision) {
+    delete digest.ok;
+    delete digest.releaseBlocked;
+    digest.cycleStatus = "pending_central_decision";
+    digest.nextAction = "decide_from_completed_owner_observations";
+    digest.complete = false;
+    digest.pendingOwners = ["centralAgent"];
+    digest.parentRunId = boundedString(state.parentRunId, 160);
+    digest.sourceSha256 = boundedString(state.sourceSha256, 64);
+    digest.sourceBoundary = "same_cycle_completed_owners_only";
+  }
   const owners = isPresentObject(state.owners as Record<string, unknown>)
     ? (state.owners as Record<string, unknown>)
     : {};
@@ -611,6 +735,10 @@ async function main(): Promise<void> {
   const dryRun = options.dryRun === true;
   const planOnly = options.planOnly === true;
   const maxCycles = Number(options.maxCycles);
+  const governanceInput =
+    typeof options.governanceInput === "string"
+      ? await readCentralGovernanceInput(options.governanceInput)
+      : undefined;
   const config = loadConfig();
   const workspaceDir = path.dirname(STATE_DIR);
   const registry = createCentralToolRegistry({ config, workspaceDir });
@@ -657,6 +785,7 @@ async function main(): Promise<void> {
     const perception = await buildPerception(
       compactReceipts(resumable, 10, CENTRAL_CAPABILITY_IDS),
       task,
+      governanceInput,
     );
     const perceptionBuildMs = Math.max(0, Math.round(performance.now() - perceptionBuildStartedAt));
     let receipt: CentralRunReceipt;

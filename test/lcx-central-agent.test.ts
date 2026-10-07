@@ -6,6 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildPerception,
+  extractOwnerTotals,
+  readCentralGovernanceInput,
   receiptsForHostTask,
   projectGovernanceDigest,
   projectRuntimeFreshness,
@@ -2332,5 +2335,249 @@ describe("central host task focus", () => {
     );
     expect(JSON.parse(durable.trim()).brainCall.outcome).toBe("blocked");
     expect(await fsp.readFile(originalPath, "utf8")).toBe(original);
+  });
+});
+
+describe("same-cycle governance input", () => {
+  const snapshot = {
+    snapshotId: "snapshot-current",
+    observedAt: "2026-10-07T03:00:00.000Z",
+    sourceCommit: "source-current",
+    authorityOwner: "lcx-governance-autopilot",
+  };
+  const current = {
+    schemaVersion: "lcx_central_governance_input_v1",
+    boundary: "same_cycle_completed_owners_only",
+    phase: "before_central_decision",
+    parentRunId: "governance-current",
+    checkedAt: "2026-10-07T03:00:05.000Z",
+    snapshot,
+    byOwner: {
+      mindModel: {
+        id: "mindModel",
+        ok: false,
+        runReceipt: {
+          owner: "mindModel",
+          parentRunId: "governance-current",
+          checkedAt: snapshot.observedAt,
+          snapshot,
+          status: "blocked",
+        },
+        compact: {
+          ok: false,
+          sourceObservedAt: "2026-10-07T02:59:00.000Z",
+          artifactEvidence: {
+            status: "registered",
+            id: `artifact-${"a".repeat(64)}`,
+            sha256: "b".repeat(64),
+            sourceTimeBasis: "payload.checkedAt",
+          },
+        },
+      },
+    },
+  };
+  async function inputFile(value: unknown) {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "central-current-input-"));
+    centralTestRoots.push(root);
+    const file = path.join(root, "input.json");
+    await fsp.writeFile(file, JSON.stringify(value));
+    return file;
+  }
+
+  it("uses current owner results while keeping final governance explicitly pending", async () => {
+    const input = await readCentralGovernanceInput(await inputFile(current));
+    const digest = projectGovernanceDigest(input);
+    expect(extractOwnerTotals(input)).toEqual({
+      mindModel: { ok: false, status: "blocked", compactOk: false },
+    });
+    expect(digest).toMatchObject({
+      status: "pre_decision",
+      cycleStatus: "pending_central_decision",
+      complete: false,
+      pendingOwners: ["centralAgent"],
+      parentRunId: "governance-current",
+      ownerFailures: ["mindModel"],
+    });
+    expect(digest).not.toHaveProperty("ok");
+    expect(digest).not.toHaveProperty("releaseBlocked");
+    expect(digest.ownerResults).toEqual([
+      expect.objectContaining({
+        ownerId: "mindModel",
+        artifactId: `artifact-${"a".repeat(64)}`,
+        sourceObservedAt: "2026-10-07T02:59:00.000Z",
+      }),
+    ]);
+    expect(digest.sourceSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(2048);
+  });
+
+  it.each([true, undefined])(
+    "retains structural failure even when parsed owner ok is %s",
+    async (ok) => {
+      const input = await readCentralGovernanceInput(
+        await inputFile({
+          ...current,
+          byOwner: {
+            green: {
+              ...current.byOwner.mindModel,
+              id: "green",
+              ok: true,
+              runReceipt: {
+                ...current.byOwner.mindModel.runReceipt,
+                owner: "green",
+                status: "passed",
+              },
+            },
+            failed: {
+              ...current.byOwner.mindModel,
+              id: "failed",
+              ok,
+              runReceipt: {
+                ...current.byOwner.mindModel.runReceipt,
+                owner: "failed",
+                status: "failed",
+              },
+            },
+          },
+        }),
+      );
+      const digest = projectGovernanceDigest(input);
+      expect(digest.ownerFailures).toEqual(["failed"]);
+      expect((digest.ownerResults as Array<{ ownerId: string }>)[0].ownerId).toBe("failed");
+    },
+  );
+
+  it("recovers owner verdicts from the original published ownerCommands schema", () => {
+    expect(
+      extractOwnerTotals({
+        ownerCommands: [{ id: "mindModel", ok: true, runReceipt: { status: "passed" } }],
+        owners: { mindModel: { ok: false } },
+      }),
+    ).toEqual({ mindModel: { ok: true, status: "passed", compactOk: false } });
+    expect(extractOwnerTotals({ byOwner: null, ownerCommands: [null, { id: 1 }] })).toEqual({});
+  });
+
+  it.each([
+    { ...current, byOwner: { ...current.byOwner, centralAgent: current.byOwner.mindModel } },
+    { ...current, parentRunId: "another-cycle" },
+    { ...current, snapshot: { ...snapshot, snapshotId: "another-snapshot" } },
+    { ...current, phase: "complete" },
+    { ...current, checkedAt: "invalid" },
+    { ...current, byOwner: {} },
+  ])("rejects missing lineage, self-observation and false final input", async (value) => {
+    await expect(readCentralGovernanceInput(await inputFile(value))).rejects.toThrow(
+      "central_governance_input_unavailable_or_invalid",
+    );
+  });
+
+  it("rejects oversized or missing explicit input without reading previous latest", async () => {
+    await expect(
+      readCentralGovernanceInput(
+        await inputFile({ ...current, excessive: "x".repeat(512 * 1024) }),
+      ),
+    ).rejects.toThrow("central_governance_input_unavailable_or_invalid");
+    await expect(
+      readCentralGovernanceInput(path.join(os.tmpdir(), "central-input-missing", "missing.json")),
+    ).rejects.toThrow("central_governance_input_unavailable_or_invalid");
+  });
+
+  it("feeds same-cycle results to the brain while reporting older control-room source time", async () => {
+    const input = await readCentralGovernanceInput(await inputFile(current));
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return JSON.stringify({ generatedAt: "2026-10-07T02:00:00.000Z" });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return "{}";
+      }
+      if (typeof file === "string" && file.endsWith("lcx-governance-autopilot-latest.json")) {
+        throw new Error("should not read old governance");
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const perceived = await buildPerception(
+        [],
+        { objective: "current owner evidence", focus: "general" },
+        input,
+      );
+      const propose = vi.fn(async (value: CentralPerception) => {
+        expect(value.ownerTotals.mindModel).toMatchObject({ ok: false });
+        expect(value.controlRoom.governanceDigest).toMatchObject({
+          status: "pre_decision",
+          checkedAt: current.checkedAt,
+        });
+        return {
+          kind: "proposed" as const,
+          provider: "offline",
+          modelId: "fixture",
+          plan: { actions: [], note: "saw current owner result" },
+        };
+      });
+      const result = await runCentralHarnessCycle({
+        perception: perceived,
+        brain: { propose },
+        registry: new Map(),
+      });
+      expect(propose).toHaveBeenCalledTimes(1);
+      expect(result.runtimeFreshness).toMatchObject({
+        sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
+        sources: {
+          governance: { sourceObservedAt: current.checkedAt },
+          controlRoom: { sourceObservedAt: "2026-10-07T02:00:00.000Z" },
+        },
+      });
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("actual dry-run CLI accepts the bounded handoff and names its pre-decision source", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-handoff-cli-"));
+    centralTestRoots.push(userHome);
+    const file = await inputFile(current);
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/lcx-central-agent.ts",
+        "--dry-run",
+        "--max-cycles",
+        "1",
+        "--objective",
+        "offline handoff",
+        "--focus",
+        "general",
+        "--governance-input",
+        file,
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        env: { ...process.env, LCX_USER_HOME: userHome },
+        encoding: "utf8",
+        timeout: 30000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const summary = JSON.parse(result.stdout) as { latestRunPath: string; brainReason: string };
+    expect(summary.brainReason).toBe("dry_run_no_llm");
+    const verified = await readCentralGovernanceInput(file);
+    const receipt = JSON.parse(
+      await fsp.readFile(summary.latestRunPath, "utf8"),
+    ) as CentralRunReceipt;
+    expect(receipt.runtimeFreshness).toMatchObject({
+      governanceInput: {
+        parentRunId: current.parentRunId,
+        snapshotId: snapshot.snapshotId,
+        sourceSha256: verified.sourceSha256,
+        phase: "before_central_decision",
+        ownerCount: 1,
+      },
+      sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
+      sources: { governance: { sourceObservedAt: current.checkedAt } },
+    });
   });
 });

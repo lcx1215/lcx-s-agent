@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -1015,6 +1016,80 @@ async function runOwner(
   }
 }
 
+/** Pass settled owner evidence to the existing decision child without publishing a partial latest. */
+async function runCentralOwnerAfterSnapshots(
+  command: OwnerCommand,
+  completedOwners: readonly OwnerRun[],
+  params: { parentRunId: string; snapshot: LcxRunSnapshot },
+): Promise<OwnerRun> {
+  let temporaryDirectory: string | undefined;
+  let result: OwnerRun | undefined;
+  const commandText = `node --import tsx ${command.script} ${(command.args ?? []).join(" ")}`;
+  try {
+    const input = {
+      schemaVersion: "lcx_central_governance_input_v1",
+      boundary: "same_cycle_completed_owners_only",
+      phase: "before_central_decision",
+      checkedAt: new Date().toISOString(),
+      parentRunId: params.parentRunId,
+      snapshot: params.snapshot,
+      byOwner: Object.fromEntries(
+        completedOwners
+          .filter((owner) => owner.id !== "centralAgent")
+          .map((owner) => [
+            owner.id,
+            { id: owner.id, ok: owner.ok, compact: owner.compact, runReceipt: owner.runReceipt },
+          ]),
+      ),
+    };
+    const serialized = JSON.stringify(input);
+    if (Buffer.byteLength(serialized, "utf8") > 512 * 1024) {
+      throw new Error("central governance input exceeds 512 KiB");
+    }
+    temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-central-governance-"));
+    const inputPath = path.join(temporaryDirectory, "owners.json");
+    await fs.writeFile(inputPath, serialized, { mode: 0o600 });
+    result = await runOwner(
+      { ...command, args: [...(command.args ?? []), "--governance-input", inputPath] },
+      params,
+    );
+    return result;
+  } catch (error) {
+    const reason = `central_governance_input_unavailable: ${String(error)}`;
+    result = {
+      id: command.id,
+      command: commandText,
+      exitCode: 1,
+      parsed: false,
+      ok: false,
+      boundary: undefined,
+      summary: undefined,
+      compact: {},
+      error: reason,
+      runReceipt: buildOwnerRunReceipt({
+        command,
+        parsed: false,
+        exitCode: 1,
+        parentRunId: params.parentRunId,
+        snapshot: params.snapshot,
+        phase: "observe",
+        error: reason,
+      }),
+    };
+    return result;
+  } finally {
+    if (temporaryDirectory) {
+      try {
+        await fs.rm(temporaryDirectory, { recursive: true, force: true });
+      } catch (error) {
+        if (result) {
+          result.compact.governanceInputCleanupFailure = String(error);
+        }
+      }
+    }
+  }
+}
+
 function ownerRunFromPayload(
   command: OwnerCommand,
   payload: Record<string, unknown>,
@@ -1791,8 +1866,15 @@ const commercialAcceptanceCommand = OWNER_COMMANDS.find(
 if (!commercialAcceptanceCommand) {
   throw new Error("governance autopilot is missing its commercialAcceptance owner command");
 }
+const centralAgentCommand = OWNER_COMMANDS.find((command) => command.id === "centralAgent");
+if (!centralAgentCommand) {
+  throw new Error("governance autopilot is missing its centralAgent owner command");
+}
 const directOwnerCommands = OWNER_COMMANDS.filter(
-  (command) => command.id !== "problemRadar" && command.id !== "commercialAcceptance",
+  (command) =>
+    command.id !== "problemRadar" &&
+    command.id !== "commercialAcceptance" &&
+    command.id !== "centralAgent",
 );
 const ownerFanoutStartedAt = performance.now();
 const sharedOwnerSnapshotsPromise = (async () => {
@@ -1934,12 +2016,16 @@ const commercialAcceptanceOwnerRun = await captureOwnerRun(
   }),
   commercialAcceptancePayload,
 );
+const centralAgentOwnerRun = await runCentralOwnerAfterSnapshots(
+  centralAgentCommand,
+  [...directOwners, problemRadarOwnerRun, commercialAcceptanceOwnerRun],
+  { parentRunId: governanceRunId, snapshot: governanceSnapshot },
+);
 const ownerFanoutDurationMs = Math.max(0, Math.round(performance.now() - ownerFanoutStartedAt));
 const ownerById = new Map(
-  [...directOwners, problemRadarOwnerRun, commercialAcceptanceOwnerRun].map((owner) => [
-    owner.id,
-    owner,
-  ]),
+  [...directOwners, problemRadarOwnerRun, commercialAcceptanceOwnerRun, centralAgentOwnerRun].map(
+    (owner) => [owner.id, owner],
+  ),
 );
 let owners = OWNER_COMMANDS.flatMap((command) => {
   const owner = ownerById.get(command.id);
