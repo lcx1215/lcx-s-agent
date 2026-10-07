@@ -1383,14 +1383,14 @@ describe("one snapshot per cycle, and a pointer that never moves backwards", () 
 
 describe("injected context is bounded by bytes, not by entry count", () => {
   /** A control-room snapshot the size of the live one: the bulky keys dominate. */
-  function bulkyControlRoom(): Record<string, unknown> {
+  function bulkyControlRoom(glyph?: string): Record<string, unknown> {
     return {
       schemaVersion: "lcx_control_room_v1",
       kind: "control_room",
-      governance: { raw: "g".repeat(185_000) },
-      localFailureTrace: { raw: "f".repeat(34_000) },
-      ownerControlMap: { raw: "m".repeat(24_000) },
-      ownerBrief: { raw: "b".repeat(9_800) },
+      governance: { raw: (glyph ?? "g").repeat(185_000) },
+      localFailureTrace: { raw: (glyph ?? "f").repeat(34_000) },
+      ownerControlMap: { raw: (glyph ?? "m").repeat(24_000) },
+      ownerBrief: { raw: (glyph ?? "b").repeat(9_800) },
       views: { ok: 3 },
     };
   }
@@ -1433,18 +1433,31 @@ describe("injected context is bounded by bytes, not by entry count", () => {
     expect(bounded.observedAt).toBe(perception().observedAt);
   });
 
-  it("bounds the prompt actually built for the model, not just a copy", () => {
-    const unbounded = buildCentralBrainPrompt(perception({ controlRoom: bulkyControlRoom() }));
-    const { perception: bounded } = boundPerception(
-      perception({ controlRoom: bulkyControlRoom() }),
-    );
+  it.each([
+    ["finance", "x"],
+    ["finance", "证"],
+    ["general", "x"],
+    ["general", "证"],
+  ] as const)("bounds the prompt actually built for the model (%s, %s)", (focus, glyph) => {
+    const original = perception({
+      controlRoom: bulkyControlRoom(glyph),
+      ...(focus === "general" ? { task: { focus, objective: "核对证据读取与预算" } } : {}),
+    });
+    const unbounded = buildCentralBrainPrompt(original);
+    const { perception: bounded } = boundPerception(original);
     const boundedPrompt = buildCentralBrainPrompt(bounded);
-    expect(Buffer.byteLength(unbounded)).toBeGreaterThan(250_000);
-    expect(Buffer.byteLength(boundedPrompt)).toBeLessThanOrEqual(
+    const unboundedBytes = Buffer.byteLength(unbounded);
+    const boundedBytes = Buffer.byteLength(boundedPrompt);
+    const originalControlBytes = Buffer.byteLength(JSON.stringify(original.controlRoom));
+    const boundedControlBytes = Buffer.byteLength(JSON.stringify(bounded.controlRoom));
+    expect(unboundedBytes).toBeGreaterThan(250_000);
+    expect(boundedBytes).toBeLessThanOrEqual(
       CENTRAL_PERCEPTION_BUDGET_BYTES + CENTRAL_FINANCE_CATALOG_BUDGET_BYTES + 1_500,
     );
-    // The reduction has to be real, not a rounding artefact.
-    expect(Buffer.byteLength(boundedPrompt) * 20).toBeLessThan(Buffer.byteLength(unbounded));
+    expect(boundedPrompt).toContain(`control_room_summary: ${JSON.stringify(bounded.controlRoom)}`);
+    // Only volatile evidence is compressed; fixed instructions/catalogs must survive.
+    expect(boundedControlBytes * 20).toBeLessThan(originalControlBytes);
+    expect(unboundedBytes - boundedBytes).toBe(originalControlBytes - boundedControlBytes);
   });
 
   it("hands the brain the bounded perception and records the report on the receipt", async () => {
