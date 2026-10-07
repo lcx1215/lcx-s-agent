@@ -676,7 +676,9 @@ export function createCentralToolRegistry(
                 signal,
               });
               if (Object.hasOwn(outcome, "artifactEvidence")) {
-                return outcome;
+                // Source-owned evidence stays untouched. Host provenance travels
+                // outside JSON so it cannot collide with a business field.
+                return markCentralArtifactOutcome(outcome, outcome, artifactEvidence);
               }
               return markCentralArtifactOutcome(
                 {
@@ -691,6 +693,7 @@ export function createCentralToolRegistry(
                   artifactEvidence,
                 },
                 outcome,
+                artifactEvidence,
               );
             },
           },

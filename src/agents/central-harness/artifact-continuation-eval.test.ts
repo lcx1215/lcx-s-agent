@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
+  compactReceipts,
   markCentralArtifactOutcome,
   nextCycleContinuation,
   runCentralHarnessCycle,
@@ -68,6 +69,99 @@ function customRegistry(execute: CentralToolSpec["execute"]) {
     ],
   ]);
 }
+
+describe("source-owned evidence and host result recovery", () => {
+  it("retains the original source field and independently reads the whole host result", async () => {
+    const host = await fixture();
+    const business = {
+      ok: true,
+      status: "ready",
+      value: 7,
+      artifactEvidence: { id: "source-owned", purpose: "source evidence, not host authority" },
+    };
+    const registry = createCentralToolRegistry({ ...host, execute: async () => business });
+    const first = await cycle(registry, "problemRadar");
+    const step = first.steps[0];
+    expect(step.outcome?.artifactEvidence).toEqual(business.artifactEvidence);
+    expect(step.resultArtifact?.status).toBe("registered");
+    expect(step.resultArtifact?.id).toMatch(/^artifact-[a-f0-9]{64}$/u);
+    expect(
+      compactReceipts([first], 10, new Set(["problemRadar"]))[0].outcomes[0].resultArtifact,
+    ).toEqual(step.resultArtifact);
+    const original = await registry
+      .get("artifact_memory_recall")!
+      .execute(
+        { action: "read", id: step.resultArtifact!.id, field: "/value", owner: "problemRadar" },
+        new AbortController().signal,
+      );
+    expect(original).toMatchObject({
+      available: true,
+      selectedValue: business,
+      sourceSha256: step.resultArtifact!.sha256,
+    });
+    const second = await cycle(registry, "problemRadar");
+    expect(second.steps[0].resultArtifact?.id).not.toBe(step.resultArtifact!.id);
+    expect(second.steps[0].semanticOutcomeSha256).toBe(step.semanticOutcomeSha256);
+    expect(nextCycleContinuation(second, 2, 5, first)).toEqual({
+      run: false,
+      because: "unchanged_result",
+    });
+  });
+
+  it("continues when the full source result changes beyond the bounded digest", async () => {
+    const host = await fixture();
+    let detail = "one";
+    const registry = createCentralToolRegistry({
+      ...host,
+      execute: async () => ({
+        status: "ready",
+        artifactEvidence: { id: "source-owned" },
+        details: detail.repeat(1000),
+      }),
+    });
+    const first = await cycle(registry, "problemRadar");
+    detail = "two";
+    const second = await cycle(registry, "problemRadar");
+    expect(first.steps[0].outcome).toEqual(second.steps[0].outcome);
+    expect(first.steps[0].outcomeDroppedKeys).toContain("details");
+    expect(second.steps[0].semanticOutcomeSha256).not.toBe(first.steps[0].semanticOutcomeSha256);
+    expect(nextCycleContinuation(second, 2, 5, first)).toEqual({
+      run: true,
+      because: "capability_results",
+    });
+    const exact = await registry.get("artifact_memory_recall")!.execute(
+      {
+        action: "read",
+        id: second.steps[0].resultArtifact!.id,
+        field: "/value/details",
+        owner: "problemRadar",
+      },
+      new AbortController().signal,
+    );
+    expect(exact).toMatchObject({
+      available: true,
+      selectedValue: "two".repeat(1000),
+      sourceSha256: second.steps[0].resultArtifact!.sha256,
+    });
+  });
+
+  it("reports an unavailable host index separately from a source-owned passing field", async () => {
+    const host = await fixture();
+    const business = {
+      status: "ready",
+      artifactEvidence: { status: "registered", id: "source-only" },
+    };
+    const registry = createCentralToolRegistry({
+      ...host,
+      config: { agents: { defaults: { memorySearch: { enabled: false } } } },
+      execute: async () => business,
+    });
+    const receipt = await cycle(registry, "problemRadar");
+    expect(receipt.steps[0].outcome?.artifactEvidence).toEqual(business.artifactEvidence);
+    expect(receipt.steps[0].resultArtifact?.status).toBe("unavailable");
+    expect(receipt.steps[0].resultArtifact?.id).toBeUndefined();
+  });
+});
 
 describe("host archive provenance in the original continuation guard (offline scripted)", () => {
   it("stops identical real quant results despite different archived run identities", async () => {
@@ -138,10 +232,10 @@ describe("host archive provenance in the original continuation guard (offline sc
     const first = await cycle(registry, "problemRadar");
     evidence = "business-b";
     const second = await cycle(registry, "problemRadar");
-    // An original archive-field conflict remains business evidence, without host provenance.
+    // Source-owned evidence remains business data while the host independently binds its whole result.
     expect(first.steps[0].status).toBe("ran_ok");
-    expect(first.steps[0].semanticOutcomeSha256).toBeUndefined();
-    expect(second.steps[0].semanticOutcomeSha256).toBeUndefined();
+    expect(first.steps[0].semanticOutcomeSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(second.steps[0].semanticOutcomeSha256).not.toBe(first.steps[0].semanticOutcomeSha256);
     expect(nextCycleContinuation(second, 2, 5, first)).toEqual({
       run: true,
       because: "capability_results",

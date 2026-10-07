@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { ArtifactRecordingReceipt } from "../artifact-result-recording.js";
 import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import type {
   CentralBrainCallEvidence,
@@ -12,12 +13,22 @@ import type {
 
 // Only the host registry can associate an enriched object with its business result.
 // JSON fields with these names never establish provenance.
-const hostArtifactBusinessOutcomes = new WeakMap<object, Readonly<Record<string, unknown>>>();
+const hostArtifactBusinessOutcomes = new WeakMap<
+  object,
+  Readonly<{
+    business: Readonly<Record<string, unknown>>;
+    artifactEvidence?: ArtifactRecordingReceipt;
+  }>
+>();
 export function markCentralArtifactOutcome(
   enriched: Readonly<Record<string, unknown>>,
   business: Readonly<Record<string, unknown>>,
+  artifactEvidence?: ArtifactRecordingReceipt,
 ): Readonly<Record<string, unknown>> {
-  hostArtifactBusinessOutcomes.set(enriched, business);
+  hostArtifactBusinessOutcomes.set(enriched, {
+    business,
+    ...(artifactEvidence ? { artifactEvidence } : {}),
+  });
   return enriched;
 }
 
@@ -325,14 +336,18 @@ async function runCycle(
           ? observation
           : undefined;
       if (digestSource !== undefined) {
-        const business = isPlainRecord(observation)
+        const archived = isPlainRecord(observation)
           ? hostArtifactBusinessOutcomes.get(observation)
           : undefined;
+        const business = archived?.business;
         if (business !== undefined) {
           // Owner receipts are inside the envelope; its host archive reference
           // must survive independently without overwriting any business field.
-          const reference = observation.artifactEvidence;
-          if (digestSource !== observation && isPlainRecord(reference)) {
+          const reference = archived?.artifactEvidence ?? observation.artifactEvidence;
+          if (
+            (digestSource !== observation || archived?.artifactEvidence !== undefined) &&
+            isPlainRecord(reference)
+          ) {
             const status = reference.status;
             if (status === "registered" || status === "unchanged" || status === "unavailable") {
               step.resultArtifact = {
