@@ -784,7 +784,14 @@ describe("intraday decision execution bridge", () => {
 
   // Native WBD measured only the total and dispatch timestamps; phase durations below
   // are a representative controlled decomposition, not observed native phase latencies.
-  it.each(["caller", "default", "stalled_stage", "late_veto", "ignored_review"] as const)(
+  it.each([
+    "caller",
+    "default",
+    "stalled_stage",
+    "stalled_refresh",
+    "late_veto",
+    "ignored_review",
+  ] as const)(
     "preserves caller budgets and bounds physical preparation timers (%s)",
     async (mode) => {
       const withCaller = mode !== "default";
@@ -854,6 +861,9 @@ describe("intraday decision execution bridge", () => {
       });
       const prepareExecutionQuote = vi.fn(async (_request: unknown, signal: AbortSignal) => {
         expect(signal).not.toBe(caller.signal);
+        if (mode === "stalled_refresh") {
+          await vi.advanceTimersByTimeAsync(15_000);
+        }
         return {
           referencePrice: 100,
           bidPrice: 99.9,
@@ -874,6 +884,9 @@ describe("intraday decision execution bridge", () => {
         const approved = {
           ...(await approvingReviewer()(request)),
           latencyMs: mode === "late_veto" ? 61_000 : mode === "ignored_review" ? 66_000 : 45_789,
+          ...(mode === "stalled_refresh"
+            ? { quoteApprovalPolicy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY }
+            : {}),
         };
         return mode === "late_veto"
           ? {
@@ -921,6 +934,14 @@ describe("intraday decision execution bridge", () => {
         });
         expect(result.outcome.executionFailure!.elapsedMs).toBeGreaterThanOrEqual(120_000);
         expect(result.outcome.reasons).toEqual(["intraday_execution_unexpected_error"]);
+      } else if (mode === "stalled_refresh") {
+        expect(runOrder).not.toHaveBeenCalled();
+        expect(caller.signal.aborted).toBe(false);
+        expect(result.outcome.executionFailure).toMatchObject({
+          stage: "refresh_quote",
+          category: "deadline_exceeded",
+        });
+        expect(deadlines).toContain(60_000 - 45_789);
       } else if (mode === "late_veto") {
         expect(runOrder).not.toHaveBeenCalled();
         expect(result.outcome.tradeDecisionReview).toMatchObject({
@@ -2445,6 +2466,7 @@ describe("intraday decision execution bridge", () => {
   it.each([
     { mode: "approve", calls: 2, gate: true },
     { mode: "first_used_two", calls: 1, gate: false },
+    { mode: "first_refresh_deadline", calls: 1, gate: false },
     { mode: "veto", calls: 2, gate: false },
     { mode: "failed", calls: 2, gate: false },
     { mode: "wrong_candidate", calls: 2, gate: false },
@@ -2480,6 +2502,9 @@ describe("intraday decision execution bridge", () => {
     const abort = new AbortController();
     const quoteProvider = vi.fn(async () => {
       const n = quoteProvider.mock.calls.length;
+      if (mode === "first_refresh_deadline" && n === 2) {
+        clock += 60_000;
+      }
       if (mode === "post_refresh_deadline" && n === 3) {
         clock += 60_000;
       }
@@ -2587,6 +2612,17 @@ describe("intraday decision execution bridge", () => {
     expect(runOrder).toHaveBeenCalledTimes(gate ? 1 : 0);
     const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
     expect(stored?.tradeDecisionReviewHistory?.length ?? 0).toBe(calls === 2 ? 1 : 0);
+    if (mode === "first_refresh_deadline") {
+      expect(stored?.executionFailure).toMatchObject({
+        stage: "refresh_quote",
+        category: "deadline_exceeded",
+      });
+    }
+    if (mode === "first_used_two") {
+      expect(stored?.reasons).toEqual([
+        "intraday quote re-review refused: original candidate model-call budget exhausted",
+      ]);
+    }
     if (calls === 2) {
       const first = stored!.tradeDecisionReviewHistory![0];
       const last = stored!.tradeDecisionReview!;

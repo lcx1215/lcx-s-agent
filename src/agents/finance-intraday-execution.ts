@@ -948,14 +948,28 @@ export async function executeFinanceIntradayDecision(params: {
     // Model review and ledger reads can outlive the quote; refresh once, then fail closed.
     if (params.controller.prepareExecutionQuote || executionQuoteIssue(quote, now()) !== null) {
       stage = "refresh_quote";
+      const remainingReviewMs =
+        tradeDecisionReview?.status === "completed" &&
+        tradeDecisionReview.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY
+          ? reviewDeadlineAt - now()
+          : undefined;
+      if (remainingReviewMs !== undefined && remainingReviewMs <= 0) {
+        throw new PreparationDeadlineError();
+      }
       quote = {
-        ...(await waitForPreparation(signal, (signal) =>
-          (params.controller.prepareExecutionQuote ?? params.controller.executionQuoteProvider)(
-            { instrument: input.instrument, assetClass: "us_equity", side: input.action },
-            signal,
-          ),
+        ...(await waitForPreparation(
+          signal,
+          (signal) =>
+            (params.controller.prepareExecutionQuote ?? params.controller.executionQuoteProvider)(
+              { instrument: input.instrument, assetClass: "us_equity", side: input.action },
+              signal,
+            ),
+          remainingReviewMs,
         )),
       };
+      if (remainingReviewMs !== undefined && now() >= reviewDeadlineAt) {
+        throw new PreparationDeadlineError();
+      }
     }
     const checkedAtMs = now();
     const finalQuoteIssue = executionQuoteIssue(quote, checkedAtMs);
@@ -1004,6 +1018,16 @@ export async function executeFinanceIntradayDecision(params: {
           Math.max(1, tradeDecisionReview.modelCalls ?? 1) < 2 &&
           now() < reviewDeadlineAt;
         let refusal = comparison.reason;
+        if (
+          attempt === 0 &&
+          tradeDecisionReview.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY &&
+          comparison.reason ===
+            "intraday reviewed execution prices changed; a new model review is required" &&
+          Math.max(1, tradeDecisionReview.modelCalls ?? 1) >= 2
+        ) {
+          refusal =
+            "intraday quote re-review refused: original candidate model-call budget exhausted";
+        }
         if (canReReview) {
           const refreshedPreflight = compileFinanceAlpacaOrderIntent(orderRequest(referencePrice));
           if (!refreshedPreflight.ok) {
