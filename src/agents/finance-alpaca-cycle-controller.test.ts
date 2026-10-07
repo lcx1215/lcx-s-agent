@@ -1077,6 +1077,172 @@ it("prepares slow history before binding the 30-second execution quote", async (
   ).toHaveLength(historyReads);
 });
 
+it.each(["fresh", "expired", "rollback", "new_controller", "journal_changed"] as const)(
+  "reuses original reconciliation only inside its lease and unchanged journal (%s)",
+  async (mode) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+    const f = await fixture();
+    const original = f.read.getMockImplementation()!;
+    f.read.mockImplementation(async (...args) => {
+      if (new URL(args[0]).pathname === "/v2/account/activities") {
+        vi.setSystemTime(Date.now() + 40_000);
+      }
+      return original(...args);
+    });
+    const options = { ...f.options, maxAgeMs: 30_000 };
+    const controller = createFinanceAlpacaCycleController(options);
+    await controller.accountBookProvider(AbortSignal.timeout(120000));
+    const historyReads = () =>
+      f.read.mock.calls.filter(([url]) => new URL(url).pathname === "/v2/account/activities")
+        .length;
+    const baseline = historyReads();
+    vi.setSystemTime(
+      Date.now() + (mode === "expired" ? 30_001 : mode === "rollback" ? -1 : 24_000),
+    );
+    if (mode === "journal_changed") {
+      await fs.appendFile(
+        path.join(
+          f.directory,
+          `execution-safety-${createHash("sha256")
+            .update(JSON.stringify(["alpaca:paper", f.accountId]))
+            .digest("hex")}.jsonl`,
+        ),
+        JSON.stringify({
+          id: "new-unresolved-claim",
+          run: "other-run",
+          instrument: "SPY",
+          notional: 100,
+          snapshotId: "other",
+          at: new Date().toISOString(),
+          status: "unknown",
+        }) + "\n",
+      );
+      await expect(
+        controller.prepareExecutionQuote(
+          { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+          AbortSignal.timeout(120000),
+        ),
+      ).rejects.toThrow(/execution_recovery_incomplete|unresolved_execution_claims/);
+      expect(historyReads()).toBe(baseline + 1);
+      expect(f.execute).not.toHaveBeenCalled();
+      return;
+    }
+    const selected =
+      mode === "new_controller" ? createFinanceAlpacaCycleController(options) : controller;
+    const quote = await selected.prepareExecutionQuote(
+      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+      AbortSignal.timeout(120000),
+    );
+    expect(historyReads()).toBe(baseline + (mode === "fresh" ? 0 : 1));
+    expect(Date.parse(quote.referencePriceAt)).toBe(Date.now());
+    expect((await f.place(`reused-${mode}`, selected, quote)).status).toBe("placed");
+  },
+);
+
+it.each(["failed", "inspect_only"] as const)(
+  "invalidates reusable reconciliation on an explicit refresh (%s)",
+  async (mode) => {
+    const f = await fixture();
+    await f.controller.accountBookProvider(AbortSignal.timeout(5000));
+    const historyReads = () =>
+      f.read.mock.calls.filter(([url]) => new URL(url).pathname === "/v2/account/activities")
+        .length;
+    const baseline = historyReads();
+    if (mode === "failed") {
+      f.read.mockRejectedValueOnce(new Error("fixture refresh unavailable"));
+      await expect(f.controller.inspectReconciliation(AbortSignal.timeout(5000))).rejects.toThrow(
+        "fixture refresh unavailable",
+      );
+    } else {
+      await f.controller.inspectReconciliation(AbortSignal.timeout(5000));
+    }
+    await f.controller.prepareExecutionQuote(
+      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+      AbortSignal.timeout(5000),
+    );
+    expect(historyReads()).toBe(baseline + (mode === "failed" ? 1 : 2));
+  },
+);
+
+it("refuses reuse that expires while fetching a fresh quote before model re-review", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+  const f = await fixture();
+  const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
+  await controller.accountBookProvider(AbortSignal.timeout(5000));
+  vi.setSystemTime(Date.now() + 24_000);
+  const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (...args) => {
+    if (new URL(args[0]).pathname.includes("/quotes/")) {
+      vi.setSystemTime(Date.now() + 7_000);
+    }
+    return original(...args);
+  });
+  await expect(
+    controller.prepareExecutionQuote(
+      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+      AbortSignal.timeout(5000),
+    ),
+  ).rejects.toThrow("alpaca_safety_quote_expired");
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it("refreshing quotes never renews the original reconciliation lease", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+  const f = await fixture();
+  const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
+  await controller.accountBookProvider(AbortSignal.timeout(5000));
+  vi.setSystemTime(Date.now() + 24_000);
+  const quote = await controller.prepareExecutionQuote(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  vi.setSystemTime(Date.now() + 6_001);
+  await expect(f.place("old-reconciliation-new-quote", controller, quote)).rejects.toThrow(
+    "alpaca_safety_quote_expired",
+  );
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it.each(["cash", "positions", "open_orders"] as const)(
+  "reused history retains fresh final broker checks (%s)",
+  async (change) => {
+    const f = await fixture();
+    await f.controller.accountBookProvider(AbortSignal.timeout(5000));
+    const historyReads = f.read.mock.calls.filter(
+      ([url]) => new URL(url).pathname === "/v2/account/activities",
+    ).length;
+    const quote = await f.controller.prepareExecutionQuote(
+      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+      AbortSignal.timeout(5000),
+    );
+    expect(
+      f.read.mock.calls.filter(([url]) => new URL(url).pathname === "/v2/account/activities"),
+    ).toHaveLength(historyReads);
+    if (change === "cash") {
+      f.account.cash = "899";
+      f.account.equity = "999";
+    } else if (change === "positions") {
+      f.positions[0].qty = "2";
+      f.positions[0].market_value = "200";
+      f.account.cash = "800";
+      f.account.long_market_value = "200";
+    } else {
+      f.openOrders.push({ id: "foreign-order", symbol: "SPY", side: "buy", status: "new" });
+    }
+    await expect(f.place(`changed-native-${change}`, f.controller, quote)).rejects.toThrow(
+      change === "cash"
+        ? "cash_changed"
+        : change === "positions"
+          ? "positions_changed"
+          : "account_snapshot_unavailable",
+    );
+    expect(f.execute).not.toHaveBeenCalled();
+  },
+);
+
 it("refuses an expired prepared quote without dispatch or a history retry", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));

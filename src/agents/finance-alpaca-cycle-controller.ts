@@ -66,6 +66,11 @@ export const financeAlpacaCyclePolicySchema = z.union([
 const STANDING_PAPER_OPERATION_AUTHORITY_MS = 120_000;
 
 export type FinanceAlpacaCyclePolicy = z.infer<typeof financeAlpacaCyclePolicySchema>;
+type PreparedReconciliation = {
+  snapshot: Awaited<ReturnType<typeof syncFinanceBrokerReconciliation>>;
+  claimFingerprint: string;
+  latestClaimId?: string;
+};
 type Controller = Required<
   Pick<
     FinanceDailyCycleParams,
@@ -139,16 +144,14 @@ export function createFinanceAlpacaCycleController(options: {
       .digest("hex")}.jsonl`,
   );
   const quoteBindings = new Map<string, AlpacaSafetyQuoteBinding>();
-  const preparedQuotes = new Map<
-    AlpacaSafetyQuoteBinding,
-    {
-      snapshot: Awaited<ReturnType<typeof syncFinanceBrokerReconciliation>>;
-      claimFingerprint: string;
-      latestClaimId?: string;
-    }
-  >();
+  const preparedQuotes = new Map<AlpacaSafetyQuoteBinding, PreparedReconciliation>();
+  let reusableReconciliation: PreparedReconciliation | undefined;
   const claimFingerprint = (claims: Awaited<ReturnType<typeof readFinanceExecutionSafetyClaims>>) =>
     createHash("sha256").update(JSON.stringify(claims)).digest("hex");
+  const reconciliationIsFresh = (prepared: PreparedReconciliation) => {
+    const age = Date.now() - Date.parse(prepared.snapshot.observedAt);
+    return Number.isFinite(age) && age >= 0 && age <= options.maxAgeMs;
+  };
 
   // Standing Paper permission never becomes an unlimited order capability.
   const operationExpiresAt = () =>
@@ -252,6 +255,8 @@ export function createFinanceAlpacaCycleController(options: {
     signal: AbortSignal,
     { inspectOnly = false, recoverPending = true } = {},
   ) {
+    // A failed or inspect-only refresh must not leave an older success reusable.
+    reusableReconciliation = undefined;
     const recovery = await recoverConfirmedFinanceExecutions({
       safetyStateDir: options.directory,
       accountId: policy.accountId,
@@ -357,6 +362,13 @@ export function createFinanceAlpacaCycleController(options: {
     }
     if (!inspectOnly && readiness.status === "blocked") {
       throw new FinanceExecutionSafetyFactsError("broker_reconciliation_blocked");
+    }
+    if (!inspectOnly) {
+      reusableReconciliation = {
+        snapshot,
+        claimFingerprint: claimFingerprint(claims),
+        latestClaimId: latestClaim?.id,
+      };
     }
     return { snapshot, last, latestClaim, readiness };
   }
@@ -469,21 +481,42 @@ export function createFinanceAlpacaCycleController(options: {
     },
     executionQuoteProvider,
     prepareExecutionQuote: async (request, signal) => {
-      // Finish expensive history reads before starting the short execution-quote lease.
-      const { snapshot, latestClaim } = await reconcile(signal, {
-        recoverPending: options.recoverPendingBeforeQuote === true,
-      });
-      const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
+      // Reuse the existing reconciliation lease, never the quote or a renewed timestamp.
+      // The final dispatch gate still checks fresh broker facts and the same journal.
+      let prepared = reusableReconciliation;
+      if (prepared) {
+        const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
+        if (
+          !reconciliationIsFresh(prepared) ||
+          claimFingerprint(claims) !== prepared.claimFingerprint
+        ) {
+          prepared = undefined;
+        }
+      }
+      if (!prepared) {
+        // Finish expensive history reads before starting the short execution-quote lease.
+        const { snapshot, latestClaim } = await reconcile(signal, {
+          recoverPending: options.recoverPendingBeforeQuote === true,
+        });
+        const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
+        prepared = {
+          snapshot,
+          claimFingerprint: claimFingerprint(claims),
+          latestClaimId: latestClaim?.id,
+        };
+      }
       const quote = await executionQuoteProvider(request, signal);
       const bound = quoteBindings.get(`${request.instrument}:${request.side}`);
       if (!bound) {
         throw new FinanceExecutionSafetyFactsError("quote_binding_missing");
       }
-      preparedQuotes.set(bound, {
-        snapshot,
-        claimFingerprint: claimFingerprint(claims),
-        latestClaimId: latestClaim?.id,
-      });
+      if (!reconciliationIsFresh(prepared)) {
+        throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+          reason: "alpaca_safety_quote_expired",
+          stage: "quote_binding",
+        });
+      }
+      preparedQuotes.set(bound, prepared);
       return quote;
     },
     createSafetyContext: (binding) => {
@@ -526,9 +559,8 @@ export function createFinanceAlpacaCycleController(options: {
           // rejected pending claims. Do not reacquire that lock during facts reads.
           const reconciled = prepared
             ? await (async () => {
-                const age = Date.now() - Date.parse(prepared.snapshot.observedAt);
                 const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
-                if (!Number.isFinite(age) || age < 0 || age > options.maxAgeMs) {
+                if (!reconciliationIsFresh(prepared)) {
                   throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
                     reason: "alpaca_safety_quote_expired",
                     stage: "quote_binding",
