@@ -34,6 +34,7 @@
  *   `ref` is the canonical hash of its content. A read re-verifies both.
  */
 
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
@@ -896,6 +897,12 @@ const BrokerHistoryRecordSchema = z
   .strict();
 type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
 
+// Only bounded hash proofs are retained, never payloads or database freshness claims.
+// A different encoding is a miss; every scan still parses/schema-checks every row
+// and checks its current stored ref, predecessor and sequence across all accounts.
+const BROKER_HISTORY_HASH_PROOF_LIMIT = 50_000;
+const brokerHistoryHashProofs = new Map<string, string>();
+
 /** Validate every account's chain while retaining only the caller's selected rows. */
 function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
   if (!hasTable(db, "finance_broker_history")) {
@@ -911,12 +918,24 @@ function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRe
     }
     const raw: unknown = JSON.parse(row.body);
     const record = BrokerHistoryRecordSchema.parse(raw);
+    const encodedHash = createHash("sha256").update(row.body).digest("hex");
+    const provedRef = brokerHistoryHashProofs.get(encodedHash);
+    const canonicalRef = provedRef ?? caseflowFingerprint(raw);
     if (
-      caseflowFingerprint(raw) !== row.ref ||
+      canonicalRef !== row.ref ||
       record.previousRef !== previousRef ||
       record.sequence !== ++sequence
     ) {
       throw new Error("broker history chain mismatch");
+    }
+    if (provedRef === undefined) {
+      if (brokerHistoryHashProofs.size >= BROKER_HISTORY_HASH_PROOF_LIMIT) {
+        const oldest = brokerHistoryHashProofs.keys().next().value;
+        if (oldest !== undefined) {
+          brokerHistoryHashProofs.delete(oldest);
+        }
+      }
+      brokerHistoryHashProofs.set(encodedHash, canonicalRef);
     }
     previousRef = row.ref;
     yield { ...record, ref: row.ref };

@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import * as caseflow from "./finance-caseflow.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   createPaperExecutionAdapter,
@@ -807,6 +808,76 @@ it("freezes research reconciliation cutoffs while current readers retain superse
   }
 });
 
+it("reuses canonical hashing only for byte-identical history, while returning fresh records", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: `hash-reuse-${directory}`,
+    venue: "alpaca:paper",
+    query: "activities:hash-reuse",
+    cursor: "",
+    payload: [{ id: "fill-1", quantity: 1 }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  const fingerprint = vi.spyOn(caseflow, "caseflowFingerprint");
+  try {
+    const cold = await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+    expect(fingerprint).toHaveBeenCalledTimes(1);
+    cold.records[0].body.payload[0].quantity = 999;
+    fingerprint.mockClear();
+    const warm = await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+    expect(fingerprint).not.toHaveBeenCalled();
+    expect(warm.records).toEqual([first.record]);
+
+    const db = openDatabase(directory);
+    try {
+      const { ref: _ref, ...record } = first.record;
+      db.exec("DROP TRIGGER finance_broker_history_no_update");
+      db.prepare("UPDATE finance_broker_history SET body=? WHERE sequence=1").run(
+        JSON.stringify(record, null, 2),
+      );
+    } finally {
+      db.close();
+    }
+    const reformatted = await readFinanceBrokerHistoryRecords(
+      directory,
+      body.accountId,
+      body.venue,
+    );
+    expect(fingerprint).toHaveBeenCalledTimes(1);
+    expect(reformatted.records).toEqual([first.record]);
+  } finally {
+    fingerprint.mockRestore();
+  }
+});
+
+it("rejects changed references even when serialized history has already been verified", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "cached-ref-account",
+    venue: "alpaca:paper",
+    query: "activities:cached-ref",
+    cursor: "",
+    payload: [{ id: "cached-fill", quantity: 1 }],
+  };
+  await appendFinanceBrokerHistory(directory, body);
+  await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET ref=? WHERE sequence=1").run("0".repeat(64));
+  } finally {
+    db.close();
+  }
+  await expect(
+    readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue),
+  ).rejects.toThrow("broker history chain mismatch");
+  await expect(appendFinanceBrokerHistory(directory, body)).rejects.toThrow(
+    "broker history chain mismatch",
+  );
+});
+
 it("retains exact broker-observation deduplication and detects tampered predecessors", async () => {
   const directory = await storeDirectory();
   const body = {
@@ -872,6 +943,7 @@ it.each(["body", "sequence", "previousRef", "tail"] as const)(
     await appendFinanceBrokerHistory(directory, body);
     await appendFinanceBrokerHistory(directory, { ...body, accountId: "account-b" });
     await appendFinanceBrokerHistory(directory, { ...body, query: "tail" });
+    await readFinanceBrokerHistoryRecords(directory, "account-a", "alpaca:paper");
     const db = openDatabase(directory);
     try {
       db.exec("DROP TRIGGER finance_broker_history_no_update");
