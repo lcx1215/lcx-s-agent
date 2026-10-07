@@ -195,6 +195,8 @@ describe("intraday decision execution bridge", () => {
         stage: "quote_snapshot",
         httpStatus: 503,
       });
+      let elapsed = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => elapsed);
       const caller = new AbortController();
       const account = {
         accountId: "paper-account",
@@ -216,6 +218,7 @@ describe("intraday decision execution bridge", () => {
       const runOrder = vi.fn();
       const createSafetyContext = vi.fn();
       const quoteProvider = vi.fn(async () => {
+        elapsed += 7_000;
         if (mode === "refresh") {
           return quote;
         }
@@ -237,6 +240,7 @@ describe("intraday decision execution bridge", () => {
         controller: {
           accountId: "paper-account",
           accountBookProvider: async () => {
+            elapsed += 4_000;
             if (mode === "account") {
               throw typed;
             }
@@ -246,6 +250,7 @@ describe("intraday decision execution bridge", () => {
           ...(mode === "refresh"
             ? {
                 prepareExecutionQuote: async () => {
+                  elapsed += 9_000;
                   throw typed;
                 },
               }
@@ -268,7 +273,8 @@ describe("intraday decision execution bridge", () => {
               ? "refresh_quote"
               : "initial_quote",
         category: mode === "cancelled" ? "cancelled" : "unexpected",
-        elapsedMs: expect.any(Number),
+        elapsedMs: mode === "account" ? 4_000 : mode === "refresh" ? 20_000 : 11_000,
+        stageElapsedMs: mode === "account" ? 4_000 : mode === "refresh" ? 9_000 : 7_000,
       });
       if (mode === "initial" || mode === "refresh") {
         expect(stored?.executionFailure?.quote).toEqual({

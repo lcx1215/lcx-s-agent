@@ -326,6 +326,22 @@ it("accepts safe optional preparation diagnostics and rejects arbitrary provider
   };
   await appendFinanceIntradayOutcome(directory, outcome);
   expect(await readFinanceIntradayOutcome(directory, outcome.signalId)).toEqual(outcome);
+  const timed = {
+    ...outcome,
+    signalId: "timed-diagnostic",
+    executionFailure: { ...outcome.executionFailure, stageElapsedMs: 20_000 },
+  };
+  await appendFinanceIntradayOutcome(directory, timed);
+  expect(await readFinanceIntradayOutcome(directory, timed.signalId)).toEqual(timed);
+  for (const stageElapsedMs of [-1, 0.5, 120_002]) {
+    await expect(
+      appendFinanceIntradayOutcome(directory, {
+        ...timed,
+        signalId: `invalid-timing-${stageElapsedMs}`,
+        executionFailure: { ...timed.executionFailure, stageElapsedMs },
+      }),
+    ).rejects.toThrow();
+  }
   await expect(
     appendFinanceIntradayOutcome(directory, {
       ...outcome,

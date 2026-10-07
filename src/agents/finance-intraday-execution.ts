@@ -482,23 +482,34 @@ export async function executeFinanceIntradayDecision(params: {
   const startedAt = performance.now();
   let stage: NonNullable<FinanceIntradayOutcomeInput["executionFailure"]>["stage"] =
     "position_receipts";
+  let stageStartedAt = startedAt;
+  const setStage = (
+    next: NonNullable<FinanceIntradayOutcomeInput["executionFailure"]>["stage"],
+  ) => {
+    stage = next;
+    stageStartedAt = performance.now();
+  };
   const executionFailure = (
     error?: unknown,
-  ): NonNullable<FinanceIntradayOutcomeInput["executionFailure"]> => ({
-    stage,
-    category: params.signal?.aborted
-      ? "cancelled"
-      : signal.aborted || error instanceof PreparationDeadlineError
-        ? "deadline_exceeded"
-        : "unexpected",
-    elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
-    ...(!signal.aborted &&
-    !(error instanceof PreparationDeadlineError) &&
-    (stage === "initial_quote" || stage === "refresh_quote") &&
-    error instanceof AlpacaSafetyQuoteReadError
-      ? { quote: { reason: error.reason, ...error.diagnostic } }
-      : {}),
-  });
+  ): NonNullable<FinanceIntradayOutcomeInput["executionFailure"]> => {
+    const observedAt = performance.now();
+    return {
+      stage,
+      category: params.signal?.aborted
+        ? "cancelled"
+        : signal.aborted || error instanceof PreparationDeadlineError
+          ? "deadline_exceeded"
+          : "unexpected",
+      elapsedMs: Math.max(0, Math.round(observedAt - startedAt)),
+      stageElapsedMs: Math.max(0, Math.round(observedAt - stageStartedAt)),
+      ...(!signal.aborted &&
+      !(error instanceof PreparationDeadlineError) &&
+      (stage === "initial_quote" || stage === "refresh_quote") &&
+      error instanceof AlpacaSafetyQuoteReadError
+        ? { quote: { reason: error.reason, ...error.diagnostic } }
+        : {}),
+    };
+  };
   const now = params.now ?? Date.now;
   let tradeDecisionReview: FinanceIntradayDecisionReviewReceipt | undefined;
   let tradeDecisionReviewHistory: FinanceIntradayDecisionReviewReceipt[] | undefined;
@@ -534,7 +545,7 @@ export async function executeFinanceIntradayDecision(params: {
         receipt: recoveredReceipt,
       });
     }
-    stage = "safety_claims";
+    setStage("safety_claims");
     const safetyClaims = await waitForPreparation(signal, (signal) =>
       readFinanceExecutionSafetyClaims({
         stateDir: params.directory,
@@ -551,7 +562,7 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
-    stage = "strategy_binding";
+    setStage("strategy_binding");
     const strategyIssue = await waitForPreparation(signal, () =>
       strategyBindingIssue(
         params.directory,
@@ -568,7 +579,7 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
-    stage = "account_book";
+    setStage("account_book");
     const account = await waitForPreparation(signal, (signal) =>
       params.controller.accountBookProvider(signal),
     );
@@ -591,7 +602,7 @@ export async function executeFinanceIntradayDecision(params: {
     }
     const brokerHeld =
       account.positions.find((position) => position.instrument === input.instrument)?.quantity ?? 0;
-    stage = "owned_positions";
+    setStage("owned_positions");
     const ownedBook = await waitForPreparation(signal, () =>
       readFinanceIntradayOwnedPositions({
         directory: params.directory,
@@ -619,7 +630,7 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
-    stage = "initial_quote";
+    setStage("initial_quote");
     let quote = {
       ...(await waitForPreparation(signal, (signal) =>
         params.controller.executionQuoteProvider(
@@ -735,7 +746,7 @@ export async function executeFinanceIntradayDecision(params: {
       ["opening_range_stop", "reward_target", "pre_close"].includes(input.reason);
     if (!protectiveExit) {
       const reconciliation = account.reconciliation;
-      stage = "decision_context";
+      setStage("decision_context");
       const decisionContext = await waitForPreparation(signal, () =>
         buildFinanceThesisDecisionContext({
           directory: params.directory,
@@ -824,7 +835,7 @@ export async function executeFinanceIntradayDecision(params: {
           adapterAttested: false,
           failureCode,
         });
-        stage = "model_review";
+        setStage("model_review");
         let rawReview: unknown;
         if (!params.tradeDecisionReviewer) {
           rawReview = failedReview("reviewer_unavailable", false);
@@ -947,7 +958,7 @@ export async function executeFinanceIntradayDecision(params: {
     const reviewedQuote = quote;
     // Model review and ledger reads can outlive the quote; refresh once, then fail closed.
     if (params.controller.prepareExecutionQuote || executionQuoteIssue(quote, now()) !== null) {
-      stage = "refresh_quote";
+      setStage("refresh_quote");
       const remainingReviewMs =
         tradeDecisionReview?.status === "completed" &&
         tradeDecisionReview.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY
@@ -1049,7 +1060,7 @@ export async function executeFinanceIntradayDecision(params: {
               refusal =
                 "intraday bounded quote re-review did not approve within the original deadline";
             } else {
-              stage = "refresh_quote";
+              setStage("refresh_quote");
               quote = {
                 ...(await waitForPreparation(
                   signal,
@@ -1120,7 +1131,7 @@ export async function executeFinanceIntradayDecision(params: {
         });
       }
     }
-    stage = "final_strategy_binding";
+    setStage("final_strategy_binding");
     const remainingReviewMs = tradeDecisionReviewHistory ? reviewDeadlineAt - now() : undefined;
     if (remainingReviewMs !== undefined && remainingReviewMs <= 0) {
       throw new PreparationDeadlineError();
@@ -1155,7 +1166,7 @@ export async function executeFinanceIntradayDecision(params: {
     if (tradeDecisionReviewHistory && now() >= reviewDeadlineAt) {
       throw new PreparationDeadlineError();
     }
-    stage = "order_dispatch";
+    setStage("order_dispatch");
     const result = await (params.runOrder ?? runFinanceAlpacaOrder)(orderRequest(referencePrice));
     if (!result.ok) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
@@ -1173,7 +1184,7 @@ export async function executeFinanceIntradayDecision(params: {
         ...reviewHistory(),
       });
     }
-    stage = "fill_projection";
+    setStage("fill_projection");
     const recorded = await (params.recordFill ?? recordCycleFill)({
       directory: params.directory,
       receipt: result.receipt,

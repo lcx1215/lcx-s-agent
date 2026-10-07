@@ -417,6 +417,8 @@ const FinanceIntradayOutcomeBase = z
         ]),
         category: z.enum(["deadline_exceeded", "cancelled", "unexpected"]),
         elapsedMs: z.number().int().nonnegative(),
+        /** Current operation only; elapsedMs remains cumulative for legacy readers. */
+        stageElapsedMs: z.number().int().nonnegative().optional(),
         quote: z
           .object({
             reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
@@ -427,6 +429,11 @@ const FinanceIntradayOutcomeBase = z
           .optional(),
       })
       .strict()
+      .refine(
+        (failure) =>
+          failure.stageElapsedMs === undefined || failure.stageElapsedMs <= failure.elapsedMs,
+        { message: "operation elapsed time cannot exceed total elapsed time" },
+      )
       .refine(
         (failure) =>
           failure.quote === undefined ||
