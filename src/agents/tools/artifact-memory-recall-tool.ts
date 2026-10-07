@@ -84,7 +84,7 @@ export function createArtifactMemoryRecallTool(options: {
     label: "Artifact Memory Recall",
     name: "artifact_memory_recall",
     description:
-      "Search registered owner results and conclusions, or read an original by its registered ID with source-time and SHA verification. Local read only. Binary results return a verified original reference, not inferred contents.",
+      "Search registered owner results and conclusions, or read an original by its registered ID with source-time and SHA verification. Local read only. field must be an exact RFC6901 JSON Pointer, such as /value/status; dot/bracket paths are invalid. sourceAvailable=true retains a verified original or usable fragment even when the requested field is unavailable. Use truncated previews as partial context; recover a narrower field when exact evidence is required. Binary results provide original references, not inferred media meaning.",
     parameters: ArtifactRecallSchema,
     execute: async (_toolCallId, input, signal) => {
       const args = (input ?? {}) as Record<string, unknown>;
@@ -183,16 +183,47 @@ export function createArtifactMemoryRecallTool(options: {
           ...(result.artifact.cutoff ? { sourceCutoff: result.artifact.cutoff } : {}),
         };
         if (field !== undefined) {
-          const selectedValue = selectJsonField(result.text, result.truncated, field);
+          let selectedValue: unknown;
+          try {
+            selectedValue = selectJsonField(result.text, result.truncated, field);
+          } catch (error) {
+            if (
+              !(error instanceof ArtifactStoreError) ||
+              !["artifact_field_json_unavailable", "artifact_field_text_unavailable"].includes(
+                error.code,
+              )
+            ) {
+              throw error;
+            }
+            // The verified original remains useful even when this field cannot
+            // be extracted. Retain a bounded fragment without inventing a value.
+            const fragment = preview(result.text ?? "");
+            return jsonResult({
+              available: false,
+              authority: "local_read",
+              action,
+              field,
+              gap: error.code,
+              sourceAvailable: true,
+              selectionComplete: false,
+              artifactId: result.artifact.id,
+              format: result.artifact.format,
+              ...source,
+              ...(result.text === undefined
+                ? {}
+                : {
+                    textPreview: fragment.preview,
+                    previewTruncated: fragment.truncated || result.truncated,
+                  }),
+            });
+          }
           const encoded = JSON.stringify(selectedValue);
           if (Buffer.byteLength(encoded) > ARTIFACT_TEXT_PREVIEW_MAX_BYTES) {
             throw new ArtifactStoreError("artifact_field_budget_exceeded");
           }
           const selected = preview(encoded);
           const fieldResult = { ...result };
-          const sourceTextOmitted =
-            result.text !== undefined &&
-            Buffer.byteLength(result.text) > ARTIFACT_TEXT_PREVIEW_MAX_BYTES;
+          const sourceTextOmitted = result.text !== undefined;
           if (sourceTextOmitted) {
             delete fieldResult.text;
           }

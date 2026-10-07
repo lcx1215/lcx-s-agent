@@ -110,9 +110,16 @@ describe("owner artifacts in the existing memory database", () => {
 
   it.each([
     ["json", "application/json", Buffer.from('{"profit":1}')],
+    ["partial-json", "application/json", Buffer.from('{"price":138.05,"volume":')],
     ["jsonl", "application/x-ndjson", Buffer.from('{"profit":1}\n{"profit":2}\n')],
     ["md", "text/markdown", Buffer.from("# result\n取证结论")],
     ["csv", "text/csv", Buffer.from("symbol,value\nABC,42\n")],
+    ["partial-csv", "text/csv", Buffer.from("symbol,price,volume\nTJX,138.05,\n")],
+    [
+      "contradictory-text",
+      "text/plain",
+      Buffer.from("source A: 138.05; source B: 140; unresolved"),
+    ],
     ["png", "image/png", Buffer.from([137, 80, 78, 71, 0, 255])],
     ["pdf", "application/pdf", Buffer.from("%PDF-1.7\nopaque")],
     ["wav", "audio/wav", Buffer.from([82, 73, 70, 70, 0, 255])],

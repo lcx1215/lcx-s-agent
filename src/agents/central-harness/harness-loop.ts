@@ -336,6 +336,11 @@ async function runCycle(
           ? observation
           : undefined;
       if (digestSource !== undefined) {
+        // A successful dispatch may still return unavailable evidence. Preserve
+        // the host verdict when present; otherwise surface the tool's verdict.
+        if (step.observedOk === undefined && typeof digestSource.available === "boolean") {
+          step.observedOk = digestSource.available;
+        }
         const archived = isPlainRecord(observation)
           ? hostArtifactBusinessOutcomes.get(observation)
           : undefined;
@@ -371,6 +376,7 @@ async function runCycle(
         const decisionDigest = compactCentralStepOutcome(step.ownerId, digestSource);
         const outcomeBudget =
           step.ownerId === "finance_bar_ledger" ||
+          (step.ownerId === "artifact_memory_recall" && typeof step.args.field === "string") ||
           (step.ownerId === "finance_position_ledger_read" &&
             ["receipt", "order", "fill", "fee"].includes(String(step.args.historyKind)))
             ? CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES
@@ -901,6 +907,31 @@ function compactCentralStepOutcome(
   ownerId: string,
   source: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
+  if (
+    ownerId === "artifact_memory_recall" &&
+    source.action === "read" &&
+    typeof source.field === "string" &&
+    Object.hasOwn(source, "selectedValue")
+  ) {
+    // Recover the selected evidence, not a duplicate full source and index row.
+    // Oversized values are omitted by the existing budget with a named gap;
+    // the pointer and verified source identity allow a narrower next read.
+    return {
+      available: source.available,
+      authority: source.authority,
+      action: source.action,
+      ...(isPlainRecord(source.artifact) && typeof source.artifact.id === "string"
+        ? { artifactId: source.artifact.id }
+        : {}),
+      field: source.field,
+      sourceSha256: source.sourceSha256,
+      sourceObservedAt: source.sourceObservedAt,
+      ...(source.sourceCutoff ? { sourceCutoff: source.sourceCutoff } : {}),
+      selectedValue: source.selectedValue,
+      selectedPreview: source.selectedPreview,
+      selectedPreviewTruncated: source.selectedPreviewTruncated,
+    };
+  }
   if (ownerId === "finance_position_ledger_read" && isPlainRecord(source.history)) {
     return {
       schemaVersion: source.schemaVersion,

@@ -9,10 +9,19 @@ import {
   OPERATING_REVIEW_MEMORY_NOTES,
 } from "../hooks/bundled/lobster-brain-registry.js";
 import { typedCases } from "../test-utils/typed-cases.js";
+import { CENTRAL_BRAIN_PROMPT_CACHE_PREFIX } from "./central-harness/model-brain.js";
+import { PARTIAL_EVIDENCE_PROMPT_GUIDANCE } from "./finance-research-provenance.js";
 import { buildSubagentSystemPrompt } from "./subagent-announce.js";
 import { buildAgentSystemPrompt, buildRuntimeLine } from "./system-prompt.js";
 
 describe("buildAgentSystemPrompt", () => {
+  it("shares partial-evidence guidance across normal, worker and central prompts", () => {
+    for (const promptMode of ["full", "minimal"] as const) {
+      const prompt = buildAgentSystemPrompt({ workspaceDir: "/tmp/openclaw", promptMode });
+      expect(prompt).toContain(PARTIAL_EVIDENCE_PROMPT_GUIDANCE);
+    }
+    expect(CENTRAL_BRAIN_PROMPT_CACHE_PREFIX).toContain(PARTIAL_EVIDENCE_PROMPT_GUIDANCE);
+  });
   it("explains result recall when it is the only available memory tool", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

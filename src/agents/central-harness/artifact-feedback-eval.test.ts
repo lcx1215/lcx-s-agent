@@ -3,12 +3,20 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import { ArtifactStore } from "../../memory/artifact-store.js";
 import { requireNodeSqlite } from "../../memory/sqlite.js";
 import { recordAgentArtifact } from "../artifact-result-recording.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
-import { compactReceipts, runCentralHarnessCycle } from "./harness-loop.js";
+import {
+  boundPerception,
+  CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES,
+  compactReceipts,
+  nextCycleContinuation,
+  runCentralHarnessCycle,
+  type CompactBacklogEntry,
+} from "./harness-loop.js";
 import { createCentralToolRegistry } from "./tool-registry.js";
-import type { CentralRunReceipt } from "./types.js";
+import type { CentralPerception, CentralRunReceipt } from "./types.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -244,4 +252,230 @@ describe("original owner artifact read changes the next bounded decision (offlin
       expect(next.brainCall.modelCall).toBeUndefined();
     },
   );
+});
+
+describe("bounded artifact evidence and unavailable-result feedback", () => {
+  async function readCycle(value: unknown, field?: string) {
+    const host = await fixture();
+    const artifact = await recordAgentArtifact({
+      ...host,
+      agentId: "main",
+      owner: "fixture_evidence",
+      runId: "retained-evidence",
+      value,
+    });
+    const full = createCentralToolRegistry(host);
+    const registry = new Map([["artifact_memory_recall", full.get("artifact_memory_recall")!]]);
+    const capabilities = new Set(["artifact_memory_recall"]);
+    const args = { action: "read", id: artifact.id, ...(field === undefined ? {} : { field }) };
+    const perception = {
+      observedAt: new Date().toISOString(),
+      ownerTotals: {},
+      controlRoom: {},
+      backlog: [],
+      boundaries: ["offline_scripted", "no_execution_authority"],
+    };
+    const brain = {
+      propose: async () => ({
+        kind: "proposed" as const,
+        provider: "fixture",
+        modelId: "scripted",
+        plan: {
+          actions: [{ ownerId: "artifact_memory_recall", args }],
+          note: "read exact evidence",
+        },
+      }),
+    };
+    const options = {
+      perception,
+      registry,
+      capabilityOwnerIds: capabilities,
+      planOnly: true,
+      brain,
+    };
+    const receipt = await runCentralHarnessCycle(options);
+    return { receipt, options, artifact, capabilities };
+  }
+
+  it.each(["value.content[0].text", "/value/missing"])(
+    "reports unavailable evidence separately from successful dispatch (%s)",
+    async (field) => {
+      const { receipt, options } = await readCycle({ present: true }, field);
+      expect(receipt.steps[0]).toMatchObject({
+        status: "ran_ok",
+        observedOk: false,
+        outcome: { available: false },
+      });
+      expect(receipt.steps[0].outcome?.gap).toBe(
+        field.startsWith("/") ? "artifact_field_missing" : "artifact_field_invalid",
+      );
+      expect(receipt.nextAction).toBe("follow_up_on_owners_reporting_not_ok");
+      const repeated = await runCentralHarnessCycle(options);
+      expect(nextCycleContinuation(repeated, 2, 4, receipt)).toEqual({
+        run: false,
+        because: "unchanged_failure",
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "carries the exact evidence into the next decision (ready=%s)",
+    async (ready) => {
+      const selected = { evidence: "核实证据".repeat(120), ready };
+      const { receipt, options, artifact, capabilities } = await readCycle(
+        { selected, unrelated: "not decision evidence".repeat(3000) },
+        "/value/selected",
+      );
+      const step = receipt.steps[0];
+      expect(step.observedOk).toBe(true);
+      expect(step.outcome).toMatchObject({
+        selectedValue: selected,
+        artifactId: artifact.id,
+        sourceSha256: artifact.sha256,
+        field: "/value/selected",
+      });
+      expect(step.outcome).not.toHaveProperty("text");
+      expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(
+        CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES,
+      );
+      const backlog = compactReceipts([receipt], 10, capabilities);
+      const nextPerception = { ...options.perception, backlog };
+      expect(boundPerception(nextPerception).report.overBudget).toBe(false);
+      const next = await runCentralHarnessCycle({
+        ...options,
+        perception: nextPerception,
+        brain: {
+          propose: async (perception: CentralPerception) => {
+            const outcomes = perception.backlog[0].outcomes as CompactBacklogEntry["outcomes"];
+            const recovered = outcomes[0].outcome?.selectedValue;
+            expect(recovered).toEqual(selected);
+            return {
+              kind: "proposed",
+              provider: "fixture",
+              modelId: "scripted",
+              plan: { actions: [], note: ready ? "proceed from evidence" : "stop from evidence" },
+            };
+          },
+        },
+      });
+      expect(next.brainCall.note).toBe(ready ? "proceed from evidence" : "stop from evidence");
+      expect(next.brainCall.modelCall).toBeUndefined();
+    },
+  );
+
+  it("keeps the original pointer and names an oversized selected-field omission", async () => {
+    const { receipt, artifact } = await readCycle(
+      { selected: "x".repeat(9000) },
+      "/value/selected",
+    );
+    const step = receipt.steps[0];
+    expect(step.outcome).toMatchObject({
+      available: true,
+      artifactId: artifact.id,
+      field: "/value/selected",
+      sourceSha256: artifact.sha256,
+      selectedPreviewTruncated: true,
+    });
+    expect(step.outcome).not.toHaveProperty("selectedValue");
+    expect(step.outcomeDroppedKeys).toContain("selectedValue");
+    expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(
+      CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES,
+    );
+  });
+
+  it("does not expand an unselected full-document read", async () => {
+    const { receipt } = await readCycle({ detail: "x".repeat(10000) });
+    expect(Buffer.byteLength(JSON.stringify(receipt.steps[0].outcome))).toBeLessThanOrEqual(512);
+    expect(receipt.steps[0].outcome).not.toHaveProperty("selectedValue");
+    expect(receipt.steps[0].outcome?.previewTruncated).toBe(true);
+  });
+
+  it("uses a malformed source fragment for a bounded hypothesis without inventing the missing field", async () => {
+    const host = await fixture();
+    await fs.mkdir(path.join(host.workspaceDir, "state/runs"), { recursive: true });
+    await fs.writeFile(
+      path.join(host.workspaceDir, "state/runs/fragment.json"),
+      '{"price":138.05,"volume":',
+    );
+    const store = ArtifactStore.open(host);
+    try {
+      await store.register({
+        id: "partial-source",
+        owner: "fragment-intake",
+        runId: "partial-run",
+        observedAt: "2026-10-07T14:00:00Z",
+        relativePath: "state/runs/fragment.json",
+        mimeType: "application/json",
+        summary: "partial price clue; volume is unknown",
+      });
+    } finally {
+      store.close();
+    }
+    const registry = createCentralToolRegistry(host);
+    const capabilities = new Set(["artifact_memory_recall"]);
+    const perception = {
+      observedAt: "2026-10-07T14:01:00Z",
+      ownerTotals: {},
+      controlRoom: {},
+      backlog: [],
+      boundaries: ["offline_scripted", "no_execution_authority"],
+    };
+    const read = await runCentralHarnessCycle({
+      perception,
+      registry,
+      capabilityOwnerIds: capabilities,
+      brain: {
+        propose: async () => ({
+          kind: "proposed",
+          provider: "fixture",
+          modelId: "scripted",
+          plan: {
+            note: "inspect source",
+            actions: [
+              {
+                ownerId: "artifact_memory_recall",
+                args: { action: "read", id: "partial-source", field: "/volume" },
+              },
+            ],
+          },
+        }),
+      },
+    });
+    expect(read.steps[0]).toMatchObject({
+      status: "ran_ok",
+      observedOk: false,
+      outcome: {
+        sourceAvailable: true,
+        selectionComplete: false,
+        textPreview: '{"price":138.05,"volume":',
+      },
+    });
+    const next = await runCentralHarnessCycle({
+      perception: { ...perception, backlog: compactReceipts([read], 10, capabilities) },
+      registry,
+      capabilityOwnerIds: capabilities,
+      brain: {
+        propose: async (current) => {
+          const outcomes = current.backlog[0].outcomes as CompactBacklogEntry["outcomes"];
+          const fragment = outcomes[0].outcome;
+          expect(fragment).not.toHaveProperty("selectedValue");
+          return {
+            kind: "proposed",
+            provider: "fixture",
+            modelId: "scripted",
+            plan: {
+              actions: [],
+              note:
+                fragment?.sourceAvailable === true &&
+                String(fragment.textPreview).includes("138.05")
+                  ? "retain price clue as hypothesis; volume remains unknown"
+                  : "no usable source",
+            },
+          };
+        },
+      },
+    });
+    expect(next.brainCall.note).toBe("retain price clue as hypothesis; volume remains unknown");
+    expect(next.brainCall.modelCall).toBeUndefined();
+  });
 });

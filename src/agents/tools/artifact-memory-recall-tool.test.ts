@@ -102,6 +102,69 @@ it("reports missing and changed registered originals", async () => {
   ).toMatchObject({ gap: "artifact_original_missing" });
 });
 
+it.each([
+  ["json", "application/json", Buffer.from('{"price":138.05,"volume":')],
+  ["png", "image/png", Buffer.from([137, 80, 78, 71, 0, 255])],
+])(
+  "retains the verified %s fragment when a requested field is unavailable",
+  async (ext, mime, bytes) => {
+    await fs.mkdir(path.join(root, "state/runs"), { recursive: true });
+    const relativePath = `state/runs/partial.${ext}`;
+    await fs.writeFile(path.join(root, relativePath), bytes);
+    const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+    let sourceSha256: string;
+    try {
+      const recorded = await store.register({
+        id: "partial-source",
+        owner: "fragment-intake",
+        runId: "partial-run",
+        observedAt: "2026-10-07T14:00:00Z",
+        relativePath,
+        mimeType: mime,
+        summary: "partial source retained, exact price field not verified",
+      });
+      sourceSha256 = recorded.artifact.sha256;
+    } finally {
+      store.close();
+    }
+    const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
+    const read = (
+      await tool.execute("partial-field", {
+        action: "read",
+        id: "partial-source",
+        field: "/price",
+      })
+    ).details as Record<string, unknown>;
+    expect(read).toMatchObject({
+      available: false,
+      sourceAvailable: true,
+      selectionComplete: false,
+      artifactId: "partial-source",
+      sourceSha256,
+      gap: ext === "json" ? "artifact_field_json_unavailable" : "artifact_field_text_unavailable",
+    });
+    expect(read).not.toHaveProperty("selectedValue");
+    if (ext === "json") {
+      expect(read.textPreview).toBe(bytes.toString("utf8"));
+    } else {
+      expect(read.format).toBe("binary");
+      expect(read).not.toHaveProperty("textPreview");
+    }
+    expect(await fs.readFile(path.join(root, relativePath))).toEqual(bytes);
+    await fs.writeFile(path.join(root, relativePath), "changed fragment");
+    const changed = (
+      await tool.execute("changed-partial", {
+        action: "read",
+        id: "partial-source",
+        field: "/price",
+      })
+    ).details as Record<string, unknown>;
+    expect(changed).toMatchObject({ available: false, gap: "artifact_original_hash_mismatch" });
+    expect(changed).not.toHaveProperty("sourceAvailable");
+    expect(changed).not.toHaveProperty("textPreview");
+  },
+);
+
 it("puts a compact pointer and UTF8 text preview before large details", async () => {
   await seed();
   const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
@@ -166,14 +229,16 @@ it("selects a precise quant result through RFC6901 after source hash verificatio
     store.close();
   }
   const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
-  expect(
-    (await tool.execute("beta", { action: "read", id: "quant", field: "/value/details/beta" }))
-      .details,
-  ).toMatchObject({
+  const beta = (
+    await tool.execute("beta", { action: "read", id: "quant", field: "/value/details/beta" })
+  ).details;
+  expect(beta).toMatchObject({
     selectedValue: 0.38,
     selectedPreview: "0.38",
     selectedPreviewTruncated: false,
+    sourceTextOmittedForField: true,
   });
+  expect(beta).not.toHaveProperty("text");
   expect(
     (
       await tool.execute("escape", {

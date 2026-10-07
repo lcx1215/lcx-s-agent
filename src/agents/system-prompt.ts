@@ -14,6 +14,7 @@ import { CANONICAL_CLI_NAME, CANONICAL_PRODUCT_NAME } from "../infra/canonical-i
 import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
 import { FINANCE_CONDITION_ORIGIN_GUIDANCE } from "./finance-decision-policy.js";
+import { PARTIAL_EVIDENCE_PROMPT_GUIDANCE } from "./finance-research-provenance.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
 import type { EmbeddedSandboxInfo } from "./pi-embedded-runner/types.js";
 import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
@@ -1026,6 +1027,7 @@ export function buildAgentSystemPrompt(params: {
           '- session_status: show usage/time/model state and answer "what model are we using?"',
         ].join("\n"),
     "TOOLS.md does not control tool availability; it is user guidance for how to use external tools.",
+    PARTIAL_EVIDENCE_PROMPT_GUIDANCE,
     `For long waits, avoid rapid poll loops: use ${execToolName} with enough yieldMs or ${processToolName}(action=poll, timeout=<ms>).`,
     "If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.",
     ...(acpHarnessSpawnAllowed
