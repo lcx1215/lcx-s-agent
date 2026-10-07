@@ -1,3 +1,5 @@
+import type { ArtifactRecordingReceipt } from "../artifact-result-recording.js";
+
 /** LCX Central Agent Harness types.
  *
  * The central harness is a single agentic main loop that perceives system
@@ -67,6 +69,8 @@ export type CentralStep = {
    * not silently missing.
    */
   outcome?: Readonly<Record<string, unknown>>;
+  /** Host-bound original result reference, separate from owner-provided receipt fields. */
+  resultArtifact?: ArtifactRecordingReceipt;
   outcomeDroppedKeys?: readonly string[];
   /** Host-computed original business result identity before archive annotations. */
   semanticOutcomeSha256?: string;

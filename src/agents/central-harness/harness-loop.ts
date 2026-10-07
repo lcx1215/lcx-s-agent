@@ -329,6 +329,25 @@ async function runCycle(
           ? hostArtifactBusinessOutcomes.get(observation)
           : undefined;
         if (business !== undefined) {
+          // Owner receipts are inside the envelope; its host archive reference
+          // must survive independently without overwriting any business field.
+          const reference = observation.artifactEvidence;
+          if (digestSource !== observation && isPlainRecord(reference)) {
+            const status = reference.status;
+            if (status === "registered" || status === "unchanged" || status === "unavailable") {
+              step.resultArtifact = {
+                status,
+                reason: typeof reference.reason === "string" ? reference.reason.slice(0, 160) : "",
+                ...(typeof reference.id === "string" &&
+                /^artifact-[a-f0-9]{64}$/u.test(reference.id)
+                  ? { id: reference.id }
+                  : {}),
+                ...(typeof reference.sha256 === "string" && /^[a-f0-9]{64}$/u.test(reference.sha256)
+                  ? { sha256: reference.sha256 }
+                  : {}),
+              };
+            }
+          }
           const businessDigest = isPlainRecord(business.receipt) ? business.receipt : business;
           step.semanticOutcomeSha256 = createHash("sha256")
             .update(JSON.stringify(canonicalContinuationValue(businessDigest)))
@@ -381,7 +400,9 @@ async function runCycle(
                       options.capabilityOwnerIds?.has(step.ownerId),
                   )
                 ? "follow_up_on_capability_results"
-                : "continue"
+                : steps.some(hasExecutedResult)
+                  ? "follow_up_on_owner_results"
+                  : "continue"
         : brainCall.outcome === "failed"
           ? "halt_and_report"
           : brainCall.outcome === "blocked"
@@ -468,6 +489,7 @@ export type CompactBacklogEntry = Readonly<{
     status: CentralStep["status"];
     reason?: string;
     outcome?: Readonly<Record<string, unknown>>;
+    resultArtifact?: CentralStep["resultArtifact"];
     outcomeDroppedKeys?: readonly string[];
     /** Original observation time; carrying a result does not refresh its evidence. */
     sourceObservedAt?: string;
@@ -507,7 +529,8 @@ export type CentralCycleContinuation =
         | "dispatch_failed"
         | "proposals_blocked_by_gate"
         | "owners_reported_not_ok"
-        | "capability_results";
+        | "capability_results"
+        | "owner_results";
     }
   | {
       run: false;
@@ -526,9 +549,11 @@ const FOLLOW_UP_VERDICTS: Readonly<
     | "proposals_blocked_by_gate"
     | "owners_reported_not_ok"
     | "capability_results"
+    | "owner_results"
   >
 > = {
   follow_up_on_capability_results: "capability_results",
+  follow_up_on_owner_results: "owner_results",
   follow_up_on_failed_dispatch: "dispatch_failed",
   review_blocked_proposals: "proposals_blocked_by_gate",
   follow_up_on_owners_reporting_not_ok: "owners_reported_not_ok",
@@ -581,10 +606,11 @@ export function nextCycleContinuation(
   ) {
     return {
       run: false,
-      because:
-        receipt.nextAction === "follow_up_on_capability_results"
-          ? "unchanged_result"
-          : "unchanged_failure",
+      because: ["follow_up_on_capability_results", "follow_up_on_owner_results"].includes(
+        receipt.nextAction,
+      )
+        ? "unchanged_result"
+        : "unchanged_failure",
     };
   }
   return { run: true, because };
@@ -604,15 +630,35 @@ function canonicalContinuationValue(value: unknown): unknown {
   return value;
 }
 
+const OWNER_RESULT_METADATA_KEYS = new Set([
+  "ok",
+  "observedOk",
+  "exitCode",
+  "output",
+  "schemaVersion",
+  "boundary",
+  "checkedAt",
+  "updatedAt",
+  "observedAt",
+  "artifactEvidence",
+  "artifactId",
+  "artifactIndexStatus",
+]);
+
+/** A dispatched business result must reach the next decision, even when its owner is green. */
+function hasExecutedResult(step: CentralStep): boolean {
+  return (
+    step.status === "ran_ok" &&
+    step.outcome !== undefined &&
+    (Object.keys(step.outcome).some((key) => !OWNER_RESULT_METADATA_KEYS.has(key)) ||
+      (step.outcomeDroppedKeys ?? []).some((key) => !OWNER_RESULT_METADATA_KEYS.has(key)))
+  );
+}
+
 /**
- * Steps whose outcome the next decision actually needs: red lights plus the
- * successful capability results the caller elected to carry forward.
- *
- * A green governance check needs no repeated digest: the control room carries
- * its status. A green capability read is different; its returned data is the
- * evidence the next decision needs, even though the owner itself reported ok.
- * `ran_ok` with no verdict is also included because the next decision is blind
- * without that receipt.
+ * Direct owner dispatch does not publish a new control-room snapshot. Carry its
+ * bounded result through the existing backlog, just like a capability result.
+ * An approved plan alone has no result and cannot become new evidence.
  */
 function stepsToCarry(
   receipt: CentralRunReceipt,
@@ -623,7 +669,9 @@ function stepsToCarry(
       step.status === "blocked_by_gate" ||
       step.status === "ran_failed" ||
       (step.status === "ran_ok" &&
-        (step.observedOk !== true || carrySuccessfulOutcomeOwnerIds.has(step.ownerId))),
+        (step.observedOk !== true ||
+          hasExecutedResult(step) ||
+          carrySuccessfulOutcomeOwnerIds.has(step.ownerId))),
   );
 }
 
@@ -643,7 +691,7 @@ export function compactReceipts(
   for (const receipt of tail) {
     for (const step of receipt.steps) {
       // A rejected proposal did not read the source and cannot replace its evidence.
-      // A green governance check can supersede a failure without carrying a digest.
+      // A green check supersedes the failed attempt while retaining its actual result.
       if (step.status === "ran_ok" || step.status === "ran_failed") {
         latestAttempts.set(argumentIdentity(step), step);
       }
@@ -711,6 +759,7 @@ export function compactReceipts(
             : {}),
           ...(reason ? { reason: reason.slice(0, CENTRAL_STEP_REASON_CHARS) } : {}),
           ...(step.outcome && carriesDigest ? { outcome: step.outcome } : {}),
+          ...(step.resultArtifact && carriesDigest ? { resultArtifact: step.resultArtifact } : {}),
           ...(outcomeDroppedKeys.length > 0 ? { outcomeDroppedKeys } : {}),
         };
       }),

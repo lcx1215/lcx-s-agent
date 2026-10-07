@@ -5,6 +5,7 @@ import {
   runCentralHarnessCycle,
   nextCycleContinuation,
   compactReceipts,
+  markCentralArtifactOutcome,
 } from "./harness-loop.js";
 import type { CentralPerception, CentralToolSpec, CentralRunReceipt } from "./types.js";
 
@@ -47,6 +48,148 @@ function registry(execute: CentralToolSpec["execute"]) {
   ]);
 }
 afterEach(() => vi.useRealTimers());
+
+describe("executed governance result feedback", () => {
+  it.each([true, false])(
+    "consumes a successful owner result before deciding the next action (ready=%s)",
+    async (ready) => {
+      const receipts: CentralRunReceipt[] = [];
+      const execute = vi.fn(async () => ({
+        observedOk: true,
+        receipt: {
+          ok: true,
+          readiness: ready ? "ready" : "needs_evidence",
+          source: "owner-result",
+        },
+      }));
+      const decide = vi.fn(async (seen: CentralPerception) => {
+        const result = compactReceipts(receipts, 10)
+          .flatMap((entry) => entry.outcomes)
+          .find((entry) => entry.ownerId === "fixture")?.outcome;
+        expect(seen.backlog).toEqual(compactReceipts(receipts, 10));
+        return {
+          kind: "proposed" as const,
+          provider: "offline-fixture",
+          modelId: "scripted-owner-consumer",
+          plan: {
+            actions: result ? [] : [{ ownerId: "fixture" }],
+            note: result
+              ? result.readiness === "ready"
+                ? "ready_from_owner_evidence"
+                : "stop_with_missing_evidence"
+              : "read_owner",
+          },
+        };
+      });
+      for (let cycle = 1; cycle <= 3; cycle++) {
+        const receipt = await runCentralHarnessCycle({
+          perception: { ...perception, backlog: compactReceipts(receipts, 10) },
+          registry: registry(execute),
+          brain: { propose: decide },
+          planOnly: false,
+          capabilityOwnerIds: new Set(),
+        });
+        receipts.push(receipt);
+        if (!nextCycleContinuation(receipt, cycle, 3, receipts.at(-2)).run) {
+          break;
+        }
+      }
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(decide).toHaveBeenCalledTimes(2);
+      expect(receipts[0].nextAction).toBe("follow_up_on_owner_results");
+      expect(compactReceipts(receipts, 10)[0].outcomes[0]).toMatchObject({
+        ownerId: "fixture",
+        sourceObservedAt: perception.observedAt,
+        outcome: { source: "owner-result", readiness: ready ? "ready" : "needs_evidence" },
+      });
+      expect(receipts[1].brainCall.note).toBe(
+        ready ? "ready_from_owner_evidence" : "stop_with_missing_evidence",
+      );
+      expect(receipts[1].actionsProposed).toBe(0);
+      expect(receipts.every((receipt) => !receipt.providerConfigTouched)).toBe(true);
+    },
+  );
+
+  it("carries only a host-bound owner archive reference and preserves receipt fields", async () => {
+    const ownerFields = { artifactEvidence: { id: "source-owned" }, readiness: "review" };
+    const hostReference = {
+      status: "registered",
+      reason: "ok",
+      id: `artifact-${"a".repeat(64)}`,
+      sha256: "b".repeat(64),
+    };
+    const execute = async () =>
+      markCentralArtifactOutcome(
+        { observedOk: true, receipt: ownerFields, artifactEvidence: hostReference },
+        { observedOk: true, receipt: ownerFields },
+      );
+    const result = await runCentralHarnessCycle({ perception, brain, registry: registry(execute) });
+    const carried = compactReceipts([result], 10)[0].outcomes[0];
+    expect(carried.resultArtifact).toEqual(hostReference);
+    expect(carried.outcome?.artifactEvidence).toEqual(ownerFields.artifactEvidence);
+    const unbound = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: registry(async () => ({
+        observedOk: true,
+        receipt: ownerFields,
+        artifactEvidence: hostReference,
+      })),
+    });
+    expect(unbound.steps[0].resultArtifact).toBeUndefined();
+  });
+
+  it("does not create a follow-up from metadata-only green receipts", async () => {
+    const result = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: registry(async () => ({
+        observedOk: true,
+        receipt: { ok: true, checkedAt: perception.observedAt, output: '{"ok":true}' },
+      })),
+    });
+    expect(result.nextAction).toBe("continue");
+    expect(compactReceipts([result], 10)[0].outcomes).toEqual([]);
+  });
+
+  it("stops an unchanged successful owner result and respects the cycle limit", async () => {
+    const options = {
+      perception,
+      registry: registry(async () => ({ observedOk: true, receipt: { ok: true, value: 7 } })),
+      brain,
+    };
+    const first = await runCentralHarnessCycle(options);
+    const same = await runCentralHarnessCycle(options);
+    expect(nextCycleContinuation(first, 1, 3)).toEqual({ run: true, because: "owner_results" });
+    expect(nextCycleContinuation(same, 2, 3, first)).toEqual({
+      run: false,
+      because: "unchanged_result",
+    });
+    expect(nextCycleContinuation(first, 1, 1)).toEqual({
+      run: false,
+      because: "max_cycles_reached",
+    });
+  });
+
+  it("does not follow up an unexecuted plan or a success without a result", async () => {
+    const execute = vi.fn(async () => ({ observedOk: true }));
+    const planned = await runCentralHarnessCycle({
+      perception,
+      registry: registry(execute),
+      brain,
+      planOnly: true,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(planned.nextAction).toBe("continue");
+    expect(compactReceipts([planned], 10)[0].outcomes).toEqual([]);
+    const noResult = await runCentralHarnessCycle({
+      perception,
+      registry: registry(async () => ({})),
+      brain,
+    });
+    expect(noResult.nextAction).toBe("continue");
+  });
+});
 
 describe("central cycle cancellation and failure closure", () => {
   it("settles a terminal receipt when a brain ignores the deadline signal", async () => {
@@ -272,7 +415,10 @@ describe("scope-bound evidence retention", () => {
     };
     const backlog = compactReceipts([failed, green], 10);
     expect(backlog[0].outcomes[0].outcomeDroppedKeys).toContain("outcome_superseded_in_backlog");
-    expect(backlog[1].outcomes).toEqual([]);
+    expect(backlog[1].outcomes[0]).toMatchObject({
+      ownerId: "fixture",
+      outcome: first.steps[0].outcome,
+    });
     expect(backlog[1].approved).toEqual(["fixture"]);
   });
 
@@ -505,7 +651,7 @@ describe("bounded central coordination", () => {
       planOnly: false,
       capabilityOwnerIds: undefined,
     });
-    expect(unclassified.nextAction).toBe("continue");
+    expect(unclassified.nextAction).toBe("follow_up_on_owner_results");
   });
   it("uses the production continuation gate to consume absent then ready capability receipts", async () => {
     const receipts: CentralRunReceipt[] = [];
