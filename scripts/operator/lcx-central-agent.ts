@@ -136,13 +136,33 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
   return out;
 }
 
-async function readLatest<T>(name: string, fallback: T): Promise<T> {
+type SnapshotReadFailure = "missing" | "read_failed" | "invalid_json" | "invalid_shape";
+
+async function readLatest<T>(
+  name: string,
+  fallback: T,
+  onUnavailable?: (status: SnapshotReadFailure) => void,
+): Promise<T> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(path.join(STATE_DIR, name), "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
+    raw = await fs.readFile(path.join(STATE_DIR, name), "utf8");
+  } catch (error) {
+    const missing = isRecord(error) && error.code === "ENOENT";
+    onUnavailable?.(missing ? "missing" : "read_failed");
     return fallback;
   }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    onUnavailable?.("invalid_json");
+    return fallback;
+  }
+  if (!isRecord(value)) {
+    onUnavailable?.("invalid_shape");
+    return fallback;
+  }
+  return value as T;
 }
 
 /** Accept the original completed-owner handoff, never a fabricated final verdict. */
@@ -257,13 +277,28 @@ export async function buildPerception(
   task?: CentralHostTask,
   governanceInput?: Readonly<Record<string, unknown>>,
 ): Promise<CentralPerception> {
-  const controlRoom = await readLatest<Record<string, unknown>>("lcx-control-room-latest.json", {});
+  // A failed read is an evidence gap, not an empty/healthy system. Keep only
+  // bounded status codes; source contents and filesystem error text stay out.
+  const snapshotReadFailures: Record<string, SnapshotReadFailure> = {};
+  const onUnavailable = (source: string) => (status: SnapshotReadFailure) => {
+    snapshotReadFailures[source] = status;
+  };
+  const controlRoom = await readLatest<Record<string, unknown>>(
+    "lcx-control-room-latest.json",
+    {},
+    onUnavailable("controlRoom"),
+  );
   const governance =
     governanceInput ??
-    (await readLatest<Record<string, unknown>>("lcx-governance-autopilot-latest.json", {}));
+    (await readLatest<Record<string, unknown>>(
+      "lcx-governance-autopilot-latest.json",
+      {},
+      onUnavailable("governance"),
+    ));
   const learningWorkflow = await readLatest<Record<string, unknown>>(
     "lcx-learning-workflow-latest.json",
     {},
+    onUnavailable("learningWorkflow"),
   );
   const observedAt = new Date().toISOString();
   const financeAutomaticLifecycle =
@@ -292,6 +327,7 @@ export async function buildPerception(
       ...controlRoomProjection,
       runtimeFreshness: {
         ...projectRuntimeFreshness({ controlRoom, governance, learningWorkflow }, observedAt),
+        ...(Object.keys(snapshotReadFailures).length > 0 ? { snapshotReadFailures } : {}),
         ...(governanceInput
           ? {
               sourceBoundary: "same_cycle_owners_and_published_other_snapshots",

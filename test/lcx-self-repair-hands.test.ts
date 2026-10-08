@@ -8,6 +8,58 @@ import {
 } from "../scripts/operator/lcx-self-repair-hands.ts";
 
 describe("LCX self-repair hands", () => {
+  it("retains previous candidate versions and their review boundary after revised feedback", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-repair-versions-"));
+    const input = {
+      checkedAt: "2026-10-08T07:00:00.000Z",
+      workspaceDir,
+      signalKey: "snapshot_read_feedback",
+      issue: "snapshot_read_failure",
+      observedFailure: "a failed snapshot read looked like an empty system",
+      replacementRule: "carry an explicit read failure into the next perception",
+      domain: "perception_evidence",
+      write: true,
+    };
+    try {
+      const original = buildSelfRepairHandsReceipt(input);
+      await writeSelfRepairHandsReceipt(original);
+      const versionPaths = [
+        original.hands.memoryCleaner.path,
+        original.hands.trainingCaseBuilder.path,
+        original.hands.patchCandidateBuilder.path,
+      ];
+      const priorBytes = await Promise.all(versionPaths.map((file) => fs.readFile(file)));
+      const revised = buildSelfRepairHandsReceipt({
+        ...input,
+        checkedAt: "2026-10-08T07:01:00.000Z",
+        replacementRule:
+          "carry explicit read failures and clear them after a fresh successful read",
+      });
+      await writeSelfRepairHandsReceipt(revised);
+      for (const [index, file] of versionPaths.entries()) {
+        expect(await fs.readFile(file)).toEqual(priorBytes[index]);
+        expect(revised.writtenArtifacts).not.toContain(file);
+      }
+      const latest = JSON.parse(await fs.readFile(revised.latestJsonPath, "utf8"));
+      expect(latest.hands.patchCandidateBuilder.candidate.proposedPatchContract).toMatchObject({
+        candidateOnly: true,
+        canEditRepoSource: false,
+        canCommit: false,
+        ownerReviewRequired: true,
+      });
+      expect(latest.hands.trainingCaseBuilder.candidate.absorptionStatus).toBe(
+        "candidate_only_not_in_train_slice",
+      );
+      const history = (await fs.readFile(revised.jsonlPath, "utf8")).trim().split("\n");
+      expect(history.map((line) => JSON.parse(line).checkedAt)).toEqual([
+        input.checkedAt,
+        revised.checkedAt,
+      ]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("builds a supervised dry-run for memory correction, training candidates, and patch candidates", () => {
     const receipt = buildSelfRepairHandsReceipt({
       checkedAt: "2026-05-29T06:00:00.000Z",

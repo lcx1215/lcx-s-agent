@@ -58,6 +58,98 @@ afterEach(async () => {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+describe("central perception snapshot read feedback", () => {
+  it.each([
+    ["{", "invalid_json"],
+    ["null", "invalid_shape"],
+    ["[]", "invalid_shape"],
+    ['"not a snapshot"', "invalid_shape"],
+    ["ENOENT", "missing"],
+    ["EACCES", "read_failed"],
+  ])("carries %s failure through the bounded prompt and cycle receipt", async (input, status) => {
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        if (input === "ENOENT" || input === "EACCES") {
+          throw Object.assign(new Error("fixture file unavailable"), { code: input });
+        }
+        return input;
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 2 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const perceived = await buildPerception(
+        [],
+        { objective: "Recover missing perception evidence", focus: "general" },
+        { checkedAt: "2026-10-08T07:00:00.000Z", owners: {} },
+      );
+      const proposed = vi.fn(async (observed: CentralPerception) => {
+        expect(observed.controlRoom.runtimeFreshness).toMatchObject({
+          snapshotReadFailures: { controlRoom: status },
+        });
+        expect(observed.controlRoom.learningWorkflow).toMatchObject({ pending: 2 });
+        expect(buildCentralBrainPrompt(observed)).toContain(status);
+        return {
+          kind: "proposed" as const,
+          provider: "offline-fixture",
+          modelId: "scripted-feedback",
+          plan: { actions: [], note: `unresolved controlRoom read: ${status}` },
+        };
+      });
+      const receipt = await runCentralHarnessCycle({
+        perception: perceived,
+        registry: new Map(),
+        brain: { propose: proposed },
+      });
+      expect(proposed).toHaveBeenCalledOnce();
+      expect(receipt.contextBudget?.overBudget).toBe(false);
+      expect(receipt.runtimeFreshness).toMatchObject({
+        snapshotReadFailures: { controlRoom: status },
+      });
+      expect(receipt.brainCall.note).toBe(`unresolved controlRoom read: ${status}`);
+      expect(receipt.brainCall.modelCall).toBeUndefined();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("reads a recovered partial snapshot next cycle without retaining the old failure", async () => {
+    let damaged = true;
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return damaged
+          ? "{"
+          : JSON.stringify({ checkedAt: "2026-10-08T07:02:00.000Z", observedFillCount: 1 });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 0 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const task = { objective: "Read recovery feedback", focus: "general" as const };
+      const governance = { checkedAt: "2026-10-08T07:00:00.000Z", owners: {} };
+      const first = await buildPerception([], task, governance);
+      expect(first.controlRoom.runtimeFreshness).toMatchObject({
+        snapshotReadFailures: { controlRoom: "invalid_json" },
+      });
+      damaged = false;
+      const next = boundPerception(await buildPerception([], task, governance));
+      expect(next.perception.controlRoom.observedFillCount).toBe(1);
+      expect(next.perception.controlRoom.runtimeFreshness).not.toHaveProperty(
+        "snapshotReadFailures",
+      );
+      expect(buildCentralBrainPrompt(next.perception)).not.toContain("invalid_json");
+    } finally {
+      read.mockRestore();
+    }
+  });
+});
+
 /** The canonical read-only owner surface the harness must be able to drive.
  * Kept here (not imported from the side-effectful autopilot module) so a silent
  * regression in tool-registry coverage fails this test. */
@@ -1520,7 +1612,11 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
-        env: { ...process.env, LCX_USER_HOME: userHome },
+        env: {
+          ...process.env,
+          LCX_USER_HOME: userHome,
+          LCX_FINANCE_STATE_DIR: path.join(userHome, ".openclaw", "workspace", "state", "finance"),
+        },
         timeout: 60_000,
         input: "",
         shell: false,
