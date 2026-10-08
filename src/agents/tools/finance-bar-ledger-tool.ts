@@ -3,6 +3,7 @@ import {
   appendFinanceBars,
   readFinanceBarLedger,
   type FinanceBarAppendInput,
+  type FinanceBarSourceFilter,
 } from "../finance-bar-ledger.js";
 import { resolveFinanceBarLedgerLocation } from "../finance-state-dir.js";
 import { stringEnum } from "../schema/typebox.js";
@@ -51,6 +52,19 @@ const FinanceBarLedgerSchema = Type.Object({
   asOf: Type.Optional(
     Type.String({ description: "Read filter: ISO datetime; batches observed later are excluded." }),
   ),
+  source: Type.Optional(
+    Type.Object(
+      {
+        origin: Type.String({ minLength: 1 }),
+        sourceUrlOrArtifact: Type.String({ minLength: 1 }),
+      },
+      {
+        additionalProperties: false,
+        description:
+          "Read filter: exact retained origin AND original URL/artifact. No automatic source winner or fallback. Other-source disagreements remain visible; coverage and adjustment equivalence are not verified. Old deduplicated source labels cannot be reconstructed.",
+      },
+    ),
+  ),
   limit: Type.Optional(
     Type.Number({ description: "Read cap on returned bars (default 200). Newest last." }),
   ),
@@ -84,6 +98,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
         batch?: unknown;
         instrument?: string;
         asOf?: string;
+        source?: FinanceBarSourceFilter;
         limit?: number;
       };
       const location = resolveFinanceBarLedgerLocation({
@@ -160,6 +175,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
       const ledger = await readFinanceBarLedger(location.directory, {
         ...(params.instrument ? { instrument: params.instrument } : {}),
         ...(params.asOf ? { asOf: params.asOf } : {}),
+        ...(params.source !== undefined ? { source: params.source } : {}),
       });
       const limit =
         typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
@@ -205,7 +221,9 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
           ledger.recordCount === 0
             ? "no bars have ever been recorded in this directory"
             : ledger.bars.length === 0
-              ? "bars exist but none match the supplied instrument/asOf filter"
+              ? ledger.sourceSelection
+                ? "bars exist but none match the supplied instrument/asOf/source filter"
+                : "bars exist but none match the supplied instrument/asOf filter"
               : "bars are available",
         asOf: params.asOf ?? null,
         instrument: params.instrument ?? null,
@@ -242,6 +260,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
         // Two sources observing the same instrument-date with different closes is a fact about the
         // sources, not an error to collapse.
         divergentDates: ledger.divergentDates,
+        ...(ledger.sourceSelection ? { sourceSelection: ledger.sourceSelection } : {}),
         headRef: ledger.headRef,
         nextTool:
           ledger.bars.length === 0

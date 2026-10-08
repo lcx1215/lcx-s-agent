@@ -148,6 +148,11 @@ const StoredRecordSchema = z
   .strict();
 export type FinanceBarRecord = z.infer<typeof StoredRecordSchema> & { ref: string };
 
+const SourceFilter = Provenance.pick({ origin: true, sourceUrlOrArtifact: true })
+  .required()
+  .strict();
+export type FinanceBarSourceFilter = z.infer<typeof SourceFilter>;
+
 export type FinanceBarLedger = Readonly<{
   /**
    * Bars in `(instrument, date)` order, one per observed instrument-date *value*.
@@ -168,6 +173,13 @@ export type FinanceBarLedger = Readonly<{
   collapsedRepeats: number;
   recordCount: number;
   headRef: string | null;
+  sourceSelection?: Readonly<{
+    requested: FinanceBarSourceFilter;
+    matchedRecordCount: number;
+    excludedRecordCount: number;
+    allSourcesDivergentDates: readonly string[];
+    boundary: "exact_retained_provenance_not_verified_coverage_or_adjustment";
+  }>;
 }>;
 
 const BAR_LEDGER_MIGRATION_LEDGER = "finance_bar_migrations";
@@ -526,8 +538,18 @@ export function collapseRepeatedBars(bars: readonly FinanceBar[]): {
 
 export async function readFinanceBarLedger(
   directory: string,
-  options: { asOf?: string; instrument?: string } = {},
+  options: { asOf?: string; instrument?: string; source?: FinanceBarSourceFilter } = {},
 ): Promise<FinanceBarLedger> {
+  const source = options.source === undefined ? undefined : SourceFilter.parse(options.source);
+  const sourceSelection = source
+    ? {
+        requested: Object.freeze(source),
+        matchedRecordCount: 0,
+        excludedRecordCount: 0,
+        allSourcesDivergentDates: Object.freeze([] as string[]),
+        boundary: "exact_retained_provenance_not_verified_coverage_or_adjustment" as const,
+      }
+    : undefined;
   // Opening the database would create it. A read must not have that side effect, and must not
   // destroy the "this book does not exist yet" state just by looking: after one read, an absent
   // book would otherwise report itself as present-but-empty forever.
@@ -538,6 +560,7 @@ export async function readFinanceBarLedger(
       collapsedRepeats: 0,
       recordCount: 0,
       headRef: null,
+      ...(sourceSelection ? { sourceSelection: Object.freeze(sourceSelection) } : {}),
     });
   }
   const db = openReadOnlyDatabase(directory);
@@ -549,6 +572,7 @@ export async function readFinanceBarLedger(
         collapsedRepeats: 0,
         recordCount: 0,
         headRef: null,
+        ...(sourceSelection ? { sourceSelection: Object.freeze(sourceSelection) } : {}),
       });
     }
     const asOf = options.asOf;
@@ -559,6 +583,8 @@ export async function readFinanceBarLedger(
     const signaturesByKey = new Map<string, Set<string>>();
     const bars: FinanceBar[] = [];
     let collapsedRepeats = 0;
+    const allSourceCloses = new Map<string, number>();
+    const allSourceDivergentKeys = new Set<string>();
     // Consume the entire verified chain even for a narrow read. Only the requested
     // projection is retained; a filtered-out or trailing corruption still rejects it.
     for (const record of readStoredRecords(db)) {
@@ -569,6 +595,26 @@ export async function readFinanceBarLedger(
       }
       if (options.instrument !== undefined && record.body.instrument !== options.instrument) {
         continue;
+      }
+      if (source && sourceSelection) {
+        // Keep the comparison within the same instrument/as-of scope even when a
+        // caller explicitly reads one source. Selection does not resolve disagreement.
+        for (const bar of record.body.bars) {
+          const key = `${bar.instrument}@${bar.date}`;
+          const firstClose = allSourceCloses.get(key);
+          if (firstClose !== undefined && firstClose !== bar.close) {
+            allSourceDivergentKeys.add(key);
+          }
+          allSourceCloses.set(key, firstClose ?? bar.close);
+        }
+        if (
+          record.body.provenance.origin !== source.origin ||
+          record.body.provenance.sourceUrlOrArtifact !== source.sourceUrlOrArtifact
+        ) {
+          sourceSelection.excludedRecordCount += 1;
+          continue;
+        }
+        sourceSelection.matchedRecordCount += 1;
       }
       for (const bar of record.body.bars) {
         const key = `${bar.instrument}@${bar.date}`;
@@ -610,6 +656,14 @@ export async function readFinanceBarLedger(
       collapsedRepeats,
       recordCount,
       headRef,
+      ...(sourceSelection
+        ? {
+            sourceSelection: Object.freeze({
+              ...sourceSelection,
+              allSourcesDivergentDates: Object.freeze([...allSourceDivergentKeys].toSorted()),
+            }),
+          }
+        : {}),
     });
   } finally {
     db.close();
