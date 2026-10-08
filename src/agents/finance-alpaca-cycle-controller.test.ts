@@ -459,6 +459,7 @@ it("sizes from native positions, executes twice through the shared gate and reco
     grossExposure: 100,
     maxGrossExposure: f.options.policy.maxGrossExposure,
     uncertaintyReserve: 0,
+    availableCash: 900,
   });
   expect(Object.isFrozen(book.executionCapacity)).toBe(true);
 
@@ -1358,5 +1359,64 @@ it("propagates typed safe quote GET evidence rather than an order rejection", as
   });
   expect(JSON.stringify(error)).not.toMatch(/PRIVATE_BODY|secret.invalid|token/);
   expect(f.read).toHaveBeenCalledTimes(1);
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it("uses the current candidate for account preparation rather than a stale first universe quote", async () => {
+  const f = await fixture();
+  const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (url, init) => {
+    const pathname = new URL(url).pathname;
+    if (pathname === "/v2/assets/AMD") {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          symbol: "AMD",
+          status: "active",
+          tradable: true,
+          class: "us_equity",
+        }),
+      };
+    }
+    if (pathname === "/v2/stocks/AMD/quotes/latest") {
+      return {
+        status: 200,
+        body: JSON.stringify({ quote: { bp: 100, ap: 101, t: new Date().toISOString() } }),
+      };
+    }
+    if (pathname === "/v2/stocks/SPY/quotes/latest") {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          quote: { bp: 100, ap: 101, t: new Date(Date.now() - 120_000).toISOString() },
+        }),
+      };
+    }
+    return original(url, init);
+  });
+  const controller = createFinanceAlpacaCycleController({
+    ...f.options,
+    instruments: ["SPY", "AMD"],
+  });
+  await expect(
+    controller.accountBookProvider(AbortSignal.timeout(5000), { instrument: "AMD", side: "buy" }),
+  ).resolves.toMatchObject({ executionCapacity: { availableCash: 900, grossExposure: 100 } });
+  expect(
+    f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/stocks/SPY/quotes/latest"),
+  ).toBe(false);
+  await expect(
+    controller.accountBookProvider(AbortSignal.timeout(5000), { instrument: "SPY", side: "buy" }),
+  ).rejects.toMatchObject({
+    category: "account_snapshot_unavailable",
+    provider: { stage: "quote_freshness" },
+  });
+  f.read.mockClear();
+  await expect(
+    controller.accountBookProvider(AbortSignal.timeout(5000), {
+      instrument: "FOREIGN",
+      side: "buy",
+    }),
+  ).rejects.toThrow("instrument outside controller universe");
+  expect(f.read).not.toHaveBeenCalled();
   expect(f.execute).not.toHaveBeenCalled();
 });

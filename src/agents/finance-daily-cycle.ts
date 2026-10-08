@@ -204,13 +204,18 @@ export type FinanceDailyAccountBook = Readonly<{
     grossExposure: number;
     maxGrossExposure: number;
     uncertaintyReserve: number;
+    /** Fresh fully-funded cash; omitted only by legacy read-only callers. */
+    availableCash?: number;
   }>;
 }>;
 
 export type FinanceDailyCycleParams = Readonly<{
   createSafetyContext?: FinanceExecutionSafetyContextFactory;
   accountId?: string;
-  accountBookProvider?: (signal: AbortSignal) => Promise<FinanceDailyAccountBook>;
+  accountBookProvider?: (
+    signal: AbortSignal,
+    candidate?: { instrument: string; side: "buy" | "sell" },
+  ) => Promise<FinanceDailyAccountBook>;
   instruments: readonly string[];
   equity: number;
   asOf: string;

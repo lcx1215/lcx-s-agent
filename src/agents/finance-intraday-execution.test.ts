@@ -295,8 +295,13 @@ describe("intraday decision execution bridge", () => {
   it.each([
     { mode: "full", refused: true },
     { mode: "available", refused: false },
+    { mode: "cash", refused: false },
+    { mode: "cash_reserve", refused: false },
+    { mode: "cash_empty", refused: true },
+    { mode: "cash_below_unit", refused: true },
+    { mode: "invalid_cash", refused: false },
     { mode: "equality", refused: false },
-    { mode: "reserve", refused: true },
+    { mode: "reserve", refused: false },
     { mode: "reserve_equality", refused: false },
     { mode: "missing", refused: false },
     { mode: "stale", refused: false },
@@ -338,7 +343,8 @@ describe("intraday decision execution bridge", () => {
       ).record;
       const observedAt = "2026-09-18T15:00:01.000Z";
       const expiresAt = "2026-09-18T15:01:01.000Z";
-      const reserve = mode === "reserve" ? 600 : mode === "reserve_equality" ? 500 : 0;
+      const reserve =
+        mode === "reserve" || mode === "cash_reserve" ? 600 : mode === "reserve_equality" ? 500 : 0;
       const account: FinanceDailyAccountBook = {
         accountId,
         venue: "alpaca:paper",
@@ -363,7 +369,12 @@ describe("intraday decision execution bridge", () => {
           policyRevision: "current",
           maxGrossExposure: 10_000,
           grossExposure:
-            mode === "available" || mode === "final_capacity_changed"
+            mode === "available" ||
+            mode === "cash" ||
+            mode === "cash_empty" ||
+            mode === "cash_below_unit" ||
+            mode === "invalid_cash" ||
+            mode === "final_capacity_changed"
               ? 4_000
               : mode === "equality"
                 ? 5_000
@@ -371,6 +382,10 @@ describe("intraday decision execution bridge", () => {
                   ? 4_500
                   : 10_000,
           uncertaintyReserve: reserve,
+          ...(mode === "cash" || mode === "cash_reserve" ? { availableCash: 1250 } : {}),
+          ...(mode === "cash_empty" ? { availableCash: 0 } : {}),
+          ...(mode === "cash_below_unit" ? { availableCash: 50 } : {}),
+          ...(mode === "invalid_cash" ? { availableCash: Number.NaN } : {}),
         },
       };
       const capacity = account.executionCapacity!;
@@ -505,12 +520,13 @@ describe("intraday decision execution bridge", () => {
         maxAgeMs: 30_000,
         sourceUrlOrArtifact: "fixture://quote",
       }));
+      const accountBookProvider = vi.fn(async () => book);
       const result = await executeFinanceIntradayDecision({
         directory,
         decision,
         controller: {
           accountId,
-          accountBookProvider: async () => book,
+          accountBookProvider,
           executionQuoteProvider: quoteProvider,
           createSafetyContext,
         },
@@ -519,16 +535,37 @@ describe("intraday decision execution bridge", () => {
         now: Date.now,
         runOrder,
       });
+      expect(accountBookProvider).toHaveBeenCalledWith(expect.any(AbortSignal), {
+        instrument: "SPY",
+        side: "buy",
+      });
       expect(reviewer).toHaveBeenCalledTimes(refused ? 0 : 1);
       expect(runOrder).toHaveBeenCalledTimes(refused ? 0 : 1);
+      if (!refused) {
+        const quantity =
+          mode === "reserve" ? 49 : mode === "cash" ? 12 : mode === "cash_reserve" ? 6 : 50;
+        const reviewedCandidate = reviewer.mock.calls[0][0].candidates[0];
+        expect("plannedQuantity" in reviewedCandidate && reviewedCandidate.plannedQuantity).toBe(
+          quantity,
+        );
+        const compiled = compileFinanceAlpacaOrderIntent(runOrder.mock.calls[0][0]);
+        expect(compiled.ok && compiled.intent.quantity).toBe(quantity);
+        expect(reviewer.mock.calls[0][0].caps.maxOrderNotional).toBe(5000);
+      }
       expect(createSafetyContext).not.toHaveBeenCalled();
       expect(venueExecute).not.toHaveBeenCalled();
       if (refused) {
-        expect(result.outcome.reasons).toEqual([
-          "account_capacity_precheck_before_model_review",
-          "execution_safety_portfolio_exposure_exceeded",
-          `observedAt=${observedAt};expiresAt=${expiresAt};gross=${capacity.grossExposure};notional=5000;reserve=${reserve};limit=10000`,
-        ]);
+        expect(result.outcome.reasons).toEqual(
+          mode === "cash_below_unit"
+            ? ["refuse: computed size rounds to zero; refusing rather than trading a token"]
+            : [
+                "account_capacity_precheck_before_model_review",
+                mode === "cash_empty"
+                  ? "execution_safety_funding_and_survival_facts_required"
+                  : "execution_safety_portfolio_exposure_exceeded",
+                `observedAt=${observedAt};expiresAt=${expiresAt};gross=${capacity.grossExposure};notional=5000;reserve=${reserve};limit=10000`,
+              ],
+        );
         expect(result.outcome.tradeDecisionReview).toBeUndefined();
         expect(quoteProvider).toHaveBeenCalledTimes(1);
       } else {

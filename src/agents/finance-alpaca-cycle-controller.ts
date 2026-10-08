@@ -449,9 +449,13 @@ export function createFinanceAlpacaCycleController(options: {
     accountId: policy.accountId,
     executionPolicyExpiresAt: policyExpiresAt,
     executionPolicyAuthorizationMode: policy.authorizationMode,
-    accountBookProvider: async (signal) => {
+    accountBookProvider: async (signal, candidate) => {
+      const instrument = candidate?.instrument ?? options.instruments[0];
+      if (!instruments.has(instrument)) {
+        throw new Error("instrument outside controller universe");
+      }
       const { snapshot } = await reconcile(signal);
-      const observed = await facts(options.instruments[0], "buy", signal);
+      const observed = await facts(instrument, candidate?.side ?? "buy", signal);
       assertSamePositions(observed.positions, snapshot.positions);
       const reconciliation = readinessFor(snapshot, observed.positions);
       if (reconciliation.status === "blocked") {
@@ -476,6 +480,7 @@ export function createFinanceAlpacaCycleController(options: {
           grossExposure: observed.facts.account.grossExposure,
           maxGrossExposure: policy.maxGrossExposure,
           uncertaintyReserve: reconciliation.uncertaintyReserve,
+          availableCash: observed.facts.account.availableCash,
         }),
       };
     },

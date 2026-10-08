@@ -143,6 +143,8 @@ function freshExecutionCapacity(
     capacity.maxGrossExposure <= 0 ||
     !Number.isFinite(capacity.uncertaintyReserve) ||
     capacity.uncertaintyReserve < 0 ||
+    (capacity.availableCash !== undefined &&
+      (!Number.isFinite(capacity.availableCash) || capacity.availableCash < 0)) ||
     capacity.uncertaintyReserve !== reconciliation.uncertaintyReserve ||
     (reconciliation.status === "ready"
       ? reconciliation.historyStatus !== "reconciled" ||
@@ -581,7 +583,10 @@ export async function executeFinanceIntradayDecision(params: {
     }
     setStage("account_book");
     const account = await waitForPreparation(signal, (signal) =>
-      params.controller.accountBookProvider(signal),
+      params.controller.accountBookProvider(signal, {
+        instrument: input.instrument,
+        side: input.action,
+      }),
     );
     const reconciliation = account.reconciliation;
     if (
@@ -653,6 +658,30 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
+    const capacity =
+      input.action === "buy"
+        ? freshExecutionCapacity(account, params.controller.accountId, now())
+        : undefined;
+    const entryHeadroom = capacity
+      ? Math.max(
+          0,
+          Math.min(
+            capacity.maxGrossExposure - capacity.grossExposure - capacity.uncertaintyReserve,
+            capacity.availableCash === undefined
+              ? Number.POSITIVE_INFINITY
+              : capacity.availableCash - capacity.uncertaintyReserve,
+          ),
+        )
+      : undefined;
+    // Size before review from trusted remaining funds. The final locked gate still
+    // rereads broker facts; no resize of a reviewed candidate or a protective exit.
+    const orderCaps =
+      entryHeadroom !== undefined && entryHeadroom > 0
+        ? {
+            ...params.caps,
+            maxOrderNotional: Math.min(params.caps.maxOrderNotional, entryHeadroom),
+          }
+        : params.caps;
     const orderRequest = (price: number): FinanceAlpacaRunRequest => ({
       credentialStateDirectory: params.directory,
       createSafetyContext: params.controller.createSafetyContext,
@@ -692,7 +721,7 @@ export async function executeFinanceIntradayDecision(params: {
       budget: {
         automation: "unattended",
         allowedInstruments: [input.instrument],
-        ...params.caps,
+        ...orderCaps,
       },
       instruments: [input.instrument],
       strategyClass: "A",
@@ -712,7 +741,6 @@ export async function executeFinanceIntradayDecision(params: {
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
     if (input.action === "buy") {
-      const capacity = freshExecutionCapacity(account, params.controller.accountId, now());
       if (capacity) {
         const intent = preflight.intent;
         const notional =
@@ -725,13 +753,19 @@ export async function executeFinanceIntradayDecision(params: {
           uncertaintyReserve: capacity.uncertaintyReserve,
           reducing: false,
         });
-        if (issue) {
+        const fundingIssue =
+          capacity.availableCash !== undefined &&
+          capacity.availableCash - capacity.uncertaintyReserve < notional
+            ? "execution_safety_funding_and_survival_facts_required"
+            : undefined;
+        const capacityIssue = issue ?? fundingIssue;
+        if (capacityIssue) {
           const outcome = await appendFinanceIntradayOutcome(params.directory, {
             signalId: input.signalId,
             status: "refused",
             reasons: [
               "account_capacity_precheck_before_model_review",
-              issue,
+              capacityIssue,
               `observedAt=${capacity.observedAt};expiresAt=${capacity.expiresAt};` +
                 `gross=${capacity.grossExposure};notional=${notional};reserve=${capacity.uncertaintyReserve};limit=${capacity.maxGrossExposure}`,
             ],
