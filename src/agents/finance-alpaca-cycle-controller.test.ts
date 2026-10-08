@@ -1408,7 +1408,7 @@ it("uses the current candidate for account preparation rather than a stale first
     controller.accountBookProvider(AbortSignal.timeout(5000), { instrument: "SPY", side: "buy" }),
   ).rejects.toMatchObject({
     category: "account_snapshot_unavailable",
-    provider: { stage: "quote_freshness" },
+    provider: { stage: "quote_age_exceeded" },
   });
   f.read.mockClear();
   await expect(

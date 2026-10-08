@@ -868,8 +868,12 @@ it.each(["transport", "json", "oversize", "shape", "values", "future", "stale"] 
           mode === "transport" || mode === "json" || mode === "oversize"
             ? "quote_snapshot"
             : mode === "stale"
-              ? "quote_freshness"
-              : "quote_values",
+              ? "quote_age_exceeded"
+              : mode === "future"
+                ? "quote_timestamp_future"
+                : mode === "values"
+                  ? "quote_bid_non_positive"
+                  : "quote_values",
       },
     });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|secret.invalid|token|FAKE|429/);
@@ -911,3 +915,62 @@ it("sanitizes typed quote failure fields before host propagation", () => {
   expect(error.diagnostic).toEqual({ stage: "quote_snapshot" });
   expect(JSON.stringify(error)).not.toContain("PRIVATE_BODY");
 });
+
+it.each([
+  { kind: "non_positive", stage: "quote_bid_non_positive", expired: false },
+  { kind: "crossed", stage: "quote_ask_below_bid", expired: false },
+  { kind: "invalid_time", stage: "quote_timestamp_invalid", expired: false },
+  { kind: "future", stage: "quote_timestamp_future", expired: false },
+  { kind: "old", stage: "quote_age_exceeded", expired: true },
+  { kind: "duration", stage: "quote_read_duration_exceeded", expired: true },
+] as const)(
+  "classifies quote refusal on both original readers without changing the gate ($kind)",
+  async ({ kind, stage, expired }) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T00:00:00.000Z"));
+    try {
+      for (const reader of [readAlpacaPaperSafetyQuote, readAlpacaPaperSafetyFacts]) {
+        const f = fixture();
+        if (kind === "non_positive") {
+          f.quote.bp = 0;
+        }
+        if (kind === "crossed") {
+          f.quote.ap = 98;
+        }
+        if (kind === "invalid_time") {
+          f.quote.t = "PRIVATE_BODY https://secret.invalid/token";
+        }
+        if (kind === "future") {
+          f.quote.t = new Date(Date.now() + 1000).toISOString();
+        }
+        if (kind === "old") {
+          f.quote.t = new Date(Date.now() - 60001).toISOString();
+        }
+        if (kind === "duration") {
+          const original = f.read.getMockImplementation()!;
+          f.read.mockImplementation(async (url, init) => {
+            if (url.includes("quotes")) {
+              vi.setSystemTime(new Date(Date.now() + 60001));
+              f.quote.t = new Date().toISOString();
+            }
+            return original(url, init);
+          });
+        }
+        const result = await reader({ ...f.options, diagnostics: true });
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expired ? "alpaca_safety_quote_expired" : "alpaca_safety_facts_inconsistent",
+        });
+        if (result.ok) {
+          throw new Error("invalid quote accepted");
+        }
+        expect(
+          typeof result.diagnostic === "string" ? result.diagnostic : result.diagnostic?.stage,
+        ).toBe(stage);
+        expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|secret.invalid|token|FAKE/);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

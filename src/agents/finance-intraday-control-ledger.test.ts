@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
+import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
@@ -440,3 +442,44 @@ it.each([
     } as never),
   ).rejects.toThrow();
 });
+
+it.each([
+  "quote_freshness",
+  "quote_bid_non_positive",
+  "quote_ask_below_bid",
+  "quote_timestamp_invalid",
+  "quote_timestamp_future",
+  "quote_age_exceeded",
+  "quote_read_duration_exceeded",
+] as const)(
+  "retains legacy and precise quote classifications through the original durable ledger: %s",
+  async (stage) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-quote-cause-"));
+    temporary.push(directory);
+    const reason =
+      stage === "quote_age_exceeded" || stage === "quote_read_duration_exceeded"
+        ? "alpaca_safety_quote_expired"
+        : "alpaca_safety_facts_inconsistent";
+    const quoteError = new AlpacaSafetyQuoteReadError(reason, { stage });
+    expect(quoteError.diagnostic?.stage).toBe(stage);
+    const factsError = new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+      reason,
+      stage,
+    });
+    await appendFinanceIntradayDecision(directory, input);
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: input.signalId,
+      status: "refused",
+      reasons: [factsError.message],
+      executionSafetyFailure: {
+        stage: "facts",
+        category: factsError.category,
+        operation: "read_account_safety_facts",
+        provider: factsError.provider,
+      },
+    });
+    const recalled = await readFinanceIntradayOutcome(directory, input.signalId);
+    expect(recalled?.executionSafetyFailure?.provider).toEqual({ reason, stage });
+    expect(recalled?.status).toBe("refused");
+  },
+);

@@ -59,6 +59,15 @@ export const ALPACA_SAFETY_FAILURE_CODES = [
   "alpaca_safety_quote_expired",
 ] as const;
 export type AlpacaSafetyFailureCode = (typeof ALPACA_SAFETY_FAILURE_CODES)[number];
+const QUOTE_REFUSAL_STAGES = [
+  "quote_bid_non_positive",
+  "quote_ask_below_bid",
+  "quote_timestamp_invalid",
+  "quote_timestamp_future",
+  "quote_age_exceeded",
+  "quote_read_duration_exceeded",
+] as const;
+type QuoteRefusalStage = (typeof QUOTE_REFUSAL_STAGES)[number];
 export const ALPACA_SAFETY_DIAGNOSTIC_STAGES = [
   "account_snapshot",
   "account_status",
@@ -78,6 +87,7 @@ export const ALPACA_SAFETY_DIAGNOSTIC_STAGES = [
   "quote_snapshot",
   "quote_values",
   "quote_freshness",
+  ...QUOTE_REFUSAL_STAGES,
   "controller_evidence_freshness",
 ] as const;
 export type AlpacaSafetyDiagnosticStage = (typeof ALPACA_SAFETY_DIAGNOSTIC_STAGES)[number];
@@ -122,6 +132,7 @@ export const ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES = [
   "quote_snapshot",
   "quote_values",
   "quote_freshness",
+  ...QUOTE_REFUSAL_STAGES,
 ] as const;
 export type AlpacaSafetyQuoteDiagnostic = Readonly<{
   stage: (typeof ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES)[number];
@@ -159,14 +170,19 @@ class AlpacaSafetyProviderFailure extends Error {
   constructor(
     readonly code: AlpacaSafetyFailureCode,
     readonly httpStatus?: number,
+    readonly quoteFailureStage?: QuoteRefusalStage,
   ) {
     super(code);
     this.name = "AlpacaSafetyProviderFailure";
   }
 }
 
-function refuse(code: AlpacaSafetyFailureCode, httpStatus?: number): never {
-  throw new AlpacaSafetyProviderFailure(code, safeHttpStatus(httpStatus));
+function refuse(
+  code: AlpacaSafetyFailureCode,
+  httpStatus?: number,
+  quoteFailureStage?: QuoteRefusalStage,
+): never {
+  throw new AlpacaSafetyProviderFailure(code, safeHttpStatus(httpStatus), quoteFailureStage);
 }
 
 const PAPER = "https://paper-api.alpaca.markets";
@@ -234,11 +250,23 @@ function assertFreshQuote(
   maxAgeMs: number,
 ) {
   const quoteAtMs = Date.parse(quoteAt);
-  if (bid <= 0 || ask < bid || !Number.isFinite(quoteAtMs) || quoteAtMs > now) {
-    refuse("alpaca_safety_facts_inconsistent");
+  if (bid <= 0) {
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_bid_non_positive");
   }
-  if (now - quoteAtMs > maxAgeMs || now - start > maxAgeMs) {
-    refuse("alpaca_safety_quote_expired");
+  if (ask < bid) {
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_ask_below_bid");
+  }
+  if (!Number.isFinite(quoteAtMs)) {
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_timestamp_invalid");
+  }
+  if (quoteAtMs > now) {
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_timestamp_future");
+  }
+  if (now - quoteAtMs > maxAgeMs) {
+    refuse("alpaca_safety_quote_expired", undefined, "quote_age_exceeded");
+  }
+  if (now - start > maxAgeMs) {
+    refuse("alpaca_safety_quote_expired", undefined, "quote_read_duration_exceeded");
   }
 }
 
@@ -416,9 +444,11 @@ export async function readAlpacaPaperSafetyQuote(
         ? {
             diagnostic: {
               stage:
-                error instanceof AlpacaSafetyProviderFailure &&
-                error.code === "alpaca_safety_quote_expired"
-                  ? ("quote_freshness" as const)
+                !signal.aborted && error instanceof AlpacaSafetyProviderFailure
+                  ? (error.quoteFailureStage ??
+                    (error.code === "alpaca_safety_quote_expired"
+                      ? "quote_freshness"
+                      : failureStage))
                   : failureStage,
               ...(!signal.aborted &&
               error instanceof AlpacaSafetyProviderFailure &&
@@ -889,7 +919,14 @@ export async function readAlpacaPaperSafetyFacts(
         : error instanceof AlpacaSafetyProviderFailure
           ? error.code
           : "alpaca_safety_facts_inconsistent",
-      ...(options.diagnostics ? { diagnostic: failureStage } : {}),
+      ...(options.diagnostics
+        ? {
+            diagnostic:
+              !signal.aborted && error instanceof AlpacaSafetyProviderFailure
+                ? (error.quoteFailureStage ?? failureStage)
+                : failureStage,
+          }
+        : {}),
       ...(options.diagnostics && accountArithmetic ? { accountArithmetic } : {}),
     };
   } finally {
