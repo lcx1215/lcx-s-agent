@@ -56,6 +56,17 @@ const FinanceIntradayExecutionSafetyFailureRecord = z
               })
               .strict(),
             trackNewHigh: z.boolean(),
+            valuationRetry: z
+              .object({
+                firstGrossDrift: z.number().finite().nonnegative().nullable(),
+                retryGrossDrift: z.number().finite().nonnegative().nullable(),
+                firstCoherentTolerance: z.number().finite().nonnegative(),
+                retryCoherentTolerance: z.number().finite().nonnegative(),
+                cashStable: z.boolean(),
+                quantitiesStable: z.boolean(),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
           .optional(),

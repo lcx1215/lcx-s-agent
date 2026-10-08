@@ -265,6 +265,13 @@ export class FinanceExecutionSafetyFactsError extends Error {
   ) {
     const accountArithmetic = provider?.accountArithmetic;
     const arithmeticValues = accountArithmetic?.values;
+    const valuationRetry = accountArithmetic?.valuationRetry;
+    const retryNumericKeys = [
+      "firstGrossDrift",
+      "retryGrossDrift",
+      "firstCoherentTolerance",
+      "retryCoherentTolerance",
+    ] as const;
     const arithmeticKeys = [
       "equity",
       "cash",
@@ -298,7 +305,21 @@ export class FinanceExecutionSafetyFactsError extends Error {
           arithmeticKeys.some((key) => {
             const value = arithmeticValues[key];
             return value !== null && (typeof value !== "number" || !Number.isFinite(value));
-          })))
+          }) ||
+          (valuationRetry !== undefined &&
+            (!valuationRetry ||
+              typeof valuationRetry !== "object" ||
+              Object.keys(valuationRetry).length !== 6 ||
+              typeof valuationRetry.cashStable !== "boolean" ||
+              typeof valuationRetry.quantitiesStable !== "boolean" ||
+              retryNumericKeys.some((key) => {
+                const value = valuationRetry[key];
+                return (
+                  (value === null && key !== "firstGrossDrift" && key !== "retryGrossDrift") ||
+                  (value !== null &&
+                    (typeof value !== "number" || !Number.isFinite(value) || value < 0))
+                );
+              })))))
     ) {
       throw new Error("invalid finance execution safety failure classification");
     }
@@ -322,6 +343,18 @@ export class FinanceExecutionSafetyFactsError extends Error {
                     arithmeticKeys.map((key) => [key, arithmeticValues?.[key] ?? null]),
                   ) as AlpacaSafetyAccountArithmeticDiagnostic["values"],
                   trackNewHigh: accountArithmetic.trackNewHigh,
+                  ...(valuationRetry
+                    ? {
+                        valuationRetry: {
+                          firstGrossDrift: valuationRetry.firstGrossDrift,
+                          retryGrossDrift: valuationRetry.retryGrossDrift,
+                          firstCoherentTolerance: valuationRetry.firstCoherentTolerance,
+                          retryCoherentTolerance: valuationRetry.retryCoherentTolerance,
+                          cashStable: valuationRetry.cashStable,
+                          quantitiesStable: valuationRetry.quantitiesStable,
+                        },
+                      }
+                    : {}),
                 },
               }),
         })

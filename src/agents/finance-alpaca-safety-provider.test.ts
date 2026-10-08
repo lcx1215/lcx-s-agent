@@ -276,6 +276,14 @@ it("refuses account valuation drift above the bounded tolerance", async () => {
         controllerPeakEquity: 1100,
       },
       trackNewHigh: false,
+      valuationRetry: {
+        firstGrossDrift: expect.closeTo(0.0545, 8),
+        retryGrossDrift: expect.closeTo(0.0545, 8),
+        firstCoherentTolerance: expect.closeTo(0.048018, 8),
+        retryCoherentTolerance: expect.closeTo(0.048018, 8),
+        cashStable: true,
+        quantitiesStable: true,
+      },
     },
   });
   expect(f.read.mock.calls.filter(([url]) => url.includes("/account"))).toHaveLength(2);
@@ -334,6 +342,95 @@ it("refuses persistent soft-bounded skew when position quantity changes", async 
   });
   expect(positionReads).toBe(2);
 });
+it("retains the first failed sample when the retry drift alone fits the coherent bound", async () => {
+  const f = fixture();
+  f.account.equity = "30000";
+  f.account.cash = "10000";
+  f.account.long_market_value = "20000";
+  f.options = {
+    ...f.options,
+    diagnostics: true,
+    evidence: { ...f.options.evidence, peakEquity: 30000 },
+  };
+  const baseRead = f.read.getMockImplementation()!;
+  let positionReads = 0;
+  f.read.mockImplementation(async (url, init) => {
+    if (url.includes("/positions")) {
+      return {
+        status: 200,
+        body: JSON.stringify([
+          { ...f.positions[0], market_value: positionReads++ === 0 ? "19999" : "19999.9" },
+        ]),
+      };
+    }
+    return baseRead(url, init);
+  });
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result).toMatchObject({
+    ok: false,
+    diagnostic: "account_arithmetic",
+    accountArithmetic: {
+      failedConditions: ["gross_valuation_drift"],
+      values: { grossDrift: expect.closeTo(0.1, 8), grossDriftTolerance: 0.6 },
+      valuationRetry: {
+        firstGrossDrift: 1,
+        retryGrossDrift: expect.closeTo(0.1, 8),
+        firstCoherentTolerance: 0.6,
+        retryCoherentTolerance: 0.6,
+        cashStable: true,
+        quantitiesStable: true,
+      },
+    },
+  });
+});
+
+it("parallel independent order and asset reads fit the original observation lease", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture();
+    const baseRead = f.read.getMockImplementation()!;
+    const start = Date.now();
+    const quoteReadAges: number[] = [];
+    f.read.mockImplementation(async (url, init) => {
+      if (url.includes("/orders?") || url.includes("/assets/")) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      }
+      if (url.includes("/quotes/latest")) {
+        quoteReadAges.push(Date.now() - start);
+      }
+      return baseRead(url, init);
+    });
+    const result = readAlpacaPaperSafetyFacts({ ...f.options, maxAgeMs: 75 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await result).ok).toBe(true);
+    expect(quoteReadAges).toEqual([40]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["orders", "asset", "both"] as const)(
+  "keeps endpoint-specific failures while parallel sampling: %s",
+  async (failure) => {
+    const f = fixture();
+    const baseRead = f.read.getMockImplementation()!;
+    f.read.mockImplementation(async (url, init) => {
+      if (
+        ((failure === "orders" || failure === "both") && url.includes("/orders?")) ||
+        ((failure === "asset" || failure === "both") && url.includes("/assets/"))
+      ) {
+        return { status: 503, body: "PRIVATE_RESPONSE" };
+      }
+      return baseRead(url, init);
+    });
+    expect(await readAlpacaPaperSafetyFacts({ ...f.options, diagnostics: true })).toEqual({
+      ok: false,
+      reason: "alpaca_safety_snapshot_read_unavailable",
+      diagnostic: failure === "asset" ? "instrument_asset_snapshot" : "open_order_snapshot",
+    });
+    expect(f.read.mock.calls.some(([url]) => url.includes("/quotes/latest"))).toBe(false);
+  },
+);
 it("keeps the absolute gross-drift ceiling at sixty cents", async () => {
   const f = fixture();
   f.account.equity = "30000";

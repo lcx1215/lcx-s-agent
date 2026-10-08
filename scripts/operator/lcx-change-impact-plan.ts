@@ -206,7 +206,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/operator\/lcx-finance-scheduler(?:-lifecycle)?\.test\.ts$/u,
       /^docs\/tools\/finance-scheduler\.md$/u,
       /^src\/agents\/finance-paper-run\.ts$/u,
-      /^src\/agents\/finance-intraday-execution(?:\.test)?\.ts$/u,
+      /^src\/agents\/finance-intraday-(?:execution|control-ledger)(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-alpaca-run\.ts$/u,
       /^src\/agents\/finance-alpaca-execution-adapter\.ts$/u,
       /^src\/agents\/finance-(?:alpaca-cycle-controller|broker-reconciliation|protection-coordination|write-transport)(?:\.test)?\.ts$/u,

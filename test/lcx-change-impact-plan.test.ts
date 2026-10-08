@@ -713,6 +713,8 @@ it("owns the intraday execution bridge and requires its focused controller regre
   const files = [
     "src/agents/finance-intraday-execution.ts",
     "src/agents/finance-intraday-execution.test.ts",
+    "src/agents/finance-intraday-control-ledger.ts",
+    "src/agents/finance-intraday-control-ledger.test.ts",
   ];
   const result = await runPlanArgs(["--files", ...files]);
   expect(result.ok).toBe(true);

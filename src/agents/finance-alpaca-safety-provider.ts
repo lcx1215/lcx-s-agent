@@ -119,6 +119,15 @@ export type AlpacaSafetyAccountArithmeticDiagnostic = {
     number | null
   >;
   trackNewHigh: boolean;
+  /** The two samples used by the existing bounded valuation-only retry. */
+  valuationRetry?: {
+    firstGrossDrift: number | null;
+    retryGrossDrift: number | null;
+    firstCoherentTolerance: number;
+    retryCoherentTolerance: number;
+    cashStable: boolean;
+    quantitiesStable: boolean;
+  };
 };
 
 export function isAlpacaSafetyFailureCode(value: unknown): value is AlpacaSafetyFailureCode {
@@ -531,6 +540,7 @@ export async function readAlpacaPaperSafetyFacts(
   const get = (url: string) => readJson(options.read, url, headers, signal);
   let failureStage: AlpacaSafetyDiagnosticStage = "account_snapshot";
   let accountArithmetic: AlpacaSafetyAccountArithmeticDiagnostic | undefined;
+  let valuationRetry: AlpacaSafetyAccountArithmeticDiagnostic["valuationRetry"];
   const run = async () => {
     const readAccountPositionSnapshot = async () => {
       // Start independent endpoints together to minimize sampling skew; this still is not
@@ -690,6 +700,21 @@ export async function readAlpacaPaperSafetyFacts(
       ({ account, positions } = await readAccountPositionSnapshot());
       let retrySnapshot = inspectAccountPositionSnapshot();
       conservativeAccountGross = Math.max(firstSnapshot.accountGross, retrySnapshot.accountGross);
+      const firstGrossDrift = Math.abs(firstSnapshot.gross - firstSnapshot.longValue);
+      const retryGrossDrift = Math.abs(retrySnapshot.gross - retrySnapshot.longValue);
+      const cashStable = sameCashToCent(firstSnapshot.cash, retrySnapshot.cash);
+      const quantitiesStable = samePositionQuantities(
+        firstSnapshot.quantities,
+        retrySnapshot.quantities,
+      );
+      valuationRetry = {
+        firstGrossDrift: Number.isFinite(firstGrossDrift) ? firstGrossDrift : null,
+        retryGrossDrift: Number.isFinite(retryGrossDrift) ? retryGrossDrift : null,
+        firstCoherentTolerance: firstSnapshot.coherentDriftTolerance,
+        retryCoherentTolerance: retrySnapshot.coherentDriftTolerance,
+        cashStable,
+        quantitiesStable,
+      };
       const firstHasOnlyDrift =
         firstSnapshot.failedConditions.length === 1 &&
         firstSnapshot.failedConditions[0] === "gross_valuation_drift";
@@ -697,11 +722,7 @@ export async function readAlpacaPaperSafetyFacts(
         retrySnapshot.failedConditions.length === 1 &&
         retrySnapshot.failedConditions[0] === "gross_valuation_drift";
       if (firstHasOnlyDrift && retryHasOnlyDrift) {
-        const firstGrossDrift = Math.abs(firstSnapshot.gross - firstSnapshot.longValue);
-        const retryGrossDrift = Math.abs(retrySnapshot.gross - retrySnapshot.longValue);
-        const coherentPair =
-          sameCashToCent(firstSnapshot.cash, retrySnapshot.cash) &&
-          samePositionQuantities(firstSnapshot.quantities, retrySnapshot.quantities);
+        const coherentPair = cashStable && quantitiesStable;
         if (coherentPair) {
           retrySnapshot = {
             ...retrySnapshot,
@@ -751,14 +772,27 @@ export async function readAlpacaPaperSafetyFacts(
             controllerPeakEquity: evidence.peakEquity,
           },
           trackNewHigh: evidence.trackNewHigh === true,
+          ...(valuationRetry ? { valuationRetry } : {}),
         };
       }
       refuse("alpaca_safety_facts_inconsistent");
     }
     failureStage = "open_order_snapshot";
-    const orders = array(await get(`${PAPER}/v2/orders?status=open&limit=500&nested=true`));
+    // These independent GETs share the original observation deadline. Await both so
+    // either endpoint's failure keeps its own stage and cannot leak a pending read.
+    const [ordersResult, assetResult] = await Promise.allSettled([
+      get(`${PAPER}/v2/orders?status=open&limit=500&nested=true`),
+      get(`${PAPER}/v2/assets/${encodeURIComponent(options.instrument)}`),
+    ]);
+    if (ordersResult.status === "rejected") {
+      throw ordersResult.reason;
+    }
+    const orders = array(ordersResult.value);
     failureStage = "instrument_asset_snapshot";
-    const asset = record(await get(`${PAPER}/v2/assets/${encodeURIComponent(options.instrument)}`));
+    if (assetResult.status === "rejected") {
+      throw assetResult.reason;
+    }
+    const asset = record(assetResult.value);
     failureStage = "open_order_limit";
     if (orders.length >= 500) {
       refuse("alpaca_safety_facts_inconsistent");

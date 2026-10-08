@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
+import type { AlpacaSafetyAccountArithmeticDiagnostic } from "./finance-alpaca-safety-provider.js";
 import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayDecision,
@@ -36,6 +37,110 @@ const input: FinanceIntradayDecisionInput = {
   datasetHeadRef: "a".repeat(64),
   strategyRule: "opening_range_breakout_long_next_bar_v1",
 };
+
+function arithmeticDiagnostic(): AlpacaSafetyAccountArithmeticDiagnostic {
+  return {
+    failedConditions: ["gross_valuation_drift"],
+    values: {
+      equity: 30000,
+      cash: 10000,
+      shortMarketValue: 0,
+      positionGross: 19999.9,
+      longMarketValue: 20000,
+      accountGross: 20000,
+      grossDrift: 0.1,
+      grossDriftTolerance: 0.6,
+      cashEquityResidual: 0,
+      cashEquityTolerance: 0.01,
+      controllerPeakEquity: 30000,
+    },
+    trackNewHigh: true,
+    valuationRetry: {
+      firstGrossDrift: 1,
+      retryGrossDrift: 0.1,
+      firstCoherentTolerance: 0.6,
+      retryCoherentTolerance: 0.6,
+      cashStable: true,
+      quantitiesStable: true,
+    },
+  };
+}
+
+it.each([false, true])(
+  "retains legacy or paired arithmetic evidence in the original ledger: %s",
+  async (paired) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-valuation-pair-"));
+    temporary.push(directory);
+    const diagnostic = arithmeticDiagnostic();
+    if (!paired) {
+      delete diagnostic.valuationRetry;
+    }
+    const error = new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+      reason: "alpaca_safety_facts_inconsistent",
+      stage: "account_arithmetic",
+      accountArithmetic: diagnostic,
+    });
+    const expected = structuredClone(diagnostic);
+    if (diagnostic.valuationRetry) {
+      diagnostic.valuationRetry.firstGrossDrift = 999;
+    }
+    await appendFinanceIntradayDecision(directory, input);
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: input.signalId,
+      status: "refused",
+      reasons: [error.message],
+      executionSafetyFailure: {
+        stage: "facts",
+        category: error.category,
+        operation: "read_account_safety_facts",
+        provider: error.provider,
+      },
+    });
+    expect(
+      (await readFinanceIntradayOutcome(directory, input.signalId))?.executionSafetyFailure
+        ?.provider?.accountArithmetic,
+    ).toEqual(expected);
+  },
+);
+
+it.each([
+  "raw",
+  "null",
+  "infinite",
+  "negative",
+  "missing",
+  "bad_boolean",
+  "null_tolerance",
+] as const)(
+  "rejects malformed valuation retry evidence before it reaches the ledger: %s",
+  (mode) => {
+    const diagnostic = arithmeticDiagnostic();
+    const retry = diagnostic.valuationRetry!;
+    const malformed = {
+      ...diagnostic,
+      valuationRetry:
+        mode === "null"
+          ? null
+          : {
+              ...retry,
+              ...(mode === "raw" ? { body: "PRIVATE_BODY" } : {}),
+              ...(mode === "infinite" ? { firstGrossDrift: Number.POSITIVE_INFINITY } : {}),
+              ...(mode === "negative" ? { retryGrossDrift: -1 } : {}),
+              ...(mode === "missing" ? { retryGrossDrift: undefined } : {}),
+              ...(mode === "bad_boolean" ? { cashStable: "true" } : {}),
+              ...(mode === "null_tolerance" ? { firstCoherentTolerance: null } : {}),
+            },
+    };
+    expect(
+      () =>
+        new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+          reason: "alpaca_safety_facts_inconsistent",
+          stage: "account_arithmetic",
+          accountArithmetic: malformed as never,
+        }),
+    ).toThrow("invalid finance execution safety failure classification");
+  },
+);
 
 describe("finance intraday control ledger", () => {
   it("persists a hash-chained decision and deduplicates its stable signal id", async () => {
