@@ -35,7 +35,11 @@ import {
   createCentralBrain,
   validateCentralActionPlan,
 } from "../src/agents/central-harness/model-brain.js";
-import { resolveLatestPointer, runSnapshotPath } from "../src/agents/central-harness/run-store.js";
+import {
+  resolveLatestPointer,
+  runSnapshotPath,
+  writeRunSnapshot,
+} from "../src/agents/central-harness/run-store.js";
 import {
   createCentralToolRegistry,
   approveOwner,
@@ -58,6 +62,57 @@ afterEach(async () => {
 });
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("central immutable cycle snapshots", () => {
+  async function root() {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "central-snapshot-identity-"));
+    centralTestRoots.push(dir);
+    return dir;
+  }
+
+  it("rejects conflicting same-id evidence without replacing the original", async () => {
+    const dir = await root();
+    const original = receipt({ runId: "same-cycle" });
+    const file = await writeRunSnapshot(dir, original);
+    const bytes = await fsp.readFile(file);
+    await expect(
+      writeRunSnapshot(dir, { ...original, nextAction: "different-decision" }),
+    ).rejects.toThrow("central_run_snapshot_conflict");
+    expect(await fsp.readFile(file)).toEqual(bytes);
+    expect(await fsp.readdir(dir)).toEqual(["same-cycle.json"]);
+  });
+
+  it("accepts parallel identical retries with one complete original and no temporary residue", async () => {
+    const dir = await root();
+    const original = receipt({ runId: "same-cycle" });
+    const paths = await Promise.all(
+      Array.from({ length: 3 }, () => writeRunSnapshot(dir, original)),
+    );
+    expect(new Set(paths).size).toBe(1);
+    expect(JSON.parse(await fsp.readFile(paths[0], "utf8"))).toEqual(original);
+    expect(await fsp.readdir(dir)).toEqual(["same-cycle.json"]);
+  });
+
+  it("publishes exactly one original when conflicting same-id writes race", async () => {
+    const dir = await root();
+    const versions = [
+      receipt({ runId: "same-cycle", nextAction: "first-decision" }),
+      receipt({ runId: "same-cycle", nextAction: "second-decision" }),
+    ];
+    const results = await Promise.allSettled(versions.map((item) => writeRunSnapshot(dir, item)));
+    expect(results.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((item) => item.status === "rejected")).toHaveLength(1);
+    const winner = results.findIndex((item) => item.status === "fulfilled");
+    const failed = results.find((item) => item.status === "rejected");
+    expect(String(failed?.status === "rejected" ? failed.reason : "")).toContain(
+      "central_run_snapshot_conflict",
+    );
+    expect(JSON.parse(await fsp.readFile(path.join(dir, "same-cycle.json"), "utf8"))).toEqual(
+      versions[winner],
+    );
+    expect(await fsp.readdir(dir)).toEqual(["same-cycle.json"]);
+  });
+});
 
 describe("central perception snapshot read feedback", () => {
   it.each([
@@ -1720,6 +1775,29 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       },
     );
   }
+
+  it("names a damaged latest read while retaining the rebuilt pointer and original cycle evidence", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-damaged-pointer-"));
+    centralTestRoots.push(userHome);
+    const stateDir = path.join(userHome, ".openclaw", "workspace", "state");
+    const latest = path.join(stateDir, "lcx-central-agent-latest.json");
+    await fsp.mkdir(stateDir, { recursive: true });
+    await fsp.writeFile(latest, "{");
+    const result = runCli(userHome);
+    expect(result.status, result.stderr).toBe(0);
+    const summary = JSON.parse(result.stdout);
+    expect(summary.evidenceComplete).toBe(false);
+    expect(summary.evidenceWriteFailures).toEqual([
+      { target: "latest_pointer_read", reason: "invalid_json" },
+    ]);
+    const rebuilt = JSON.parse(await fsp.readFile(latest, "utf8"));
+    expect(rebuilt.evidenceWriteFailures).toEqual(summary.evidenceWriteFailures);
+    expect(rebuilt.latestRunPath).toBe(summary.latestRunPath);
+    expect(JSON.parse(await fsp.readFile(summary.latestRunPath, "utf8"))).toMatchObject({
+      runId: rebuilt.latestRunId,
+      brainCall: { reason: "dry_run_no_llm" },
+    });
+  }, 120_000);
 
   it.each([
     ["--duration-minutes", "Infinity"],

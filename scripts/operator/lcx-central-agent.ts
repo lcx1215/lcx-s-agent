@@ -787,6 +787,7 @@ async function writeLatest(
     droppedNonDecisionCycles: number;
     resumeScan: Readonly<Record<string, unknown>>;
     evidenceWriteFailures: readonly EvidenceWriteFailure[];
+    recordEvidenceFailure: (target: string, error: unknown) => void;
     capabilityDrain: readonly string[];
     receiptPersistenceDurationMs: number | null;
     continuation?: CentralCycleContinuation;
@@ -799,7 +800,11 @@ async function writeLatest(
   const previous = await readLatest<{
     latestReceipt?: unknown;
     latestRunPath?: unknown;
-  }>(path.basename(LATEST_PATH), {});
+  }>(path.basename(LATEST_PATH), {}, (status) => {
+    if (status !== "missing") {
+      meta.recordEvidenceFailure("latest_pointer_read", status);
+    }
+  });
   const pointer = resolveLatestPointer(previous, receipt, meta.runSnapshotPath);
   await writeJsonAtomic(LATEST_PATH, {
     schemaVersion: "lcx_central_agent_latest_v1",
@@ -1028,6 +1033,7 @@ async function main(): Promise<void> {
       droppedNonDecisionCycles,
       resumeScan,
       evidenceWriteFailures,
+      recordEvidenceFailure,
       artifactBackfill,
       artifactBackfillDeferredReason,
       capabilityDrain: dispatchedCapabilities(lastReceipt, CENTRAL_CAPABILITY_IDS),
