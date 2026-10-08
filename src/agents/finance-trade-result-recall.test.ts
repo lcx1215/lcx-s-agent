@@ -85,6 +85,7 @@ async function seed(
     signalId?: string;
     owner?: string;
     observedAt?: string;
+    decisionRecordedAt?: string;
     sourceTime?: string;
     reasons?: string[];
     summary?: string;
@@ -106,7 +107,7 @@ async function seed(
   const details = {
     accountId: options.accountId ?? "paper-a",
     venue: options.venue ?? "alpaca:paper",
-    decision: { input, recordedAt: oldTime, ref: "b".repeat(64) },
+    decision: { input, recordedAt: options.decisionRecordedAt ?? oldTime, ref: "b".repeat(64) },
     outcome: {
       signalId,
       status: "refused",
@@ -186,6 +187,27 @@ it("finds the original operation before newer portfolio mentions consume the fou
   expect(await run()).toMatchObject({ ok: true, sourceArtifactId: source.id });
   expect(read).toHaveBeenCalledTimes(1);
   expect(search.mock.calls.map(([args]) => args.query)).toEqual(["AAA buy"]);
+});
+it("ranks native operation time rather than capture time after historical index repair", async () => {
+  await seed({ id: "backfilled-old", observedAt: asOf, summary: "AAA buy: refused" });
+  const recent = await seed({
+    id: "recent-operation",
+    observedAt: "2026-09-30T13:01:00.000Z",
+    decisionRecordedAt: "2026-09-30T13:00:00.000Z",
+    summary: "AAA buy: refused",
+    reasons: ["recent decision-specific condition"],
+  });
+  const read = vi.spyOn(ArtifactStore.prototype, "read");
+  expect(await run()).toMatchObject({
+    ok: true,
+    sourceArtifactId: recent.id,
+    sourceObservedAt: "2026-09-30T13:01:00.000Z",
+    recordedResult: {
+      decisionRecordedAt: "2026-09-30T13:00:00.000Z",
+      reasons: ["recent decision-specific condition"],
+    },
+  });
+  expect(read).toHaveBeenCalledTimes(2);
 });
 it("retains the original account boundary and four reads when precise matches belong to another account", async () => {
   await seed({ summary: "AAA buy: refused" });

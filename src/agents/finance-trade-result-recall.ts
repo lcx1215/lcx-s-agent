@@ -31,7 +31,7 @@ export function createFinanceTradeResultRecallCapability(options: {
     toolName: "finance_trade_result_recall",
     moduleIds: ["portfolio_risk_gates", "technical_timing", "finance_learning_memory"],
     description:
-      "Read a prior execution result for this account, Paper venue and instrument, preferring the same direction before review cutoff. At most four verified originals searched; no current account facts, strategy edge, self-recall or new research.",
+      "Read a prior execution result for this account, Paper venue and instrument, preferring the same direction before review cutoff. Choose the newest native decision among at most four verified originals; capture time is not operation time. No current account facts, strategy edge, self-recall or new research.",
     execute: async ({ candidate, asOf, accountId, venue }, signal) => {
       signal.throwIfAborted();
       const cutoff = typeof asOf === "string" ? Date.parse(asOf) : NaN;
@@ -71,6 +71,7 @@ export function createFinanceTradeResultRecallCapability(options: {
         );
       }
       let readGap: string | undefined;
+      let selected: { recordedAt: number; result: Record<string, unknown> } | undefined;
       // The native ledger schemas depend on review evidence; load at use, not factory setup.
       const { FinanceIntradayDecisionInput } = await import("./finance-intraday-control-ledger.js");
       for (const item of found.artifacts.slice(0, SEARCH_LIMIT)) {
@@ -137,6 +138,11 @@ export function createFinanceTradeResultRecallCapability(options: {
           readGap = "finance_recall_source_after_cutoff_or_invalid_time";
           continue;
         }
+        const recordedAt =
+          typeof decision.recordedAt === "string" ? Date.parse(decision.recordedAt) : -Infinity;
+        if (selected && selected.recordedAt >= recordedAt) {
+          continue;
+        }
         const reasons = (outcome.reasons as string[])
           .slice(0, 2)
           .map((reason) => excerpt(reason, 70));
@@ -150,7 +156,7 @@ export function createFinanceTradeResultRecallCapability(options: {
         ) {
           truncatedFields.push("reviewRationale");
         }
-        return {
+        const result = {
           ok: true,
           sourceArtifactId: metadata.id,
           sourceSha256: read.sourceSha256,
@@ -158,6 +164,7 @@ export function createFinanceTradeResultRecallCapability(options: {
           ...(read.sourceCutoff === undefined ? {} : { sourceCutoff: read.sourceCutoff }),
           recordedResult: {
             signalId: input.data.signalId,
+            decisionRecordedAt: decision.recordedAt ?? null,
             outcome: outcome.status,
             reasons,
             omittedReasonCount: outcome.reasons.length - reasons.length,
@@ -167,6 +174,10 @@ export function createFinanceTradeResultRecallCapability(options: {
               : {}),
           },
         };
+        selected = { recordedAt, result };
+      }
+      if (selected) {
+        return selected.result;
       }
       return unavailable(
         readGap ??
