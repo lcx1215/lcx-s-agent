@@ -15,6 +15,7 @@ import {
   describeFinanceCycleExecution,
   parseFinanceSchedulerArgs,
   resolveActiveIntradayRule,
+  runFinanceRetiredIntradayExitTick,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
@@ -32,6 +33,7 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
 } from "../../src/agents/finance-intraday-paper.js";
+import * as intradayPositions from "../../src/agents/finance-intraday-position.js";
 import { commitFinanceSchedulerDatabaseState } from "../../src/agents/finance-scheduler-ledger.js";
 import {
   FINANCE_SCHEDULER_LOCK,
@@ -117,9 +119,11 @@ vi.mock("../../src/agents/finance-alpaca-market-calendar.js", async (importOrigi
 vi.mock("../../src/agents/finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: mocks.syncAlpacaHistory,
 }));
-vi.mock("../../src/agents/finance-alpaca-cycle-controller.js", () => ({
-  createFinanceAlpacaCycleController: mocks.createIntradayController,
-}));
+vi.mock("../../src/agents/finance-alpaca-cycle-controller.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/agents/finance-alpaca-cycle-controller.js")>();
+  return { ...actual, createFinanceAlpacaCycleController: mocks.createIntradayController };
+});
 vi.mock("../../src/agents/finance-intraday-monitor.js", () => ({
   runFinanceIntradayMonitorTick: mocks.runIntradayMonitorTick,
   resolveFinanceIntradayCashSession: vi.fn(async () => ({ status: "cash_session_open" })),
@@ -425,6 +429,129 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.resetAllMocks();
+});
+
+async function managedExitFixture(signal = new AbortController().signal) {
+  await activateIntradayRule(
+    {
+      measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
+      paperExecutionEligibility: "paper_execution_eligible",
+      paperUniverseScope: "fresh_us_equity_selection_v1",
+    },
+    FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+    directory,
+    FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+  );
+  const policyPath = path.join(directory, "managed-exit-policy.json");
+  fs.writeFileSync(
+    policyPath,
+    JSON.stringify({
+      schemaVersion: "lcx_alpaca_cycle_policy_v1",
+      accountId: "paper-account",
+      planId: "managed-exit-fixture",
+      revision: "1",
+      peakEquity: 100000,
+      peakScope: "fixture",
+      unhedged: true,
+      maxPortfolioDrawdownFraction: 0.2,
+      maxGrossExposure: 100000,
+      authorizationMode: "until_revoked",
+    }),
+  );
+  const options = parseFinanceSchedulerArgs([
+    "--loop",
+    "--dir",
+    directory,
+    "--intraday-monitor",
+    "--place",
+    "--venue",
+    "alpaca",
+    "--execution-policy",
+    policyPath,
+    "--execution-quote-feed",
+    "iex",
+    "--execution-max-age-ms",
+    "30000",
+    "--max-order-notional",
+    "10000",
+    "--max-instrument-notional",
+    "20000",
+    "--max-orders",
+    "8",
+  ]);
+  const contract = await resolveActiveIntradayRule(directory, options.intraday!);
+  vi.spyOn(intradayPositions, "readFinanceRetiredIntradayExitTargets").mockResolvedValue([]);
+  vi.spyOn(intradayPositions, "readFinanceDynamicIntradayExitTargets").mockResolvedValue([
+    { instrument: "BROKEN", quantity: 1, contract },
+    { instrument: "WBD", quantity: 32, contract },
+  ]);
+  return {
+    root: { directory, source: "explicit" as const },
+    options: {
+      ...options,
+      intraday: {
+        ...options.intraday!,
+        instrumentSource: "system_universe" as const,
+        strategyContract: contract,
+      },
+    },
+    signal,
+    resolveMarketSession: mocks.resolveCalendar,
+  };
+}
+
+it.each(["controller", "monitor"])(
+  "continues managed exits after one target's %s preparation fails",
+  async (stage) => {
+    const context = await managedExitFixture();
+    mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_closed_session_bar" });
+    if (stage === "controller") {
+      mocks.createIntradayController.mockImplementationOnce(() => {
+        throw new Error("fixture controller unavailable");
+      });
+    } else {
+      mocks.runIntradayMonitorTick.mockRejectedValueOnce(
+        new Error("Alpaca intraday bars response is malformed"),
+      );
+    }
+    await runFinanceRetiredIntradayExitTick(context);
+    expect(mocks.runIntradayMonitorTick).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instrument: "WBD",
+        exitOnly: true,
+        scope: { kind: "managed_position_exit" },
+      }),
+    );
+    expect(stderrMessages.join("\n")).toContain("retired intraday BROKEN monitor failed:");
+    expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+    expect(mocks.tradeDecisionReviewer).not.toHaveBeenCalled();
+  },
+);
+
+it("stops managed exits on cancellation rather than treating it as a target failure", async () => {
+  const abort = new AbortController();
+  const context = await managedExitFixture(abort.signal);
+  mocks.runIntradayMonitorTick.mockImplementationOnce(async () => {
+    abort.abort();
+    throw new Error("fixture cancelled");
+  });
+  await runFinanceRetiredIntradayExitTick(context);
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  expect(stderrMessages.join("\n")).not.toContain("retired intraday BROKEN monitor failed:");
+});
+
+it("does not continue another managed exit after an unexpected execution failure", async () => {
+  const context = await managedExitFixture();
+  mocks.runIntradayMonitorTick.mockResolvedValue({
+    status: "decision_recorded",
+    decision: { input: { action: "sell" } },
+  });
+  mocks.executeIntradayDecision.mockRejectedValueOnce(new Error("fixture order outcome unknown"));
+  await runFinanceRetiredIntradayExitTick(context);
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).toHaveBeenCalledOnce();
+  expect(stderrMessages.join("\n")).toContain("retired intraday exit cycle failed:");
 });
 
 it.each(["explicit", "env"])(

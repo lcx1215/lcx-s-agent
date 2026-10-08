@@ -2046,31 +2046,45 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
         if (context.signal.aborted) {
           break;
         }
-        const exitController = createFinanceAlpacaCycleController({
-          directory: context.root.directory,
-          policy,
-          instruments: [target.instrument],
-          feed: target.contract.feed,
-          maxAgeMs: numericExtra(args, "--execution-max-age-ms"),
-        });
-        const result = await runFinanceIntradayMonitorTick({
-          directory: context.root.directory,
-          accountId: exitController.accountId,
-          instrument: target.instrument,
-          exitOnly: true,
-          intervalSeconds: target.contract.intervalSeconds,
-          feed: target.contract.feed,
-          openingRangeBars: target.contract.openingRangeBars,
-          rewardRisk: target.contract.rewardRisk,
-          strategyContract: target.contract,
-          scope:
-            context.options.intraday?.instrumentSource === "system_universe" &&
-            target.contract.paperUniverseScope === "fresh_us_equity_selection_v1"
-              ? { kind: "managed_position_exit" }
-              : { kind: "strategy_universe" },
-          resolveMarketSession: context.resolveMarketSession,
-          signal: context.signal,
-        });
+        let exitController: ReturnType<typeof createFinanceAlpacaCycleController>;
+        let result: Awaited<ReturnType<typeof runFinanceIntradayMonitorTick>>;
+        try {
+          exitController = createFinanceAlpacaCycleController({
+            directory: context.root.directory,
+            policy,
+            instruments: [target.instrument],
+            feed: target.contract.feed,
+            maxAgeMs: numericExtra(args, "--execution-max-age-ms"),
+          });
+          result = await runFinanceIntradayMonitorTick({
+            directory: context.root.directory,
+            accountId: exitController.accountId,
+            instrument: target.instrument,
+            exitOnly: true,
+            intervalSeconds: target.contract.intervalSeconds,
+            feed: target.contract.feed,
+            openingRangeBars: target.contract.openingRangeBars,
+            rewardRisk: target.contract.rewardRisk,
+            strategyContract: target.contract,
+            scope:
+              context.options.intraday?.instrumentSource === "system_universe" &&
+              target.contract.paperUniverseScope === "fresh_us_equity_selection_v1"
+                ? { kind: "managed_position_exit" }
+                : { kind: "strategy_universe" },
+            resolveMarketSession: context.resolveMarketSession,
+            signal: context.signal,
+          });
+        } catch (error) {
+          if (context.signal.aborted) {
+            throw error;
+          }
+          // A target's preparation failure must not starve unrelated owned exits.
+          // Execution stays outside this catch so an unknown order still stops the cycle.
+          process.stderr.write(
+            `[${new Date().toISOString()}] retired intraday ${target.instrument} monitor failed: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+          continue;
+        }
         if (
           (result.status === "decision_recorded" ||
             result.status === "decision_pending_execution") &&
