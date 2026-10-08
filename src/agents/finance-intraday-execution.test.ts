@@ -2788,6 +2788,28 @@ describe("intraday decision execution bridge", () => {
 
   it.each([
     { name: "same prices, newer observation", bid: 499, ask: 501, reachesGate: true },
+    {
+      name: "first review calendar within original deadline",
+      bid: 499,
+      ask: 501,
+      calendarDelayMs: 24_999,
+      reachesGate: true,
+    },
+    {
+      name: "first review calendar crosses original deadline",
+      bid: 499,
+      ask: 501,
+      calendarDelayMs: 25_000,
+      reachesGate: false,
+    },
+    {
+      name: "legacy approval keeps its original calendar budget",
+      bid: 499,
+      ask: 501,
+      calendarDelayMs: 25_000,
+      legacy: true,
+      reachesGate: true,
+    },
     { name: "both sides improve", bid: 499.2, ask: 500.8, reachesGate: true },
     { name: "ask only improves", bid: 499, ask: 500.8, reachesGate: true },
     { name: "bid only improves", bid: 499.2, ask: 501, reachesGate: true },
@@ -2913,10 +2935,15 @@ describe("intraday decision execution bridge", () => {
         priceBasis: fixture.basis ?? firstQuote.priceBasis,
         maxAgeMs: fixture.maxAge ?? firstQuote.maxAgeMs,
       });
+      let refreshedQuoteAt: string | undefined;
       const quoteProvider = vi
         .fn()
         .mockResolvedValueOnce(firstQuote)
-        .mockImplementation(async () => finalQuote());
+        .mockImplementation(async () => {
+          const refreshed = finalQuote();
+          refreshedQuoteAt = refreshed.referencePriceAt;
+          return refreshed;
+        });
       const reviewer = vi.fn(async (request: FinanceTradeDecisionReviewRequest) => {
         clock += fixture.shortReview ? 1_000 : 35_000;
         return {
@@ -2931,6 +2958,24 @@ describe("intraday decision execution bridge", () => {
         stage: "place" as const,
         refusals: ["fixture final fresh-account gate refuses"],
       }));
+      if (fixture.calendarDelayMs !== undefined) {
+        const originalRead = strategyRules.readFinanceStrategyRuleLedger;
+        let delayed = false;
+        vi.spyOn(strategyRules, "readFinanceStrategyRuleLedger").mockImplementation(
+          async (...args) => {
+            const records = await originalRead(...args);
+            if (
+              !delayed &&
+              reviewer.mock.calls.length > 0 &&
+              quoteProvider.mock.calls.length >= 2
+            ) {
+              delayed = true;
+              clock += fixture.calendarDelayMs;
+            }
+            return records;
+          },
+        );
+      }
       const result = await executeFinanceIntradayDecision({
         directory,
         decision,
@@ -2969,19 +3014,31 @@ describe("intraday decision execution bridge", () => {
       expect(stored?.tradeDecisionReview?.quoteApprovalPolicy).toBe(
         fixture.legacy ? undefined : FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
       );
+      if (fixture.name === "first review calendar crosses original deadline") {
+        expect(stored?.executionFailure).toMatchObject({
+          stage: "final_strategy_binding",
+          category: "deadline_exceeded",
+        });
+      }
+      if (fixture.calendarDelayMs !== undefined && fixture.reachesGate) {
+        expect(stored?.executionFailure).toBeUndefined();
+      }
       if (fixture.reachesGate) {
         expect(runOrder).toHaveBeenCalledWith(
           expect.objectContaining({
             market: {
               referencePrice: fixture.ask,
-              referencePriceAt: finalQuote().referencePriceAt,
+              referencePriceAt: refreshedQuoteAt,
             },
           }),
         );
         expect(stored?.reasons).toEqual(["fixture final fresh-account gate refuses"]);
         expect(stored?.tradeDecisionReview?.executionQuoteValidation).toMatchObject({
-          status: fixture.name.startsWith("same") ? "unchanged" : "inside_reviewed_bid_ask",
-          policy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
+          status:
+            fixture.bid === firstQuote.bidPrice && fixture.ask === firstQuote.askPrice
+              ? "unchanged"
+              : "inside_reviewed_bid_ask",
+          policy: fixture.legacy ? "exact" : FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
           quote: { bidPrice: fixture.bid, askPrice: fixture.ask },
         });
       }

@@ -1189,7 +1189,13 @@ export async function executeFinanceIntradayDecision(params: {
       }
     }
     setStage("final_strategy_binding");
-    const remainingReviewMs = tradeDecisionReviewHistory ? reviewDeadlineAt - now() : undefined;
+    // The final local binding read shares the first review's deadline as well
+    // as a re-review's; legacy and unavailable reviews keep their original path.
+    const remainingReviewMs =
+      tradeDecisionReview?.status === "completed" &&
+      tradeDecisionReview.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY
+        ? reviewDeadlineAt - now()
+        : undefined;
     if (remainingReviewMs !== undefined && remainingReviewMs <= 0) {
       throw new PreparationDeadlineError();
     }
@@ -1220,7 +1226,7 @@ export async function executeFinanceIntradayDecision(params: {
       });
     }
     signal.throwIfAborted();
-    if (tradeDecisionReviewHistory && now() >= reviewDeadlineAt) {
+    if (remainingReviewMs !== undefined && now() >= reviewDeadlineAt) {
       throw new PreparationDeadlineError();
     }
     setStage("order_dispatch");
