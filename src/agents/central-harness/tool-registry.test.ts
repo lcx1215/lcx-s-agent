@@ -3,10 +3,134 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
-import { runCentralHarnessCycle } from "./harness-loop.js";
+import { appendFinanceBars } from "../finance-bar-ledger.js";
+import { compactReceipts, runCentralHarnessCycle } from "./harness-loop.js";
+import { buildCentralToolCatalog } from "./model-brain.js";
 import { executeOwnedProcess } from "./owned-process.js";
 import { createCentralToolRegistry } from "./tool-registry.js";
-import type { CentralToolSpec } from "./types.js";
+import type { CentralPerception, CentralToolSpec } from "./types.js";
+
+it("carries exact bar-source comparison through the registered reader into the next decision", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "central-bar-source-"));
+  const source = {
+    origin: "retained-eod-history",
+    sourceUrlOrArtifact: `https://example.test/original-daily-history?instrument=WBD&scope=${"x".repeat(50)}`,
+  };
+  const bars = Array.from({ length: 25 }, (_, index) => ({
+    date: `2026-09-${String(index + 1).padStart(2, "0")}`,
+    open: 30.15,
+    high: 31.15,
+    low: 29.15,
+    close: Number((30.15 + index / 100).toFixed(2)),
+    volume: 13_708_348,
+  }));
+  const directory = path.join(root, "state", "finance");
+  try {
+    await appendFinanceBars(directory, {
+      instrument: "WBD",
+      derivation: "ohlcv",
+      observedAt: "2026-09-26T00:00:00Z",
+      provenance: source,
+      bars,
+    });
+    await appendFinanceBars(directory, {
+      instrument: "WBD",
+      derivation: "ohlcv",
+      observedAt: "2026-09-26T01:00:00Z",
+      provenance: { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+      bars: [{ ...bars[24], close: 30.5 }],
+    });
+    const registry = createCentralToolRegistry({ workspaceDir: root });
+    const args = {
+      action: "read",
+      instrument: "WBD",
+      asOf: "2026-09-27T00:00:00Z",
+      source,
+      limit: 25,
+    };
+    const spec = registry.get("finance_bar_ledger")!;
+    expect(spec.inputKeys).toContain("source");
+    const catalog = buildCentralToolCatalog([...registry.values()]);
+    expect(spec.approve(args)).toEqual({ ok: true });
+    expect(spec.approve({ ...args, action: "append" }).ok).toBe(false);
+    expect(spec.approve({ ...args, directory }).ok).toBe(false);
+    const perception = {
+      observedAt: args.asOf,
+      ownerTotals: {},
+      controlRoom: {},
+      backlog: [],
+      boundaries: [],
+    };
+    const first = await runCentralHarnessCycle({
+      perception,
+      registry,
+      brain: {
+        propose: async () => ({
+          kind: "proposed",
+          provider: "offline-fixture",
+          modelId: "scripted-consumer",
+          plan: { actions: [{ ownerId: spec.ownerId, args }], note: "read exact retained source" },
+        }),
+      },
+    });
+    expect(first.steps[0].outcome).toMatchObject({
+      sourceSelection: {
+        requested: source,
+        matchedRecordCount: 1,
+        excludedRecordCount: 1,
+        allSourcesDivergentDates: ["WBD@2026-09-25"],
+      },
+      divergentDates: [],
+    });
+    expect(first.steps[0].outcomeDroppedKeys).not.toContain("sourceSelection");
+    const backlog = compactReceipts([first], 10);
+    const decide = vi.fn(async (seen: CentralPerception) => {
+      const carried = (seen.backlog as ReturnType<typeof compactReceipts>)[0].outcomes[0];
+      expect(seen.backlog).toEqual(compactReceipts([first], 10));
+      const outcome = carried.outcome!;
+      expect(outcome.sourceSelection).toEqual(first.steps[0].outcome?.sourceSelection);
+      expect(outcome.headRef).toBe(first.steps[0].outcome?.headRef);
+      expect(carried.args?.source).toEqual(source);
+      const selection = outcome.sourceSelection as { allSourcesDivergentDates: string[] };
+      return {
+        kind: "proposed" as const,
+        provider: "offline-fixture",
+        modelId: "scripted-consumer",
+        plan: {
+          actions: [],
+          note: selection.allSourcesDivergentDates.length
+            ? "require source-equivalence evidence before judging"
+            : "no retained cross-source conflict",
+        },
+      };
+    });
+    const second = await runCentralHarnessCycle({
+      perception: { ...perception, backlog },
+      registry,
+      brain: { propose: decide },
+    });
+    expect(second.brainCall.note).toBe("require source-equivalence evidence before judging");
+    expect(decide).toHaveBeenCalledOnce();
+    expect(catalog).toContain("source={origin, sourceUrlOrArtifact}");
+    const missing = await spec.execute(
+      { ...args, source: { ...source, sourceUrlOrArtifact: "fixture://missing" } },
+      new AbortController().signal,
+    );
+    expect(missing).toMatchObject({
+      status: "empty_for_filter",
+      returnedBarCount: 0,
+      sourceSelection: { matchedRecordCount: 0, excludedRecordCount: 2 },
+    });
+    const unfiltered = await spec.execute(
+      { action: "read", instrument: "WBD", asOf: args.asOf, limit: 25 },
+      new AbortController().signal,
+    );
+    expect(unfiltered).toMatchObject({ divergentDates: ["WBD@2026-09-25"] });
+    expect(unfiltered).not.toHaveProperty("sourceSelection");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 it("binds declared workspace inputs to the trusted host while refusing model-selected roots", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "central-recall-host-"));

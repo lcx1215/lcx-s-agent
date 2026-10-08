@@ -49,6 +49,49 @@ function registry(execute: CentralToolSpec["execute"]) {
 }
 afterEach(() => vi.useRealTimers());
 
+it("names oversized bar-source comparisons instead of exceeding the existing read-page budget", async () => {
+  const sourceSelection = {
+    allSourcesDivergentDates: Array.from({ length: 500 }, (_, i) => `WBD@${i}`),
+  };
+  const spec: CentralToolSpec = {
+    ownerId: "finance_bar_ledger",
+    name: "finance_bar_ledger",
+    label: "fixture",
+    description: "fixture",
+    boundary: [],
+    allowedSideEffects: [],
+    approve: () => ({ ok: true }),
+    execute: async () => ({
+      schemaVersion: "lcx_finance_bar_ledger_tool_v1",
+      status: "ready",
+      sourceSelection,
+      divergentDates: [],
+      headRef: "a".repeat(64),
+      bars: [{ instrument: "WBD", date: "2026-09-01", close: 30 }],
+    }),
+  };
+  const receipt = await runCentralHarnessCycle({
+    perception,
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async () => ({
+        kind: "proposed",
+        provider: "fixture",
+        modelId: "fixture",
+        plan: { actions: [{ ownerId: spec.ownerId, args: { action: "read" } }], note: "fixture" },
+      }),
+    },
+  });
+  expect(receipt.steps[0].outcome).not.toHaveProperty("sourceSelection");
+  expect(receipt.steps[0].outcomeDroppedKeys).toContain("sourceSelection");
+  expect(Buffer.byteLength(JSON.stringify(receipt.steps[0].outcome))).toBeLessThanOrEqual(4096);
+  const backlog = compactReceipts([receipt], 10);
+  expect(backlog[0].outcomes[0].outcomeDroppedKeys).toContain("sourceSelection");
+  const bounded = boundPerception({ ...perception, backlog });
+  expect(bounded.report.overBudget).toBe(false);
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
+});
+
 describe("executed governance result feedback", () => {
   it.each([true, false])(
     "consumes a successful owner result before deciding the next action (ready=%s)",

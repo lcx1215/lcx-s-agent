@@ -911,6 +911,32 @@ function compactCentralStepOutcome(
   source: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
   if (
+    ownerId === "finance_bar_ledger" &&
+    source.schemaVersion === "lcx_finance_bar_ledger_tool_v1"
+  ) {
+    // Budget source scope and conflicts before duplicate chart data or host paths.
+    // Otherwise a source-filtered page can appear unqualified and conflict-free.
+    const priorityKeys = [
+      "schemaVersion",
+      "boundary",
+      "status",
+      "asOf",
+      "instrument",
+      "headRef",
+      "sourceSelection",
+      "divergentDates",
+      "chartBarsUnavailableReason",
+      "totalBarCount",
+      "returnedBarCount",
+      "truncated",
+      "bars",
+    ];
+    return Object.fromEntries([
+      ...priorityKeys.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]),
+      ...Object.entries(source).filter(([key]) => !priorityKeys.includes(key)),
+    ]);
+  }
+  if (
     ownerId === "artifact_memory_recall" &&
     source.action === "read" &&
     typeof source.field === "string" &&

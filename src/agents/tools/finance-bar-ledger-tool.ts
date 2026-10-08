@@ -89,7 +89,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
     label: "Finance Bar Ledger",
     name: "finance_bar_ledger",
     description:
-      "Append a daily OHLCV batch to the agent's own bar book, or read the bars already recorded. Append-only and idempotent: the identical batch is not recorded twice. Every batch carries provenance, and bars are stored with their derivation so a range built from point observations is never read as an exchange-aggregated range. Use read before any answer that depends on price history the system holds; use append after fetching bars from a source (for example an MCP bar server). Research-only: it places no order and has no execution authority.",
+      "Append a daily OHLCV batch to the agent's own bar book, or read the bars already recorded. Append-only and idempotent: the identical batch is not recorded twice. Every batch carries provenance, and bars are stored with their derivation so a range built from point observations is never read as an exchange-aggregated range. Read optionally accepts source={origin, sourceUrlOrArtifact}: copy both exact retained labels; no automatic winner or fallback. sourceSelection reports other-source disagreements; one source does not prove coverage or adjustment equivalence. Use read before any answer that depends on price history the system holds; use append after fetching bars from a source (for example an MCP bar server). Research-only: it places no order and has no execution authority.",
     parameters: FinanceBarLedgerSchema,
     execute: async (_toolCallId, args) => {
       const params = args as {
