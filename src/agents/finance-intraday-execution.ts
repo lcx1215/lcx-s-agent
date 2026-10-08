@@ -789,10 +789,33 @@ export async function executeFinanceIntradayDecision(params: {
           horizon: "intraday",
         }),
       );
+      // Local evidence reads also consume the quote lease. Reuse the original
+      // freshness gate before spending model budget, and report the actual age.
+      const reviewAtMs = now();
+      const reviewQuoteIssue = executionQuoteIssue(quote, reviewAtMs);
+      if (reviewQuoteIssue !== null) {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: [
+            `execution quote gate refused model review after context preparation: ${reviewQuoteIssue}`,
+            JSON.stringify({
+              phase: "quote_before_model_review_after_context",
+              quoteAtMs: Date.parse(quote.referencePriceAt),
+              checkedAtMs: Number.isFinite(reviewAtMs) ? reviewAtMs : null,
+              ageMs: Number.isFinite(reviewAtMs)
+                ? reviewAtMs - Date.parse(quote.referencePriceAt)
+                : null,
+              maxAgeMs: quote.maxAgeMs,
+            }),
+          ],
+        });
+        return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+      }
       const reviewRequest: FinanceIntradayTradeDecisionReviewRequest = {
         schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
         venue: "alpaca:paper",
-        asOf: new Date(observedAtMs).toISOString(),
+        asOf: new Date(reviewAtMs).toISOString(),
         signalAnchor: input.signalId,
         ruleIds: [input.strategyRule],
         equity: account.equity,
@@ -827,7 +850,7 @@ export async function executeFinanceIntradayDecision(params: {
             brokerPositionQuantity: brokerHeld,
             plannedQuantity: preflight.intent.quantity,
             plannedNotional: preflight.intent.quantity * referencePrice,
-            executionQuote: reviewQuoteSnapshot(quote, observedAtMs),
+            executionQuote: reviewQuoteSnapshot(quote, reviewAtMs),
           },
         ],
       };
@@ -943,7 +966,7 @@ export async function executeFinanceIntradayDecision(params: {
         });
         return reviewContractAnomaly;
       };
-      const reviewContractAnomaly = await performReview(quote, observedAtMs, 2);
+      const reviewContractAnomaly = await performReview(quote, reviewAtMs, 2);
       const reviewResult = tradeDecisionReview!;
       const reviewedDecision = reviewResult.decision;
       if (

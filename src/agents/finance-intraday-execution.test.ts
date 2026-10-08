@@ -48,6 +48,7 @@ import {
   retireFinanceStrategyRule,
 } from "./finance-strategy-rule-ledger.js";
 import * as strategyRules from "./finance-strategy-rule-ledger.js";
+import * as thesisContext from "./finance-thesis-decision-context.js";
 import { openFinanceThesis } from "./finance-thesis-ledger.js";
 import {
   FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
@@ -169,6 +170,102 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
+  it.each([
+    { delayMs: 10_000, ageMs: 11_000, review: true },
+    { delayMs: 29_000, ageMs: 30_000, review: true },
+    { delayMs: 29_001, ageMs: 30_001, review: false },
+  ])(
+    "checks actual quote age after local evidence preparation ($delayMs)",
+    async ({ delayMs, ageMs, review }) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-context-lease-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: `context-lease-${delayMs}`,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          stopPrice: 99,
+          targetPrice: 102,
+          datasetHeadRef: "c".repeat(64),
+          strategyRule: "opening_range_breakout_long_next_bar_v1",
+          strategyBinding,
+        })
+      ).record;
+      let clock = Date.parse("2026-09-18T15:00:02.000Z");
+      const build = thesisContext.buildFinanceThesisDecisionContext;
+      const contextReader = vi
+        .spyOn(thesisContext, "buildFinanceThesisDecisionContext")
+        .mockImplementation(async (params) => {
+          const context = await build(params);
+          clock += delayMs;
+          return context;
+        });
+      const quoteProvider = vi.fn(async () => ({
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T15:00:01.000Z",
+        sourceUrlOrArtifact: "fixture://quote",
+        bidPrice: 99.9,
+        askPrice: 100,
+        maxAgeMs: 30_000,
+      }));
+      const reviewer = approvingReviewer();
+      const runOrder = vi.fn(async () => ({
+        ok: false as const,
+        refusals: ["fixture final gate refused"],
+      }));
+      const safetyContext = vi.fn();
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: async () => ({
+            accountId: "paper-account",
+            venue: "alpaca:paper" as const,
+            observedAt: "2026-09-18T15:00:01.000Z",
+            expiresAt: "2026-09-18T15:01:01.000Z",
+            equity: 100_000,
+            positions: [],
+          }),
+          executionQuoteProvider: quoteProvider,
+          createSafetyContext: safetyContext,
+        },
+        caps: { maxOrderNotional: 5000, maxInstrumentNotional: 10000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: () => clock,
+        runOrder: runOrder as never,
+      });
+      const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+      expect(stored).toEqual(result.outcome);
+      expect(contextReader).toHaveBeenCalledOnce();
+      expect(quoteProvider).toHaveBeenCalledOnce();
+      expect(reviewer).toHaveBeenCalledTimes(review ? 1 : 0);
+      expect(runOrder).toHaveBeenCalledTimes(review ? 1 : 0);
+      expect(safetyContext).not.toHaveBeenCalled();
+      if (review) {
+        expect(stored?.tradeDecisionReview?.request.asOf).toBe(new Date(clock).toISOString());
+        expect(stored?.tradeDecisionReview?.request.candidates[0].executionQuote.ageMs).toBe(ageMs);
+        expect(stored?.tradeDecisionReview?.request.decisionContext?.observedAt).toBe(
+          "2026-09-18T15:00:02.000Z",
+        );
+      } else {
+        expect(stored?.tradeDecisionReview).toBeUndefined();
+        expect(stored?.reasons[0]).toContain("after context preparation");
+        expect(JSON.parse(stored!.reasons[1])).toEqual({
+          phase: "quote_before_model_review_after_context",
+          quoteAtMs: Date.parse("2026-09-18T15:00:01.000Z"),
+          checkedAtMs: clock,
+          ageMs,
+          maxAgeMs: 30_000,
+        });
+      }
+    },
+  );
   it.each(["initial", "refresh", "spoof", "account", "cancelled"] as const)(
     "persists only trusted preparation quote evidence (%s)",
     async (mode) => {
