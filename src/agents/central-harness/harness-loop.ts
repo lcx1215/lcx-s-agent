@@ -1073,6 +1073,7 @@ function boundObjectSection(
 /** A fallback for known lifecycle fields, never a replacement for the original feedback. */
 function projectFinanceBudgetFacts(
   source: Record<string, unknown>,
+  maxBytes = 2048,
 ): Record<string, unknown> | undefined {
   if (
     !isPlainRecord(source.scheduler) &&
@@ -1218,7 +1219,47 @@ function projectFinanceBudgetFacts(
     }
     annotate();
   }
-  return jsonBytes(result) <= 2048 ? result : undefined;
+  if (jsonBytes(result) <= maxBytes) {
+    return result;
+  }
+  // A fixed 2KB projection can still exceed the remaining shared budget. Keep
+  // source-timed action gaps as whole JSON, and explicitly leave details unknown.
+  const minimal = pick(source, ["status", "observedAt", "nextTask"], "");
+  const minimalSections: readonly [string, readonly string[]][] = [
+    ["intradayExecution", ["scope", "uncertain", "missingOutcome", "needsExecutionInspection"]],
+    ["positionManagement", ["needsInspection"]],
+    ["economicFeedback", ["status"]],
+  ];
+  for (const [section, keys] of minimalSections) {
+    if (isPlainRecord(source[section])) {
+      minimal[section] = pick(source[section], keys, `${section}.`);
+    }
+  }
+  for (const key of Object.keys(source)) {
+    if (!Object.hasOwn(minimal, key)) {
+      omitted.add(key);
+    }
+  }
+  const annotateMinimal = () => {
+    minimal.budgetProjection = {
+      kind: "critical_finance_facts",
+      originalBytes: jsonBytes(source),
+      omittedFieldCount: omitted.size,
+      boundary: "partial_observation_not_execution_readiness; omitted_costs_remain_unknown",
+    };
+  };
+  annotateMinimal();
+  for (const section of ["economicFeedback", "positionManagement", "intradayExecution"]) {
+    if (jsonBytes(minimal) <= maxBytes) {
+      break;
+    }
+    if (Object.hasOwn(minimal, section)) {
+      delete minimal[section];
+      omitted.add(section);
+      annotateMinimal();
+    }
+  }
+  return jsonBytes(minimal) <= maxBytes ? minimal : undefined;
 }
 
 /**
@@ -1308,7 +1349,15 @@ export function boundPerception(
     ) {
       const financeFacts =
         key === "financeAutomaticLifecycle" && isPlainRecord(item)
-          ? projectFinanceBudgetFacts(item)
+          ? projectFinanceBudgetFacts(
+              item,
+              Math.min(
+                2048,
+                budget -
+                  jsonBytes({ ...perception, controlRoom: { ...value, [key]: null } }) +
+                  jsonBytes(null),
+              ),
+            )
           : undefined;
       if (
         financeFacts &&

@@ -273,3 +273,49 @@ it("names omitted detail and keeps missing economics unknown rather than inventi
   expect(JSON.stringify(bounded.perception)).not.toContain("netMatchedPnl");
   expect(bounded.report.overBudget).toBe(false);
 });
+
+it("keeps source-timed actionable finance gaps when less than 600 bytes remain", () => {
+  const finance = {
+    schemaVersion: "lcx_finance_automatic_lifecycle_feedback_v2",
+    status: "present",
+    observedAt: "2026-10-08T05:07:00Z",
+    nextTask: "inspect_unexecuted_finance_candidates",
+    intradayExecution: { uncertain: 1, missingOutcome: 1, needsExecutionInspection: true },
+    positionManagement: { needsInspection: true, accounts: [{ snapshotRef: "sealed-source" }] },
+    economicFeedback: { status: "net_profit_unverified", accounts: [{ netMatchedPnl: null }] },
+    history: "x".repeat(8400),
+  };
+  const perception = {
+    observedAt: finance.observedAt,
+    ownerTotals: {},
+    backlog: [{ note: "x".repeat(7300) }],
+    boundaries: [],
+    controlRoom: {
+      runtimeFreshness: { ageMs: 1000 },
+      governanceDigest: { nextAction: "inspect", ownerResults: [] },
+      financeAutomaticLifecycle: finance,
+    },
+  };
+  const base = {
+    ...perception,
+    controlRoom: {
+      runtimeFreshness: perception.controlRoom.runtimeFreshness,
+      governanceDigest: perception.controlRoom.governanceDigest,
+    },
+  };
+  const budget = Buffer.byteLength(JSON.stringify(base)) + 580;
+  const bounded = boundPerception(perception, budget);
+  expect(bounded.perception.controlRoom.financeAutomaticLifecycle).toMatchObject({
+    observedAt: finance.observedAt,
+    nextTask: finance.nextTask,
+    intradayExecution: { uncertain: 1, missingOutcome: 1, needsExecutionInspection: true },
+    positionManagement: { needsInspection: true },
+    economicFeedback: { status: "net_profit_unverified" },
+    budgetProjection: { kind: "critical_finance_facts", omittedFieldCount: expect.any(Number) },
+  });
+  expect(JSON.stringify(bounded.perception)).not.toContain("netMatchedPnl");
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(budget);
+  expect(bounded.report.overBudget).toBe(false);
+  expect(boundPerception(bounded.perception, budget).perception).toEqual(bounded.perception);
+  expect(finance.history.length).toBe(8400);
+});
