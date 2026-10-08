@@ -423,6 +423,116 @@ it("rejects same-day/future bars, divergent duplicate dates and mixed request/de
     )(packet, new AbortController().signal),
   ).toMatchObject({ status: "failed", modelCalls: 1 });
 });
+it("carries failed history identity and conflicting dates into the second model call", async () => {
+  const scope = await fixture();
+  const conflict = await appendFinanceBars(scope.directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-30T13:00:00.000Z",
+    provenance: { origin: "different-feed" },
+    bars: [{ date: "2026-09-20", open: 300, high: 301, low: 299, close: 300 }],
+  });
+  const payloads: unknown[] = [];
+  const model = scripted(
+    [
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [requests[0]],
+        hypothesis: "Check recorded risk evidence",
+      },
+      decision,
+    ],
+    payloads,
+  );
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    { adapterFactory: model.factory, evidenceScope: scope },
+  )(packet, new AbortController().signal);
+  expect(result).toMatchObject({ status: "completed", modelCalls: 2 });
+  const evidence = result.toolEvidence![0];
+  expect(evidence.status).toBe("unavailable");
+  expect(JSON.parse(evidence.summary).result).toMatchObject({
+    reason: "ambiguous recorded daily history",
+    historyRead: {
+      instrument: "AAA",
+      headRef: conflict.headRef,
+      returnedBarCount: 30,
+      completedBarCount: 30,
+      duplicateDates: ["2026-09-20"],
+      duplicateDatesOmitted: 0,
+      divergentDateCount: 1,
+    },
+  });
+  expect(JSON.stringify(payloads[1])).toContain(conflict.headRef);
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+
+  await appendFinanceBars(scope.directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-30T13:01:00.000Z",
+    provenance: { origin: "another-observation" },
+    bars: [{ date: "2026-09-20", open: 301, high: 302, low: 300, close: 301 }],
+  });
+  const [changed] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [requests[0]],
+    packet,
+    new AbortController().signal,
+  );
+  expect(changed.status).toBe("unavailable");
+  expect(changed.sourceRef).not.toBe(evidence.sourceRef);
+});
+
+it("identifies the failed second instrument without attributing its gap to the successful first leg", async () => {
+  const scope = await fixture();
+  const conflict = await appendFinanceBars(scope.directory, {
+    instrument: "BBB",
+    derivation: "ohlcv",
+    observedAt: "2026-09-30T13:00:00.000Z",
+    provenance: { origin: "different-feed" },
+    bars: [{ date: "2026-09-20", open: 300, high: 301, low: 299, close: 300 }],
+  });
+  const [evidence] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [requests[1]],
+    packet,
+    new AbortController().signal,
+  );
+  expect(evidence.status).toBe("unavailable");
+  expect(JSON.parse(evidence.summary).result.historyRead).toMatchObject({
+    instrument: "BBB",
+    headRef: conflict.headRef,
+    duplicateDates: ["2026-09-20"],
+  });
+});
+
+it("bounds failed history date samples and explicitly counts omitted dates", async () => {
+  const scope = await fixture();
+  await appendFinanceBars(scope.directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-30T13:00:00.000Z",
+    provenance: { origin: "different-feed" },
+    bars: Array.from({ length: 29 }, (_, i) => ({
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      open: 300,
+      high: 301,
+      low: 299,
+      close: 300,
+    })),
+  });
+  const [evidence] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [requests[0]],
+    packet,
+    new AbortController().signal,
+  );
+  expect(evidence.status).toBe("unavailable");
+  expect(JSON.parse(evidence.summary).result.historyRead).toMatchObject({
+    duplicateDates: ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"],
+    duplicateDatesOmitted: 25,
+    divergentDateCount: 29,
+  });
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+});
+
 it("never includes today's unfinished close or a future-observed batch in the computed series", async () => {
   const scope = await fixture();
   for (const [observedAt, date, close] of [

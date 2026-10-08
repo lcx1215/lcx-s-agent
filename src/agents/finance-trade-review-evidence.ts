@@ -699,7 +699,21 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           continue;
         }
         const refs: string[] = [];
+        let historyRead:
+          | {
+              instrument: string;
+              headRef: string;
+              barsSha256: string;
+              returnedBarCount: number;
+              completedBarCount?: number;
+              duplicateDates?: string[];
+              duplicateDatesOmitted?: number;
+              divergentDateCount?: number;
+            }
+          | undefined;
         const read = async (instrument: string) => {
+          // A failed second leg must not inherit the first leg's diagnostics.
+          historyRead = undefined;
           signal.throwIfAborted();
           const result = await barTool.execute("trade-review-bars", {
             action: "read",
@@ -717,13 +731,36 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           ) {
             throw new Error("recorded daily history missing");
           }
+          historyRead = {
+            instrument,
+            headRef: details.headRef,
+            barsSha256: digest(details.bars),
+            returnedBarCount: details.bars.length,
+          };
           const bars = z
             .array(Bar)
             .max(120)
             .parse(details.bars)
             .filter((bar) => bar.date < packet.asOf.slice(0, 10));
+          const seenDates = new Set<string>();
+          const duplicateDates = new Set<string>();
+          for (const bar of bars) {
+            if (seenDates.has(bar.date)) {
+              duplicateDates.add(bar.date);
+            }
+            seenDates.add(bar.date);
+          }
+          historyRead = {
+            ...historyRead,
+            completedBarCount: bars.length,
+            duplicateDates: [...duplicateDates].toSorted().slice(0, 4),
+            duplicateDatesOmitted: Math.max(0, duplicateDates.size - 4),
+            divergentDateCount: Array.isArray(details.divergentDates)
+              ? details.divergentDates.length
+              : 0,
+          };
           if (
-            new Set(bars.map((bar) => bar.date)).size !== bars.length ||
+            duplicateDates.size > 0 ||
             (Array.isArray(details.divergentDates) && details.divergentDates.length > 0)
           ) {
             throw new Error("ambiguous recorded daily history");
@@ -864,7 +901,17 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           priority = {};
           output = {
             reason: error instanceof Error ? error.message.slice(0, 160) : "evidence unavailable",
+            ...(historyRead ? { historyRead } : {}),
           };
+          if (historyRead) {
+            // Preserve the rejected read's identity without making its series usable.
+            sourceRef = digest({
+              refs,
+              historyRead,
+              asOf: packet.asOf,
+              instrument: candidate.instrument,
+            });
+          }
         }
         sourceRef ||= digest({ refs, asOf: packet.asOf, instrument: candidate.instrument });
         const summaryText = summarizeEvidence(output, priority, excludedSummaryKeys);
