@@ -984,6 +984,85 @@ it.each(["verified_fact", "market_consensus"])(
   },
 );
 
+it.each([
+  { hypothesis: "x".repeat(240), accepted: true },
+  { hypothesis: "疑".repeat(80), accepted: true },
+  { hypothesis: "疑".repeat(81), accepted: false },
+])(
+  "aligns evidence hypothesis guidance and consumption with UTF8 bytes: %j",
+  async ({ hypothesis, accepted }) => {
+    const execute = vi.fn(async () => ({ ok: true, value: "recorded method" }));
+    const capability: FinanceTradeReviewFinancialCapability = {
+      toolName: "fixture_method_read",
+      moduleIds: ["finance_learning_memory"],
+      description: "Read a recorded method without market facts or execution.",
+      execute,
+    };
+    const first = adapter({
+      schemaVersion: intradayRequest.schemaVersion,
+      evidenceRequests: [
+        {
+          candidateId: intradayRequest.candidates[0].candidateId,
+          action: "financial_capability",
+          toolName: capability.toolName,
+          moduleId: "finance_learning_memory",
+          question: "Check the retained method.",
+        },
+      ],
+      hypothesis,
+    });
+    const second = adapter({
+      schemaVersion: intradayRequest.schemaVersion,
+      decisions: [
+        {
+          candidateId: intradayRequest.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "The recorded method adds no candidate-specific contradiction.",
+        },
+      ],
+    });
+    let prompt = "";
+    const models = [first, second];
+    const factory = vi.fn<typeof createConfiguredFinanceModelAdapter>((_cfg, options) => {
+      const model = models.shift()!;
+      return {
+        ...model,
+        invoke: async (call, signal) => {
+          prompt ||= options!.buildPrompt!(call.payload);
+          if (model === second) {
+            expect(call.payload).toMatchObject({ evidenceHypothesis: hypothesis });
+          }
+          return model.invoke(call, signal);
+        },
+      };
+    });
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: factory,
+        evidenceScope: {
+          directory: "/fixture-method-only",
+          accountId: "paper-fixture",
+          instruments: ["SPY"],
+          financialCapabilities: [capability],
+        },
+      },
+    );
+    const result = await reviewer(intradayRequest, AbortSignal.timeout(1000));
+    expect(prompt).toContain("Hypothesis at most 240 UTF-8 bytes");
+    expect(prompt).not.toContain("Hypothesis max240 characters");
+    expect(result).toMatchObject(
+      accepted
+        ? { status: "completed", modelCalls: 2 }
+        : { status: "failed", failureCode: "output_invalid", modelCalls: 1 },
+    );
+    expect(execute).toHaveBeenCalledTimes(accepted ? 1 : 0);
+    expect(second.invoke).toHaveBeenCalledTimes(accepted ? 1 : 0);
+    expect(factory).toHaveBeenCalledTimes(accepted ? 2 : 1);
+    expect(intradayRequest.candidates[0].candidateId).toBe("intraday-signal-1");
+  },
+);
+
 it("binds the trusted economic objective into the actual adapter payload and receipt metadata", async () => {
   const objective = "Grow net Paper wealth after costs; keep unknown economics explicit";
   const model = adapter({
