@@ -1024,6 +1024,25 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    id: "git_commit_delivery",
+    lane: "local_dev_tooling",
+    patterns: [
+      /^scripts\/committer$/u,
+      /^git-hooks\/pre-commit$/u,
+      /^scripts\/pre-commit\/(?:run-node-tool\.sh|filter-staged-files\.mjs)$/u,
+      /^test\/git-hooks-pre-commit\.test\.ts$/u,
+    ],
+    requiredChecks: ["git-diff-check", "run-changed-tests"],
+    commands: [
+      "bash -n scripts/committer",
+      "pnpm vitest run test/git-hooks-pre-commit.test.ts",
+      "git diff --check",
+    ],
+    safetyNotes: [
+      "Commit hooks may rewrite and stage selected files. Verify the committed content and exact-path index synchronization in an isolated repository; preserve unrelated worktree and index entries. This lane grants no push, merge or deployment authority.",
+    ],
+  },
+  {
     // Root-level build and dependency configuration. Changing one changes how
     // everything is compiled, typed, or installed, but no single downstream
     // check covers it, so the lane records the change and requires a clean diff

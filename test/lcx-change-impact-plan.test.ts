@@ -45,6 +45,17 @@ async function runPlan(changedFile: string) {
 }
 
 describe("lcx-change-impact-plan", () => {
+  it("routes the commit helper alone to its original hook regression", async () => {
+    const result = await runPlan("scripts/committer");
+    expect(result.ok).toBe(true);
+    expect(result.unmatchedFiles).toEqual([]);
+    expect(result.affectedLanes).toEqual(["local_dev_tooling"]);
+    expect(result.recommendedFastCommands).toContain(
+      "pnpm vitest run test/git-hooks-pre-commit.test.ts",
+    );
+    expect(result.recommendedFastCommands).toContain("bash -n scripts/committer");
+  });
+
   it("routes project Skill pointers through the canonical Skill lane", async () => {
     const result = await runPlanArgs([
       "--files",
