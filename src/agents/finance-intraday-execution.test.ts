@@ -277,11 +277,15 @@ describe("intraday decision execution bridge", () => {
         stageElapsedMs: mode === "account" ? 4_000 : mode === "refresh" ? 9_000 : 7_000,
       });
       if (mode === "initial" || mode === "refresh") {
+        expect(stored?.reasons).toEqual([
+          "intraday_execution_quote_unavailable:alpaca_safety_snapshot_read_unavailable:quote_snapshot",
+        ]);
         expect(stored?.executionFailure?.quote).toEqual({
           reason: typed.reason,
           ...typed.diagnostic,
         });
       } else {
+        expect(stored?.reasons).toEqual(["intraday_execution_unexpected_error"]);
         expect(stored?.executionFailure?.quote).toBeUndefined();
       }
       expect(JSON.stringify(stored)).not.toMatch(/PRIVATE_BODY|secret.invalid/);

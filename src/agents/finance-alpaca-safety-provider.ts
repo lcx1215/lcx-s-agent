@@ -60,6 +60,10 @@ export const ALPACA_SAFETY_FAILURE_CODES = [
 ] as const;
 export type AlpacaSafetyFailureCode = (typeof ALPACA_SAFETY_FAILURE_CODES)[number];
 const QUOTE_REFUSAL_STAGES = [
+  "quote_payload_invalid",
+  "quote_bid_invalid",
+  "quote_ask_invalid",
+  "quote_timestamp_missing",
   "quote_bid_non_positive",
   "quote_ask_below_bid",
   "quote_timestamp_invalid",
@@ -341,8 +345,31 @@ function latestQuoteUrl(instrument: string, stockFeed: "iex" | "sip"): string {
 }
 
 function latestQuote(value: unknown, instrument: string): Record<string, unknown> {
-  const envelope = record(value);
-  return record(instrument.includes("/") ? record(envelope.quotes)[instrument] : envelope.quote);
+  try {
+    const envelope = record(value);
+    return record(instrument.includes("/") ? record(envelope.quotes)[instrument] : envelope.quote);
+  } catch {
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_payload_invalid");
+  }
+}
+
+function quoteValues(quote: Record<string, unknown>) {
+  const price = (value: unknown, stage: "quote_bid_invalid" | "quote_ask_invalid") => {
+    try {
+      return numeric(value);
+    } catch {
+      refuse("alpaca_safety_facts_inconsistent", undefined, stage);
+    }
+  };
+  const bid = price(quote.bp, "quote_bid_invalid");
+  const ask = price(quote.ap, "quote_ask_invalid");
+  let at: string;
+  try {
+    at = string(quote.t);
+  } catch {
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_timestamp_missing");
+  }
+  return { bid, ask, at };
 }
 
 /** Reads and binds a fresh spot quote without reading any account or instrument facts. */
@@ -404,9 +431,7 @@ export async function readAlpacaPaperSafetyQuote(
     );
     failureStage = "quote_values";
     const quote = latestQuote(response, options.instrument);
-    const bidPrice = numeric(quote.bp);
-    const askPrice = numeric(quote.ap);
-    const observedAt = string(quote.t);
+    const { bid: bidPrice, ask: askPrice, at: observedAt } = quoteValues(quote);
     const now = Date.now();
     assertFreshQuote(bidPrice, askPrice, observedAt, start, now, options.maxAgeMs);
     const boundQuote = createBoundQuote(
@@ -848,9 +873,7 @@ export async function readAlpacaPaperSafetyFacts(
       );
     }
     failureStage = "quote_values";
-    const bid = numeric(quote.bp),
-      ask = numeric(quote.ap),
-      quoteAt = string(quote.t);
+    const { bid, ask, at: quoteAt } = quoteValues(quote);
     const now = Date.now();
     failureStage = "quote_freshness";
     assertFreshQuote(bid, ask, quoteAt, start, now, options.maxAgeMs);

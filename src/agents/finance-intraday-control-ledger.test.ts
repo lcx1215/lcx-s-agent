@@ -550,6 +550,10 @@ it.each([
 
 it.each([
   "quote_freshness",
+  "quote_payload_invalid",
+  "quote_bid_invalid",
+  "quote_ask_invalid",
+  "quote_timestamp_missing",
   "quote_bid_non_positive",
   "quote_ask_below_bid",
   "quote_timestamp_invalid",

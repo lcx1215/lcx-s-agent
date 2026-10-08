@@ -970,7 +970,7 @@ it.each(["transport", "json", "oversize", "shape", "values", "future", "stale"] 
                 ? "quote_timestamp_future"
                 : mode === "values"
                   ? "quote_bid_non_positive"
-                  : "quote_values",
+                  : "quote_payload_invalid",
       },
     });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|secret.invalid|token|FAKE|429/);
@@ -1001,6 +1001,76 @@ it("preserves an ignored-reader quote timeout and parent cancellation without re
     spy.mockRestore();
   }
 });
+
+it.each([
+  { kind: "empty_payload", stage: "quote_payload_invalid" },
+  { kind: "array_payload", stage: "quote_payload_invalid" },
+  { kind: "null_bid", stage: "quote_bid_invalid" },
+  { kind: "boolean_bid", stage: "quote_bid_invalid" },
+  { kind: "blank_bid", stage: "quote_bid_invalid" },
+  { kind: "missing_ask", stage: "quote_ask_invalid" },
+  { kind: "nonfinite_ask", stage: "quote_ask_invalid" },
+  { kind: "missing_timestamp", stage: "quote_timestamp_missing" },
+  { kind: "blank_timestamp", stage: "quote_timestamp_missing" },
+] as const)(
+  "rejects malformed quote data with bounded field attribution on both readers: $kind",
+  async ({ kind, stage }) => {
+    for (const crypto of [false, true]) {
+      for (const reader of [readAlpacaPaperSafetyQuote, readAlpacaPaperSafetyFacts]) {
+        const f = fixture(crypto);
+        const instrument = f.options.instrument;
+        const quote: Record<string, unknown> = { ...f.quote };
+        if (kind === "null_bid") {
+          quote.bp = null;
+        }
+        if (kind === "boolean_bid") {
+          quote.bp = true;
+        }
+        if (kind === "blank_bid") {
+          quote.bp = " ";
+        }
+        if (kind === "missing_ask") {
+          delete quote.ap;
+        }
+        if (kind === "nonfinite_ask") {
+          quote.ap = "PRIVATE_BODY";
+        }
+        if (kind === "missing_timestamp") {
+          delete quote.t;
+        }
+        if (kind === "blank_timestamp") {
+          quote.t = " ";
+        }
+        const payload = kind === "empty_payload" ? {} : kind === "array_payload" ? [] : quote;
+        const body =
+          kind === "empty_payload"
+            ? {}
+            : crypto
+              ? { quotes: { [instrument]: payload } }
+              : { quote: payload };
+        const original = f.read.getMockImplementation()!;
+        f.read.mockImplementation(async (url, init) =>
+          url.includes("quotes")
+            ? { status: 200, body: JSON.stringify(body) }
+            : original(url, init),
+        );
+        const result = await reader({ ...f.options, diagnostics: true });
+        expect(result).toMatchObject({ ok: false, reason: "alpaca_safety_facts_inconsistent" });
+        if (result.ok) {
+          throw new Error("malformed quote accepted");
+        }
+        expect(
+          typeof result.diagnostic === "string" ? result.diagnostic : result.diagnostic?.stage,
+        ).toBe(stage);
+        expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|FAKE/);
+        expect(await reader({ ...f.options, diagnostics: false })).toEqual({
+          ok: false,
+          reason: "alpaca_safety_facts_inconsistent",
+        });
+      }
+    }
+  },
+);
 
 it("sanitizes typed quote failure fields before host propagation", () => {
   const error = new AlpacaSafetyQuoteReadError("alpaca_safety_snapshot_read_unavailable", {

@@ -1269,6 +1269,8 @@ export async function executeFinanceIntradayDecision(params: {
             ...(error.provider ? { provider: { ...error.provider } } : {}),
           }
         : undefined;
+    const preparationFailure = !factsFailure && !attempt ? executionFailure(error) : undefined;
+    const quoteFailure = preparationFailure?.quote;
     const outcome = await appendFinanceIntradayOutcome(params.directory, {
       signalId: input.signalId,
       status: uncertain ? "uncertain" : "refused",
@@ -1281,9 +1283,11 @@ export async function executeFinanceIntradayDecision(params: {
               : "execution_outcome_unresolved"
           : factsFailure
             ? `execution_safety_${factsFailure.category}`
-            : "intraday_execution_unexpected_error",
+            : quoteFailure
+              ? `intraday_execution_quote_unavailable:${quoteFailure.reason}${quoteFailure.stage ? `:${quoteFailure.stage}` : ""}`
+              : "intraday_execution_unexpected_error",
       ],
-      ...(!factsFailure && !attempt ? { executionFailure: executionFailure(error) } : {}),
+      ...(preparationFailure ? { executionFailure: preparationFailure } : {}),
       ...(factsFailure ? { executionSafetyFailure: factsFailure } : {}),
       ...(attempt
         ? {
