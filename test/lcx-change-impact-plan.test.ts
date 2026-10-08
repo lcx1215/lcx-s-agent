@@ -726,3 +726,19 @@ it("owns the intraday execution bridge and requires its focused controller regre
     "pnpm vitest run src/agents/finance-intraday-execution.test.ts src/agents/finance-alpaca-cycle-controller.test.ts",
   );
 });
+
+it("keeps trade review, evidence and result recall on the original unattended owner", async () => {
+  const files = ["decision-review", "review-evidence", "result-recall"].flatMap((name) => [
+    `src/agents/finance-trade-${name}.ts`,
+    `src/agents/finance-trade-${name}.test.ts`,
+  ]);
+  const result = await runPlanArgs(["--files", ...files]);
+  expect(result.ok).toBe(true);
+  expect(result.unmatchedFiles).toEqual([]);
+  const impact = result.impacts.find((entry) => entry.id === "finance_unattended_cycle");
+  expect(impact?.matchedFiles).toEqual(files.toSorted());
+  expect(impact?.requiredChecks).toContain("head-tail-consistency");
+  expect(impact?.commands).toContain(
+    "pnpm vitest run src/agents/finance-trade-decision-review.test.ts src/agents/finance-trade-review-evidence.test.ts src/agents/finance-trade-result-recall.test.ts",
+  );
+});
