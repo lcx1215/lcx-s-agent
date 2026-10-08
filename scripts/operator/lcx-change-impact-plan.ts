@@ -206,6 +206,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/operator\/lcx-finance-scheduler(?:-lifecycle)?\.test\.ts$/u,
       /^docs\/tools\/finance-scheduler\.md$/u,
       /^src\/agents\/finance-paper-run\.ts$/u,
+      /^src\/agents\/finance-intraday-execution(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-alpaca-run\.ts$/u,
       /^src\/agents\/finance-alpaca-execution-adapter\.ts$/u,
       /^src\/agents\/finance-(?:alpaca-cycle-controller|broker-reconciliation|protection-coordination|write-transport)(?:\.test)?\.ts$/u,
@@ -218,6 +219,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
+      "pnpm vitest run src/agents/finance-intraday-execution.test.ts src/agents/finance-alpaca-cycle-controller.test.ts",
       "pnpm vitest run src/agents/finance-value-assessment.test.ts src/agents/finance-portfolio-cycle.test.ts test/operator/lcx-finance-daily-strategy.test.ts src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
       "pnpm vitest run src/agents/finance-execution-safety.test.ts src/agents/finance-execution-recovery.test.ts src/agents/finance-alpaca-safety-provider.test.ts src/agents/finance-alpaca-cycle-controller.test.ts src/agents/finance-alpaca-history-sync.test.ts",
       "pnpm vitest run src/agents/finance-scheduler-lock.test.ts src/agents/finance-scheduler-process.test.ts src/agents/finance-scheduler-state.test.ts src/agents/finance-link-health.test.ts test/operator/lcx-finance-scheduler.test.ts test/operator/lcx-finance-scheduler-lifecycle.test.ts",

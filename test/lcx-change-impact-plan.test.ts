@@ -708,3 +708,19 @@ it("routes the model-facing composition entry to the canonical research regressi
   expect(impact?.commands.join(" ")).toContain("finance-brain-orchestration.test.ts");
   expect(result.unmatchedFiles).toEqual([]);
 });
+
+it("owns the intraday execution bridge and requires its focused controller regression", async () => {
+  const files = [
+    "src/agents/finance-intraday-execution.ts",
+    "src/agents/finance-intraday-execution.test.ts",
+  ];
+  const result = await runPlanArgs(["--files", ...files]);
+  expect(result.ok).toBe(true);
+  expect(result.unmatchedFiles).toEqual([]);
+  const impact = result.impacts.find((entry) => entry.id === "finance_unattended_cycle");
+  expect(impact?.matchedFiles).toEqual(files.toSorted());
+  expect(impact?.requiredChecks).toContain("head-tail-consistency");
+  expect(impact?.commands).toContain(
+    "pnpm vitest run src/agents/finance-intraday-execution.test.ts src/agents/finance-alpaca-cycle-controller.test.ts",
+  );
+});
