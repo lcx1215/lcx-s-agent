@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { syncAlpacaIntradayBars } from "./finance-alpaca-intraday.js";
 import {
   FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
   FINANCE_ALPACA_MARKET_CALENDAR_URL,
@@ -93,6 +94,40 @@ async function monitorTickWithFixtureCalendar(options: FinanceIntradayMonitorOpt
       options.resolveMarketSession ?? (async (date) => fixtureMarketSession(date, asOf)),
   });
 }
+
+it("stops on an observed empty data response rather than deciding from cached session prices", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-empty-source-"));
+  temporary.push(directory);
+  const strategyContract = await activeContract(directory);
+  await seed(directory);
+  const result = await monitorTickWithFixtureCalendar({
+    directory,
+    instrument: "SPY",
+    intervalSeconds: 300,
+    feed: "iex",
+    openingRangeBars: 6,
+    rewardRisk: 2,
+    strategyContract,
+    scope: { kind: "strategy_universe" },
+    now: new Date("2026-09-18T15:15:00.000Z"),
+    sync: (options) =>
+      syncAlpacaIntradayBars({
+        ...options,
+        credentials: { apiKeyId: "key", apiSecretKey: "secret" },
+        read: vi.fn().mockResolvedValue({
+          status: 200,
+          body: JSON.stringify({ bars: null, symbol: "SPY", next_page_token: null }),
+        }),
+      }),
+  });
+  expect(result).toMatchObject({
+    status: "no_closed_session_bar",
+    syncReceipt: { status: "unavailable", reason: "no_closed_bars", append: null },
+  });
+  expect(result).not.toHaveProperty("decision");
+  expect(result).not.toHaveProperty("signal");
+  expect(await readFinanceIntradayDecisions(directory)).toEqual([]);
+});
 
 async function seed(directory: string): Promise<void> {
   const closes = [100, 100.5, 100.2, 100.4, 100.1, 100.3, 101];

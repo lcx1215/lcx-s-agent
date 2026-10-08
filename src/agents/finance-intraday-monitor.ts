@@ -1,4 +1,7 @@
-import { syncAlpacaIntradayBars } from "./finance-alpaca-intraday.js";
+import {
+  AlpacaIntradayBarsUnavailableError,
+  syncAlpacaIntradayBars,
+} from "./finance-alpaca-intraday.js";
 import {
   financeAlpacaMarketSessionIssue,
   type FinanceAlpacaMarketSession,
@@ -268,19 +271,35 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   while (syncStart + intervalMs <= now.getTime() && starts.has(syncStart)) {
     syncStart += intervalMs;
   }
-  const syncReceipt =
-    syncStart + intervalMs > now.getTime()
-      ? null
-      : await sync({
-          directory: options.directory,
-          instrument,
-          start: new Date(syncStart).toISOString(),
-          end: now.toISOString(),
-          intervalSeconds: options.intervalSeconds,
-          feed: options.feed,
-          now: () => now,
-          signal: options.signal,
-        });
+  let syncReceipt: Awaited<ReturnType<typeof syncAlpacaIntradayBars>> | null;
+  try {
+    syncReceipt =
+      syncStart + intervalMs > now.getTime()
+        ? null
+        : await sync({
+            directory: options.directory,
+            instrument,
+            start: new Date(syncStart).toISOString(),
+            end: now.toISOString(),
+            intervalSeconds: options.intervalSeconds,
+            feed: options.feed,
+            now: () => now,
+            signal: options.signal,
+          });
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    if (!(error instanceof AlpacaIntradayBarsUnavailableError)) {
+      throw error;
+    }
+    // Stop this tick even if cached bars exist. An empty fresh read cannot admit
+    // a decision from old prices; the original unavailable status carries its scope.
+    return Object.freeze({
+      status: "no_closed_session_bar" as const,
+      clock,
+      syncReceipt: error.observation,
+      datasetHeadRef: priorBars.headRef,
+    });
+  }
   const intraday = await readFinanceIntradayLedger(options.directory, {
     instrument,
     feed: options.feed,

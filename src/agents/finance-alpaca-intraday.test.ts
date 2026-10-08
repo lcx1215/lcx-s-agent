@@ -13,6 +13,98 @@ afterEach(async () => {
 });
 
 describe("Alpaca intraday sync", () => {
+  it("follows a symbol-bound empty page before consuming a later closed bar", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-empty-page-"));
+    temporary.push(directory);
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        body: JSON.stringify({ symbol: "WBD", bars: null, next_page_token: "more" }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: JSON.stringify({
+          symbol: "WBD",
+          bars: [{ t: "2026-01-05T14:30:00Z", o: 30, h: 31, l: 29, c: 30, v: 1 }],
+          next_page_token: null,
+        }),
+      });
+    const result = await syncAlpacaIntradayBars({
+      directory,
+      instrument: "WBD",
+      start: "2026-01-05T14:30:00Z",
+      end: "2026-01-05T14:40:00Z",
+      intervalSeconds: 300,
+      feed: "iex",
+      credentials: { apiKeyId: "key", apiSecretKey: "secret" },
+      read,
+      now: () => new Date("2026-01-05T15:00:00Z"),
+    });
+    expect(result).toMatchObject({ pages: 2, barsReceived: 1, closedBarsAccepted: 1 });
+    expect(read.mock.calls[1]?.[0]).toContain("page_token=more");
+    expect((await readFinanceIntradayLedger(directory)).bars).toHaveLength(1);
+  });
+
+  it.each([
+    { bars: null, symbol: "WBD", next_page_token: null },
+    { bars: [], symbol: "WBD", next_page_token: null },
+    { bars: [{ t: "2026-01-05T14:35:00Z", o: 30, h: 31, l: 29, c: 30, v: 1 }] },
+  ])("reports unavailable closed data without recording prices: %j", async (body) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-empty-intraday-"));
+    temporary.push(directory);
+    await expect(
+      syncAlpacaIntradayBars({
+        directory,
+        instrument: "WBD",
+        start: "2026-01-05T14:30:00Z",
+        end: "2026-01-05T14:38:00Z",
+        intervalSeconds: 300,
+        feed: "iex",
+        credentials: { apiKeyId: "key", apiSecretKey: "secret" },
+        read: vi.fn().mockResolvedValue({ status: 200, body: JSON.stringify(body) }),
+        now: () => new Date("2026-01-05T14:38:00Z"),
+      }),
+    ).rejects.toMatchObject({
+      name: "AlpacaIntradayBarsUnavailableError",
+      observation: {
+        status: "unavailable",
+        reason: "no_closed_bars",
+        instrument: "WBD",
+        feed: "iex",
+        closedBarsAccepted: 0,
+        append: null,
+        orderPathTouched: false,
+      },
+    });
+    expect((await readFinanceIntradayLedger(directory)).recordCount).toBe(0);
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
+
+  it.each([
+    { bars: null },
+    { bars: null, symbol: "SPY", next_page_token: null },
+    { bars: null, symbol: "WBD", next_page_token: 7 },
+    { bars: {} },
+  ])("keeps malformed empty responses blocked: %j", async (body) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-bad-empty-intraday-"));
+    temporary.push(directory);
+    await expect(
+      syncAlpacaIntradayBars({
+        directory,
+        instrument: "WBD",
+        start: "2026-01-05T14:30:00Z",
+        end: "2026-01-05T14:40:00Z",
+        intervalSeconds: 300,
+        feed: "iex",
+        credentials: { apiKeyId: "key", apiSecretKey: "secret" },
+        read: vi.fn().mockResolvedValue({ status: 200, body: JSON.stringify(body) }),
+        now: () => new Date("2026-01-05T15:00:00Z"),
+      }),
+    ).rejects.toThrow("response is malformed");
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
+
   it("reuses the authenticated read seam, paginates, skips an unclosed bar, and appends locally", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-intraday-"));
     temporary.push(directory);

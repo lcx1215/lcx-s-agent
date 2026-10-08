@@ -10,6 +10,38 @@ export type AlpacaIntradayFeed = "iex" | "sip";
 
 type AlpacaBar = { t?: unknown; o?: unknown; h?: unknown; l?: unknown; c?: unknown; v?: unknown };
 
+type UnavailableBarObservation = Readonly<{
+  instrument: string;
+  intervalSeconds: 60 | 300 | 900;
+  feed: AlpacaIntradayFeed;
+  start: string;
+  end: string;
+  observedAt: string;
+  pages: number;
+  barsReceived: number;
+  unclosedBarsSkipped: number;
+}>;
+
+/** A successful HTTP read with no closed prices is missing evidence, not corrupt prices. */
+export class AlpacaIntradayBarsUnavailableError extends Error {
+  readonly observation;
+
+  constructor(observation: UnavailableBarObservation) {
+    super("Alpaca intraday sync returned no closed bars");
+    this.name = "AlpacaIntradayBarsUnavailableError";
+    this.observation = Object.freeze({
+      ...observation,
+      status: "unavailable" as const,
+      reason: "no_closed_bars" as const,
+      closedBarsAccepted: 0,
+      append: null,
+      boundary: "missing_closed_market_data_not_execution_evidence" as const,
+      credentialsPersisted: false as const,
+      orderPathTouched: false as const,
+    });
+  }
+}
+
 function positive(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     throw new Error(`Alpaca intraday bar requires positive ${field}`);
@@ -79,11 +111,24 @@ export async function syncAlpacaIntradayBars(options: {
     if (response.status !== 200) {
       throw new Error(`Alpaca intraday bars returned HTTP ${response.status}`);
     }
-    const payload = JSON.parse(response.body) as { bars?: unknown; next_page_token?: unknown };
-    if (!Array.isArray(payload.bars)) {
+    const payload = JSON.parse(response.body) as {
+      bars?: unknown;
+      symbol?: unknown;
+      next_page_token?: unknown;
+    } | null;
+    // The native endpoint can return a symbol-bound null page when no bars exist.
+    // Missing/wrong-symbol/unstructured values remain malformed; no source fallback.
+    const emptyNativePage =
+      payload?.bars === null &&
+      payload.symbol === instrument &&
+      (payload.next_page_token === null ||
+        (typeof payload.next_page_token === "string" && payload.next_page_token.length > 0));
+    if (!payload || (!Array.isArray(payload.bars) && !emptyNativePage)) {
       throw new Error("Alpaca intraday bars response is malformed");
     }
-    collected.push(...(payload.bars as AlpacaBar[]));
+    if (Array.isArray(payload.bars)) {
+      collected.push(...(payload.bars as AlpacaBar[]));
+    }
     pageToken =
       typeof payload.next_page_token === "string" && payload.next_page_token
         ? payload.next_page_token
@@ -121,7 +166,17 @@ export async function syncAlpacaIntradayBars(options: {
     ];
   });
   if (bars.length === 0) {
-    throw new Error("Alpaca intraday sync returned no closed bars");
+    throw new AlpacaIntradayBarsUnavailableError({
+      instrument,
+      intervalSeconds: options.intervalSeconds,
+      feed: options.feed,
+      start: options.start,
+      end: options.end,
+      observedAt,
+      pages,
+      barsReceived: collected.length,
+      unclosedBarsSkipped,
+    });
   }
   const append = await appendFinanceIntradayBars(options.directory, {
     instrument,
