@@ -276,6 +276,7 @@ export async function buildPerception(
   backlog: readonly CompactBacklogEntry[],
   task?: CentralHostTask,
   governanceInput?: Readonly<Record<string, unknown>>,
+  resumeScan?: Readonly<Record<string, unknown>>,
 ): Promise<CentralPerception> {
   // A failed read is an evidence gap, not an empty/healthy system. Keep only
   // bounded status codes; source contents and filesystem error text stay out.
@@ -328,6 +329,7 @@ export async function buildPerception(
       runtimeFreshness: {
         ...projectRuntimeFreshness({ controlRoom, governance, learningWorkflow }, observedAt),
         ...(Object.keys(snapshotReadFailures).length > 0 ? { snapshotReadFailures } : {}),
+        ...(resumeScan ? { resumeScan } : {}),
         ...(governanceInput
           ? {
               sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
@@ -687,11 +689,19 @@ export function selectPersistedReceipts(raw: string, task?: CentralHostTask): Ce
   };
 }
 
-async function loadPersistedReceipts(task?: CentralHostTask): Promise<CentralResumeRead> {
+export async function loadPersistedReceipts(
+  task?: CentralHostTask,
+): Promise<CentralResumeRead & Readonly<{ readStatus: "ready" | "missing" | "read_failed" }>> {
   try {
-    return selectPersistedReceipts(await fs.readFile(LOG_PATH, "utf8"), task);
-  } catch {
-    return selectPersistedReceipts("", task);
+    return {
+      ...selectPersistedReceipts(await fs.readFile(LOG_PATH, "utf8"), task),
+      readStatus: "ready",
+    };
+  } catch (error) {
+    return {
+      ...selectPersistedReceipts("", task),
+      readStatus: isRecord(error) && error.code === "ENOENT" ? "missing" : "read_failed",
+    };
   }
 }
 
@@ -896,6 +906,7 @@ async function main(): Promise<void> {
   droppedNonDecisionCycles = loadedResume.droppedNonDecisionCycles;
   const resumeScan = {
     scope: "physical_log_suffix_until_40_matching_completed_receipts",
+    readStatus: loadedResume.readStatus,
     window: RESUME_WINDOW,
     scannedRows: loadedResume.scannedRows,
     invalidRows: loadedResume.invalidRows,
@@ -915,6 +926,7 @@ async function main(): Promise<void> {
       compactReceipts(resumable, 10, CENTRAL_CAPABILITY_IDS),
       task,
       governanceInput,
+      resumeScan,
     );
     const perceptionBuildMs = Math.max(0, Math.round(performance.now() - perceptionBuildStartedAt));
     let receipt: CentralRunReceipt;

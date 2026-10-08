@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPerception,
   extractOwnerTotals,
+  loadPersistedReceipts,
   readCentralGovernanceInput,
   receiptsForHostTask,
   projectGovernanceDigest,
@@ -1151,6 +1152,100 @@ describe("central resume selects matching evidence before truncation", () => {
       ],
     });
   const jsonl = (rows: readonly unknown[]) => rows.map((row) => JSON.stringify(row)).join("\n");
+
+  it.each([
+    ["ENOENT", "missing"],
+    ["EACCES", "read_failed"],
+    ["EISDIR", "read_failed"],
+  ])("carries the %s history read gap to the next bounded decision", async (code, status) => {
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-central-agent-log-latest.jsonl")) {
+        throw Object.assign(new Error("fixture unavailable history"), { code });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return JSON.stringify({ checkedAt: "2026-10-08T08:00:00.000Z" });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 0 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const loaded = await loadPersistedReceipts(task);
+      expect(loaded).toMatchObject({ readStatus: status, receipts: [] });
+      const { receipts, ...scan } = loaded;
+      const perceived = await buildPerception(compactReceipts(receipts, 10), task, {}, scan);
+      const result = await runCentralHarnessCycle({
+        perception: perceived,
+        registry: new Map(),
+        brain: {
+          propose: async (observed) => {
+            expect(observed.controlRoom.runtimeFreshness).toMatchObject({
+              resumeScan: { readStatus: status, scannedRows: 0 },
+            });
+            expect(buildCentralBrainPrompt(observed)).toContain(status);
+            return {
+              kind: "proposed",
+              provider: "offline-fixture",
+              modelId: "scripted-resume-feedback",
+              plan: { actions: [], note: `unresolved history read: ${status}` },
+            };
+          },
+        },
+      });
+      expect(result.contextBudget?.overBudget).toBe(false);
+      expect(result.runtimeFreshness).toMatchObject({ resumeScan: { readStatus: status } });
+      expect(result.brainCall.note).toBe(`unresolved history read: ${status}`);
+      expect(result.brainCall.modelCall).toBeUndefined();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("recovers useful history after a read failure while naming malformed rows and preserving task scope", async () => {
+    let damaged = true;
+    const pending = original();
+    const unrelated = receipt({ runId: "other", task: { ...task, objective: "other task" } });
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-central-agent-log-latest.jsonl")) {
+        if (damaged) {
+          throw Object.assign(new Error("fixture unavailable history"), { code: "EACCES" });
+        }
+        return `${jsonl([pending, unrelated])}\n{`;
+      }
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return JSON.stringify({ checkedAt: "2026-10-08T08:01:00.000Z" });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 0 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      expect(await loadPersistedReceipts(task)).toMatchObject({ readStatus: "read_failed" });
+      damaged = false;
+      const loaded = await loadPersistedReceipts(task);
+      expect(loaded).toMatchObject({
+        readStatus: "ready",
+        receipts: [pending],
+        invalidRows: 1,
+        skippedOtherTaskCycles: 1,
+      });
+      const { receipts, ...scan } = loaded;
+      const bounded = boundPerception(
+        await buildPerception(compactReceipts(receipts, 10), task, {}, scan),
+      );
+      const prompt = buildCentralBrainPrompt(bounded.perception);
+      expect(prompt).toContain("original-result");
+      expect(prompt).toContain('"invalidRows":1');
+      expect(prompt).not.toContain("read_failed");
+      expect(bounded.perception.backlog).toEqual(compactReceipts([pending], 10));
+    } finally {
+      read.mockRestore();
+    }
+  });
 
   it("keeps the original scoped result after forty failed cycles without renewing its source clock", () => {
     const pending = original();
