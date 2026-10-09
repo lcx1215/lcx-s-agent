@@ -419,8 +419,25 @@ function knowledgeProjection(output: Record<string, unknown>, priority: Record<s
   };
 }
 
-/** One review-local calculation ledger; all data and identity come from the trusted host. */
+type HistoryReadIdentity = {
+  instrument: string;
+  headRef: string;
+  barsSha256: string;
+  returnedBarCount: number;
+  completedBarCount?: number;
+  duplicateDates?: string[];
+  duplicateDatesOmitted?: number;
+  divergentDateCount?: number;
+};
+
+/** Bounded tool batches reuse validated history only within the same host review packet. */
 export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeReviewEvidenceScope) {
+  let observations = new Map<
+    string,
+    { bars: z.infer<typeof Bar>[]; identity: HistoryReadIdentity; ref: string }
+  >();
+  let observationPacket: FinanceTradeDecisionReviewRequest | undefined;
+  let observationScope: string | undefined;
   return async (
     requests: readonly FinanceTradeReviewEvidenceRequest[],
     packet: FinanceTradeDecisionReviewRequest,
@@ -468,6 +485,14 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
         throw new Error("financial capability outside host tool/module scope");
       }
     }
+    const scopeKey = JSON.stringify([scope.directory, scope.accountId, packet.venue, packet.asOf]);
+    if (packet !== observationPacket || scopeKey !== observationScope) {
+      observations = new Map();
+      observationPacket = packet;
+      observationScope = scopeKey;
+    }
+    // Keep a concurrent caller's differently scoped packet from replacing this batch's map.
+    const packetObservations = observations;
     const ledger = createCalculationLedger({ maxEntries: 2 });
     const barTool = createFinanceBarLedgerTool();
     const math = createQuantMathTool();
@@ -703,22 +728,17 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           continue;
         }
         const refs: string[] = [];
-        let historyRead:
-          | {
-              instrument: string;
-              headRef: string;
-              barsSha256: string;
-              returnedBarCount: number;
-              completedBarCount?: number;
-              duplicateDates?: string[];
-              duplicateDatesOmitted?: number;
-              divergentDateCount?: number;
-            }
-          | undefined;
+        let historyRead: HistoryReadIdentity | undefined;
         const read = async (instrument: string) => {
           // A failed second leg must not inherit the first leg's diagnostics.
           historyRead = undefined;
           signal.throwIfAborted();
+          const observed = packetObservations.get(instrument);
+          if (observed) {
+            historyRead = observed.identity;
+            refs.push(observed.ref);
+            return observed.bars;
+          }
           const result = await barTool.execute("trade-review-bars", {
             action: "read",
             directory: scope.directory,
@@ -777,7 +797,14 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           if (bars.length < 21) {
             throw new Error("insufficient completed daily history");
           }
-          refs.push(`${details.headRef}:${digest(bars)}`);
+          const ref = `${details.headRef}:${digest(bars)}`;
+          // Capture this verified observation, not a fresh quote. A new review gets a new
+          // executor; direct callers changing packet/cutoff/account also discard it.
+          if (packetObservations.size >= FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS * 2) {
+            packetObservations.delete(packetObservations.keys().next().value!);
+          }
+          packetObservations.set(instrument, { bars, identity: historyRead, ref });
+          refs.push(ref);
           return bars;
         };
         let sourceRef = "";

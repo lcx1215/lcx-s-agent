@@ -33,11 +33,175 @@ import {
   type FinanceTradeReviewFinancialCapability,
 } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError, type LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
+import * as barLedgerTools from "./tools/finance-bar-ledger-tool.js";
 const dirs: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     dirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
+});
+
+function observeBarReads(beforeRead?: (args: unknown) => void | Promise<void>) {
+  const factory = barLedgerTools.createFinanceBarLedgerTool;
+  const read = vi.fn();
+  vi.spyOn(barLedgerTools, "createFinanceBarLedgerTool").mockImplementation(() => {
+    const tool = factory();
+    const execute = tool.execute;
+    return {
+      ...tool,
+      execute: async (...args) => {
+        read(args[1]);
+        await beforeRead?.(args[1]);
+        return execute(...args);
+      },
+    };
+  });
+  return read;
+}
+
+it("reuses one validated historical observation across tools, but reads again for a new packet", async () => {
+  const scope = await fixture();
+  const read = observeBarReads();
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+  const signal = new AbortController().signal;
+  const [first] = await executor(
+    [{ candidateId: "signal", action: "daily_closes" }],
+    packet,
+    signal,
+  );
+  const [second] = await executor(
+    [{ candidateId: "signal", action: "max_drawdown" }],
+    packet,
+    signal,
+  );
+  expect(first.status).toBe("completed");
+  expect(second.status).toBe("completed");
+  expect(second.sourceRef).toBe(first.sourceRef);
+  expect(read).toHaveBeenCalledTimes(1);
+  await executor([{ candidateId: "signal", action: "z_score" }], { ...packet }, signal);
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it.each(["account", "cutoff", "directory"] as const)(
+  "discards the observation when its trusted %s changes",
+  async (field) => {
+    const scope = await fixture();
+    const original = { ...scope };
+    const currentPacket = { ...packet };
+    const read = observeBarReads();
+    const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+    const signal = new AbortController().signal;
+    await executor([{ candidateId: "signal", action: "daily_closes" }], currentPacket, signal);
+    if (field === "account") {
+      scope.accountId = "different-paper-account";
+    }
+    if (field === "cutoff") {
+      currentPacket.asOf = "2026-09-30T15:00:00.000Z";
+    }
+    if (field === "directory") {
+      scope.directory = (await fixture()).directory;
+    }
+    const [result] = await executor(
+      [{ candidateId: "signal", action: "max_drawdown" }],
+      currentPacket,
+      signal,
+    );
+    expect(result).toMatchObject({
+      status: "completed",
+      accountId: scope.accountId,
+      asOf: currentPacket.asOf,
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read.mock.calls[0][0]).toMatchObject({
+      directory: original.directory,
+      asOf: packet.asOf,
+    });
+    expect(read.mock.calls[1][0]).toMatchObject({
+      directory: scope.directory,
+      asOf: currentPacket.asOf,
+    });
+  },
+);
+
+it("revalidates history on reviewer re-entry even when the caller reuses the packet", async () => {
+  const scope = await fixture();
+  const read = observeBarReads();
+  const ask = (action: string) => ({
+    schemaVersion: packet.schemaVersion,
+    hypothesis: "Check the specific historical doubt.",
+    evidenceRequests: [{ candidateId: "signal", action }],
+  });
+  const model = scripted([ask("daily_closes"), decision, ask("max_drawdown"), decision]);
+  const reviewer = createFinanceTradeDecisionReviewer(
+    {},
+    { adapterFactory: model.factory, evidenceScope: scope },
+  );
+  for (let round = 0; round < 2; round++) {
+    expect(
+      await reviewer(packet, new AbortController().signal, { maxModelCalls: 2 }),
+    ).toMatchObject({ status: "completed", modelCalls: 2 });
+  }
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("does not reuse rejected history or ignore cancellation after a successful observation", async () => {
+  const scope = await fixture();
+  const read = observeBarReads();
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+  const signal = new AbortController().signal;
+  await executor([{ candidateId: "signal", action: "daily_closes" }], packet, signal);
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    executor([{ candidateId: "signal", action: "max_drawdown" }], packet, controller.signal),
+  ).rejects.toThrow();
+  expect(read).toHaveBeenCalledTimes(1);
+  await appendFinanceBars(scope.directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-29T23:30:00.000Z",
+    provenance: { origin: "contradictory-fixture" },
+    bars: [{ date: "2026-09-29", open: 1, high: 2, low: 0.5, close: 1 }],
+  });
+  const freshPacket = { ...packet };
+  for (const action of ["daily_closes", "max_drawdown"] as const) {
+    const [result] = await executor([{ candidateId: "signal", action }], freshPacket, signal);
+    expect(result.status).toBe("unavailable");
+    expect(result.summary).toContain("ambiguous recorded daily history");
+  }
+  expect(read).toHaveBeenCalledTimes(3);
+});
+
+it("keeps concurrent packets from sharing historical observations across cutoffs", async () => {
+  const scope = await fixture();
+  const early = { ...packet, asOf: "2026-09-29T23:01:00.000Z" };
+  let resume!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const read = observeBarReads((args) =>
+    (args as { asOf: string }).asOf === early.asOf ? gate : undefined,
+  );
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+  const signal = new AbortController().signal;
+  const pending = executor([{ candidateId: "signal", action: "daily_closes" }], early, signal);
+  const [first] = await executor(
+    [{ candidateId: "signal", action: "daily_closes" }],
+    packet,
+    signal,
+  );
+  resume();
+  const [earlier] = await pending;
+  expect(JSON.parse(earlier.summary).result.count).toBe(28);
+  expect(JSON.parse(first.summary).result.count).toBe(29);
+  const [second] = await executor(
+    [{ candidateId: "signal", action: "max_drawdown" }],
+    packet,
+    signal,
+  );
+  expect(second.sourceRef).toBe(first.sourceRef);
+  expect(read).toHaveBeenCalledTimes(2);
 });
 const asOf = "2026-09-30T14:00:00.000Z";
 const packet: FinanceIntradayTradeDecisionReviewRequest = {

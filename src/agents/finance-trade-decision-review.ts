@@ -454,9 +454,6 @@ export function createFinanceTradeDecisionReviewer(
     taskObjective === undefined
       ? {}
       : { taskObjectiveSha256: createHash("sha256").update(taskObjective).digest("hex") };
-  const evidenceExecutor = dependencies.evidenceScope
-    ? createFinanceTradeReviewEvidenceExecutor(dependencies.evidenceScope)
-    : undefined;
   const financialCapabilities = dependencies.evidenceScope
     ? describeFinanceTradeReviewFinancialCapabilities(dependencies.evidenceScope)
     : [];
@@ -485,6 +482,10 @@ export function createFinanceTradeDecisionReviewer(
   const now = dependencies.now ?? Date.now;
 
   return async (reviewRequest, signal, options) => {
+    // A quote re-review, even with an unchanged packet object, must validate history anew.
+    const evidenceExecutor = dependencies.evidenceScope
+      ? createFinanceTradeReviewEvidenceExecutor(dependencies.evidenceScope)
+      : undefined;
     const {
       evidenceResults: _untrustedResults,
       evidenceTools: _untrustedCatalog,
