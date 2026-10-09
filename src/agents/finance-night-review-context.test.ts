@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
+import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import {
   annualisedVol,
   FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
@@ -1594,6 +1595,9 @@ describe("shared broker account research evidence", () => {
               brokerCash: 100,
               positions: [{ symbol: "SPY", qty: "1" }],
               protection: { coverage: [] },
+              status: "unresolved",
+              cashDifference: 1.29,
+              issues: ["cash_difference"],
               accountObservation: {
                 accountId,
                 currency: "USD",
@@ -1603,6 +1607,10 @@ describe("shared broker account research evidence", () => {
                 equity: 200,
                 buyingPower: 300,
                 portfolioValue: 200,
+                balanceAsOf: "2026-09-20",
+                accruedFees: 0,
+                pendingRegTafFees: 1.29,
+                intradayAdjustments: -0.25,
               },
             },
           ],
@@ -1614,6 +1622,14 @@ describe("shared broker account research evidence", () => {
           venue: "alpaca:paper",
         });
         const snapshot = JSON.parse(evidence.text).positionSnapshots[0];
+        const reconciliation = await readFinanceBrokerReconciliation(
+          directory,
+          "selected",
+          Date.parse(asOf),
+        );
+        expect(reconciliation.ok).toBe(false);
+        expect(reconciliation.reason).toBe("unresolved");
+        expect(reconciliation.snapshot?.cashDifference).toBe(1.29);
         if (_case === "valid") {
           expect(snapshot).toMatchObject({
             equity: 200,
@@ -1622,6 +1638,12 @@ describe("shared broker account research evidence", () => {
             accountObservationSource: source,
             accountObservationObservedAt: observedAt,
             missingFields: [],
+            accountBalanceDiagnostics: {
+              balanceAsOf: "2026-09-20",
+              accruedFees: 0,
+              pendingRegTafFees: 1.29,
+              intradayAdjustments: -0.25,
+            },
           });
         } else {
           expect(snapshot).toMatchObject({
@@ -1630,6 +1652,12 @@ describe("shared broker account research evidence", () => {
             portfolioValue: null,
             accountObservationSource: null,
             missingFields: ["equity", "buyingPower", "portfolioValue"],
+            accountBalanceDiagnostics: {
+              balanceAsOf: null,
+              accruedFees: null,
+              pendingRegTafFees: null,
+              intradayAdjustments: null,
+            },
           });
         }
       } finally {
@@ -1637,6 +1665,71 @@ describe("shared broker account research evidence", () => {
       }
     },
   );
+  it.each([
+    ["legacy", {}],
+    [
+      "partial",
+      {
+        balanceAsOf: "2026-02-30",
+        accruedFees: 0,
+        pendingRegTafFees: "1.29",
+        intradayAdjustments: false,
+      },
+    ],
+  ])("keeps %s balance diagnostics unknown without losing valid facts", async (kind, fields) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-balance-diagnostics-"));
+    try {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "selected",
+        venue: "alpaca:paper",
+        query: "reconciliation:balance-diagnostics",
+        cursor: "",
+        payload: [
+          {
+            observedAt: asOf,
+            brokerCash: 100,
+            positions: [],
+            protection: { coverage: [] },
+            accountObservation: {
+              accountId: "selected",
+              currency: "USD",
+              source: "https://paper-api.alpaca.markets/v2/account",
+              observedAt: asOf,
+              cash: 100,
+              equity: 200,
+              buyingPower: 300,
+              portfolioValue: 200,
+              ...fields,
+            },
+          },
+        ],
+      });
+      const summary = JSON.parse(
+        (
+          await buildFinanceBrokerAccountResearchEvidence({
+            directory,
+            asOf,
+            accountId: "selected",
+            venue: "alpaca:paper",
+          })
+        ).text,
+      );
+      expect(summary.executionAuthority).toBe("none");
+      expect(summary.positionSnapshots[0]).toMatchObject({
+        brokerCash: 100,
+        equity: 200,
+        accountBalanceDiagnostics: {
+          balanceAsOf: null,
+          accruedFees: kind === "partial" ? 0 : null,
+          pendingRegTafFees: null,
+          intradayAdjustments: null,
+        },
+      });
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
   it("reads the exact account and venue even outside the aggregate's latest three books", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-context-"));
     try {

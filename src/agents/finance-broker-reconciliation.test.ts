@@ -313,6 +313,10 @@ describe("canonical account observation", () => {
       equity: "123.45",
       buying_power: "999",
       portfolio_value: 123.45,
+      balance_asof: "2026-10-07",
+      accrued_fees: "0",
+      pending_reg_taf_fees: "1.29",
+      intraday_adjustments: "-0.25",
     });
     for (const [url] of read.mock.calls.filter(([url]) => /activities\/(?:CFEE|FEE)/u.test(url))) {
       const query = new URL(url).searchParams;
@@ -341,11 +345,17 @@ describe("canonical account observation", () => {
       buyingPower: 999,
       cash: 0,
       portfolioValue: 123.45,
+      balanceAsOf: "2026-10-07",
+      accruedFees: 0,
+      pendingRegTafFees: 1.29,
+      intradayAdjustments: -0.25,
       source: "https://paper-api.alpaca.markets/v2/account",
     });
     expect(Number.isFinite(Date.parse(snapshot.accountObservation?.observedAt ?? ""))).toBe(true);
     expect(JSON.stringify(snapshot)).not.toContain("never-copy");
     expect(snapshot.brokerCash).toBe(0);
+    expect(snapshot.cashDifference).toBe(0);
+    expect(snapshot.status).toBe("reconciled");
     expect(syncMocks.append.mock.calls.at(-1)?.[1].payload[0].accountObservation).toEqual(
       snapshot.accountObservation,
     );
@@ -383,13 +393,27 @@ describe("canonical account observation", () => {
         equity: value,
         buying_power: value,
         portfolio_value: value,
+        accrued_fees: value,
+        pending_reg_taf_fees: value,
+        intraday_adjustments: value,
       });
       expect(snapshot.accountObservation).toMatchObject({
         equity: null,
         buyingPower: null,
         portfolioValue: null,
+        accruedFees: null,
+        pendingRegTafFees: null,
+        intradayAdjustments: null,
         unknownValueMeaning: "missing_or_invalid",
       });
+    },
+  );
+  it.each([undefined, null, "", "2026-02-30", "2026-10-07T00:00:00Z", 20261007])(
+    "keeps missing or invalid vendor balance dates unknown: %j",
+    async (value) => {
+      const { snapshot } = await reconcile({ balance_asof: value });
+      expect(snapshot.accountObservation.balanceAsOf).toBeNull();
+      expect(snapshot.accountObservation.observedAt).toEqual(expect.any(String));
     },
   );
   it("retains finite signed account observations without treating them as buying authority", async () => {

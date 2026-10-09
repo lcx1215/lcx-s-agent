@@ -985,6 +985,16 @@ function projectFinanceBrokerAccountResearchSummary(params: {
               equity,
               buyingPower,
               portfolioValue,
+              accountBalanceDiagnostics: {
+                balanceAsOf: accountObservationValid
+                  ? (z.iso.date().safeParse(observation?.balanceAsOf).data ?? null)
+                  : null,
+                accruedFees: observedNumber(observation?.accruedFees),
+                pendingRegTafFees: observedNumber(observation?.pendingRegTafFees),
+                intradayAdjustments: observedNumber(observation?.intradayAdjustments),
+                boundary:
+                  "vendor_account_observations_only; balanceAsOf_is_not_capture_time; no_cash_offset_or_fee_attribution",
+              },
               accountObservationSource: accountObservationValid ? observation.source : null,
               accountObservationObservedAt:
                 accountObservationValid && typeof observation.observedAt === "string"

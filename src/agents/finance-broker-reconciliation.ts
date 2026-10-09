@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import {
   syncAlpacaPaperHistory,
@@ -429,6 +430,18 @@ export async function syncFinanceBrokerReconciliation(
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
+  // Optional in the receipt contract so older snapshots and adapters remain readable.
+  const balanceDiagnostics: {
+    balanceAsOf?: string | null;
+    accruedFees?: number | null;
+    pendingRegTafFees?: number | null;
+    intradayAdjustments?: number | null;
+  } = {
+    balanceAsOf: z.iso.date().safeParse(last.balance_asof).data ?? null,
+    accruedFees: optionalAccountNumber(last.accrued_fees),
+    pendingRegTafFees: optionalAccountNumber(last.pending_reg_taf_fees),
+    intradayAdjustments: optionalAccountNumber(last.intraday_adjustments),
+  };
   const accountObservation = {
     accountId: options.accountId,
     currency: "USD" as const,
@@ -438,6 +451,7 @@ export async function syncFinanceBrokerReconciliation(
     cash: optionalAccountNumber(last.cash),
     buyingPower: optionalAccountNumber(last.buying_power),
     portfolioValue: optionalAccountNumber(last.portfolio_value),
+    ...balanceDiagnostics,
     boundary: "observed_account_values_not_execution_authority; buying_power_is_not_cash" as const,
     unknownValueMeaning: "missing_or_invalid" as const,
   };
