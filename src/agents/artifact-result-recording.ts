@@ -11,6 +11,7 @@ import {
   ARTIFACT_JSON_SOURCE_MAX_BYTES,
   ArtifactStore,
   ArtifactStoreError,
+  projectArtifactSourceRefs,
 } from "../memory/artifact-store.js";
 import { resolveMemorySearchConfig } from "./memory-search.js";
 import type { AnyAgentTool } from "./tools/common.js";
@@ -253,8 +254,7 @@ export async function recordAgentArtifact(
       observedAt: input.observedAt ?? original.stat.mtime.toISOString(),
       relativePath,
       mimeType: "application/json",
-      summary: summarizeAgentArtifact(input.value),
-      ...(input.sourceReceiptRefs ? { sourceReceiptRefs: input.sourceReceiptRefs } : {}),
+      ...projectArtifactSourceRefs(input.sourceReceiptRefs, summarizeAgentArtifact(input.value)),
     });
     return { status: registered.status, reason: "ok", ...artifact };
   } catch (error) {

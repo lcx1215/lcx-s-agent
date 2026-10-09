@@ -8,6 +8,7 @@ import { requireNodeSqlite } from "./sqlite.js";
 
 export const ARTIFACT_TEXT_PREVIEW_MAX_BYTES = 64 * 1024;
 export const ARTIFACT_JSON_SOURCE_MAX_BYTES = 16 * 1024 * 1024;
+const SOURCE_RECEIPT_REF_LIMIT = 20;
 const TEXT_LIMIT = ARTIFACT_TEXT_PREVIEW_MAX_BYTES;
 type Database = InstanceType<ReturnType<typeof requireNodeSqlite>["DatabaseSync"]>;
 
@@ -19,6 +20,21 @@ export class ArtifactStoreError extends Error {
     super(code, options);
     this.name = "ArtifactStoreError";
   }
+}
+
+/** Only for envelopes that retain all references in their immutable original. */
+export function projectArtifactSourceRefs(refs: readonly string[] | undefined, summary: string) {
+  if (refs?.some((ref) => typeof ref !== "string" || !ref || ref.length > 2048)) {
+    throw new ArtifactStoreError("artifact_source_refs_invalid");
+  }
+  const omitted = Math.max(0, (refs?.length ?? 0) - SOURCE_RECEIPT_REF_LIMIT);
+  return {
+    summary:
+      omitted > 0
+        ? `${omitted} source reference(s) retained only in original; index limit=${SOURCE_RECEIPT_REF_LIMIT}. ${summary}`
+        : summary,
+    ...(refs === undefined ? {} : { sourceReceiptRefs: refs.slice(0, SOURCE_RECEIPT_REF_LIMIT) }),
+  };
 }
 
 export type ArtifactRegistration = Readonly<{
@@ -80,7 +96,8 @@ function normalize(input: ArtifactRegistration): ArtifactRegistration {
   const refs = input.sourceReceiptRefs;
   if (
     refs &&
-    (refs.length > 20 || refs.some((ref) => typeof ref !== "string" || !ref || ref.length > 2048))
+    (refs.length > SOURCE_RECEIPT_REF_LIMIT ||
+      refs.some((ref) => typeof ref !== "string" || !ref || ref.length > 2048))
   ) {
     throw new ArtifactStoreError("artifact_source_refs_invalid");
   }

@@ -115,6 +115,38 @@ it("names partial failures, pending omissions and global truncation", async () =
   });
   expect(all.coverage.find((c) => c.root === "state/artifacts")?.excluded).toBe(1);
 });
+it("recovers legacy reference overflow without rewriting the original or expanding index metadata", async () => {
+  const refs = Array.from({ length: 21 }, (_, index) => `receipt:${index}`);
+  const envelope = {
+    schemaVersion: "lcx_agent_artifact_v1",
+    owner: "workflow_delivery",
+    runId: "legacy-refs",
+    observedAt: "2026-10-04T10:00:00Z",
+    value: { conclusion: "retained-original" },
+    sourceReceiptRefs: refs,
+  };
+  const bytes = JSON.stringify(envelope);
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const file = `state/artifacts/${sha}.json`;
+  await write(file, envelope);
+  expect(
+    await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir: root }),
+  ).toMatchObject({ status: "complete", registered: 1, gapCount: 0 });
+  const reader = ArtifactStore.open({ dbPath, workspaceDir: root, readOnly: true });
+  try {
+    const artifact = reader.search({ owner: "workflow_delivery" }).artifacts[0];
+    expect(artifact.sourceReceiptRefs).toEqual(refs.slice(0, 20));
+    expect(artifact.summary).toContain("1 source reference(s) retained only in original");
+    expect((await reader.read(artifact.id, { completeJsonText: true })).text).toBe(bytes);
+    expect(artifact.sha256).toBe(sha);
+  } finally {
+    reader.close();
+  }
+  expect(
+    (await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir: root })).unchanged,
+  ).toBe(1);
+  expect(await fs.readFile(path.join(root, file), "utf8")).toBe(bytes);
+});
 it("does not read broad state or protected memory and rejects symlink owner roots", async () => {
   await write("state/unrelated/private.json", { secret: "shouldnotbeindexed" });
   await write("memory/current-research-line.md", { secret: "protectedshouldnotbeindexed" });

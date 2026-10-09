@@ -42,6 +42,52 @@ const value = {
 };
 
 describe("host-owned artifact result recording", () => {
+  it("indexes bounded reference metadata while preserving every original reference and value", async () => {
+    const host = await fixture();
+    const refs = Array.from({ length: 21 }, (_, index) => `receipt:${index}`);
+    const input = {
+      ...host,
+      owner: "workflow_delivery",
+      runId: "many-references",
+      value,
+      sourceReceiptRefs: refs,
+    };
+    const receipt = await recordAgentArtifact(input);
+    expect(receipt.status).toBe("registered");
+    const raw = await fs.readFile(path.join(host.workspaceDir, receipt.relativePath!), "utf8");
+    expect(JSON.parse(raw)).toMatchObject({ value, sourceReceiptRefs: refs });
+    const reader = ArtifactStore.open({
+      dbPath: host.dbPath,
+      workspaceDir: host.workspaceDir,
+      readOnly: true,
+    });
+    try {
+      const read = await reader.read(receipt.id!);
+      expect(read.artifact.sourceReceiptRefs).toEqual(refs.slice(0, 20));
+      expect(read.artifact.summary).toContain("1 source reference(s) retained only in original");
+      expect(read.artifact.sha256).toBe(createHash("sha256").update(raw).digest("hex"));
+    } finally {
+      reader.close();
+    }
+    expect((await recordAgentArtifact(input)).status).toBe("unchanged");
+  });
+  it("rejects invalid references even beyond the index projection instead of laundering them", async () => {
+    const host = await fixture();
+    const receipt = await recordAgentArtifact({
+      ...host,
+      owner: "workflow_delivery",
+      runId: "bad-late-ref",
+      value,
+      sourceReceiptRefs: [
+        ...Array.from({ length: 20 }, (_, i) => `receipt:${i}`),
+        "x".repeat(2049),
+      ],
+    });
+    expect(receipt).toMatchObject({
+      status: "unavailable",
+      reason: "artifact_source_refs_invalid",
+    });
+  });
   it("preserves the exact JSON tool envelope and media, registers SQLite, and is immutable/idempotent", async () => {
     const host = await fixture();
     const first = await recordAgentArtifact({

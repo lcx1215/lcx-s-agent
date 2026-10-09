@@ -8,7 +8,7 @@ import {
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { readFileWithinRoot } from "../infra/fs-safe.js";
-import { ArtifactStore, ArtifactStoreError } from "./artifact-store.js";
+import { ArtifactStore, ArtifactStoreError, projectArtifactSourceRefs } from "./artifact-store.js";
 
 const ROOTS = [
   { root: "state/lcx-central-agent-runs", owner: "central_harness" },
@@ -300,13 +300,13 @@ export async function backfillOwnerArtifacts(input: {
               observedAt,
               relativePath,
               mimeType: "application/json",
-              summary: envelope
-                ? summarizeAgentArtifact(record.value)
-                : `${owner.owner} run ${runId}; observation time source: ${observed ? "receipt" : "file_mtime"}`,
+              ...projectArtifactSourceRefs(
+                envelope ? (sourceRefs as string[] | undefined) : undefined,
+                envelope
+                  ? summarizeAgentArtifact(record.value)
+                  : `${owner.owner} run ${runId}; observation time source: ${observed ? "receipt" : "file_mtime"}`,
+              ),
               ...(cutoff && !envelope ? { cutoff } : {}),
-              ...(envelope && sourceRefs !== undefined
-                ? { sourceReceiptRefs: sourceRefs as string[] }
-                : {}),
             });
             receipt[registered.status]++;
             coverage[registered.status]++;
