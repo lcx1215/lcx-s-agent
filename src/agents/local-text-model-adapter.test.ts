@@ -49,6 +49,36 @@ describe("local text model adapter contract", () => {
     expect(() => parseLocalBaseModelJson('{"facts":[{"quote":"text"}],"tail"')).toThrow();
     expect(() => parseLocalBaseModelJson('commentary {"label":"finance"}')).toThrow();
   });
+  it("bounds rejected output in valid UTF8 and JSON field bytes without exposing it in errors", () => {
+    const raw = '{"partial":"' + "汉字\n".repeat(5000);
+    try {
+      parseLocalBaseModelJson(raw);
+      throw new Error("expected rejection");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "output_invalid",
+        diagnostic: { status: "rejected_not_evidence", representation: "raw_text" },
+      });
+      const failure = error as Error & {
+        diagnostic: {
+          preview: string;
+          originalBytes: number;
+          retainedBytes: number;
+          omittedBytes: number;
+        };
+      };
+      expect(failure.message).not.toContain("partial");
+      expect(raw.startsWith(failure.diagnostic.preview)).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(failure.diagnostic.preview))).toBeLessThanOrEqual(
+        4096,
+      );
+      expect(failure.diagnostic.preview).not.toContain("\uFFFD");
+      expect(failure.diagnostic.omittedBytes).toBeGreaterThan(0);
+      expect(failure.diagnostic.originalBytes).toBe(
+        failure.diagnostic.retainedBytes + failure.diagnostic.omittedBytes,
+      );
+    }
+  });
 
   it("parses JSON after bounded runtime chatter", () => {
     expect(parseLocalModelJson('loading\n{"kind":"plan","requirements":[]}')).toEqual({

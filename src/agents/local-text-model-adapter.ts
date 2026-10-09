@@ -194,15 +194,76 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
   throw new Error("local text model output did not contain a JSON object");
 }
 
+export type LocalTextOutputDiagnostic = Readonly<{
+  status: "rejected_not_evidence";
+  representation: "raw_text" | "serialized_value";
+  sha256: string;
+  originalBytes: number;
+  retainedBytes: number;
+  omittedBytes: number;
+  preview: string;
+  gap: "rejected_output_tail_omitted" | null;
+}>;
+
+/** Bound the selected JSON string too, so the existing field reader can retrieve it. */
+export function createLocalTextOutputDiagnostic(
+  raw: string,
+  representation: LocalTextOutputDiagnostic["representation"],
+  maxJsonBytes = 4096,
+): LocalTextOutputDiagnostic {
+  const bytes = Buffer.from(raw, "utf8");
+  const budget = Math.max(2, Math.min(4096, maxJsonBytes));
+  let low = 0;
+  let high = Math.min(bytes.length, budget);
+  let preview = "";
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    let end = mid;
+    while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+      end--;
+    }
+    const candidate = bytes.subarray(0, end).toString("utf8");
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= budget) {
+      preview = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  const retainedBytes = Buffer.byteLength(preview, "utf8");
+  return {
+    status: "rejected_not_evidence",
+    representation,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    originalBytes: bytes.length,
+    retainedBytes,
+    omittedBytes: bytes.length - retainedBytes,
+    preview,
+    gap: bytes.length > retainedBytes ? "rejected_output_tail_omitted" : null,
+  };
+}
+
+export class LocalTextModelOutputError extends ModelAdapterError {
+  readonly diagnostic: LocalTextOutputDiagnostic;
+  constructor(raw: string) {
+    super("output_invalid");
+    this.diagnostic = createLocalTextOutputDiagnostic(raw, "raw_text");
+  }
+}
+
 /** Base specialists may unwrap one complete code fence, never repair missing fields or tails. */
 export function parseLocalBaseModelJson(raw: string): Record<string, unknown> {
-  const trimmed = raw.trim();
-  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u.exec(trimmed);
-  const value: unknown = JSON.parse(fenced?.[1] ?? trimmed);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("local base model requires a complete JSON object");
+  try {
+    const trimmed = raw.trim();
+    const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u.exec(trimmed);
+    const value: unknown = JSON.parse(fenced?.[1] ?? trimmed);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("local base model requires a complete JSON object");
+    }
+    return value as Record<string, unknown>;
+  } catch {
+    throw new LocalTextModelOutputError(raw);
   }
-  return value as Record<string, unknown>;
 }
 
 function clipPromptText(value: string, maxLength: number): string {
@@ -854,8 +915,12 @@ async function runMlxGenerate(
           undefined,
           runtime.baseModel ? parseLocalBaseModelJson(stdout) : parseLocalModelJson(stdout),
         );
-      } catch {
-        finish(new ModelAdapterError("output_invalid"));
+      } catch (error) {
+        finish(
+          error instanceof LocalTextModelOutputError
+            ? error
+            : new ModelAdapterError("output_invalid"),
+        );
       }
     });
     timer = setTimeout(() => finish(new ModelAdapterError("runtime_timeout")), runtime.timeoutMs);

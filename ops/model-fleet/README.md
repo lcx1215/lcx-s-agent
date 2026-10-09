@@ -55,3 +55,11 @@ Inference completion is not a valid task result. A failed batch must retain its
 sources; later batches can still use the original supervised worker. Qualify a
 specific workload before expanding duties. For simply preserving supplied text,
 use the original text directly; copying it alone does not justify model inference.
+
+Rejected base-model text and invalid parsed values retain a diagnostic in the
+original preprocessing receipt: representation, represented-output hash, useful prefix
+and explicit omitted bytes. The stored prefix fits a 4 KiB selected JSON field;
+the model-facing prefix fits 512 bytes. The existing tool-result recorder indexes
+the retained details for exact recall. These are rejected, untrusted diagnostics,
+not source evidence or accepted results; no output repair, retry or authority is
+added. Missing transport output is never invented from an error message.

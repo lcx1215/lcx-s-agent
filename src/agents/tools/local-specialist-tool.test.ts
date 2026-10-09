@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { createLocalTextModelAdapter } from "../local-text-model-adapter.js";
+import { withArtifactResultRecording } from "../artifact-result-recording.js";
+import {
+  parseLocalBaseModelJson,
+  type createLocalTextModelAdapter,
+} from "../local-text-model-adapter.js";
+import { createArtifactMemoryRecallTool } from "./artifact-memory-recall-tool.js";
 import {
   buildLocalSpecialistPrompt,
   createLocalSpecialistTool,
@@ -96,11 +101,15 @@ async function controlledTool(output: unknown, fail = false) {
   await fs.mkdir(path.join(root, "Qwen3.5-2B-4bit"));
   await fs.writeFile(path.join(root, "Qwen3.5-2B-4bit", "config.json"), "{}");
   const invoke = vi.fn(async () => {
+    if (output instanceof Error) {
+      throw output;
+    }
     if (fail) {
       throw new Error("local_model_busy");
     }
     return output;
   });
+  const observe = vi.fn(() => undefined);
   const factory: typeof createLocalTextModelAdapter = (runtime) => {
     expect(runtime.allowNetwork).toBe(false);
     expect(runtime.timeoutMs).toBe(15_000);
@@ -113,20 +122,122 @@ async function controlledTool(output: unknown, fail = false) {
       requiredTools: [],
       requiredSideEffects: ["local_compute"],
       invoke,
+      observe,
     };
   };
   return {
+    root,
     tool: createLocalSpecialistTool({
       workspaceDir: root,
       modelRoot: root,
       adapterFactory: factory,
     }),
     invoke,
+    observe,
   };
 }
 const classifyArgs = { task: "classify", text: "季度利润下降", labels: ["finance", "other"] };
 
 describe("agent-supervised local preprocessing", () => {
+  it("indexes useful rejected fields for exact recall without promoting or repeating them", async () => {
+    const output = {
+      facts: [{ quote: "资产100" }],
+      missing: ["费用仍未知；".repeat(100) + "selected-tail-marker"],
+    };
+    const { tool, invoke, root } = await controlledTool(output);
+    const config = {
+      agents: {
+        defaults: {
+          workspace: root,
+          memorySearch: { store: { path: path.join(root, "memory.sqlite") } },
+        },
+      },
+    };
+    const wrapped = withArtifactResultRecording(tool, {
+      config,
+      agentId: "main",
+      workspaceDir: root,
+    });
+    const result = await wrapped.execute("rejected-fields", {
+      task: "extract",
+      text: "资产100；费用未知。",
+    });
+    expect(result.details).toMatchObject({
+      status: "fallback_to_agent",
+      source: { text: "资产100；费用未知。" },
+      rejectedOutput: {
+        status: "rejected_not_evidence",
+        representation: "serialized_value",
+        preview: JSON.stringify(output),
+        omittedBytes: 0,
+      },
+      finalAuthority: false,
+    });
+    expect(result.details).not.toHaveProperty("result", expect.anything());
+    expect(result.content[0]).not.toHaveProperty(
+      "text",
+      expect.stringContaining("selected-tail-marker"),
+    );
+    const registered = ("artifactEvidence" in result ? result.artifactEvidence : undefined) as {
+      id: string;
+      sha256: string;
+      status: string;
+    };
+    expect(registered.status).toBe("registered");
+    const recall = await createArtifactMemoryRecallTool({
+      config,
+      agentId: "main",
+      workspaceDir: root,
+    }).execute("diagnostic-field", {
+      action: "read",
+      id: registered.id,
+      owner: "local_specialist",
+      field: "/value/details/rejectedOutput/preview",
+    });
+    expect(recall.details).toMatchObject({
+      available: true,
+      sourceSha256: registered.sha256,
+      selectedValue: JSON.stringify(output),
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+  it.each(['{"facts":[{"quote":"有用片段"}],"tail"', "[]", "有用的非JSON片段"])(
+    "retains rejected base output %s without repairing it",
+    async (raw) => {
+      let failure: unknown;
+      try {
+        parseLocalBaseModelJson(raw);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      const { tool, observe } = await controlledTool(failure);
+      const result = await tool.execute("partial-base", { task: "extract", text: "有用片段" });
+      expect(result.details).toMatchObject({
+        status: "fallback_to_agent",
+        rejectedOutput: {
+          status: "rejected_not_evidence",
+          representation: "raw_text",
+          preview: raw,
+          omittedBytes: 0,
+        },
+        source: { text: "有用片段" },
+        finalAuthority: false,
+      });
+      expect(result.details).not.toHaveProperty("result", expect.anything());
+      expect(observe).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("does not invent a model output from an operational error message", async () => {
+    const { tool } = await controlledTool(new Error("private-command-detail"));
+    const result = await tool.execute("operational-failure", classifyArgs);
+    expect(result.details).toMatchObject({
+      status: "fallback_to_agent",
+      source: { text: classifyArgs.text },
+    });
+    expect(result.details).not.toHaveProperty("rejectedOutput");
+    expect(JSON.stringify(result)).not.toContain("private-command-detail");
+  });
   it("rejects real observed omission of an undisclosed profit caveat", async () => {
     const text = "甲公司2025年营收为12亿元，同比增长5%；净利润尚未披露。";
     const { tool, invoke } = await controlledTool({

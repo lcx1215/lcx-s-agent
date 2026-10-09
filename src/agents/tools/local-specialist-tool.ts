@@ -5,7 +5,10 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
   createLocalTextModelAdapter,
+  createLocalTextOutputDiagnostic,
+  LocalTextModelOutputError,
   resolveLocalTextModelRuntimeConfig,
+  type LocalTextOutputDiagnostic,
 } from "../local-text-model-adapter.js";
 import { createResidentLocalTextAdapter, localTextWorker } from "../local-text-worker.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -16,6 +19,36 @@ import {
   buildLocalSpecialistPrompt,
   validateLocalSpecialistOutput,
 } from "./local-specialist-contract.js";
+
+function publicLocalDiagnostics(payload: Record<string, unknown>): Record<string, unknown> {
+  const projected = { ...payload };
+  if (payload.rejectedOutput) {
+    const stored = payload.rejectedOutput as LocalTextOutputDiagnostic;
+    const short = createLocalTextOutputDiagnostic(stored.preview, stored.representation, 512);
+    projected.rejectedOutput = {
+      ...short,
+      sha256: stored.sha256,
+      originalBytes: stored.originalBytes,
+      omittedBytes: stored.originalBytes - short.retainedBytes,
+      gap: stored.originalBytes > short.retainedBytes ? "rejected_output_tail_omitted" : null,
+      storedDiagnosticBytes: stored.retainedBytes,
+    };
+  }
+  if (Array.isArray(payload.results)) {
+    projected.results = payload.results.map(
+      (item: { id: string; details: Record<string, unknown> }) => ({
+        ...item,
+        details: publicLocalDiagnostics(item.details),
+      }),
+    );
+  }
+  return projected;
+}
+
+/** The original recorder keeps details; the model receives a short rejected-output prefix. */
+function localSpecialistResult<T extends Record<string, unknown>>(payload: T) {
+  return { ...jsonResult(publicLocalDiagnostics(payload)), details: payload };
+}
 export {
   LOCAL_SPECIALIST_POLICY,
   LOCAL_SPECIALIST_PROFILES,
@@ -83,6 +116,8 @@ function createLocalSpecialistItemTool(options?: {
         NonNullable<ReturnType<typeof createLocalTextModelAdapter>["observe"]>
       >;
       let reason: string | undefined;
+      let rejectedOutput: LocalTextOutputDiagnostic | undefined;
+      let rejectedOutputGap: string | undefined;
       let status: "completed_requires_review" | "fallback_to_agent" | "cancelled" =
         "fallback_to_agent";
       if (task === "summarize") {
@@ -120,8 +155,12 @@ function createLocalSpecialistItemTool(options?: {
             modelId: adapter.modelId,
             payload: {},
           };
-          const result = await adapter.invoke(request, signal ?? new AbortController().signal);
-          observation = adapter.observe?.(request);
+          let result: unknown;
+          try {
+            result = await adapter.invoke(request, signal ?? new AbortController().signal);
+          } finally {
+            observation = adapter.observe?.(request);
+          }
           if (signal?.aborted) {
             status = "cancelled";
             reason = "caller_cancelled";
@@ -136,10 +175,23 @@ function createLocalSpecialistItemTool(options?: {
               status = "completed_requires_review";
             } else {
               reason = "output_invalid_or_source_coverage_incomplete";
+              try {
+                const serialized = JSON.stringify(result);
+                if (serialized === undefined) {
+                  rejectedOutputGap = "rejected_output_not_serializable";
+                } else {
+                  rejectedOutput = createLocalTextOutputDiagnostic(serialized, "serialized_value");
+                }
+              } catch {
+                rejectedOutputGap = "rejected_output_not_serializable";
+              }
               disabled = true;
             }
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof LocalTextModelOutputError) {
+            rejectedOutput = error.diagnostic;
+          }
           status = signal?.aborted ? "cancelled" : "fallback_to_agent";
           reason = signal?.aborted ? "caller_cancelled" : "local_inference_unavailable";
           disabled = true;
@@ -152,6 +204,8 @@ function createLocalSpecialistItemTool(options?: {
         model: LOCAL_SPECIALIST_PROFILES[task].model,
         status,
         reason,
+        ...(rejectedOutput ? { rejectedOutput } : {}),
+        ...(rejectedOutputGap ? { rejectedOutputGap } : {}),
         elapsedMs: Date.now() - started,
         callsUsed: calls,
         rawContractPassed: contractPassed && !observation?.outputNormalization,
@@ -176,7 +230,7 @@ function createLocalSpecialistItemTool(options?: {
       if (status === "cancelled") {
         signal?.throwIfAborted();
       }
-      return jsonResult({ ...receipt, receiptPath });
+      return localSpecialistResult({ ...receipt, receiptPath });
     },
   };
 }
@@ -190,7 +244,7 @@ export function createLocalSpecialistTool(
     name: "local_specialist",
     label: "Local Data Worker",
     description:
-      "Agent-supervised local data batches. Supply text or records (not both). clean uses deterministic whitespace normalization and duplicate marking; classify supplies preliminary labels; extract requires source-complete quotes. Never discard records based on labels. Summarize is unqualified and returns source. Up to 32 records, 32000 total characters, 60 seconds per batch; MLX inference up to 15 seconds per item, no retries. Batches renew after completion. All model suggestions require agent review; no planning, risk judgment, execution or final-review authority.",
+      "Agent-supervised local data batches. Supply text or records (not both). clean uses deterministic whitespace normalization and duplicate marking; classify supplies preliminary labels; extract requires source-complete quotes. Use supplied originals directly when only preserving or copying text. Never discard records based on labels. Summarize is unqualified and returns source. Rejected outputs retain bounded diagnostics in details for exact recall; model-facing diagnostics are short untrusted prefixes. Up to 32 records, 32000 total characters, 60 seconds per batch; MLX inference up to 15 seconds per item, no retries. Batches renew after completion. All model suggestions require agent review; no planning, risk judgment, execution or final-review authority.",
     parameters: Type.Object(
       {
         task: Type.Union([
@@ -382,7 +436,7 @@ export function createLocalSpecialistTool(
           }
         }
         if (params.records === undefined) {
-          return jsonResult(results[0].details);
+          return localSpecialistResult(results[0].details as Record<string, unknown>);
         }
         const fallbackCount = results.filter(
           ({ details }) =>
@@ -415,7 +469,7 @@ export function createLocalSpecialistTool(
           mode: 0o600,
           flag: "wx",
         });
-        return jsonResult({ ...receipt, receiptPath });
+        return localSpecialistResult({ ...receipt, receiptPath });
       } finally {
         clearTimeout(timer);
         active = false;
