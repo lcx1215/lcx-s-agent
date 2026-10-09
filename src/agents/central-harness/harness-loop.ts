@@ -799,7 +799,23 @@ export function compactReceipts(
   });
   const byteLimit = 8_500;
   let omitted = 0;
-  const recoveredArtifactSources = new Map<string, number>();
+  const knownArtifactHashes = new Map<string, Set<string>>();
+  for (const receipt of receipts) {
+    for (const step of receipt.steps) {
+      const artifact = step.resultArtifact;
+      if (
+        (artifact?.status === "registered" || artifact?.status === "unchanged") &&
+        typeof artifact.id === "string" &&
+        typeof artifact.sha256 === "string"
+      ) {
+        const hashes = knownArtifactHashes.get(artifact.id) ?? new Set<string>();
+        hashes.add(artifact.sha256);
+        knownArtifactHashes.set(artifact.id, hashes);
+      }
+    }
+  }
+  const verifiedSelections = new Set<CompactBacklogEntry["outcomes"][number]>();
+  let newestSelectionAt = -1;
   for (const entry of mapped) {
     for (const outcome of entry.outcomes) {
       const read = outcome.outcome;
@@ -810,33 +826,28 @@ export function compactReceipts(
         read.action === "read" &&
         typeof read.artifactId === "string" &&
         typeof read.sourceSha256 === "string" &&
+        (!knownArtifactHashes.has(read.artifactId) ||
+          knownArtifactHashes.get(read.artifactId)?.has(read.sourceSha256)) &&
         typeof read.field === "string" &&
         outcome.args?.id === read.artifactId &&
         outcome.args.field === read.field &&
         Object.hasOwn(read, "selectedValue") &&
         !outcome.outcomeDroppedKeys?.includes("selectedValue")
       ) {
-        const identity = JSON.stringify([read.artifactId, read.sourceSha256]);
-        recoveredArtifactSources.set(
-          identity,
-          Math.max(recoveredArtifactSources.get(identity) ?? 0, entry.atMs),
-        );
+        verifiedSelections.add(outcome);
+        newestSelectionAt = Math.max(newestSelectionAt, entry.atMs);
       }
     }
   }
-  // A verified narrower read has recovered this source's useful evidence. Under
-  // pressure, retain that feedback rather than the older page it came from.
-  // Other sources and unavailable/omitted selections keep their page priority.
+  // Fresh verified selections outrank older bulk pages, including other sources.
+  // This is budget priority, not proof that the other page was consumed; omissions
+  // remain explicit and the full receipt stays available for another exact read.
   const isFocusPage = (outcome: CompactBacklogEntry["outcomes"][number]): boolean =>
     Boolean(
       outcome.outcome &&
       !(
-        (outcome.resultArtifact?.status === "registered" ||
-          outcome.resultArtifact?.status === "unchanged") &&
         typeof outcome.sourceObservedAt === "string" &&
-        (recoveredArtifactSources.get(
-          JSON.stringify([outcome.resultArtifact.id, outcome.resultArtifact.sha256]),
-        ) ?? -1) >= Date.parse(outcome.sourceObservedAt)
+        newestSelectionAt >= Date.parse(outcome.sourceObservedAt)
       ) &&
       (outcome.ownerId === "finance_bar_ledger" ||
         (outcome.ownerId === "finance_position_ledger_read" &&
@@ -846,6 +857,8 @@ export function compactReceipts(
     );
   const carriesFocusPage = (entry: CompactBacklogEntry): boolean =>
     entry.outcomes.some(isFocusPage);
+  const carriesSelection = (entry: CompactBacklogEntry): boolean =>
+    entry.outcomes.some((outcome) => verifiedSelections.has(outcome));
   const carriesCurrentAttempt = (entry: CompactBacklogEntry): boolean =>
     entry.outcomes.some(
       (outcome) =>
@@ -858,8 +871,14 @@ export function compactReceipts(
     (mapped.length > bounded || jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit)
   ) {
     let removeIndex = mapped.findIndex(
-      (entry) => !carriesFocusPage(entry) && !carriesCurrentAttempt(entry),
+      (entry) =>
+        !carriesFocusPage(entry) && !carriesSelection(entry) && !carriesCurrentAttempt(entry),
     );
+    if (removeIndex < 0) {
+      removeIndex = mapped.findIndex(
+        (entry) => !carriesFocusPage(entry) && !carriesSelection(entry),
+      );
+    }
     if (removeIndex < 0) {
       removeIndex = mapped.findIndex((entry) => !carriesFocusPage(entry));
     }
@@ -896,7 +915,12 @@ export function compactReceipts(
       ];
     }
     const entry = mapped[index];
-    const removeIndex = entry.outcomes.findLastIndex((outcome) => !isFocusPage(outcome));
+    let removeIndex = entry.outcomes.findLastIndex(
+      (outcome) => !isFocusPage(outcome) && !verifiedSelections.has(outcome),
+    );
+    if (removeIndex < 0) {
+      removeIndex = entry.outcomes.findLastIndex((outcome) => !isFocusPage(outcome));
+    }
     const removed = removeIndex >= 0 ? removeIndex : entry.outcomes.length - 1;
     mapped[index] = {
       ...entry,
@@ -1369,6 +1393,20 @@ function projectFinanceBudgetFacts(
     if (isPlainRecord(source[section])) {
       minimal[section] = pick(source[section], keys, `${section}.`);
     }
+  }
+  if (
+    isPlainRecord(result.intradayExecution) &&
+    Array.isArray(result.intradayExecution.topReasons) &&
+    result.intradayExecution.topReasons.length > 0 &&
+    isPlainRecord(minimal.intradayExecution)
+  ) {
+    const intraday: Record<string, unknown> = {
+      ...minimal.intradayExecution,
+      topReasons: result.intradayExecution.topReasons.slice(0, 1),
+    };
+    delete intraday.scope;
+    minimal.intradayExecution = intraday;
+    omitted.add("intradayExecution.scope");
   }
   for (const key of Object.keys(source)) {
     if (!Object.hasOwn(minimal, key)) {

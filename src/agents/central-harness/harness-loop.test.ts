@@ -638,15 +638,39 @@ describe("scope-bound evidence retention", () => {
     expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
   });
 
-  it.each(["matched", "unchanged", "wrong_hash", "unavailable", "omitted", "older"] as const)(
+  it.each([
+    "matched",
+    "unchanged",
+    "different_source",
+    "wrong_hash",
+    "unavailable",
+    "omitted",
+    "older",
+  ] as const)(
     "prioritizes recovered fields only after verified source recovery (%s)",
     async (condition) => {
       const original = await observe({ page: 1 }, 1, perception.observedAt);
       const id = `artifact-${"a".repeat(64)}`;
       const sha256 = "b".repeat(64);
+      const recoveredId = condition === "different_source" ? `artifact-${"d".repeat(64)}` : id;
       const page: CentralRunReceipt = {
         ...original,
         steps: [
+          ...(condition === "different_source"
+            ? [
+                {
+                  ...original.steps[0],
+                  ownerId: "finance_position_ledger_read",
+                  outcome: { openPositionCount: 34 },
+                  resultArtifact: {
+                    status: "registered" as const,
+                    reason: "ok",
+                    id: recoveredId,
+                    sha256,
+                  },
+                },
+              ]
+            : []),
           {
             ...original.steps[0],
             ownerId: "finance_bar_ledger",
@@ -668,11 +692,11 @@ describe("scope-bound evidence retention", () => {
           ...original.steps[0],
           stepId: `read-${index}`,
           ownerId: "artifact_memory_recall",
-          args: { action: "read", id, field: `/value/rows/${index}` },
+          args: { action: "read", id: recoveredId, field: `/value/rows/${index}` },
           outcome: {
             available: condition !== "unavailable",
             action: "read",
-            artifactId: id,
+            artifactId: recoveredId,
             field: `/value/rows/${index}`,
             sourceSha256: condition === "wrong_hash" ? "c".repeat(64) : sha256,
             selectedValue: { index, data: "r".repeat(500) },
@@ -683,11 +707,15 @@ describe("scope-bound evidence retention", () => {
       const backlog = compactReceipts(
         [page, recovered],
         10,
-        new Set(["finance_bar_ledger", "artifact_memory_recall"]),
+        new Set(["finance_bar_ledger", "finance_position_ledger_read", "artifact_memory_recall"]),
       );
       expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8500);
       const outcomes = backlog.flatMap((entry) => entry.outcomes);
-      if (condition === "matched" || condition === "unchanged") {
+      if (
+        condition === "matched" ||
+        condition === "unchanged" ||
+        condition === "different_source"
+      ) {
         expect(
           outcomes
             .filter((entry) => entry.ownerId === "artifact_memory_recall")

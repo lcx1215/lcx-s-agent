@@ -404,3 +404,38 @@ it("keeps source-timed actionable finance gaps when less than 600 bytes remain",
   expect(boundPerception(bounded.perception, budget).perception).toEqual(bounded.perception);
   expect(finance.history.length).toBe(8400);
 });
+it("keeps the leading refusal cause when the full projection cannot fit", () => {
+  const finance = {
+    status: "present",
+    observedAt: "2026-10-09T16:00:00Z",
+    nextTask: "inspect_unexecuted_finance_candidates",
+    intradayExecution: {
+      scope: "latest_100_recorded_signals",
+      uncertain: 0,
+      missingOutcome: 0,
+      needsExecutionInspection: true,
+      topReasons: [
+        { reason: "account_execution_safety_claim_pending_before_model_review", count: 100 },
+      ],
+    },
+    history: "x".repeat(8400),
+  };
+  const base = {
+    observedAt: finance.observedAt,
+    ownerTotals: {},
+    backlog: [{ note: "x".repeat(7300) }],
+    boundaries: [],
+    controlRoom: {},
+  };
+  const budget = Buffer.byteLength(JSON.stringify(base)) + 580;
+  const bounded = boundPerception(
+    { ...base, controlRoom: { financeAutomaticLifecycle: finance } },
+    budget,
+  );
+  expect(bounded.perception.controlRoom.financeAutomaticLifecycle).toMatchObject({
+    observedAt: finance.observedAt,
+    intradayExecution: { topReasons: finance.intradayExecution.topReasons },
+    budgetProjection: { omittedFieldCount: expect.any(Number) },
+  });
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(budget);
+});
