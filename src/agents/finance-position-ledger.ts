@@ -1027,6 +1027,54 @@ export async function readFinanceBrokerHistoryRecords(
   }
 }
 
+/** Economics projection: validate the full chain without retaining repeated source pages. */
+export async function readFinanceBrokerHistoryActivities(
+  directory: string,
+  accountId: string,
+  venue: string,
+  throughSequence: number,
+) {
+  if (
+    !accountId.trim() ||
+    !venue.trim() ||
+    !Number.isSafeInteger(throughSequence) ||
+    throughSequence < 1
+  ) {
+    throw new Error("broker activities require account, venue and sealed sequence");
+  }
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return { activities: [], headRef: null };
+  }
+  try {
+    const activities = new Map<string, { fingerprint: string; row: Record<string, unknown> }>();
+    let headRef: string | null = null;
+    for (const record of readBrokerHistoryRows(db)) {
+      if (record.body.accountId !== accountId || record.body.venue !== venue) {
+        continue;
+      }
+      headRef = record.ref;
+      if (record.sequence > throughSequence || !record.body.query.startsWith("activities:")) {
+        continue;
+      }
+      for (const row of record.body.payload) {
+        if (typeof row.id !== "string" || !row.id) {
+          throw new Error("missing activity identity");
+        }
+        const fingerprint = caseflowFingerprint(row);
+        const previous = activities.get(row.id);
+        if (previous && previous.fingerprint !== fingerprint) {
+          throw new Error("conflicting activity identity");
+        }
+        activities.set(row.id, { fingerprint, row });
+      }
+    }
+    return { activities: [...activities.values()].map(({ row }) => row), headRef };
+  } finally {
+    db.close();
+  }
+}
+
 /** Latest reconciliations per book, with chain validation and no migration or writes. */
 export async function readFinanceLatestBrokerReconciliations(
   directory: string,

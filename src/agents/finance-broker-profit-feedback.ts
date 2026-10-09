@@ -4,6 +4,7 @@ import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { readFinanceIntradayDecisions } from "./finance-intraday-control-ledger.js";
 import {
+  readFinanceBrokerHistoryActivities,
   readFinanceBrokerHistoryRecords,
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
@@ -438,16 +439,13 @@ export async function readFinanceBrokerProfitFeedback(
             status: "snapshot_outside_cutoff",
           };
         }
-        const history = await readFinanceBrokerHistoryRecords(
+        const history = await readFinanceBrokerHistoryActivities(
           directory,
           record.accountId,
           record.venue,
+          record.sequence,
         );
-        const activities = history.records
-          .filter(
-            (row) => row.sequence <= record.sequence && row.body.query.startsWith("activities:"),
-          )
-          .flatMap((row) => row.body.payload);
+        const activities = history.activities;
         return {
           accountId: record.accountId,
           venue: record.venue,

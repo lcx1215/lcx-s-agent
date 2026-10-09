@@ -27,6 +27,7 @@ import {
   readFinancePositionRecords,
   readFinanceLatestBrokerReconciliations,
   readFinanceBrokerHistoryRecords,
+  readFinanceBrokerHistoryActivities,
 } from "./finance-position-ledger.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
 
@@ -1026,4 +1027,105 @@ it("streams scoped observations and latest snapshots without losing global tail 
   const appended = await appendFinanceBrokerHistory(directory, { ...body, query: "new" });
   expect(appended.record.sequence).toBe(4);
   expect(appended.record.previousRef).toBe(tail.record.ref);
+});
+
+describe("sealed broker activities projection", () => {
+  async function fixture() {
+    const directory = await storeDirectory();
+    const append = (
+      query: string,
+      payload: Record<string, unknown>[],
+      accountId = "account-a",
+      venue = "alpaca:paper",
+    ) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue,
+        query,
+        cursor: "",
+        payload,
+      });
+    return { directory, append };
+  }
+
+  it("retains unique sealed activities, excludes other scopes and keeps the current head", async () => {
+    const { directory, append } = await fixture();
+    const row = { id: "fill-1", activity_type: "FILL", price: "100" };
+    await append("activities:first", [row, row]);
+    await append("activities:other", [{ ...row, price: "900" }], "account-b");
+    await append("activities:venue", [{ ...row, price: "900" }], "account-a", "other");
+    await append("orders:ignored", [{ ...row, price: "900" }]);
+    const sealed = await append("reconciliation:sealed", [{ observedAt: "2026-10-09T00:00:00Z" }]);
+    const tail = await append("activities:later", [{ ...row, price: "900" }]);
+    expect(
+      await readFinanceBrokerHistoryActivities(
+        directory,
+        "account-a",
+        "alpaca:paper",
+        sealed.record.sequence,
+      ),
+    ).toEqual({ activities: [row], headRef: tail.record.ref });
+  });
+
+  it("rejects conflicting or missing native identities within the sealed scope", async () => {
+    const { directory, append } = await fixture();
+    await append("activities:first", [{ id: "same", price: "100" }]);
+    const conflict = await append("activities:conflict", [{ id: "same", price: "101" }]);
+    await expect(
+      readFinanceBrokerHistoryActivities(
+        directory,
+        "account-a",
+        "alpaca:paper",
+        conflict.record.sequence,
+      ),
+    ).rejects.toThrow("conflicting activity identity");
+    const missing = await fixture();
+    const row = await missing.append("activities:no-id", [{ price: "100" }]);
+    await expect(
+      readFinanceBrokerHistoryActivities(
+        missing.directory,
+        "account-a",
+        "alpaca:paper",
+        row.record.sequence,
+      ),
+    ).rejects.toThrow("missing activity identity");
+  });
+
+  it("still rejects a corrupt other-account tail beyond the sealed cutoff", async () => {
+    const { directory, append } = await fixture();
+    const sealed = await append("activities:first", [{ id: "fill-1" }]);
+    await append("orders:other-tail", [{ id: "order-1" }], "account-b");
+    const db = openDatabase(directory);
+    try {
+      db.exec("DROP TRIGGER finance_broker_history_no_update");
+      db.prepare("UPDATE finance_broker_history SET ref=? WHERE sequence=2").run("0".repeat(64));
+    } finally {
+      db.close();
+    }
+    await expect(
+      readFinanceBrokerHistoryActivities(
+        directory,
+        "account-a",
+        "alpaca:paper",
+        sealed.record.sequence,
+      ),
+    ).rejects.toThrow("broker history chain mismatch");
+  });
+
+  it("rejects invalid cutoff and scope without creating a missing database", async () => {
+    const directory = await storeDirectory();
+    for (const sequence of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(
+        readFinanceBrokerHistoryActivities(directory, "account-a", "alpaca:paper", sequence),
+      ).rejects.toThrow("sealed sequence");
+    }
+    await expect(
+      readFinanceBrokerHistoryActivities(directory, "", "alpaca:paper", 1),
+    ).rejects.toThrow("account");
+    expect(
+      await readFinanceBrokerHistoryActivities(directory, "account-a", "alpaca:paper", 1),
+    ).toEqual({ activities: [], headRef: null });
+    await expect(fs.stat(financePositionLedgerPath(directory))).rejects.toThrow();
+  });
 });
