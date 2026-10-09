@@ -62,7 +62,7 @@ export type FinanceResearchConclusion = Readonly<{
 
 export type FinanceIntentCompilationResult = Readonly<
   | { ok: true; intent: FinanceExecutionIntent; notes: readonly string[] }
-  | { ok: false; refusals: readonly string[] }
+  | { ok: false; refusals: readonly string[]; notes?: readonly string[] }
 >;
 
 export type CompileExecutionIntentParams = Readonly<{
@@ -360,7 +360,8 @@ export function compileExecutionIntent(
   }
 
   if (refusals.length > 0) {
-    return { ok: false, refusals };
+    // Failed sizing still carries its computed bounds; notes never grant an intent.
+    return { ok: false, refusals, ...(notes.length ? { notes } : {}) };
   }
 
   const side: FinanceOrderSide = conclusion.direction === "buy" ? "buy" : "sell";

@@ -658,7 +658,11 @@ describe("intraday decision execution bridge", () => {
       if (refused) {
         expect(result.outcome.reasons).toEqual(
           mode === "cash_below_unit"
-            ? ["refuse: computed size rounds to zero; refusing rather than trading a token"]
+            ? [
+                "refuse: computed size rounds to zero; refusing rather than trading a token",
+                "entry size reduced from 1000 to 0 within supplied notional headroom 50",
+                "sized from stop distance 1.0000 at 1.00% planned risk; costs excluded and gap loss is not capped",
+              ]
             : [
                 "account_capacity_precheck_before_model_review",
                 mode === "cash_empty"
@@ -669,6 +673,15 @@ describe("intraday decision execution bridge", () => {
         );
         expect(result.outcome.tradeDecisionReview).toBeUndefined();
         expect(quoteProvider).toHaveBeenCalledTimes(1);
+        const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+        expect(stored?.reasons).toEqual(result.outcome.reasons);
+        if (mode === "cash_below_unit") {
+          expect(stored?.reasons.slice(0, 2)).toEqual([
+            "refuse: computed size rounds to zero; refusing rather than trading a token",
+            "entry size reduced from 1000 to 0 within supplied notional headroom 50",
+          ]);
+          expect(Buffer.byteLength(stored!.reasons[1])).toBeLessThanOrEqual(70);
+        }
       } else {
         expect(result.outcome.reasons).toEqual([
           mode === "final_capacity_changed"

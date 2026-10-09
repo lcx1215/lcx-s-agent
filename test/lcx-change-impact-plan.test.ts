@@ -738,6 +738,21 @@ it("owns the intraday execution bridge and requires its focused controller regre
   );
 });
 
+it("keeps the order intent compiler and its test under the original unattended owner", async () => {
+  const files = [
+    "src/agents/finance-intent-compiler.ts",
+    "src/agents/finance-intent-compiler.test.ts",
+  ];
+  const result = await runPlanArgs(["--files", ...files]);
+  expect(result.ok).toBe(true);
+  expect(result.unmatchedFiles).toEqual([]);
+  const impact = result.impacts.find((entry) => entry.id === "finance_unattended_cycle");
+  expect(impact?.matchedFiles).toEqual(files.toSorted());
+  expect(impact?.commands).toContain(
+    "pnpm vitest run src/agents/finance-intent-compiler.test.ts src/agents/finance-alpaca-run.test.ts",
+  );
+});
+
 it("keeps trade review, evidence and result recall on the original unattended owner", async () => {
   const files = ["decision-review", "review-evidence", "result-recall"].flatMap((name) => [
     `src/agents/finance-trade-${name}.ts`,

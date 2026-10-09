@@ -97,6 +97,30 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it.each(["entry", "authorization"] as const)(
+    "retains the %s sizing explanation when whole-share quantity rounds to zero",
+    (bound) => {
+      const result = compileExecutionIntent({
+        conclusion: equityConclusion,
+        market,
+        equity,
+        runAuthorizationId: "auth-1",
+        ...(bound === "entry" ? { maxEntryNotional: 99 } : { maxAuthorizedNotional: 99 }),
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        refusals: ["refuse: computed size rounds to zero; refusing rather than trading a token"],
+        notes: [
+          "sized from stop distance 5.0000 at 1.00% planned risk; costs excluded and gap loss is not capped",
+          bound === "entry"
+            ? "entry size reduced from 200 to 0 within supplied notional headroom 99"
+            : "order size reduced from 200 to 0 within controller authorization 99",
+        ],
+      });
+      expect(result).not.toHaveProperty("intent");
+    },
+  );
+
   it("shrinks a valid entry to supplied headroom instead of discarding it", () => {
     const base = { conclusion: equityConclusion, market, equity, runAuthorizationId: "auth-1" };
     const result = compileExecutionIntent({

@@ -740,7 +740,11 @@ export async function executeFinanceIntradayDecision(params: {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
         status: "refused",
-        reasons: [...preflight.refusals],
+        reasons: [
+          ...preflight.refusals,
+          // Put the last sizing bound first so the existing two-reason recall retains it.
+          ...(preflight.notes ?? []).toReversed(),
+        ],
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
