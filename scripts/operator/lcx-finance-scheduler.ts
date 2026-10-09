@@ -1008,6 +1008,8 @@ type CycleContext = {
   sourceHeartbeatInFlight?: boolean;
   lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
   progressPhase?: "idle" | "cycle";
+  progressCycleStage?: FinanceSchedulerCycleStage;
+  progressObservedAt?: string;
 };
 
 type UniverseSelectionReceipt = Readonly<{
@@ -1446,9 +1448,15 @@ function writeSchedulerProgress(
   context: CycleContext,
   phase: "idle" | "cycle",
   cycleStage?: FinanceSchedulerCycleStage,
+  preserveCycleDeadline = false,
 ) {
   const filename = path.join(context.root.directory, FINANCE_SCHEDULER_LOCK, "progress.json");
   const temporary = `${filename}.tmp`;
+  const now = new Date().toISOString();
+  const observedAt =
+    preserveCycleDeadline && phase === "cycle" && context.progressPhase === "cycle"
+      ? (context.progressObservedAt ?? now)
+      : now;
   const args = context.options.extraArgs;
   const venueIndex = args.indexOf("--venue");
   const venue = venueIndex < 0 ? "paper" : args[venueIndex + 1];
@@ -1468,10 +1476,13 @@ function writeSchedulerProgress(
     temporary,
     JSON.stringify({
       pid: process.pid,
-      observedAt: new Date().toISOString(),
+      observedAt,
       phase,
       ...(cycleStage ? { cycleStage } : {}),
       timeoutMs: context.options.timeoutMs,
+      accountWork: context.reconciliationWake
+        ? { ...context.reconciliationWake.getStatus(), observedAt: now }
+        : null,
       historicalMaintenance: context.historicalMaintenance ?? null,
       placementEnabled: args.includes("--place"),
       venue,
@@ -1515,6 +1526,8 @@ function writeSchedulerProgress(
   );
   fs.renameSync(temporary, filename);
   context.progressPhase = phase;
+  context.progressCycleStage = cycleStage;
+  context.progressObservedAt = observedAt;
 }
 
 /** Each bounded child owns a fresh progress deadline; elapsed prior stages do not count as a stall. */
@@ -2961,6 +2974,18 @@ export async function runFinanceScheduler(
       };
       context.reconciliationWake = reconciliationWake = createFinanceSchedulerReconciliationWake({
         signal: controller.signal,
+        onStateChange: () => {
+          try {
+            writeSchedulerProgress(
+              context,
+              context.progressPhase ?? "idle",
+              context.progressCycleStage,
+              true,
+            );
+          } catch (error) {
+            throw new SchedulerProgressBeforeDispatchError(error);
+          }
+        },
         reconcile: async () => {
           reconciliation.lastAttemptAt = new Date().toISOString();
           writeStreamStatus();
@@ -2973,8 +2998,11 @@ export async function runFinanceScheduler(
           reconciliation.lastErrorCode = null;
           writeStreamStatus();
         },
-        onError: () => {
-          reconciliation.lastErrorCode = "reconciliation_failed";
+        onError: (error) => {
+          reconciliation.lastErrorCode =
+            error instanceof SchedulerProgressBeforeDispatchError
+              ? "progress_observation_failed"
+              : "reconciliation_failed";
           reconciliation.lastReadinessStatus = "unavailable";
           writeStreamStatus();
           process.stderr.write(

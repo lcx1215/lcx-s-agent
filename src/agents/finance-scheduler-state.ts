@@ -352,6 +352,41 @@ function writeCompatibilityState(directory: string, state: SchedulerState): void
   }
 }
 
+function inspectAccountWork(value: unknown, now: number, present: boolean) {
+  if (value === undefined || value === null) {
+    return { status: "unavailable" as const };
+  }
+  if (
+    !isObject(value) ||
+    value.schemaVersion !== "lcx_finance_account_work_v1" ||
+    ![null, "trading", "reconciliation"].includes(value.activeWork as string | null) ||
+    !Number.isSafeInteger(value.queuedWork) ||
+    typeof value.queuedWork !== "number" ||
+    value.queuedWork < 0 ||
+    typeof value.reconciliationPending !== "boolean" ||
+    typeof value.observedAt !== "string"
+  ) {
+    return { status: "invalid" as const };
+  }
+  const age = now - Date.parse(value.observedAt);
+  if (!Number.isFinite(age) || age < 0) {
+    return { status: "invalid" as const };
+  }
+  return {
+    status: !present
+      ? ("owner_missing" as const)
+      : age > 2 * FINANCE_SCHEDULER_TICK_MS
+        ? ("stale" as const)
+        : value.activeWork !== null || value.queuedWork > 0 || value.reconciliationPending
+          ? ("busy" as const)
+          : ("idle" as const),
+    observedAt: value.observedAt,
+    activeWork: value.activeWork as "trading" | "reconciliation" | null,
+    queuedWork: value.queuedWork,
+    reconciliationPending: value.reconciliationPending,
+  };
+}
+
 /** A responsive process and completed trading work are separate health signals. */
 export function inspectFinanceSchedulerProgress(
   directory: string,
@@ -498,6 +533,7 @@ export function inspectFinanceSchedulerProgress(
       ageMs: age,
       deadlineMs: deadline,
       placementEnabled: progress.placementEnabled,
+      accountWork: inspectAccountWork(progress.accountWork, now, present),
       venue,
       executionPolicyStatus,
       executionPolicyAuthorizationMode: venue === "paper" ? null : executionPolicyAuthorizationMode,

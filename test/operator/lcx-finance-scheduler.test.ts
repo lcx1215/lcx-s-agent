@@ -4326,3 +4326,117 @@ it("keeps calendar and ledger failures named without throwing from close capture
     }),
   ).toMatchObject({ status: "unavailable", reason: "close_capture_read_failed" });
 });
+
+it("publishes real account-lane busy state during the original idle broker readback", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
+  mocks.syncAlpacaHistory.mockImplementation(async () => {
+    expect(inspectFinanceSchedulerStatus({ directory, source: "explicit" }).progress).toMatchObject(
+      { phase: "idle", accountWork: { status: "busy", activeWork: "trading" } },
+    );
+    return { accountId: "paper-account", accountReconciliation: { status: "reconciled" } };
+  });
+  mocks.delay.mockImplementationOnce(async () => {
+    expect(
+      inspectFinanceSchedulerStatus({ directory, source: "explicit" }).progress.accountWork,
+    ).toMatchObject({
+      status: "idle",
+      activeWork: null,
+      queuedWork: 0,
+      reconciliationPending: false,
+    });
+    process.emit("SIGTERM");
+  });
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--sync-alpaca-history",
+      "--venue",
+      "alpaca",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.syncAlpacaHistory).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});
+
+it("does not renew the original cycle deadline when account-work observations change", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const at = new Date("2026-09-21T19:30:00Z");
+  vi.setSystemTime(at);
+  const policy = path.join(directory, "observation-policy.json");
+  fs.writeFileSync(policy, JSON.stringify({ authorizationMode: "until_revoked" }));
+  const context = path.join(directory, "observation-context.json");
+  writePortfolioContext(context);
+  const writes = vi.spyOn(fs, "writeFileSync");
+  mocks.runCycle
+    .mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => ({
+      ...success,
+      stdout: JSON.stringify(
+        acceptedResearchCandidate(
+          path.join(directory, "research-portfolio-plan-latest.json"),
+          researchAsOfFromArgs(argv),
+        ),
+      ),
+    }))
+    .mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date(at.getTime() + 14 * 60_000));
+      return success;
+    });
+  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--place",
+      "--sync-alpaca-history",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policy,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "fixture",
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  const observations = writes.mock.calls
+    .filter(([filename]) => String(filename).endsWith("progress.json.tmp"))
+    .map(([, data]) => {
+      if (typeof data !== "string") {
+        throw new Error("progress expected JSON text");
+      }
+      return JSON.parse(data) as {
+        phase: string;
+        cycleStage?: string;
+        observedAt: string;
+        accountWork?: { activeWork: string | null; queuedWork: number; observedAt: string };
+      };
+    });
+  expect(observations).toContainEqual(
+    expect.objectContaining({
+      phase: "cycle",
+      cycleStage: "execution",
+      observedAt: at.toISOString(),
+      accountWork: expect.objectContaining({
+        activeWork: null,
+        queuedWork: 0,
+        observedAt: new Date(at.getTime() + 14 * 60_000).toISOString(),
+      }),
+    }),
+  );
+});

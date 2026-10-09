@@ -431,3 +431,44 @@ it("exposes only fresh, schema-valid intraday monitor results from progress", ()
     expect(inspect(tick).intraday?.lastTick).toBeNull();
   }
 });
+
+it("distinguishes actual busy account work from the legacy main-cycle idle phase", () => {
+  const observedAt = "2026-09-22T12:00:00.000Z",
+    now = Date.parse(observedAt);
+  const filename = path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json");
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const base = {
+    pid: 1,
+    observedAt,
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: true,
+    venue: "alpaca",
+  };
+  const inspect = (accountWork?: Record<string, unknown>) => {
+    fs.writeFileSync(filename, JSON.stringify({ ...base, accountWork }));
+    return inspectFinanceSchedulerProgress(directory, 1, true, now);
+  };
+  expect(inspect().accountWork?.status).toBe("unavailable");
+  const work = {
+    schemaVersion: "lcx_finance_account_work_v1",
+    observedAt,
+    activeWork: "trading",
+    queuedWork: 0,
+    reconciliationPending: false,
+  };
+  expect(inspect(work)).toMatchObject({
+    status: "responsive",
+    phase: "idle",
+    accountWork: { status: "busy", activeWork: "trading" },
+  });
+  expect(inspect({ ...work, activeWork: null, queuedWork: 1 }).accountWork?.status).toBe("busy");
+  expect(
+    inspect({ ...work, activeWork: null, reconciliationPending: true }).accountWork?.status,
+  ).toBe("busy");
+  expect(inspect({ ...work, activeWork: null }).accountWork?.status).toBe("idle");
+  expect(inspect({ ...work, queuedWork: -1 }).accountWork?.status).toBe("invalid");
+  expect(inspect({ ...work, observedAt: "2026-09-22T11:55:00.000Z" }).accountWork?.status).toBe(
+    "stale",
+  );
+});
