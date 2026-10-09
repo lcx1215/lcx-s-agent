@@ -637,6 +637,70 @@ describe("scope-bound evidence retention", () => {
     expect(bounded.report.overBudget).toBe(false);
     expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
   });
+
+  it.each(["matched", "unchanged", "wrong_hash", "unavailable", "omitted", "older"] as const)(
+    "prioritizes recovered fields only after verified source recovery (%s)",
+    async (condition) => {
+      const original = await observe({ page: 1 }, 1, perception.observedAt);
+      const id = `artifact-${"a".repeat(64)}`;
+      const sha256 = "b".repeat(64);
+      const page: CentralRunReceipt = {
+        ...original,
+        steps: [
+          {
+            ...original.steps[0],
+            ownerId: "finance_bar_ledger",
+            outcome: { data: "p".repeat(4080) },
+            resultArtifact: {
+              status: condition === "unchanged" ? "unchanged" : "registered",
+              reason: "ok",
+              id,
+              sha256,
+            },
+          },
+        ],
+      };
+      const recovered: CentralRunReceipt = {
+        ...original,
+        runId: "recovered",
+        observedAt: condition === "older" ? "2026-09-20T23:00:00Z" : "2026-09-21T01:00:00Z",
+        steps: Array.from({ length: 6 }, (_, index) => ({
+          ...original.steps[0],
+          stepId: `read-${index}`,
+          ownerId: "artifact_memory_recall",
+          args: { action: "read", id, field: `/value/rows/${index}` },
+          outcome: {
+            available: condition !== "unavailable",
+            action: "read",
+            artifactId: id,
+            field: `/value/rows/${index}`,
+            sourceSha256: condition === "wrong_hash" ? "c".repeat(64) : sha256,
+            selectedValue: { index, data: "r".repeat(500) },
+          },
+          ...(condition === "omitted" ? { outcomeDroppedKeys: ["selectedValue"] } : {}),
+        })),
+      };
+      const backlog = compactReceipts(
+        [page, recovered],
+        10,
+        new Set(["finance_bar_ledger", "artifact_memory_recall"]),
+      );
+      expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8500);
+      const outcomes = backlog.flatMap((entry) => entry.outcomes);
+      if (condition === "matched" || condition === "unchanged") {
+        expect(
+          outcomes
+            .filter((entry) => entry.ownerId === "artifact_memory_recall")
+            .map((entry) => entry.outcome?.selectedValue),
+        ).toEqual(recovered.steps.map((step) => step.outcome?.selectedValue));
+        expect(backlog[0].backlogEntriesOmitted).toBe(1);
+      } else {
+        expect(outcomes.find((entry) => entry.ownerId === "finance_bar_ledger")?.outcome).toEqual(
+          page.steps[0].outcome,
+        );
+      }
+    },
+  );
 });
 
 describe("governance result pointer budget", () => {

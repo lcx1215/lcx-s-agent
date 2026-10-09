@@ -799,9 +799,45 @@ export function compactReceipts(
   });
   const byteLimit = 8_500;
   let omitted = 0;
+  const recoveredArtifactSources = new Map<string, number>();
+  for (const entry of mapped) {
+    for (const outcome of entry.outcomes) {
+      const read = outcome.outcome;
+      if (
+        outcome.ownerId === "artifact_memory_recall" &&
+        outcome.status === "ran_ok" &&
+        read?.available === true &&
+        read.action === "read" &&
+        typeof read.artifactId === "string" &&
+        typeof read.sourceSha256 === "string" &&
+        typeof read.field === "string" &&
+        outcome.args?.id === read.artifactId &&
+        outcome.args.field === read.field &&
+        Object.hasOwn(read, "selectedValue") &&
+        !outcome.outcomeDroppedKeys?.includes("selectedValue")
+      ) {
+        const identity = JSON.stringify([read.artifactId, read.sourceSha256]);
+        recoveredArtifactSources.set(
+          identity,
+          Math.max(recoveredArtifactSources.get(identity) ?? 0, entry.atMs),
+        );
+      }
+    }
+  }
+  // A verified narrower read has recovered this source's useful evidence. Under
+  // pressure, retain that feedback rather than the older page it came from.
+  // Other sources and unavailable/omitted selections keep their page priority.
   const isFocusPage = (outcome: CompactBacklogEntry["outcomes"][number]): boolean =>
     Boolean(
       outcome.outcome &&
+      !(
+        (outcome.resultArtifact?.status === "registered" ||
+          outcome.resultArtifact?.status === "unchanged") &&
+        typeof outcome.sourceObservedAt === "string" &&
+        (recoveredArtifactSources.get(
+          JSON.stringify([outcome.resultArtifact.id, outcome.resultArtifact.sha256]),
+        ) ?? -1) >= Date.parse(outcome.sourceObservedAt)
+      ) &&
       (outcome.ownerId === "finance_bar_ledger" ||
         (outcome.ownerId === "finance_position_ledger_read" &&
           (isPlainRecord(outcome.outcome.history) ||
