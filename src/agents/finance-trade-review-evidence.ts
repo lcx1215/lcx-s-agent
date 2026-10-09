@@ -452,18 +452,23 @@ function knowledgeProjection(output: Record<string, unknown>, priority: Record<s
   }
   const selected: Record<string, unknown> = {};
   for (const [prefix, record] of records) {
+    // Retained methods need their application checks, not only names and risk labels.
     for (const key of [
       "capabilityName",
+      "applicationBoundary",
       "whatChangesMyMind",
-      "doNotUseFor",
+      "causalCheck",
       "riskGateNotes",
       "riskChecks",
+      "doNotUseFor",
       "requiredInputs",
+      "implementationCheck",
+      "useFor",
+      "requiredEvidenceCategories",
       "evidenceSummary",
       "baseCase",
       "bearCase",
       "keyCausalChain",
-      "applicationBoundary",
       "sourceArticlePath",
     ]) {
       if (record[key] === undefined) {

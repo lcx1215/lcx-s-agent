@@ -1774,6 +1774,12 @@ it("queries native retained guidance without any bar book or usage writes and ca
   const summary = JSON.parse(result.summary);
   expect(summary.result.candidateCount).toBe(2);
   expect(result.summary).toContain("Credit funding risk");
+  expect(summary.result.knowledge["appliedCapabilities.0.causalCheck"]).toBe(
+    "Funding pressure may reduce liquidity.",
+  );
+  expect(summary.result.knowledge["appliedCapabilities.0.applicationBoundary"]).toBe(
+    "research_only",
+  );
   expect(summary.omittedKeys).toContain("answerSkeleton");
   expect(summary.result.sourceTime).toBe(
     "recorded_metadata_at_or_before_cutoff_not_market_freshness",
@@ -1788,6 +1794,149 @@ it("queries native retained guidance without any bar book or usage writes and ca
   await expect(fs.access(path.join(directory, "finance-bars.sqlite"))).rejects.toThrow();
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(2048);
 });
+
+it("keeps a retained causal check ahead of verbose risk notes while marking their partial coverage", async () => {
+  const raw = {
+    ok: true,
+    sourceUpdatedAt: "2026-09-29T00:00:00.000Z",
+    candidateCount: 2,
+    applicationStatus: "application_ready",
+    appliedCapabilities: [
+      {
+        capabilityName: "ETF liquidity regime triage workflow",
+        applicationBoundary: "research_only",
+        causalCheck:
+          "Funding pressure may reduce liquidity; verify this mechanism against current data.",
+        riskChecks: ["Liquidity stress can normalize quickly. ".repeat(200)],
+        doNotUseFor: "No trade execution approval, doctrine mutation or standalone prediction.",
+      },
+    ],
+  };
+  const capability: FinanceTradeReviewFinancialCapability = {
+    toolName: "finance_learning_capability_apply",
+    moduleIds: ["credit_liquidity"],
+    description: "Verbose retained method fixture",
+    execute: async () => raw,
+  };
+  const [evidence] = await createFinanceTradeReviewEvidenceExecutor({
+    directory: "unused",
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: [capability],
+  })(
+    [{ ...financialRequest, toolName: capability.toolName }],
+    packet,
+    new AbortController().signal,
+  );
+  const summary = JSON.parse(evidence.summary);
+  expect(summary.result.knowledge["appliedCapabilities.0.causalCheck"]).toBe(
+    raw.appliedCapabilities[0].causalCheck,
+  );
+  expect(summary.result.knowledge["appliedCapabilities.0.riskChecks"]).toMatchObject({
+    fragmentFormat: "json_prefix_not_complete_value",
+  });
+  expect(summary.result.knowledge["appliedCapabilities.0.riskChecks"].jsonPrefix).toContain(
+    "Liquidity stress can normalize quickly.",
+  );
+  expect(summary.result.omittedKnowledgeFieldCount).toBeGreaterThan(0);
+  expect(evidence.resultSha256).toBe(
+    createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+  );
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+});
+
+it.each([false, true])(
+  "carries retained method checks into the original review follow-up (partial=%s, scripted)",
+  async (partial) => {
+    const implementationCheck = partial ? "先核对数据口径。".repeat(300) : "Check current inputs.";
+    const raw = {
+      ok: true,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+      appliedCapabilities: [
+        {
+          capabilityName: "Funding method",
+          applicationBoundary: "research_only",
+          requiredInputs: ["current funding"],
+          requiredEvidenceCategories: ["credit_evidence"],
+          causalCheck: "Funding can reduce liquidity.",
+          implementationCheck,
+          useFor: "Compare funding with credit conditions.",
+          riskChecks: ["Keep current risk gates."],
+          doNotUseFor: "Not execution approval.",
+        },
+      ],
+      answerSkeleton: "Large scaffold.".repeat(200),
+    };
+    const capability: FinanceTradeReviewFinancialCapability = {
+      toolName: "host_local_read",
+      moduleIds: ["credit_liquidity"],
+      description: "Retained method fixture",
+      execute: async () => raw,
+    };
+    const payloads: unknown[] = [];
+    const request = { ...financialRequest, toolName: capability.toolName };
+    const model = scripted(
+      [
+        {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [request],
+          hypothesis: "Check the retained method conditions.",
+        },
+        decision,
+      ],
+      payloads,
+    );
+    const result = await createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: model.factory,
+        evidenceScope: {
+          directory: "unused",
+          accountId: "paper-a",
+          instruments: ["AAA"],
+          financialCapabilities: [capability],
+        },
+      },
+    )(packet, new AbortController().signal);
+    expect(result).toMatchObject({ status: "completed", modelCalls: 2, adapterAttested: false });
+    const evidence = result.toolEvidence![0];
+    const summary = JSON.parse(evidence.summary);
+    const knowledge = summary.result.knowledge;
+    expect(knowledge["appliedCapabilities.0.causalCheck"]).toBe(
+      raw.appliedCapabilities[0].causalCheck,
+    );
+    expect(knowledge["appliedCapabilities.0.applicationBoundary"]).toBe("research_only");
+    expect(knowledge["appliedCapabilities.0.doNotUseFor"]).toBe("Not execution approval.");
+    if (partial) {
+      expect(knowledge["appliedCapabilities.0.implementationCheck"]).toMatchObject({
+        fragmentFormat: "json_prefix_not_complete_value",
+        originalJsonBytes: Buffer.byteLength(JSON.stringify(implementationCheck)),
+      });
+      expect(knowledge["appliedCapabilities.0.implementationCheck"].jsonPrefix).toContain(
+        "先核对数据口径。",
+      );
+      expect(knowledge["appliedCapabilities.0.implementationCheck"].jsonPrefix).not.toContain(
+        "\uFFFD",
+      );
+      expect(summary.result.omittedKnowledgeFieldCount).toBeGreaterThan(0);
+    } else {
+      expect(knowledge["appliedCapabilities.0.implementationCheck"]).toBe(implementationCheck);
+      expect(knowledge["appliedCapabilities.0.useFor"]).toBe(raw.appliedCapabilities[0].useFor);
+      expect(knowledge["appliedCapabilities.0.requiredEvidenceCategories"]).toEqual([
+        "credit_evidence",
+      ]);
+    }
+    expect((payloads[1] as { toolEvidence: unknown[] }).toolEvidence).toEqual(result.toolEvidence);
+    expect(evidence.resultSha256).toBe(
+      createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+    );
+    expect(result.modelCallEvidence![1].toolEvidenceSha256).toBe(
+      createHash("sha256").update(JSON.stringify(result.toolEvidence)).digest("hex"),
+    );
+    expect(summary.omittedKeys).toContain("answerSkeleton");
+    expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+  },
+);
 
 it.each([
   "directory",
