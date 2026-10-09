@@ -25,6 +25,7 @@ import {
 import {
   appendFinanceBrokerHistory,
   appendFinanceExecutionReceipt,
+  readFinanceLatestBrokerReconciliations,
 } from "./finance-position-ledger.js";
 import {
   declareFinanceStrategyRule,
@@ -219,7 +220,18 @@ describe("finance night review context", () => {
       });
       expect(sharedBrokerSummary.id).toBe("finance-controller:broker-account-summary");
       expect(sharedBrokerSummary.source).toBe(evidence[1].source);
-      expect(JSON.parse(sharedBrokerSummary.text)).toMatchObject(brokerSummary);
+      // The legacy night report retains rejected-snapshot diagnostics; the shared
+      // account reader selects only sealed snapshots available at the cutoff.
+      expect(JSON.parse(sharedBrokerSummary.text)).toMatchObject({
+        ...brokerSummary,
+        accounts: brokerSummary.accounts.filter(
+          (account: { status: string }) => account.status !== "snapshot_outside_cutoff",
+        ),
+        positionSnapshots: brokerSummary.positionSnapshots.filter(
+          (snapshot: { accountId: string }) => snapshot.accountId !== "future-account",
+        ),
+      });
+      expect(sharedBrokerSummary.text).not.toContain("future-account");
       expect(brokerSummary).not.toHaveProperty("executionAuthority");
       expect(brokerSummary.positionSnapshots[0]).not.toHaveProperty("brokerCash");
       expect(brokerSummary.positionSnapshots).toEqual(
@@ -1791,9 +1803,17 @@ describe("shared broker account research evidence", () => {
             positions: [{ symbol: "SPY", quantity: 1 }],
           },
         ],
-        missingFields: ["profit_summary_for_account"],
-        accounts: [],
+        missingFields: [],
+        accounts: [
+          {
+            accountId: "selected",
+            venue: "alpaca:paper",
+            status: "no_closed_matches",
+            netMatchedPnl: null,
+          },
+        ],
       });
+      expect(summary.accounts[0].snapshotRef).toBe(summary.positionSnapshots[0].snapshotRef);
       expect(evidence.text).not.toContain("OTHER-ACCOUNT-SECRET");
       const localPaper = JSON.parse(
         (
@@ -1807,6 +1827,45 @@ describe("shared broker account research evidence", () => {
       );
       expect(localPaper.positionSnapshots[0].venue).toBe("paper");
       expect(localPaper.positionSnapshots[0].brokerCash).toBe(999);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+  it.each([true, false])("keeps account research at its cutoff with scoped=%s", async (scoped) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-fixed-cutoff-"));
+    try {
+      const append = (query: string, observedAt: string, brokerCash: number, symbol: string) =>
+        appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "selected",
+          venue: "alpaca:paper",
+          query,
+          cursor: "",
+          payload: [{ observedAt, brokerCash, positions: [{ symbol, qty: "1" }] }],
+        });
+      await append("reconciliation:before", "2026-09-22T21:59:00.000Z", 100, "SPY");
+      const read = () =>
+        buildFinanceBrokerAccountResearchEvidence({
+          directory,
+          asOf,
+          ...(scoped ? { accountId: "selected", venue: "alpaca:paper" } : {}),
+        });
+      const before = JSON.parse((await read()).text);
+      await append("reconciliation:after", "2026-09-22T22:00:01.000Z", 999, "FUTURE-CONTENT");
+      await append("orders:after", "2026-09-22T22:00:02.000Z", 999, "FUTURE-CONTENT");
+      const evidence = await read();
+      const after = JSON.parse(evidence.text);
+      expect(after.positionSnapshots).toEqual(before.positionSnapshots);
+      expect(after.accounts).toEqual(before.accounts);
+      expect(after.positionSnapshots[0]).toMatchObject({ freshness: "fresh", brokerCash: 100 });
+      expect(after.executionAuthority).toBe("none");
+      if (scoped) {
+        expect(after.currentAccountFactsStatus).toBe("observed");
+      }
+      expect(evidence.text).not.toContain("FUTURE-CONTENT");
+      const current = await readFinanceLatestBrokerReconciliations(directory);
+      expect(current.records[0].superseded).toBe(true);
+      expect(current.records[0].ref).not.toBe(after.positionSnapshots[0].snapshotRef);
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
     }
@@ -1836,10 +1895,15 @@ describe("shared broker account research evidence", () => {
       });
       const summary = JSON.parse(evidence.text);
       expect(summary.currentAccountFactsStatus).toBe("unknown");
-      expect(summary.positionSnapshots[0].freshness).toBe(freshness);
+      if (freshness === "outside_cutoff") {
+        expect(summary.positionSnapshots).toEqual([]);
+        expect(summary.missingFields).toContain("positionSnapshots");
+      } else {
+        expect(summary.positionSnapshots[0].freshness).toBe(freshness);
+        expect(summary.positionSnapshots[0].brokerCash).toBeNull();
+        expect(summary.positionSnapshots[0].positions).toBeNull();
+      }
       expect(evidence.text).not.toContain("CUTOFF-CONTENT");
-      expect(summary.positionSnapshots[0].brokerCash).toBeNull();
-      expect(summary.positionSnapshots[0].positions).toBeNull();
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
     }

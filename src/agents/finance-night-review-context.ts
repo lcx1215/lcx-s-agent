@@ -1087,15 +1087,23 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
   }
   const readReconciliations = async (): Promise<BrokerReconciliationRead> => {
     if (!scoped) {
-      return readFinanceLatestBrokerReconciliations(params.directory);
+      return readFinanceLatestBrokerReconciliations(params.directory, { asOf: params.asOf });
     }
     return readFinanceLatestBrokerReconciliations(params.directory, {
+      asOf: params.asOf,
       scope: { accountId: params.accountId ?? "", venue: params.venue ?? "" },
     });
   };
+  const reconciliationRead = readReconciliations();
   const [brokerProfit, brokerReconciliations] = await Promise.all([
-    readFinanceBrokerProfitFeedback(params.directory, params.asOf),
-    readReconciliations(),
+    readFinanceBrokerProfitFeedback(params.directory, params.asOf, {
+      reconciliationObservation: {
+        directory: params.directory,
+        asOf: params.asOf,
+        read: () => reconciliationRead,
+      },
+    }),
+    reconciliationRead,
   ]);
   const projected = projectFinanceBrokerAccountResearchSummary({
     asOf: params.asOf,
