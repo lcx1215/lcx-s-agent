@@ -498,31 +498,42 @@ export function createFinanceAlpacaCycleController(options: {
           prepared = undefined;
         }
       }
-      if (!prepared) {
-        // Finish expensive history reads before starting the short execution-quote lease.
-        const { snapshot, latestClaim } = await reconcile(signal, {
-          recoverPending: options.recoverPendingBeforeQuote === true,
-        });
-        const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
-        prepared = {
-          snapshot,
-          claimFingerprint: claimFingerprint(claims),
-          latestClaimId: latestClaim?.id,
-        };
+      // A quote read can outlive a still-fresh reconciliation. Refresh that preparation
+      // once, before review/dispatch, rather than extending either evidence lease.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        signal.throwIfAborted();
+        if (!prepared) {
+          // Finish expensive history reads before starting the short execution-quote lease.
+          const { snapshot, latestClaim } = await reconcile(signal, {
+            recoverPending: options.recoverPendingBeforeQuote === true,
+          });
+          const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
+          prepared = {
+            snapshot,
+            claimFingerprint: claimFingerprint(claims),
+            latestClaimId: latestClaim?.id,
+          };
+        }
+        const quote = await executionQuoteProvider(request, signal);
+        const key = `${request.instrument}:${request.side}`;
+        const bound = quoteBindings.get(key);
+        if (!bound) {
+          throw new FinanceExecutionSafetyFactsError("quote_binding_missing");
+        }
+        if (reconciliationIsFresh(prepared)) {
+          preparedQuotes.set(bound, prepared);
+          return quote;
+        }
+        // Retire the unusable quote; a failed refresh cannot leave it dispatchable.
+        quoteBindings.delete(key);
+        preparedQuotes.delete(bound);
+        prepared = undefined;
+        reusableReconciliation = undefined;
       }
-      const quote = await executionQuoteProvider(request, signal);
-      const bound = quoteBindings.get(`${request.instrument}:${request.side}`);
-      if (!bound) {
-        throw new FinanceExecutionSafetyFactsError("quote_binding_missing");
-      }
-      if (!reconciliationIsFresh(prepared)) {
-        throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
-          reason: "alpaca_safety_quote_expired",
-          stage: "quote_binding",
-        });
-      }
-      preparedQuotes.set(bound, prepared);
-      return quote;
+      throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+        reason: "alpaca_safety_quote_expired",
+        stage: "quote_binding",
+      });
     },
     createSafetyContext: (binding) => {
       if (

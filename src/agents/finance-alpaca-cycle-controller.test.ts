@@ -1166,27 +1166,157 @@ it.each(["failed", "inspect_only"] as const)(
   },
 );
 
-it("refuses reuse that expires while fetching a fresh quote before model re-review", async () => {
+it("refreshes once when the original reconciliation expires while fetching a fresh quote", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
   const f = await fixture();
   const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
   await controller.accountBookProvider(AbortSignal.timeout(5000));
+  const historyReads = () =>
+    f.read.mock.calls.filter(([url]) => new URL(url).pathname === "/v2/account/activities").length;
+  const baseline = historyReads();
   vi.setSystemTime(Date.now() + 24_000);
   const original = f.read.getMockImplementation()!;
+  let quoteReads = 0;
   f.read.mockImplementation(async (...args) => {
     if (new URL(args[0]).pathname.includes("/quotes/")) {
+      quoteReads += 1;
       vi.setSystemTime(Date.now() + 7_000);
+    }
+    return original(...args);
+  });
+  const quote = await controller.prepareExecutionQuote(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(120000),
+  );
+  expect(quoteReads).toBe(2);
+  expect(historyReads()).toBe(baseline + 1);
+  expect(Date.parse(quote.referencePriceAt)).toBe(Date.now());
+  expect(f.execute).not.toHaveBeenCalled();
+  expect((await f.place("expired-lease-refreshed", controller, quote)).status).toBe("placed");
+  expect(historyReads()).toBe(baseline + 1);
+});
+
+it.each(["quote_expired", "refresh_failed", "journal_changed", "cancelled"] as const)(
+  "bounds the expired-lease refresh and preserves its original failure (%s)",
+  async (mode) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+    const f = await fixture();
+    const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
+    await controller.accountBookProvider(AbortSignal.timeout(5000));
+    vi.setSystemTime(Date.now() + 24_000);
+    const original = f.read.getMockImplementation()!;
+    const caller = new AbortController();
+    let quoteReads = 0;
+    let refreshReads = 0;
+    f.read.mockImplementation(async (...args) => {
+      const pathname = new URL(args[0]).pathname;
+      if (pathname.includes("/quotes/")) {
+        quoteReads += 1;
+        vi.setSystemTime(Date.now() + (quoteReads === 2 ? 31_000 : 7_000));
+        if (mode === "cancelled") {
+          caller.abort();
+        }
+        if (mode === "journal_changed") {
+          await fs.appendFile(
+            path.join(
+              f.directory,
+              `execution-safety-${createHash("sha256")
+                .update(JSON.stringify(["alpaca:paper", f.accountId]))
+                .digest("hex")}.jsonl`,
+            ),
+            JSON.stringify({
+              id: "new-unresolved-claim",
+              run: "other-run",
+              instrument: "SPY",
+              notional: 100,
+              snapshotId: "other",
+              at: new Date().toISOString(),
+              status: "unknown",
+            }) + "\n",
+          );
+        }
+      }
+      if (quoteReads > 0 && pathname === "/v2/account/activities") {
+        refreshReads += 1;
+        if (mode === "refresh_failed") {
+          throw new Error("fixture refresh unavailable");
+        }
+      }
+      return original(...args);
+    });
+    await expect(
+      controller.prepareExecutionQuote(
+        { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+        caller.signal,
+      ),
+    ).rejects.toThrow(
+      mode === "quote_expired"
+        ? "alpaca_safety_quote_expired"
+        : mode === "refresh_failed"
+          ? "broker_reconciliation_blocked"
+          : mode === "journal_changed"
+            ? /execution_recovery_incomplete|unresolved_execution_claims/
+            : "alpaca_safety_cancelled_or_timed_out",
+    );
+    expect(quoteReads).toBe(mode === "quote_expired" ? 2 : 1);
+    expect(refreshReads).toBe(mode === "cancelled" ? 0 : 1);
+    expect(f.execute).not.toHaveBeenCalled();
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: f.directory,
+      accountId: f.accountId,
+      venue: "alpaca:paper",
+    });
+    expect(
+      claims.filter((claim) => claim.status === "reserved" || claim.status === "confirmed"),
+    ).toHaveLength(0);
+  },
+);
+
+it("refuses a second exhausted reconciliation lease without a third preparation or dispatch", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+  const f = await fixture();
+  const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
+  expect((await f.place("confirmed-before-refresh", controller)).status).toBe("placed");
+  await controller.accountBookProvider(AbortSignal.timeout(5000));
+  const previousQuote = await controller.executionQuoteProvider(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  vi.setSystemTime(Date.now() + 24_000);
+  const original = f.read.getMockImplementation()!;
+  let quoteReads = 0;
+  let refreshReads = 0;
+  f.read.mockImplementation(async (...args) => {
+    const pathname = new URL(args[0]).pathname;
+    if (pathname.includes("/quotes/")) {
+      quoteReads += 1;
+      vi.setSystemTime(Date.now() + 7_000);
+    }
+    if (quoteReads > 0 && pathname === "/v2/account/activities") {
+      refreshReads += 1;
+    }
+    if (quoteReads > 0 && pathname === "/v2/orders:by_client_order_id") {
+      // The original terminal-order check consumes the fresh snapshot's lease.
+      vi.setSystemTime(Date.now() + 24_000);
     }
     return original(...args);
   });
   await expect(
     controller.prepareExecutionQuote(
       { instrument: "SPY", side: "buy", assetClass: "us_equity" },
-      AbortSignal.timeout(5000),
+      AbortSignal.timeout(120000),
     ),
-  ).rejects.toThrow("alpaca_safety_quote_expired");
-  expect(f.execute).not.toHaveBeenCalled();
+  ).rejects.toThrow("account_snapshot_unavailable:alpaca_safety_quote_expired:quote_binding");
+  expect(quoteReads).toBe(2);
+  expect(refreshReads).toBe(1);
+  expect(f.execute).toHaveBeenCalledTimes(1);
+  await expect(f.place("stale-binding-retired", controller, previousQuote)).rejects.toThrow(
+    "quote_binding_missing",
+  );
+  expect(f.execute).toHaveBeenCalledTimes(1);
 });
 
 it("refreshing quotes never renews the original reconciliation lease", async () => {
