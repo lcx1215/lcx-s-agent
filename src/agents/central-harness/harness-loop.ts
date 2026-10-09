@@ -1032,6 +1032,7 @@ function compactCentralStepOutcome(
       schemaVersion: source.schemaVersion,
       status: source.status,
       historyKind: source.historyKind,
+      ...(isPlainRecord(source.brokerSnapshot) ? { brokerSnapshot: source.brokerSnapshot } : {}),
       history: source.history,
       ...(source.historyDroppedKeys ? { historyDroppedKeys: source.historyDroppedKeys } : {}),
     };
@@ -1042,13 +1043,14 @@ function compactCentralStepOutcome(
     isPlainRecord(source.brokerTradeEconomics) &&
     isPlainRecord(source.brokerTradeEconomics.diagnostic)
   ) {
-    // A scoped account read needs its full cost caveats before host paths and
-    // the separate all-receipts position view. Retain named omissions as usual.
+    // Scoped native protection and cost caveats precede host paths and the
+    // separate all-receipts position view. Retain named omissions as usual.
     const priorityKeys = [
       "schemaVersion",
       "status",
       "asOf",
       "asOfCaveat",
+      "brokerSnapshot",
       "brokerTradeEconomics",
       "headRef",
     ];

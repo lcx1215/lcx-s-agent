@@ -52,6 +52,19 @@ afterEach(() => vi.useRealTimers());
 it.each([null, -12.5])(
   "carries account-scoped economics and cost gaps into the next decision (pnl=%s)",
   async (pnl) => {
+    const brokerSnapshot = {
+      status: "present",
+      accounts: [
+        {
+          accountId: "fixture-paper-account",
+          snapshotRef: "b".repeat(64),
+          observedAt: perception.observedAt,
+          freshness: "fresh",
+          holdings: [{ instrument: "TLT", positionQuantity: 130, status: "no_recognized_stop" }],
+          omittedHoldings: 15,
+        },
+      ],
+    };
     const economics = {
       accountId: "fixture-paper-account",
       venue: "alpaca:paper",
@@ -86,6 +99,7 @@ it.each([null, -12.5])(
         positions: Array.from({ length: 100 }, () => ({ instrument: "FIXTURE", quantity: 1 })),
         headRef: "a".repeat(64),
         brokerTradeEconomics: economics,
+        brokerSnapshot,
       }),
     };
     const options = {
@@ -105,10 +119,12 @@ it.each([null, -12.5])(
     };
     const first = await runCentralHarnessCycle(options);
     expect(first.steps[0].outcome?.brokerTradeEconomics).toEqual(economics);
+    expect(first.steps[0].outcome?.brokerSnapshot).toEqual(brokerSnapshot);
     expect(first.steps[0].outcomeDroppedKeys).toContain("positions");
     expect(Buffer.byteLength(JSON.stringify(first.steps[0].outcome))).toBeLessThanOrEqual(4096);
     const backlog = compactReceipts([first], 10);
     expect(backlog[0].outcomes[0].outcome?.brokerTradeEconomics).toEqual(economics);
+    expect(backlog[0].outcomes[0].outcome?.brokerSnapshot).toEqual(brokerSnapshot);
     expect(backlog[0].outcomes[0].args).toEqual({ brokerAccountId: economics.accountId });
     expect(boundPerception({ ...perception, backlog }).report.overBudget).toBe(false);
     const next = await runCentralHarnessCycle({
@@ -171,6 +187,59 @@ it("names oversized bar-source comparisons instead of exceeding the existing rea
   const bounded = boundPerception({ ...perception, backlog });
   expect(bounded.report.overBudget).toBe(false);
   expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
+});
+
+it("retains native protection when the same read also requests historical orders", async () => {
+  const brokerSnapshot = {
+    status: "present",
+    accounts: [
+      {
+        observedAt: perception.observedAt,
+        freshness: "stale",
+        snapshotRef: "a".repeat(64),
+        holdings: [{ instrument: "TLT", positionQuantity: 130, status: "no_recognized_stop" }],
+      },
+    ],
+  };
+  const spec: CentralToolSpec = {
+    ownerId: "finance_position_ledger_read",
+    name: "fixture",
+    label: "fixture",
+    description: "fixture",
+    boundary: [],
+    allowedSideEffects: [],
+    approve: () => ({ ok: true }),
+    execute: async () => ({
+      schemaVersion: "lcx_finance_position_ledger_read_v2",
+      status: "ready",
+      brokerSnapshot,
+      historyKind: "order",
+      history: { items: [{ orderId: "old-canceled" }] },
+      positions: Array.from({ length: 100 }, () => ({ instrument: "FIXTURE", quantity: 1 })),
+    }),
+  };
+  const receipt = await runCentralHarnessCycle({
+    perception,
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async () => ({
+        kind: "proposed",
+        provider: "fixture",
+        modelId: "fixture",
+        plan: {
+          note: "read native protection and historical orders without conflating them",
+          actions: [
+            { ownerId: spec.ownerId, args: { brokerAccountId: "fixture", historyKind: "order" } },
+          ],
+        },
+      }),
+    },
+  });
+  expect(receipt.steps[0].outcome?.brokerSnapshot).toEqual(brokerSnapshot);
+  expect(receipt.steps[0].outcome?.history).toEqual({ items: [{ orderId: "old-canceled" }] });
+  expect(compactReceipts([receipt], 10)[0].outcomes[0].outcome?.brokerSnapshot).toEqual(
+    brokerSnapshot,
+  );
 });
 
 describe("executed governance result feedback", () => {

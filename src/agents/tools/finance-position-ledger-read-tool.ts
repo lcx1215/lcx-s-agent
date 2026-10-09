@@ -16,6 +16,7 @@ import {
   readFinancePositionRecords,
   type FinancePositionMark,
 } from "../finance-position-ledger.js";
+import { readFinancePositionManagementFeedback } from "../finance-position-management-feedback.js";
 import {
   financeBehaviourThresholdsPath,
   resolveFinancePositionLedgerLocation,
@@ -197,7 +198,7 @@ const FinancePositionLedgerReadSchema = Type.Object({
   brokerAccountId: Type.Optional(
     Type.String({
       description:
-        "Optional explicit Alpaca paper account id. Reads already-stored broker history through the account trading-book owner; it makes no network request and does not read credentials.",
+        "Optional explicit Alpaca paper account id. Reads reconstructed broker history and brokerSnapshot: latest retained native positions and stop coverage with source time/ref, freshness and explicit omissions. This is a stored snapshot, not a fresh network request; it does not read credentials.",
     }),
   ),
   initialCapital: Type.Optional(
@@ -817,6 +818,45 @@ export function createFinancePositionLedgerReadTool(options?: {
               accountId: brokerAccountId,
               venue: "alpaca:paper",
             });
+      const brokerReadAt = new Date().toISOString();
+      const nativeFeedback =
+        brokerAccountId === undefined
+          ? undefined
+          : await readFinancePositionManagementFeedback({
+              directory: location.directory,
+              observedAt: brokerReadAt,
+              rules: [],
+              scope: { accountId: brokerAccountId, venue: "alpaca:paper" },
+            });
+      const brokerSnapshot = nativeFeedback
+        ? {
+            status: nativeFeedback.status,
+            readAt: brokerReadAt,
+            boundary:
+              "retained_native_positions_and_stop_coverage_not_network_read_or_rule_membership",
+            ...("reason" in nativeFeedback ? { reason: nativeFeedback.reason } : {}),
+            ...(nativeFeedback.accounts !== undefined
+              ? {
+                  omittedAccounts: nativeFeedback.omittedAccounts,
+                  accounts: nativeFeedback.accounts.map((account) => ({
+                    accountId: account.accountId,
+                    venue: account.venue,
+                    snapshotRef: account.snapshotRef,
+                    observedAt: account.observedAt,
+                    freshness: account.freshness,
+                    positionCount: account.positionCount,
+                    uncoveredCount: account.uncoveredCount,
+                    unresolvedOrderCount: account.unresolvedOrderCount,
+                    omittedHoldings: account.omittedHoldings,
+                    holdings: account.holdings.map(
+                      ({ activeRuleIds: _rules, omittedRuleCount: _omittedRules, ...holding }) =>
+                        holding,
+                    ),
+                  })),
+                }
+              : {}),
+          }
+        : undefined;
       const historyBook =
         historyKind === "fill" || historyKind === "fee"
           ? brokerAccountId === historyAccountId && accountTradingBook
@@ -976,6 +1016,7 @@ export function createFinancePositionLedgerReadTool(options?: {
         positionCount: ledger.positions.length,
         openPositionCount: openPositions.length,
         positions: ledger.positions,
+        ...(brokerSnapshot === undefined ? {} : { brokerSnapshot }),
         ...(history === undefined ? {} : { historyKind, history }),
         pnlBasis: ledger.pnlBasis,
         brokerTradeEconomics: accountTradingBook

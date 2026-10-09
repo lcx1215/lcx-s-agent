@@ -26,13 +26,15 @@ export async function readFinancePositionManagementFeedback(params: {
   observedAt: string;
   rules: readonly { ruleId: string; state: string; instruments: readonly string[] }[];
   reconciliationObservation?: FinanceBrokerReconciliationObservation;
+  scope?: { accountId: string; venue: string };
 }) {
   try {
     const read =
+      params.scope === undefined &&
       params.reconciliationObservation?.directory === params.directory &&
       params.reconciliationObservation.asOf === params.observedAt
         ? await params.reconciliationObservation.read()
-        : await readFinanceLatestBrokerReconciliations(params.directory);
+        : await readFinanceLatestBrokerReconciliations(params.directory, { scope: params.scope });
     const accounts = read.records.map((record) => {
       const snapshot = snapshotSchema.parse(record.snapshot);
       const age = Date.parse(params.observedAt) - Date.parse(snapshot.observedAt);

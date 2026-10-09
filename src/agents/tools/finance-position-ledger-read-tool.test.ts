@@ -96,6 +96,7 @@ type ReadPayload = {
   instrumentsWithoutMark?: readonly string[];
   headRef?: string | null;
   history?: unknown;
+  brokerSnapshot?: unknown;
   asOfCaveat?: string | null;
   equityCurve?: {
     status: string;
@@ -125,6 +126,95 @@ type ReadPayload = {
     };
   };
 };
+
+it("reads scoped retained native protection separately from the receipt book", async () => {
+  const directory = await storeDirectory();
+  await appendFinanceExecutionReceipt(directory, fill());
+  const observedAt = new Date().toISOString();
+  const append = async (accountId: string) =>
+    appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: `reconciliation:${observedAt}`,
+      cursor: "",
+      payload: [{ observedAt, positions: [{ symbol: "TLT", qty: "130" }], openOrders: [] }],
+    });
+  const record = await append("requested-account");
+  for (const accountId of ["other-1", "other-2", "other-3", "other-4"]) {
+    await append(accountId);
+  }
+  const tool = createFinancePositionLedgerReadTool();
+  const ordinary = await read(tool, { directory });
+  expect(ordinary.brokerSnapshot).toBeUndefined();
+  const scoped = await read(tool, { directory, brokerAccountId: "requested-account" });
+  expect(scoped.positions).toEqual(ordinary.positions);
+  expect(scoped.brokerSnapshot).toMatchObject({
+    status: "present",
+    accounts: [
+      {
+        accountId: "requested-account",
+        venue: "alpaca:paper",
+        snapshotRef: record.record.ref,
+        observedAt,
+        freshness: "fresh",
+        positionCount: 1,
+        uncoveredCount: 1,
+        holdings: [{ instrument: "TLT", positionQuantity: 130, status: "no_recognized_stop" }],
+      },
+    ],
+  });
+  const snapshot = scoped.brokerSnapshot as { accounts: Record<string, unknown>[] };
+  expect(snapshot.accounts).toHaveLength(1);
+  expect(snapshot.accounts[0]).not.toHaveProperty("outsideActiveRuleCount");
+  expect(snapshot.accounts[0]).not.toHaveProperty("needsInspection");
+  expect((snapshot.accounts[0].holdings as Record<string, unknown>[])[0]).not.toHaveProperty(
+    "activeRuleIds",
+  );
+});
+
+it("reports malformed retained native snapshots without claiming a flat account", async () => {
+  const directory = await storeDirectory();
+  const observedAt = new Date().toISOString();
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "requested-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${observedAt}`,
+    cursor: "",
+    payload: [{ observedAt, positions: [{ symbol: "TLT", qty: "unknown" }], openOrders: [] }],
+  });
+  const result = await read(createFinancePositionLedgerReadTool(), {
+    directory,
+    brokerAccountId: "requested-account",
+  });
+  expect(result.brokerSnapshot).toMatchObject({
+    status: "unavailable",
+    reason: expect.any(String),
+  });
+  expect(result.brokerSnapshot).not.toHaveProperty("accounts");
+});
+
+it("preserves stale and absent native snapshot status without inventing current protection", async () => {
+  const directory = await storeDirectory();
+  await appendFinanceExecutionReceipt(directory, fill());
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "requested-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${PAST}`,
+    cursor: "",
+    payload: [{ observedAt: PAST, positions: [{ symbol: "TLT", qty: "130" }], openOrders: [] }],
+  });
+  const tool = createFinancePositionLedgerReadTool();
+  const stale = await read(tool, { directory, brokerAccountId: "requested-account" });
+  expect(stale.brokerSnapshot).toMatchObject({
+    status: "present",
+    accounts: [{ freshness: "stale", observedAt: PAST, uncoveredCount: 1 }],
+  });
+  const missing = await read(tool, { directory, brokerAccountId: "missing-account" });
+  expect(missing.brokerSnapshot).toMatchObject({ status: "absent", accounts: [] });
+});
 
 /**
  * Three paper buys at round prices. Round levels are the cheapest stream that reaches a label:
