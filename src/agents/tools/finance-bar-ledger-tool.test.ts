@@ -80,6 +80,25 @@ describe("finance_bar_ledger", () => {
       sourceSelection: { matchedRecordCount: 0, excludedRecordCount: 2 },
     });
   });
+  it("exposes bounded source choices only when requested through the original reader", async () => {
+    const tool = createFinanceBarLedgerTool();
+    await tool.execute("append", { action: "append", directory, batch: batch() });
+    const listed = await tool.execute("choices", {
+      action: "read",
+      directory,
+      includeSources: true,
+      instrument: "600519.SH",
+    });
+    expect(listed.details).toMatchObject({
+      sourceCatalog: {
+        sources: [{ source: batch().provenance, recordCount: 1 }],
+        omittedRecordCount: 0,
+      },
+    });
+    const plain = await tool.execute("plain", { action: "read", directory });
+    expect(plain.details).not.toHaveProperty("sourceCatalog");
+  });
+
   it("appends a batch and reads it back — the agent can see its own book", async () => {
     const tool = createFinanceBarLedgerTool();
     const appended = (await tool.execute("c1", { action: "append", directory, batch: batch() }))

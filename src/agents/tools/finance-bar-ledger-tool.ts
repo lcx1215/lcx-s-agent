@@ -52,6 +52,12 @@ const FinanceBarLedgerSchema = Type.Object({
   asOf: Type.Optional(
     Type.String({ description: "Read filter: ISO datetime; batches observed later are excluded." }),
   ),
+  includeSources: Type.Optional(
+    Type.Boolean({
+      description:
+        "Read-only: list at most four exact retained provenance labels at this instrument/cutoff; omittedRecordCount counts records with unlisted labels. Listing does not select a winner or establish source quality.",
+    }),
+  ),
   source: Type.Optional(
     Type.Object(
       {
@@ -99,6 +105,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
         instrument?: string;
         asOf?: string;
         source?: FinanceBarSourceFilter;
+        includeSources?: boolean;
         limit?: number;
       };
       const location = resolveFinanceBarLedgerLocation({
@@ -176,6 +183,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
         ...(params.instrument ? { instrument: params.instrument } : {}),
         ...(params.asOf ? { asOf: params.asOf } : {}),
         ...(params.source !== undefined ? { source: params.source } : {}),
+        ...(params.includeSources === true ? { includeSources: true } : {}),
       });
       const limit =
         typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
@@ -261,6 +269,7 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
         // sources, not an error to collapse.
         divergentDates: ledger.divergentDates,
         ...(ledger.sourceSelection ? { sourceSelection: ledger.sourceSelection } : {}),
+        ...(ledger.sourceCatalog ? { sourceCatalog: ledger.sourceCatalog } : {}),
         headRef: ledger.headRef,
         nextTool:
           ledger.bars.length === 0

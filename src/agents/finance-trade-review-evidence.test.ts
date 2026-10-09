@@ -1024,6 +1024,203 @@ it("identifies the failed second instrument without attributing its gap to the s
   });
 });
 
+it("lets the original review explicitly select retained provenance after an ambiguous read", async () => {
+  const scope = await fixture();
+  const source = { origin: "selected", sourceUrlOrArtifact: "fixture://daily-selected" };
+  const bars = Array.from({ length: 29 }, (_, i) => ({
+    date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+    open: 300 + i,
+    high: 301 + i,
+    low: 299 + i,
+    close: 300 + i,
+  }));
+  await appendFinanceBars(scope.directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-30T13:00:00.000Z",
+    provenance: source,
+    bars,
+  });
+  const read = observeBarReads();
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+  const signal = new AbortController().signal;
+  const [ambiguous] = await executor(
+    [{ candidateId: "signal", action: "daily_closes" }],
+    packet,
+    signal,
+  );
+  expect(ambiguous.status).toBe("unavailable");
+  expect(JSON.parse(ambiguous.summary).result.historySources.sources[0].source).toEqual(source);
+  const [selected] = await executor(
+    [{ candidateId: "signal", action: "daily_closes", source }],
+    packet,
+    signal,
+  );
+  expect(selected.status).toBe("completed");
+  expect(JSON.parse(selected.summary).result.latestClose).toBe(328);
+  expect(JSON.parse(selected.summary).result.sourceSelection).toMatchObject({
+    requested: source,
+    allSourcesDivergentDateCount: 29,
+    boundary: "exact_retained_provenance_not_verified_coverage_or_adjustment",
+  });
+  await executor([{ candidateId: "signal", action: "max_drawdown", source }], packet, signal);
+  expect(read).toHaveBeenCalledTimes(2);
+  const [unselected] = await executor(
+    [{ candidateId: "signal", action: "max_drawdown" }],
+    packet,
+    signal,
+  );
+  expect(unselected.status).toBe("unavailable");
+  const [missing] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "daily_closes",
+        source: { ...source, sourceUrlOrArtifact: "fixture://absent" },
+      },
+    ],
+    packet,
+    signal,
+  );
+  expect(missing.status).toBe("unavailable");
+  expect(missing.summary).not.toContain('"latestClose":328');
+  expect(Buffer.byteLength(JSON.stringify(selected))).toBeLessThanOrEqual(2048);
+});
+
+it("keeps selected-source revisions ambiguous and rejects pair/source argument drift", async () => {
+  const scope = await fixture();
+  const source = { origin: "revision", sourceUrlOrArtifact: "fixture://revision" };
+  for (const close of [300, 400]) {
+    await appendFinanceBars(scope.directory, {
+      instrument: "AAA",
+      derivation: "ohlcv",
+      observedAt: "2026-09-30T13:00:00.000Z",
+      provenance: source,
+      bars: [{ date: "2026-09-20", open: close, high: close + 1, low: close - 1, close }],
+    });
+  }
+  const [result] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [{ candidateId: "signal", action: "max_drawdown", source }],
+    packet,
+    new AbortController().signal,
+  );
+  expect(result.status).toBe("unavailable");
+  expect(result.summary).toContain("ambiguous recorded daily history");
+  for (const request of [
+    { ...requests[1], source },
+    { candidateId: "signal", action: "max_drawdown", source: { origin: "revision" } },
+    {
+      candidateId: "signal",
+      action: "max_drawdown",
+      source: { ...source, directory: "elsewhere" },
+    },
+    {
+      candidateId: "signal",
+      action: "max_drawdown",
+      source: { ...source, sourceUrlOrArtifact: "长".repeat(200) },
+    },
+  ]) {
+    expect(FinanceTradeReviewEvidenceRequestSchema.safeParse(request).success).toBe(false);
+  }
+});
+
+it("consumes the explicit history-source result inside the existing model loop and native outcome DB", async () => {
+  const scope = await fixture();
+  const source = { origin: "selected", sourceUrlOrArtifact: "fixture://selected" };
+  await appendFinanceBars(scope.directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-30T13:00:00.000Z",
+    provenance: source,
+    bars: Array.from({ length: 29 }, (_, i) => ({
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      open: 300 + i,
+      high: 301 + i,
+      low: 299 + i,
+      close: 300 + i,
+    })),
+  });
+  let calls = 0;
+  const model: LogicalAgentModelAdapter = {
+    ...scripted([]).model,
+    invoke: async (call) => {
+      calls += 1;
+      const payload = call.payload as { toolEvidence?: { status: string; summary: string }[] };
+      if (calls === 1) {
+        return {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [{ candidateId: "signal", action: "daily_closes" }],
+          hypothesis: "Which retained series supports the historical scale?",
+        };
+      }
+      if (calls === 2) {
+        expect(payload.toolEvidence![0].status).toBe("unavailable");
+        const retained = JSON.parse(payload.toolEvidence![0].summary).result.historySources
+          .sources[0].source;
+        expect(retained).toEqual(source);
+        return {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [{ candidateId: "signal", action: "daily_closes", source: retained }],
+          hypothesis: "Use this exact retained series while keeping disagreement explicit.",
+        };
+      }
+      const result = JSON.parse(payload.toolEvidence![1].summary).result;
+      expect(result.latestClose).toBe(328);
+      expect(result.sourceSelection.allSourcesDivergentDateCount).toBe(29);
+      return {
+        schemaVersion: packet.schemaVersion,
+        decisions: [
+          {
+            candidateId: "signal",
+            decision: "veto",
+            rationale: `Selected recorded close ${result.latestClose}; competing-source disagreement remains and is not a fresh quote.`,
+          },
+        ],
+      };
+    },
+  };
+  const reviewed = await createFinanceTradeDecisionReviewer(
+    {},
+    { adapterFactory: () => model, evidenceScope: scope },
+  )(packet, new AbortController().signal);
+  expect(reviewed).toMatchObject({
+    status: "completed",
+    modelCalls: 3,
+    toolEvidence: [{ status: "unavailable" }, { status: "completed" }],
+  });
+  await appendFinanceIntradayDecision(scope.directory, {
+    signalId: "signal",
+    instrument: "AAA",
+    sessionDate: "2026-09-30",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: asOf,
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  const { decisions: _decisions, ...metadata } = reviewed;
+  const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+    ...metadata,
+    request: packet,
+    decision: reviewed.decisions![0],
+  });
+  await appendFinanceIntradayOutcome(scope.directory, {
+    signalId: "signal",
+    status: "refused",
+    reasons: ["fixture model veto"],
+    tradeDecisionReview: receipt,
+  });
+  const stored = (await readFinanceIntradayOutcome(scope.directory, "signal"))!
+    .tradeDecisionReview!;
+  expect(stored.modelCallEvidence![1].evidenceRequests![0]).toMatchObject({
+    action: "daily_closes",
+    source,
+  });
+  expect(stored.toolEvidence).toEqual(reviewed.toolEvidence);
+  expect(stored.decision!.rationale).toContain("328");
+});
+
 it("bounds failed history date samples and explicitly counts omitted dates", async () => {
   const scope = await fixture();
   await appendFinanceBars(scope.directory, {

@@ -173,6 +173,15 @@ export type FinanceBarLedger = Readonly<{
   collapsedRepeats: number;
   recordCount: number;
   headRef: string | null;
+  sourceCatalog?: Readonly<{
+    sources: readonly Readonly<{
+      source: FinanceBarSourceFilter;
+      recordCount: number;
+      latestObservedAt: string;
+    }>[];
+    omittedRecordCount: number;
+    boundary: "retained_provenance_choices_not_source_quality_or_coverage";
+  }>;
   sourceSelection?: Readonly<{
     requested: FinanceBarSourceFilter;
     matchedRecordCount: number;
@@ -538,7 +547,12 @@ export function collapseRepeatedBars(bars: readonly FinanceBar[]): {
 
 export async function readFinanceBarLedger(
   directory: string,
-  options: { asOf?: string; instrument?: string; source?: FinanceBarSourceFilter } = {},
+  options: {
+    asOf?: string;
+    instrument?: string;
+    source?: FinanceBarSourceFilter;
+    includeSources?: boolean;
+  } = {},
 ): Promise<FinanceBarLedger> {
   const source = options.source === undefined ? undefined : SourceFilter.parse(options.source);
   const sourceSelection = source
@@ -583,6 +597,11 @@ export async function readFinanceBarLedger(
     const signaturesByKey = new Map<string, Set<string>>();
     const bars: FinanceBar[] = [];
     let collapsedRepeats = 0;
+    const sourceChoices = new Map<
+      string,
+      { source: FinanceBarSourceFilter; recordCount: number; latestObservedAt: string }
+    >();
+    let omittedSourceRecordCount = 0;
     const allSourceCloses = new Map<string, number>();
     const allSourceDivergentKeys = new Set<string>();
     // Consume the entire verified chain even for a narrow read. Only the requested
@@ -595,6 +614,36 @@ export async function readFinanceBarLedger(
       }
       if (options.instrument !== undefined && record.body.instrument !== options.instrument) {
         continue;
+      }
+      if (options.includeSources) {
+        const retained = record.body.provenance;
+        const choice = retained.sourceUrlOrArtifact
+          ? { origin: retained.origin, sourceUrlOrArtifact: retained.sourceUrlOrArtifact }
+          : undefined;
+        const key = choice ? JSON.stringify(choice) : undefined;
+        const prior = key ? sourceChoices.get(key) : undefined;
+        if (prior) {
+          prior.recordCount += 1;
+          if (record.body.observedAt > prior.latestObservedAt) {
+            prior.latestObservedAt = record.body.observedAt;
+          }
+        } else if (
+          key &&
+          choice &&
+          sourceChoices.size < 4 &&
+          Buffer.byteLength(key, "utf8") <= 512 &&
+          choice.origin.length <= 120 &&
+          choice.sourceUrlOrArtifact.length <= 512
+        ) {
+          sourceChoices.set(key, {
+            source: choice,
+            recordCount: 1,
+            latestObservedAt: record.body.observedAt,
+          });
+        } else {
+          // Counts omitted records, not unique sources; retain no unbounded label set.
+          omittedSourceRecordCount += 1;
+        }
       }
       if (source && sourceSelection) {
         // Keep the comparison within the same instrument/as-of scope even when a
@@ -656,6 +705,17 @@ export async function readFinanceBarLedger(
       collapsedRepeats,
       recordCount,
       headRef,
+      ...(options.includeSources
+        ? {
+            sourceCatalog: Object.freeze({
+              sources: Object.freeze(
+                [...sourceChoices.values()].map((choice) => Object.freeze(choice)),
+              ),
+              omittedRecordCount: omittedSourceRecordCount,
+              boundary: "retained_provenance_choices_not_source_quality_or_coverage" as const,
+            }),
+          }
+        : {}),
       ...(sourceSelection
         ? {
             sourceSelection: Object.freeze({

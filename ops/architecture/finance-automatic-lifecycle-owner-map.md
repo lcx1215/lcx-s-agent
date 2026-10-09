@@ -48,6 +48,14 @@ actual result, and incorporate it into the judgment before proceeding. Use exact
 math tools for calculations. Broader research and specialist review remain
 available when the task or existing contract requires them.
 
+When recorded daily prices conflict, the original evidence loop can return bounded
+retained provenance choices. A non-pair math request may explicitly select one
+exact origin and source label through the existing bar reader. No source is
+automatically preferred; missing labels and conflicts within the selected source
+remain unavailable. Keep competing-source disagreement visible, and distinguish
+source selection from verified coverage, adjustment equivalence or a fresh quote.
+This reads the existing book and adds no provider call or execution authority.
+
 Keep funding, scope, timestamps, quote freshness, duplicate prevention, risk,
 review and reconciliation checks under their existing owners. Tool selection
 never waives them. Persist a short decision reason, source references, actual

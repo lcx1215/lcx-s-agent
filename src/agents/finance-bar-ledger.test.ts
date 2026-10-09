@@ -616,6 +616,74 @@ describe("finance-bar-ledger", () => {
     expect(first.recordCount).toBe(1);
   });
 
+  it("lists retained selectable sources at the cutoff without choosing a winner", async () => {
+    const directory = await storeDirectory();
+    const source = { origin: "vendor", sourceUrlOrArtifact: "fixture://daily" };
+    await appendFinanceBars(directory, ohlcvInput({ provenance: source }));
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        provenance: { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+        bars: [ohlcv("2026-09-01", 100, 105, 98, 103)],
+      }),
+    );
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        instrument: "BBB",
+        provenance: { origin: "foreign", sourceUrlOrArtifact: "fixture://foreign" },
+      }),
+    );
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        observedAt: "2026-09-11T00:00:00Z",
+        provenance: { origin: "future", sourceUrlOrArtifact: "fixture://future" },
+        bars: [ohlcv("2026-09-02", 100, 105, 98, 103)],
+      }),
+    );
+    const plain = await readFinanceBarLedger(directory, { instrument: "AAA", asOf: OBSERVED });
+    const listed = await readFinanceBarLedger(directory, {
+      instrument: "AAA",
+      asOf: OBSERVED,
+      includeSources: true,
+    });
+    expect(listed.sourceCatalog?.sources.map((item) => item.source)).toEqual([
+      source,
+      { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+    ]);
+    expect(listed.sourceCatalog?.omittedRecordCount).toBe(0);
+    expect(listed.bars).toEqual(plain.bars);
+    expect(listed.divergentDates).toEqual(["AAA@2026-09-01"]);
+    expect(plain.sourceCatalog).toBeUndefined();
+  });
+
+  it("bounds provenance choices and counts omitted records without inventing deduped labels", async () => {
+    const directory = await storeDirectory();
+    for (let i = 0; i < 7; i += 1) {
+      await appendFinanceBars(
+        directory,
+        ohlcvInput({
+          provenance: {
+            origin: `source-${i}`,
+            sourceUrlOrArtifact: i === 6 ? "长".repeat(400) : `fixture://${i}`,
+          },
+          bars: [ohlcv(`2026-09-${String(i + 1).padStart(2, "0")}`, 100, 104, 98, 102)],
+        }),
+      );
+    }
+    const listed = await readFinanceBarLedger(directory, { includeSources: true });
+    expect(listed.sourceCatalog?.sources).toHaveLength(4);
+    expect(listed.sourceCatalog?.omittedRecordCount).toBe(3);
+    const selected = await readFinanceBarLedger(directory, {
+      source: listed.sourceCatalog!.sources[0].source,
+      includeSources: true,
+    });
+    expect(selected.sourceCatalog).toEqual(listed.sourceCatalog);
+    expect(selected.bars).toHaveLength(1);
+    expect(selected.sourceSelection?.matchedRecordCount).toBe(1);
+  });
+
   it("selects exact origin and URL while keeping all-source disagreement visible", async () => {
     const directory = await storeDirectory();
     const source = { origin: "vendor", sourceUrlOrArtifact: "fixture://daily?feed=a" };

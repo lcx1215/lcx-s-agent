@@ -41,6 +41,13 @@ export const FinanceTradeReviewFailureCodeSchema = z.enum([
 ]);
 export type FinanceTradeReviewFailureCode = z.infer<typeof FinanceTradeReviewFailureCodeSchema>;
 const Text = z.string().min(1).max(120);
+const HistorySourceSchema = z
+  .object({
+    origin: z.string().trim().min(1).max(120),
+    sourceUrlOrArtifact: z.string().trim().min(1).max(512),
+  })
+  .strict()
+  .refine((source) => Buffer.byteLength(JSON.stringify(source), "utf8") <= 512);
 const MathEvidenceRequestSchema = z
   .object({
     candidateId: Text,
@@ -51,6 +58,7 @@ const MathEvidenceRequestSchema = z
       "returns_from_levels",
       "pair_spread_diagnostics",
     ]),
+    source: HistorySourceSchema.optional(),
     instrumentB: Text.optional(),
     construction: z.enum(["fixed_spread", "price_ratio"]).optional(),
     hedgeRatio: z.number().finite().positive().max(100).optional(),
@@ -68,6 +76,12 @@ const MathEvidenceRequestSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "fixed spread requires hedge ratio; price ratio forbids it",
+      });
+    }
+    if (pair && request.source !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "pair history source selection is not registered",
       });
     }
     if (
@@ -507,6 +521,12 @@ type HistoryReadIdentity = {
   duplicateDates?: string[];
   duplicateDatesOmitted?: number;
   divergentDateCount?: number;
+  sourceSelection?: {
+    requested: z.infer<typeof HistorySourceSchema>;
+    allSourcesDivergentDateCount: number;
+    matchedRecordCount: number;
+    boundary: string;
+  };
 };
 
 /** Bounded tool batches reuse validated history only within the same host review packet. */
@@ -986,11 +1006,14 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
         }
         const refs: string[] = [];
         let historyRead: HistoryReadIdentity | undefined;
+        let historySources: unknown;
         const read = async (instrument: string) => {
           // A failed second leg must not inherit the first leg's diagnostics.
           historyRead = undefined;
+          historySources = undefined;
           signal.throwIfAborted();
-          const observed = packetObservations.get(instrument);
+          const observationKey = JSON.stringify([instrument, request.source ?? null]);
+          const observed = packetObservations.get(observationKey);
           if (observed) {
             historyRead = observed.identity;
             refs.push(observed.ref);
@@ -1002,6 +1025,8 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             instrument,
             asOf: packet.asOf,
             limit: 120,
+            includeSources: true,
+            ...(request.source ? { source: request.source } : {}),
           });
           signal.throwIfAborted();
           const details = result.details as Record<string, unknown>;
@@ -1012,7 +1037,43 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           ) {
             throw new Error("recorded daily history missing");
           }
+          const catalog = details.sourceCatalog as
+            | { sources?: unknown[]; omittedRecordCount?: number }
+            | undefined;
+          if (catalog && Array.isArray(catalog.sources)) {
+            const choices: unknown[] = [];
+            for (const choice of catalog.sources) {
+              if (Buffer.byteLength(JSON.stringify([...choices, choice]), "utf8") <= 650) {
+                choices.push(choice);
+              }
+            }
+            historySources = {
+              sources: choices,
+              omittedCatalogSourceCount: catalog.sources.length - choices.length,
+              omittedRecordCount: catalog.omittedRecordCount ?? 0,
+              boundary: "retained_provenance_choices_not_source_quality_or_coverage",
+            };
+          }
+          const selection = details.sourceSelection as
+            | {
+                allSourcesDivergentDates?: unknown[];
+                matchedRecordCount?: number;
+                boundary?: string;
+              }
+            | undefined;
           historyRead = {
+            ...(request.source
+              ? {
+                  sourceSelection: {
+                    requested: request.source,
+                    allSourcesDivergentDateCount: selection?.allSourcesDivergentDates?.length ?? 0,
+                    matchedRecordCount: selection?.matchedRecordCount ?? 0,
+                    boundary:
+                      selection?.boundary ??
+                      "exact_retained_provenance_not_verified_coverage_or_adjustment",
+                  },
+                }
+              : {}),
             instrument,
             headRef: details.headRef,
             barsSha256: digest(details.bars),
@@ -1054,13 +1115,13 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           if (bars.length < 21) {
             throw new Error("insufficient completed daily history");
           }
-          const ref = `${details.headRef}:${digest(bars)}`;
+          const ref = `${details.headRef}:${digest(request.source ? { bars, source: request.source } : bars)}`;
           // Capture this verified observation, not a fresh quote. A new review gets a new
           // executor; direct callers changing packet/cutoff/account also discard it.
           if (packetObservations.size >= FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS * 2) {
             packetObservations.delete(packetObservations.keys().next().value!);
           }
-          packetObservations.set(instrument, { bars, identity: historyRead, ref });
+          packetObservations.set(observationKey, { bars, identity: historyRead, ref });
           refs.push(ref);
           return bars;
         };
@@ -1076,6 +1137,9 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             lastDate: bars.at(-1)!.date,
             count: bars.length,
           };
+          if (historyRead?.sourceSelection) {
+            priority.sourceSelection = historyRead.sourceSelection;
+          }
           priority.interpretation =
             "completed_history_not_current_quote_account_drawdown_or_net_profit";
           if (request.action === "daily_closes") {
@@ -1189,6 +1253,7 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           priority = {};
           output = {
             reason: error instanceof Error ? error.message.slice(0, 160) : "evidence unavailable",
+            ...(historySources ? { historySources } : {}),
             ...(historyRead ? { historyRead } : {}),
           };
           if (historyRead) {
