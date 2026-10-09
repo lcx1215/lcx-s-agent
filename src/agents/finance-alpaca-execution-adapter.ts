@@ -441,9 +441,16 @@ export function createAlpacaExecutionAdapter(
         if (!options.cancelOrder || !options.postJson) {
           throw new Error("protected reduction transport unavailable");
         }
+        const authorityRemainingMs = Date.parse(facts.expiresAt) - Date.now();
+        if (!Number.isFinite(authorityRemainingMs) || authorityRemainingMs <= 0) {
+          throw new AlpacaOrderRejectedError({ executionStage: "pre_dispatch" });
+        }
+        // The fill poll bound starts when the sell is submitted. Verification,
+        // cancellation and protection restoration share the existing authority
+        // deadline, rather than consuming the sell's terminal-fill budget.
         const reductionSignal = AbortSignal.any([
           signal,
-          AbortSignal.timeout(options.fillPoll?.timeoutMs ?? 30_000),
+          AbortSignal.timeout(Math.min(authorityRemainingMs, 2_147_483_647)),
         ]);
         const env = resolveFinanceCredentialEnv({
           ...process.env,

@@ -960,6 +960,10 @@ it.each([
     assetType: "spot_equity" as const,
     orderType: "stop" as const,
     limitPrice: undefined,
+    readPositionDelayMs: 0,
+    fillTimeoutMs: 1000,
+    quoteLeaseMs: 60000,
+    expiresBeforeSell: false,
   },
   {
     label: "BTC/USD stop-limit",
@@ -967,18 +971,54 @@ it.each([
     assetType: "spot_crypto" as const,
     orderType: "stop_limit" as const,
     limitPrice: 89,
+    readPositionDelayMs: 0,
+    fillTimeoutMs: 1000,
+    quoteLeaseMs: 60000,
+    expiresBeforeSell: false,
+  },
+  {
+    label: "slow position verification after canceled stop",
+    instrument: "AAPL",
+    assetType: "spot_equity" as const,
+    orderType: "stop" as const,
+    limitPrice: undefined,
+    readPositionDelayMs: 150,
+    fillTimeoutMs: 100,
+    quoteLeaseMs: 60000,
+    expiresBeforeSell: false,
+  },
+  {
+    label: "quote expires during canceled-stop verification",
+    instrument: "AAPL",
+    assetType: "spot_equity" as const,
+    orderType: "stop" as const,
+    limitPrice: undefined,
+    readPositionDelayMs: 150,
+    fillTimeoutMs: 100,
+    quoteLeaseMs: 100,
+    expiresBeforeSell: true,
   },
 ])(
   "coordinates a protected partial exit through Alpaca ($label)",
-  async ({ instrument, assetType, orderType, limitPrice }) => {
+  async ({
+    instrument,
+    assetType,
+    orderType,
+    limitPrice,
+    readPositionDelayMs,
+    fillTimeoutMs,
+    quoteLeaseMs,
+    expiresBeforeSell,
+  }) => {
     const now = new Date().toISOString(),
-      expires = new Date(Date.now() + 60000).toISOString();
+      expires = new Date(Date.now() + 60000).toISOString(),
+      quoteExpires = new Date(Date.now() + quoteLeaseMs).toISOString();
     let canceled = false,
       position = 2;
     const sent: Record<string, unknown>[] = [];
     const adapter = createAlpacaExecutionAdapter({
       instruments: [instrument],
-      fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+      fillPoll: { timeoutMs: fillTimeoutMs, intervalMs: 0 },
       cancelOrder: async (url) => {
         expect(url).toContain("/orders/old-stop");
         canceled = true;
@@ -1004,6 +1044,9 @@ it.each([
           return { status: 200, body: JSON.stringify({ id: "account" }) };
         }
         if (url.includes("/positions/")) {
+          if (position === 2 && readPositionDelayMs) {
+            await new Promise((resolve) => setTimeout(resolve, readPositionDelayMs));
+          }
           return {
             status: 200,
             body: JSON.stringify({ symbol: instrument, side: "long", qty: String(position) }),
@@ -1041,7 +1084,7 @@ it.each([
         };
       },
     });
-    const fill = await adapter.execute(
+    const pending = adapter.execute(
       { ...baseIntent, instrument, side: "sell" },
       AbortSignal.timeout(1000),
       {
@@ -1087,11 +1130,18 @@ it.each([
           source: "fixture",
           price: 100,
           observedAt: now,
-          expiresAt: expires,
+          expiresAt: quoteExpires,
           currency: "USD",
         },
       },
     );
+    if (expiresBeforeSell) {
+      await expect(pending).rejects.toBeInstanceOf(AlpacaOrderRejectedError);
+      expect(sent.map((body) => [body.type, body.qty])).toEqual([[orderType, "2"]]);
+      expect(position).toBe(2);
+      return;
+    }
+    const fill = await pending;
     expect(fill.filledQuantity).toBe(1);
     expect(sent.map((body) => [body.type, body.qty])).toEqual([
       ["market", "1"],
