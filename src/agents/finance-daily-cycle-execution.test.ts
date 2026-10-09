@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
 import { FinanceExecutionSafetyUncertainError } from "./finance-execution-safety.js";
@@ -6,6 +7,10 @@ import type {
   FinanceTradeDecisionReviewRequest,
   FinanceTradeDecisionReviewResult,
 } from "./finance-trade-decision-review.js";
+import type {
+  FinanceTradeReviewModelCallEvidence,
+  FinanceTradeReviewToolEvidence,
+} from "./finance-trade-review-evidence.js";
 const mocks = vi.hoisted(() => ({
   collect: vi.fn(),
   order: vi.fn(),
@@ -107,6 +112,93 @@ beforeEach(() => {
   mocks.paper.mockResolvedValue({ ok: false, stage: "place", refusals: ["synthetic refusal"] });
 });
 describe("daily cycle execution data boundary", () => {
+  it.each(["completed", "failed"] as const)(
+    "retains bounded model-call provenance and tool-result linkage in the %s daily receipt",
+    async (status) => {
+      let modelCallEvidence: FinanceTradeReviewModelCallEvidence[] = [];
+      let toolEvidence: FinanceTradeReviewToolEvidence[] = [];
+      const reviewer = vi.fn(async (request: FinanceTradeDecisionReviewRequest) => {
+        const candidateId = request.candidates[0].candidateId;
+        toolEvidence = [
+          {
+            action: "max_drawdown",
+            candidateId,
+            accountId: "fixture-account",
+            asOf,
+            status: "completed",
+            sourceRef: "fixture://bounded-evidence",
+            requestSha256: "a".repeat(64),
+            resultSha256: "b".repeat(64),
+            summary: "Recorded-history calculation only.",
+            boundary: "recorded_daily_history_research_only_no_execution_or_fresh_quote",
+          },
+        ];
+        modelCallEvidence = [
+          {
+            attempt: 1,
+            callId: "fixture-request",
+            payloadSha256: "c".repeat(64),
+            outputSha256: "d".repeat(64),
+            resultKind: "evidence_request",
+            attestation: { status: "unattested" },
+            evidenceRequests: [{ candidateId, action: "max_drawdown" }],
+            hypothesis: "Check whether the recorded-history statistics support the candidate.",
+          },
+          {
+            attempt: 2,
+            callId: "fixture-followup",
+            payloadSha256: "e".repeat(64),
+            resultKind: status === "completed" ? "decision" : "failed",
+            attestation: { status: "unattested" },
+            toolEvidenceSha256: createHash("sha256")
+              .update(JSON.stringify(toolEvidence))
+              .digest("hex"),
+          },
+        ];
+        const common = {
+          status,
+          attempted: true,
+          provider: "fixture-provider",
+          modelId: "fixture-model",
+          latencyMs: 2,
+          providerCallObserved: false,
+          adapterAttested: false,
+          modelCalls: 2,
+          modelCallEvidence,
+          toolEvidence,
+        };
+        return status === "completed"
+          ? {
+              ...common,
+              status: "completed" as const,
+              decisions: request.candidates.map((candidate) => ({
+                candidateId: candidate.candidateId,
+                decision: "veto" as const,
+                rationale: "Fixture abstention after inspecting the supplied calculation.",
+              })),
+            }
+          : { ...common, status: "failed" as const, failureCode: "process_error" as const };
+      });
+      const report = await runFinanceDailyCycle({
+        ...params,
+        executionQuotes: quotes(),
+        tradeDecisionReviewer: reviewer,
+      });
+      // Serialization is the existing operator receipt boundary; no raw model context is retained.
+      const receipt = JSON.parse(JSON.stringify(report)).tradeDecisionReview;
+      expect(receipt.modelCallEvidence).toEqual(modelCallEvidence);
+      expect(receipt.toolEvidence).toEqual(toolEvidence);
+      expect(receipt.adapterAttested).toBe(false);
+      expect(report.modelCalls).toBe(2);
+      expect(reviewer).toHaveBeenCalledTimes(1);
+      if (status === "completed") {
+        expect(mocks.order).not.toHaveBeenCalled();
+      } else {
+        expect(receipt.failureCode).toBe("process_error");
+        expect(mocks.order).toHaveBeenCalledTimes(2);
+      }
+    },
+  );
   it("does not promote old EOD research bars into venue orders", async () => {
     const report = await runFinanceDailyCycle(params);
     expect(report.targets).toHaveLength(2);

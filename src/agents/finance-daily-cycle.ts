@@ -1459,6 +1459,7 @@ export async function runFinanceDailyCycle(
       adapterAttested: result.adapterAttested,
       ...(result.requestIdSha256 ? { requestIdSha256: result.requestIdSha256 } : {}),
       ...(result.toolEvidence ? { toolEvidence: result.toolEvidence } : {}),
+      ...(result.modelCallEvidence ? { modelCallEvidence: result.modelCallEvidence } : {}),
       ...(result.taskObjectiveSha256 ? { taskObjectiveSha256: result.taskObjectiveSha256 } : {}),
       ...(result.status === "completed" ? { decisions: result.decisions } : {}),
     };

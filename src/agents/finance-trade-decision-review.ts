@@ -195,6 +195,7 @@ export type FinanceTradeDecisionReviewReceipt = Readonly<{
   requestIdSha256?: string;
   taskObjectiveSha256?: string;
   toolEvidence?: readonly FinanceTradeReviewToolEvidence[];
+  modelCallEvidence?: readonly FinanceTradeReviewModelCallEvidence[];
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
