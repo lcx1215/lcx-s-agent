@@ -51,6 +51,14 @@ Skill. Do not turn this file into a transcript or a second registry.
 
 ## Architecture boundaries
 
+- Keep model decisions continuous in the existing tool loop. Use sufficient
+  supplied evidence first; select additional registered tools or Skills for a
+  concrete uncertainty, consume their results, then decide or stop. Full research
+  and specialist workflows are available capabilities, not mandatory steps for
+  every trade. Preserve each owner's required checks and execution gates.
+- Persist a concise reason, evidence references, actual outcome and unresolved
+  gaps for each meaningful decision. Retrieve precise supporting fields on demand;
+  do not duplicate whole research packets or store private model reasoning.
 - Keep one canonical ontology registry and its existing relation/state
   contracts. Additive vocabulary is safe; relation/state changes require a
   versioned migration manifest and focused verification.

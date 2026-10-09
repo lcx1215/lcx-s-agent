@@ -5,6 +5,12 @@ The canonical finance role contracts in `src/shared/lcx-ontology.ts` now drive
 workflow with `--workflow-models`; omit `--live` to inspect its model allocation
 without inference. Add `--live` only for a bounded real source/model run.
 
+This explicit specialist workflow is an available research route, not a
+per-order prerequisite. Keep routine judgments in the existing trade-review
+tool loop; invoke this workflow when the task needs its specialist contracts.
+Its role and review boundaries remain in force once selected. See the
+[lifecycle owner map](../../../ops/architecture/finance-automatic-lifecycle-owner-map.md).
+
 | Responsibility                               | Candidate selection                       | Admission boundary                          |
 | -------------------------------------------- | ----------------------------------------- | ------------------------------------------- |
 | Intake                                       | Deterministic supplied-task/evidence plan | No model inference claim                    |

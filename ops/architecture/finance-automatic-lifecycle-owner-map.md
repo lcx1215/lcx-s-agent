@@ -37,6 +37,26 @@ An arrow exists only when the downstream owner consumes an upstream durable
 receipt. A Flow Graph edge, imported module, configured connector, tool name,
 or successful model call is not proof of that handoff.
 
+## Decision loop and selective research
+
+The lifecycle diagram names available owners; it is not a checklist requiring
+every module or research stage for every order. The original trade decision
+review (`src/agents/finance-trade-decision-review.ts`) starts with supplied
+account, market and execution evidence. When evidence suffices, decide. For a
+specific unresolved hypothesis, select a registered tool or Skill, inspect its
+actual result, and incorporate it into the judgment before proceeding. Use exact
+math tools for calculations. Broader research and specialist review remain
+available when the task or existing contract requires them.
+
+Keep funding, scope, timestamps, quote freshness, duplicate prevention, risk,
+review and reconciliation checks under their existing owners. Tool selection
+never waives them. Persist a short decision reason, source references, actual
+execution result and uncertainty; fetch supporting fields on demand rather than
+copying full research or market history into each decision. A useful fragment
+retains its provenance and missing context; partial evidence is not complete
+evidence. Prove improvement by tracing a real candidate's tool result into its
+judgment and subsequent outcome, not by counting agents, modules or trades.
+
 ## Profit-first quantitative rule
 
 Directional hit rate is a forecast-classification measure, not economic

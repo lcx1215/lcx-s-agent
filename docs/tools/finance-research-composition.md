@@ -4,6 +4,13 @@
 module combinations. The optional choice uses the existing finance module
 registry; it does not create another ontology or an execution authority.
 
+This is an optional research capability. It does not require every Paper
+decision to run this DAG. The existing trade-review loop may decide from
+sufficient supplied evidence or request a precise registered tool for a
+specific doubt. Once this research workflow is selected, its required lanes,
+source contracts and budget checks still apply. See the
+[lifecycle owner map](../../ops/architecture/finance-automatic-lifecycle-owner-map.md).
+
 The combination is a finite DAG when the caller needs more than a preferred
 list. Each node names one registered module and its upstream node IDs. The
 control layer rejects unknown modules, duplicate IDs, missing dependencies,
