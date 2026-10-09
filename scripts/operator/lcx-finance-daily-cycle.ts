@@ -751,6 +751,13 @@ export async function runFinanceDailyCycleOperator(
                         evidenceScope: scope
                           ? {
                               ...scope,
+                              artifactRecallOptions: {
+                                config,
+                                agentId: "main",
+                                ...(process.env.OPENCLAW_WORKSPACE_DIR?.trim()
+                                  ? { workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR.trim() }
+                                  : {}),
+                              },
                               financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
                                 workspaceDir:
                                   process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||

@@ -9,6 +9,7 @@ import {
   renderFinanceFrameworkCoreContractArtifact,
   renderFinanceLearningCapabilityCandidateArtifact,
 } from "../hooks/bundled/lobster-brain-registry.js";
+import { ArtifactStore } from "../memory/artifact-store.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 import { readFinanceBrokerInstrumentFeedback } from "./finance-broker-profit-feedback.js";
 import {
@@ -35,6 +36,361 @@ import {
 import { ModelAdapterError, type LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 import * as barLedgerTools from "./tools/finance-bar-ledger-tool.js";
 const dirs: string[] = [];
+async function artifactScope() {
+  const scope = await fixture();
+  const dbPath = path.join(scope.directory, "artifact.sqlite");
+  const config = {
+    agents: { defaults: { workspace: scope.directory, memorySearch: { store: { path: dbPath } } } },
+  };
+  const relativePath = "state/recorded-result.json";
+  await fs.mkdir(path.join(scope.directory, "state"), { recursive: true });
+  await fs.writeFile(
+    path.join(scope.directory, relativePath),
+    JSON.stringify({ evidence: { rate: 31.01, causeVerified: false } }),
+  );
+  const store = ArtifactStore.open({ dbPath, workspaceDir: scope.directory });
+  try {
+    await store.register({
+      id: "retained-event",
+      owner: "workflow_delivery",
+      runId: "retained",
+      observedAt: "2026-09-01T00:00:00Z",
+      relativePath,
+      mimeType: "application/json",
+      summary: "merger evidence, cancellation cause remains unknown",
+    });
+  } finally {
+    store.close();
+  }
+  return { ...scope, artifactRecallOptions: { config, workspaceDir: scope.directory }, dbPath };
+}
+
+it("searches existing owner results and reads exact source fields inside one original review", async () => {
+  const scope = await artifactScope();
+  const before = await fs.readFile(scope.dbPath);
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+  const signal = new AbortController().signal;
+  const [search] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_search",
+        owner: "workflow_delivery",
+        query: "merger",
+      },
+    ],
+    packet,
+    signal,
+  );
+  expect(search.status).toBe("completed");
+  expect(JSON.parse(search.summary).result.artifacts[0].id).toBe("retained-event");
+  const [read] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_read",
+        artifactId: "retained-event",
+        field: "/evidence",
+      },
+    ],
+    packet,
+    signal,
+  );
+  expect(read.status).toBe("completed");
+  expect(JSON.parse(read.summary).result.selectedValue).toEqual({
+    rate: 31.01,
+    causeVerified: false,
+  });
+  expect(read.sourceRef).toBe("retained-event");
+  expect(read.boundary).toBe(
+    "recorded_financial_knowledge_research_only_not_market_or_account_facts",
+  );
+  expect(await fs.readFile(scope.dbPath)).toEqual(before);
+  const [unselected] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_read",
+        artifactId: "retained-event",
+        field: "/evidence",
+      },
+    ],
+    { ...packet },
+    signal,
+  );
+  expect(unselected.status).toBe("unavailable");
+  expect(unselected.summary).toContain("artifact_not_selected_in_this_review");
+});
+
+it("preserves useful incomplete text and clearly exposes missing selected fields", async () => {
+  const scope = await artifactScope();
+  await fs.writeFile(path.join(scope.directory, "state/partial.json"), '{"price":31.01,"reason":');
+  const store = ArtifactStore.open({ dbPath: scope.dbPath, workspaceDir: scope.directory });
+  try {
+    await store.register({
+      id: "partial-event",
+      owner: "workflow_delivery",
+      runId: "partial",
+      observedAt: "2026-09-01T00:00:00Z",
+      relativePath: "state/partial.json",
+      mimeType: "application/json",
+      summary: "partial merger source",
+    });
+  } finally {
+    store.close();
+  }
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope),
+    signal = new AbortController().signal;
+  await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_search",
+        owner: "workflow_delivery",
+        query: "partial",
+      },
+    ],
+    packet,
+    signal,
+  );
+  const [missing] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_read",
+        artifactId: "partial-event",
+        field: "/price",
+      },
+    ],
+    packet,
+    signal,
+  );
+  expect(missing.status).toBe("unavailable");
+  expect(missing.summary).toContain("artifact_field_json_unavailable");
+  expect(missing.summary).toContain("31.01");
+  const [page] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_read",
+        artifactId: "partial-event",
+        textOffset: 0,
+      },
+    ],
+    packet,
+    signal,
+  );
+  expect(page.status).toBe("completed");
+  expect(JSON.parse(page.summary).result.textPage).toBe('{"price":31.01,"reason":');
+});
+
+it("rejects foreign owners and arbitrary paths instead of expanding recall authority", () => {
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      candidateId: "signal",
+      action: "artifact_search",
+      owner: "private_config",
+      query: "x",
+    }).success,
+  ).toBe(false);
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      candidateId: "signal",
+      action: "artifact_read",
+      artifactId: "x",
+      field: "/value",
+      path: "/tmp/private",
+    }).success,
+  ).toBe(false);
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      candidateId: "signal",
+      action: "artifact_read",
+      artifactId: "x",
+      field: "/value",
+      textOffset: 0,
+    }).success,
+  ).toBe(false);
+});
+
+it("feeds a searched original field into call three without increasing the original review budget", async () => {
+  const scope = await artifactScope();
+  const payloads: unknown[] = [];
+  const model = scripted(
+    [
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [
+          {
+            candidateId: "signal",
+            action: "artifact_search",
+            owner: "workflow_delivery",
+            query: "merger",
+          },
+        ],
+        hypothesis: "Retrieve recorded event evidence for this doubt.",
+      },
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [
+          {
+            candidateId: "signal",
+            action: "artifact_read",
+            artifactId: "retained-event",
+            field: "/evidence",
+          },
+        ],
+        hypothesis: "Read the retained source while keeping causality unknown.",
+      },
+      {
+        schemaVersion: packet.schemaVersion,
+        decisions: [
+          {
+            candidateId: "signal",
+            decision: "veto",
+            rationale:
+              "The retained evidence leaves cancellation cause unknown; it is not current account or execution evidence.",
+          },
+        ],
+      },
+    ],
+    payloads,
+  );
+  const reviewer = createFinanceTradeDecisionReviewer(
+    {},
+    { adapterFactory: model.factory, evidenceScope: scope },
+  );
+  const result = await reviewer(packet, AbortSignal.timeout(5000));
+  expect(result).toMatchObject({
+    status: "completed",
+    modelCalls: 3,
+    decisions: [{ decision: "veto" }],
+  });
+  expect((payloads[0] as Record<string, unknown>).evidenceArtifactRecallAvailable).toBe(true);
+  expect(JSON.stringify(payloads[2])).toContain("causeVerified");
+  expect(result.toolEvidence?.map((item) => item.action)).toEqual([
+    "artifact_search",
+    "artifact_read",
+  ]);
+  expect(result.modelCallEvidence?.map((item) => item.resultKind)).toEqual([
+    "evidence_request",
+    "evidence_request",
+    "decision",
+  ]);
+  const { decisions: _decisions, ...metadata } = result;
+  await appendFinanceIntradayDecision(scope.directory, {
+    signalId: "signal",
+    instrument: "AAA",
+    sessionDate: "2026-09-30",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: asOf,
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+    ...metadata,
+    request: packet,
+    decision: result.decisions![0],
+  });
+  await appendFinanceIntradayOutcome(scope.directory, {
+    signalId: "signal",
+    status: "refused",
+    reasons: ["scripted model veto"],
+    tradeDecisionReview: receipt,
+  });
+  const stored = (await readFinanceIntradayOutcome(scope.directory, "signal"))?.tradeDecisionReview;
+  expect(stored?.toolEvidence).toEqual(result.toolEvidence);
+  expect(stored?.modelCallEvidence).toEqual(result.modelCallEvidence);
+});
+
+it("retains an exact-field gap and useful prefix within unchanged UTF8 evidence budgets", async () => {
+  const scope = await artifactScope();
+  await fs.writeFile(
+    path.join(scope.directory, "state/long.json"),
+    JSON.stringify({ value: "量化疑点".repeat(150) }),
+  );
+  const store = ArtifactStore.open({ dbPath: scope.dbPath, workspaceDir: scope.directory });
+  try {
+    await store.register({
+      id: "long-event",
+      owner: "workflow_delivery",
+      runId: "long",
+      observedAt: "2026-09-01T00:00:00Z",
+      relativePath: "state/long.json",
+      mimeType: "application/json",
+      summary: "long merger source",
+    });
+  } finally {
+    store.close();
+  }
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope),
+    signal = new AbortController().signal;
+  await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_search",
+        owner: "workflow_delivery",
+        query: "long",
+      },
+    ],
+    packet,
+    signal,
+  );
+  const [read] = await executor(
+    [{ candidateId: "signal", action: "artifact_read", artifactId: "long-event", field: "/value" }],
+    packet,
+    signal,
+  );
+  expect(read.status).toBe("unavailable");
+  expect(read.summary).toContain("selected_field_exceeds_review_budget_use_narrower_field");
+  expect(read.summary).toContain("量化疑点");
+  expect(read.summary).not.toContain("�");
+  expect(Buffer.byteLength(JSON.stringify(read))).toBeLessThanOrEqual(2048);
+});
+
+it("keeps unavailable registration, future sources and changed originals explicit", async () => {
+  const scope = await artifactScope(),
+    signal = new AbortController().signal;
+  const ask = {
+    candidateId: "signal",
+    action: "artifact_search" as const,
+    owner: "workflow_delivery",
+    query: "merger",
+  };
+  const [unregistered] = await createFinanceTradeReviewEvidenceExecutor(await fixture())(
+    [ask],
+    packet,
+    signal,
+  );
+  expect(unregistered.summary).toContain("artifact_recall_not_registered");
+  expect(unregistered.status).toBe("unavailable");
+  const executor = createFinanceTradeReviewEvidenceExecutor(scope);
+  const [past] = await executor([ask], { ...packet, asOf: "2026-08-31T00:00:00Z" }, signal);
+  expect(JSON.parse(past.summary).result.artifacts).toEqual([]);
+  await executor([ask], packet, signal);
+  await fs.writeFile(
+    path.join(scope.directory, "state/recorded-result.json"),
+    '{"evidence":{"rate":999}}',
+  );
+  const [changed] = await executor(
+    [
+      {
+        candidateId: "signal",
+        action: "artifact_read",
+        artifactId: "retained-event",
+        field: "/evidence",
+      },
+    ],
+    packet,
+    signal,
+  );
+  expect(changed.status).toBe("unavailable");
+  expect(changed.summary).toContain("artifact_original_hash_mismatch");
+  expect(changed.summary).not.toContain("999");
+});
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(

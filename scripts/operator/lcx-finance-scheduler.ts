@@ -1422,7 +1422,19 @@ function createIntradayTradeDecisionReviewer(
       : undefined;
     return createFinanceTradeDecisionReviewer(config, {
       taskObjective,
-      evidenceScope: evidenceScope ? { ...evidenceScope, financialCapabilities } : undefined,
+      evidenceScope: evidenceScope
+        ? {
+            ...evidenceScope,
+            financialCapabilities,
+            artifactRecallOptions: {
+              config,
+              agentId: "main",
+              ...(process.env.OPENCLAW_WORKSPACE_DIR?.trim()
+                ? { workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR.trim() }
+                : {}),
+            },
+          }
+        : undefined,
     });
   } catch {
     return undefined;

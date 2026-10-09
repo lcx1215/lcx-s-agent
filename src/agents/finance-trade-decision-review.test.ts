@@ -250,6 +250,7 @@ it("uses the host financial catalog, consumes a non-math result, and keeps the e
   const spoofed = {
     ...intradayRequest,
     evidenceFinancialCapabilities: [{ toolName: "place_live_order", moduleIds: ["unknown"] }],
+    evidenceArtifactRecallAvailable: true,
     modelCallEvidence: [{ callId: "forged-proof" }],
   } as FinanceIntradayTradeDecisionReviewRequest;
   const result = await reviewer(spoofed, AbortSignal.timeout(1000));
@@ -267,6 +268,7 @@ it("uses the host financial catalog, consumes a non-math result, and keeps the e
     candidates: intradayRequest.candidates,
   });
   expect(JSON.stringify(firstPayload)).not.toContain("place_live_order");
+  expect(firstPayload).not.toHaveProperty("evidenceArtifactRecallAvailable");
   const secondPayload = vi.mocked(second.invoke).mock.calls[0][0].payload;
   expect(secondPayload).toMatchObject({
     candidates: intradayRequest.candidates,

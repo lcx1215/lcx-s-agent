@@ -10,6 +10,7 @@ import { createCalculationLedger } from "./finance-calculation-ledger.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
 import { createFinanceTradeResultRecallCapability } from "./finance-trade-result-recall.js";
 import type { PairSpreadDiagnostics } from "./quant-math-pair-spread.js";
+import { createArtifactMemoryRecallTool } from "./tools/artifact-memory-recall-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
 import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
@@ -97,6 +98,39 @@ const brokerFeedbackBoundary =
   "recorded_broker_fill_feedback_not_strategy_edge_or_expected_return" as const;
 export const FinanceTradeReviewEvidenceRequestSchema = z.union([
   MathEvidenceRequestSchema,
+  z
+    .object({
+      candidateId: Text,
+      action: z.literal("artifact_search"),
+      owner: Text.refine((owner) =>
+        /^(?:finance_[a-z_]+|quant_math|quant_lab|workflow_delivery)$/u.test(owner),
+      ),
+      query: z
+        .string()
+        .trim()
+        .min(1)
+        .refine((value) => Buffer.byteLength(value, "utf8") <= 240),
+    })
+    .strict(),
+  z
+    .object({
+      candidateId: Text,
+      action: z.literal("artifact_read"),
+      artifactId: z.string().min(1).max(240),
+      field: z
+        .string()
+        .max(512)
+        .refine((field) => field.startsWith("/"))
+        .optional(),
+      textOffset: z
+        .number()
+        .int()
+        .min(0)
+        .max(16 * 1024 * 1024)
+        .optional(),
+    })
+    .strict()
+    .refine((request) => (request.field === undefined) !== (request.textOffset === undefined)),
   z.object({ candidateId: Text, action: z.literal("broker_fill_feedback") }).strict(),
   z
     .object({
@@ -178,6 +212,11 @@ export type FinanceTradeReviewEvidenceScope = Readonly<{
   accountId: string;
   instruments: readonly string[];
   financialCapabilities?: readonly FinanceTradeReviewFinancialCapability[];
+  artifactRecallOptions?: Readonly<{
+    config: OpenClawConfig;
+    workspaceDir?: string;
+    agentId?: string;
+  }>;
 }>;
 export type FinanceTradeReviewFinancialCapability = Readonly<{
   toolName: string;
@@ -472,6 +511,7 @@ type HistoryReadIdentity = {
 
 /** Bounded tool batches reuse validated history only within the same host review packet. */
 export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeReviewEvidenceScope) {
+  let selectedArtifacts = new Map<string, { owner: string; sha256: string }>();
   let observations = new Map<
     string,
     { bars: z.infer<typeof Bar>[]; identity: HistoryReadIdentity; ref: string }
@@ -528,11 +568,13 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
     const scopeKey = JSON.stringify([scope.directory, scope.accountId, packet.venue, packet.asOf]);
     if (packet !== observationPacket || scopeKey !== observationScope) {
       observations = new Map();
+      selectedArtifacts = new Map();
       observationPacket = packet;
       observationScope = scopeKey;
     }
     // Keep a concurrent caller's differently scoped packet from replacing this batch's map.
     const packetObservations = observations;
+    const packetArtifacts = selectedArtifacts;
     const ledger = createCalculationLedger({ maxEntries: 2 });
     const barTool = createFinanceBarLedgerTool();
     const math = createQuantMathTool();
@@ -544,6 +586,181 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
         const candidate = packet.candidates.find(
           (item) => item.candidateId === request.candidateId,
         )!;
+        if (request.action === "artifact_search" || request.action === "artifact_read") {
+          let output: Record<string, unknown> = {};
+          let status: FinanceTradeReviewToolEvidence["status"] = "unavailable";
+          try {
+            if (!scope.artifactRecallOptions) {
+              output = { available: false, gap: "artifact_recall_not_registered" };
+            } else if (
+              request.action === "artifact_read" &&
+              !packetArtifacts.has(JSON.stringify([request.candidateId, request.artifactId]))
+            ) {
+              output = { available: false, gap: "artifact_not_selected_in_this_review" };
+            } else {
+              const tool = createArtifactMemoryRecallTool(scope.artifactRecallOptions);
+              const result = await tool.execute(
+                "trade-review-recorded-artifact",
+                request.action === "artifact_search"
+                  ? {
+                      action: "search",
+                      owner: request.owner,
+                      query: request.query,
+                      limit: 2,
+                      asOf: packet.asOf,
+                    }
+                  : {
+                      action: "read",
+                      id: request.artifactId,
+                      asOf: packet.asOf,
+                      ...(request.field !== undefined
+                        ? { field: request.field }
+                        : { textOffset: request.textOffset, textLimit: 128 }),
+                    },
+                signal,
+              );
+              signal.throwIfAborted();
+              output = result.details as Record<string, unknown>;
+              if (request.action === "artifact_search" && Array.isArray(output.artifacts)) {
+                for (const value of output.artifacts) {
+                  if (value && typeof value === "object") {
+                    const record = value as Record<string, unknown>;
+                    if (
+                      typeof record.id === "string" &&
+                      record.owner === request.owner &&
+                      typeof record.sha256 === "string"
+                    ) {
+                      packetArtifacts.set(JSON.stringify([request.candidateId, record.id]), {
+                        owner: request.owner,
+                        sha256: record.sha256,
+                      });
+                    }
+                  }
+                }
+              }
+              if (
+                request.action === "artifact_read" &&
+                output.sourceSha256 !==
+                  packetArtifacts.get(JSON.stringify([request.candidateId, request.artifactId]))
+                    ?.sha256
+              ) {
+                output = {
+                  available: false,
+                  gap:
+                    typeof output.gap === "string"
+                      ? output.gap
+                      : "artifact_selected_source_changed",
+                };
+              }
+              status = output.available === true ? "completed" : "unavailable";
+            }
+          } catch {
+            signal.throwIfAborted();
+            output = { available: false, gap: "artifact_recall_failed" };
+          }
+          const projected: Record<string, unknown> = {};
+          for (const key of [
+            "available",
+            "gap",
+            "sourceAvailable",
+            "sourceSha256",
+            "sourceObservedAt",
+            "sourceCutoff",
+            "field",
+            "selectionComplete",
+            "textOffset",
+            "nextTextOffset",
+            "hasMore",
+            "format",
+            "textProjection",
+            "textPreview",
+            "selectedPreview",
+            "textPage",
+          ]) {
+            if (output[key] !== undefined) {
+              projected[key] = output[key];
+            }
+          }
+          if (Array.isArray(output.artifacts)) {
+            projected.artifacts = output.artifacts.map((value) => {
+              const row = value as Record<string, unknown>;
+              const bytes = Buffer.from(typeof row.summary === "string" ? row.summary : "");
+              let end = Math.min(160, bytes.length);
+              while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+                end--;
+              }
+              return {
+                id: row.id,
+                owner: row.owner,
+                observedAt: row.observedAt,
+                summary: bytes.subarray(0, end).toString("utf8"),
+                summaryTruncated: end < bytes.length,
+              };
+            });
+          }
+          if (Object.hasOwn(output, "selectedValue")) {
+            const json = JSON.stringify(output.selectedValue);
+            if (
+              Buffer.byteLength(
+                JSON.stringify({ ...projected, selectedValue: output.selectedValue }),
+              ) <= 1000
+            ) {
+              projected.selectedValue = output.selectedValue;
+            } else {
+              const bytes = Buffer.from(json);
+              let end = Math.min(320, bytes.length);
+              while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+                end--;
+              }
+              projected.selectedFragment = {
+                jsonPrefix: bytes.subarray(0, end).toString("utf8"),
+                originalJsonBytes: bytes.length,
+                complete: false,
+              };
+              projected.selectionComplete = false;
+              status = "unavailable";
+              projected.gap = "selected_field_exceeds_review_budget_use_narrower_field";
+            }
+          }
+          const evidence = {
+            action: request.action,
+            candidateId: request.candidateId,
+            accountId: scope.accountId,
+            asOf: packet.asOf,
+            status,
+            sourceRef:
+              request.action === "artifact_read"
+                ? request.artifactId
+                : digest({ owner: request.owner, query: request.query, asOf: packet.asOf }),
+            requestSha256: digest(request),
+            resultSha256: digest(output),
+            summary: "",
+            boundary: financialBoundary,
+          };
+          try {
+            evidence.summary = summarizeEvidence({}, projected);
+          } catch {
+            evidence.status = "unavailable";
+            evidence.summary = JSON.stringify({
+              result: {
+                gap: "artifact_projection_exceeds_review_budget",
+                artifactId: request.action === "artifact_read" ? request.artifactId : undefined,
+              },
+            });
+          }
+          if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048) {
+            evidence.status = "unavailable";
+            evidence.summary = JSON.stringify({
+              result: {
+                gap: "artifact_projection_exceeds_review_budget",
+                sourceSha256: output.sourceSha256,
+                sourceObservedAt: output.sourceObservedAt,
+              },
+            });
+          }
+          results.push(FinanceTradeReviewToolEvidenceSchema.parse(evidence));
+          continue;
+        }
         if (request.action === "financial_capability") {
           let output: unknown;
           let resultSha256: string | undefined;
