@@ -7,6 +7,7 @@ import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   appendFinanceBrokerHistory,
   readFinanceBrokerHistoryRecords,
+  readFinanceLatestBrokerReconciliations,
 } from "./finance-position-ledger.js";
 import { classifyFinanceProtectionOrders } from "./finance-protection-coordination.js";
 
@@ -448,17 +449,16 @@ export async function readFinanceBrokerReconciliation(
   accountId: string,
   now = Date.now(),
 ) {
-  const records = await readFinanceBrokerHistoryRecords(directory, accountId, "alpaca:paper");
-  const latest = records.records
-    .filter((record) => record.body.query.startsWith("reconciliation:"))
-    .at(-1);
-  const snapshot = latest?.body.payload[0];
+  const records = await readFinanceLatestBrokerReconciliations(directory, {
+    scope: { accountId, venue: "alpaca:paper" },
+  });
+  const latest = records.records[0];
+  const snapshot = latest?.snapshot;
   if (!snapshot || typeof snapshot.observedAt !== "string") {
     return { ok: false, reason: "missing", snapshot: undefined } as const;
   }
   const age = now - Date.parse(snapshot.observedAt);
-  const fresh =
-    Number.isFinite(age) && age >= 0 && age <= 300_000 && latest?.ref === records.headRef;
+  const fresh = Number.isFinite(age) && age >= 0 && age <= 300_000 && !latest?.superseded;
   return {
     ok: fresh && snapshot.status === "reconciled",
     reason: fresh ? snapshot.status : "stale",

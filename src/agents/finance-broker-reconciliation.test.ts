@@ -1,15 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-const syncMocks = vi.hoisted(() => ({ append: vi.fn(), history: vi.fn(), readHistory: vi.fn() }));
+const syncMocks = vi.hoisted(() => ({
+  append: vi.fn(),
+  history: vi.fn(),
+  readHistory: vi.fn(),
+  latest: vi.fn(),
+}));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncAlpacaPaperHistory: syncMocks.history,
 }));
 vi.mock("./finance-position-ledger.js", () => ({
   appendFinanceBrokerHistory: syncMocks.append,
   readFinanceBrokerHistoryRecords: syncMocks.readHistory,
+  readFinanceLatestBrokerReconciliations: syncMocks.latest,
 }));
 import {
   reconcileFinanceBrokerActivities,
   syncFinanceBrokerReconciliation,
+  readFinanceBrokerReconciliation,
 } from "./finance-broker-reconciliation.js";
 const activities = [
   { id: "cash", activity_type: "JNLC", status: "executed", currency: "USD", net_amount: "100" },
@@ -31,6 +38,48 @@ const activities = [
     net_amount: "0",
   },
 ];
+describe("current reconciliation safety view", () => {
+  const now = Date.parse("2026-10-09T00:00:00Z");
+  it.each([
+    [0, false, "reconciled", true, "reconciled"],
+    [300_000, false, "reconciled", true, "reconciled"],
+    [300_001, false, "reconciled", false, "stale"],
+    [-1, false, "reconciled", false, "stale"],
+    [0, true, "reconciled", false, "stale"],
+    [0, false, "needs_review", false, "needs_review"],
+  ] as const)(
+    "preserves age %s, superseded %s and status %s",
+    async (age, superseded, status, ok, reason) => {
+      syncMocks.readHistory.mockClear();
+      const snapshot = { observedAt: new Date(now - age).toISOString(), status };
+      syncMocks.latest.mockResolvedValue({
+        records: [{ snapshot, superseded }],
+        omittedAccounts: 0,
+      });
+      expect(await readFinanceBrokerReconciliation("fixture", "account-a", now)).toEqual({
+        ok,
+        reason,
+        snapshot,
+      });
+      expect(syncMocks.latest).toHaveBeenLastCalledWith("fixture", {
+        scope: { accountId: "account-a", venue: "alpaca:paper" },
+      });
+      expect(syncMocks.readHistory).not.toHaveBeenCalled();
+    },
+  );
+  it.each([undefined, {}, { observedAt: "invalid", status: "reconciled" }])(
+    "fails closed on missing or invalid observation %s",
+    async (snapshot) => {
+      syncMocks.latest.mockResolvedValue({
+        records: snapshot === undefined ? [] : [{ snapshot, superseded: false }],
+        omittedAccounts: 0,
+      });
+      const result = await readFinanceBrokerReconciliation("fixture", "account-a", now);
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe(snapshot && "observedAt" in snapshot ? "stale" : "missing");
+    },
+  );
+});
 describe("broker economic reconciliation", () => {
   it("reconciles crypto fees in units, cash, and duplicate pages without fake sell receipts", () => {
     const result = reconcileFinanceBrokerActivities({

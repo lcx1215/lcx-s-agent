@@ -979,6 +979,11 @@ it.each(["body", "sequence", "previousRef", "tail"] as const)(
     await expect(readFinanceLatestBrokerReconciliations(directory)).rejects.toThrow(
       "broker history chain mismatch",
     );
+    await expect(
+      readFinanceLatestBrokerReconciliations(directory, {
+        scope: { accountId: "account-a", venue: "alpaca:paper" },
+      }),
+    ).rejects.toThrow("broker history chain mismatch");
     await expect(appendFinanceBrokerHistory(directory, body)).rejects.toThrow(
       "broker history chain mismatch",
     );
@@ -1027,6 +1032,53 @@ it("streams scoped observations and latest snapshots without losing global tail 
   const appended = await appendFinanceBrokerHistory(directory, { ...body, query: "new" });
   expect(appended.record.sequence).toBe(4);
   expect(appended.record.previousRef).toBe(tail.record.ref);
+});
+
+it("retains an exact reconciliation book older than the default three-book view", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "selected",
+    venue: "alpaca:paper",
+    query: "reconciliation:first",
+    cursor: "",
+    payload: [{ observedAt: "2026-10-09T00:00:00Z", status: "reconciled" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  await appendFinanceBrokerHistory(directory, { ...body, venue: "other:paper" });
+  for (const accountId of ["b", "c", "d"]) {
+    await appendFinanceBrokerHistory(directory, { ...body, accountId });
+  }
+  const defaults = await readFinanceLatestBrokerReconciliations(directory);
+  expect(defaults.records.map((record) => record.accountId)).toEqual(["d", "c", "b"]);
+  expect(defaults.omittedAccounts).toBe(2);
+  const scope = { accountId: "selected", venue: "alpaca:paper" };
+  const selected = await readFinanceLatestBrokerReconciliations(directory, { scope });
+  expect(selected.records).toHaveLength(1);
+  expect(selected.records[0]).toMatchObject({ ref: first.record.ref, superseded: false });
+  expect(selected.omittedAccounts).toBe(0);
+  await appendFinanceBrokerHistory(directory, { ...body, query: "activities:later" });
+  expect(
+    (await readFinanceLatestBrokerReconciliations(directory, { scope })).records[0]?.superseded,
+  ).toBe(true);
+  expect(
+    (
+      await readFinanceLatestBrokerReconciliations(directory, {
+        scope,
+        asOf: "2026-10-09T00:00:00Z",
+      })
+    ).records[0]?.superseded,
+  ).toBe(false);
+  expect(
+    (
+      await readFinanceLatestBrokerReconciliations(directory, {
+        scope: { ...scope, accountId: "absent" },
+      })
+    ).records,
+  ).toEqual([]);
+  await expect(
+    readFinanceLatestBrokerReconciliations(directory, { scope: { ...scope, accountId: " " } }),
+  ).rejects.toThrow("scope requires account and venue");
 });
 
 describe("sealed broker activities projection", () => {

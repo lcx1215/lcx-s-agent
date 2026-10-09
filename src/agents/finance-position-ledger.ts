@@ -1078,8 +1078,11 @@ export async function readFinanceBrokerHistoryActivities(
 /** Latest reconciliations per book, with chain validation and no migration or writes. */
 export async function readFinanceLatestBrokerReconciliations(
   directory: string,
-  options: { asOf?: string } = {},
+  options: { asOf?: string; scope?: { accountId: string; venue: string } } = {},
 ) {
+  if (options.scope && (!options.scope.accountId.trim() || !options.scope.venue.trim())) {
+    throw new Error("broker reconciliation scope requires account and venue");
+  }
   const cutoff = options.asOf === undefined ? undefined : Date.parse(options.asOf);
   if (cutoff !== undefined && !Number.isFinite(cutoff)) {
     throw new Error("invalid broker reconciliation cutoff");
@@ -1092,6 +1095,13 @@ export async function readFinanceLatestBrokerReconciliations(
     const latest = new Map<string, BrokerHistoryRecord>();
     const heads = new Map<string, string>();
     for (const row of readBrokerHistoryRows(db)) {
+      // Scope retention, not validation: the generator still verifies every tail row.
+      if (
+        options.scope &&
+        (row.body.accountId !== options.scope.accountId || row.body.venue !== options.scope.venue)
+      ) {
+        continue;
+      }
       const key = JSON.stringify([row.body.venue, row.body.accountId]);
       heads.set(key, row.ref);
       if (row.body.query.startsWith("reconciliation:")) {
