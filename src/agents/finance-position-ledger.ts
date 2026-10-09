@@ -897,16 +897,34 @@ const BrokerHistoryRecordSchema = z
   .strict();
 export type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
 
-// Identical bytes may reuse a payload schema proof only when parsing preserved that payload.
-// Headers still parse/normalize on every read; no payload or freshness claim is cached.
+// Byte-identical rows may reuse normalized headers and schema proofs. Payloads are
+// never cached: a selected record is decoded afresh, including schema transformations.
 const BrokerHistoryHeaderSchema = BrokerHistoryRecordSchema.extend({
   body: BrokerHistoryBodySchema.extend({ payload: z.unknown() }),
 });
 const BROKER_HISTORY_HASH_PROOF_LIMIT = 50_000;
-const brokerHistoryHashProofs = new Map<string, { ref: string; payloadUnchanged: boolean }>();
+const BROKER_HISTORY_HEADER_PROOF_BYTES = 8 * 1024 * 1024;
+const BROKER_HISTORY_HEADER_PROOF_MAX_BYTES = 2048;
+type BrokerHistoryProofHeader = Readonly<{
+  sequence: number;
+  previousRef: string | null;
+  accountId: string;
+  venue: string;
+  query: string;
+  cursor: string;
+  payloadCount: number;
+}>;
+type BrokerHistoryHashProof = {
+  ref: string;
+  payloadUnchanged: boolean;
+  header?: BrokerHistoryProofHeader;
+  bodyFingerprint?: string;
+};
+const brokerHistoryHashProofs = new Map<string, BrokerHistoryHashProof>();
+let brokerHistoryHeaderProofBytes = 0;
 
-/** Validate every account's chain while retaining only the caller's selected rows. */
-function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
+/** Hash every current row and verify the global chain before lazily decoding selected payloads. */
+function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
   if (!hasTable(db, "finance_broker_history")) {
     return;
   }
@@ -918,36 +936,76 @@ function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRe
     if (typeof row.body !== "string" || typeof row.ref !== "string") {
       throw new Error("invalid broker history row");
     }
-    const raw: unknown = JSON.parse(row.body);
+    const storedRef = row.ref;
     const encodedHash = createHash("sha256").update(row.body).digest("hex");
-    const proof = brokerHistoryHashProofs.get(encodedHash);
-    // The exact encoding was fully schema-checked before this proof was admitted.
-    const record = (
-      proof?.payloadUnchanged
-        ? BrokerHistoryHeaderSchema.parse(raw)
-        : BrokerHistoryRecordSchema.parse(raw)
-    ) as z.infer<typeof BrokerHistoryRecordSchema>;
+    let proof = brokerHistoryHashProofs.get(encodedHash);
+    let raw: unknown;
+    let record: z.infer<typeof BrokerHistoryRecordSchema> | undefined;
+    const encoded = row.body;
+    const readRecord = () => {
+      if (!record) {
+        raw = JSON.parse(encoded);
+        record = (
+          proof?.payloadUnchanged
+            ? BrokerHistoryHeaderSchema.parse(raw)
+            : BrokerHistoryRecordSchema.parse(raw)
+        ) as z.infer<typeof BrokerHistoryRecordSchema>;
+      }
+      return { ...record, ref: storedRef };
+    };
+    const header =
+      proof?.header ??
+      (() => {
+        const parsed = readRecord();
+        return Object.freeze({
+          sequence: parsed.sequence,
+          previousRef: parsed.previousRef,
+          accountId: parsed.body.accountId,
+          venue: parsed.body.venue,
+          query: parsed.body.query,
+          cursor: parsed.body.cursor,
+          payloadCount: parsed.body.payload.length,
+        });
+      })();
     const canonicalRef = proof?.ref ?? caseflowFingerprint(raw);
     if (
       canonicalRef !== row.ref ||
-      record.previousRef !== previousRef ||
-      record.sequence !== ++sequence
+      header.previousRef !== previousRef ||
+      header.sequence !== ++sequence
     ) {
       throw new Error("broker history chain mismatch");
     }
     // Retain the verified prefix at capacity: FIFO eviction would churn the whole
     // cache on every ordered full scan. Uncached tail bytes still receive full checks.
     if (proof === undefined && brokerHistoryHashProofs.size < BROKER_HISTORY_HASH_PROOF_LIMIT) {
-      brokerHistoryHashProofs.set(encodedHash, {
+      proof = {
         ref: canonicalRef,
         // A transforming schema must still run on later reads (for example __proto__ keys).
         payloadUnchanged:
-          JSON.stringify(record.body.payload) ===
+          JSON.stringify(readRecord().body.payload) ===
           JSON.stringify((raw as z.infer<typeof BrokerHistoryRecordSchema>).body.payload),
-      });
+      };
+      brokerHistoryHashProofs.set(encodedHash, proof);
+    }
+    if (proof && !proof.header) {
+      const bytes = Buffer.byteLength(JSON.stringify(header));
+      if (
+        bytes <= BROKER_HISTORY_HEADER_PROOF_MAX_BYTES &&
+        brokerHistoryHeaderProofBytes + bytes <= BROKER_HISTORY_HEADER_PROOF_BYTES
+      ) {
+        proof.header = header;
+        brokerHistoryHeaderProofBytes += bytes;
+      }
     }
     previousRef = row.ref;
-    yield { ...record, ref: row.ref };
+    yield { header, ref: row.ref, proof, readRecord };
+  }
+}
+
+/** Validate every account's chain while retaining only the caller's selected rows. */
+function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
+  for (const row of readVerifiedBrokerHistoryRows(db)) {
+    yield row.readRecord();
   }
 }
 
@@ -968,22 +1026,28 @@ export async function appendFinanceBrokerHistory(directory: string, body: Broker
     db.exec("BEGIN IMMEDIATE");
     try {
       const fingerprint = caseflowFingerprint(validated);
-      let last: BrokerHistoryRecord | undefined;
+      let last: { sequence: number; ref: string } | undefined;
       let existing: BrokerHistoryRecord | undefined;
       // Finding a duplicate never ends validation: corrupt tails and other accounts
       // must still fail before returning the first matching observation.
-      for (const record of readBrokerHistoryRows(db)) {
-        last = record;
+      for (const row of readVerifiedBrokerHistoryRows(db)) {
+        last = { sequence: row.header.sequence, ref: row.ref };
         if (
           !existing &&
-          record.body.accountId === validated.accountId &&
-          record.body.venue === validated.venue &&
-          record.body.query === validated.query &&
-          record.body.cursor === validated.cursor &&
-          record.body.payload.length === validated.payload.length &&
-          caseflowFingerprint(record.body) === fingerprint
+          row.header.accountId === validated.accountId &&
+          row.header.venue === validated.venue &&
+          row.header.query === validated.query &&
+          row.header.cursor === validated.cursor &&
+          row.header.payloadCount === validated.payload.length
         ) {
-          existing = record;
+          const bodyFingerprint =
+            row.proof?.bodyFingerprint ?? caseflowFingerprint(row.readRecord().body);
+          if (row.proof) {
+            row.proof.bodyFingerprint = bodyFingerprint;
+          }
+          if (bodyFingerprint === fingerprint) {
+            existing = row.readRecord();
+          }
         }
       }
       if (existing) {

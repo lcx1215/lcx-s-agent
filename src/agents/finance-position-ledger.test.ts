@@ -914,6 +914,54 @@ it("retains full payload normalization when the original schema transformed a ra
   expect(Object.getPrototypeOf(warm.records[0].body.payload[0])).toBe(Object.prototype);
 });
 
+it.each(["duplicate", "new"] as const)(
+  "materializes only a selected duplicate after warm history validation: %s",
+  async (operation) => {
+    const directory = await storeDirectory();
+    const body = {
+      kind: "broker_history" as const,
+      accountId: `lazy-append-${operation}`,
+      venue: "alpaca:paper",
+      query: "activities:lazy",
+      cursor: "",
+      payload: [{ id: "fill", note: "x".repeat(4096) }],
+    };
+    const first = await appendFinanceBrokerHistory(directory, body);
+    const tail = await appendFinanceBrokerHistory(directory, { ...body, accountId: "foreign" });
+    await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+    const db = openDatabase(directory);
+    let encodings: Set<string>;
+    try {
+      encodings = new Set(
+        db
+          .prepare("SELECT body FROM finance_broker_history")
+          .all()
+          .map((row) => String(row.body)),
+      );
+    } finally {
+      db.close();
+    }
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      const result = await appendFinanceBrokerHistory(
+        directory,
+        operation === "duplicate" ? body : { ...body, query: "activities:new" },
+      );
+      const decodedHistoryRows = parse.mock.calls.filter(([raw]) => encodings.has(raw));
+      expect(decodedHistoryRows).toHaveLength(operation === "duplicate" ? 1 : 0);
+      if (operation === "duplicate") {
+        expect(result).toEqual({ appended: false, record: first.record });
+      } else {
+        expect(result.appended).toBe(true);
+        expect(result.record.previousRef).toBe(tail.record.ref);
+        expect(result.record.sequence).toBe(3);
+      }
+    } finally {
+      parse.mockRestore();
+    }
+  },
+);
+
 it("fully validates newly encoded payloads even after an earlier proof was cached", async () => {
   const directory = await storeDirectory();
   const body = {
@@ -941,6 +989,71 @@ it("fully validates newly encoded payloads even after an earlier proof was cache
   await expect(
     readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue),
   ).rejects.toThrow();
+});
+
+it("falls back to full row decoding when a normalized header exceeds its cache budget", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "large-header-proof",
+    venue: "alpaca:paper",
+    query: `activities:${"界".repeat(2048)}`,
+    cursor: "",
+    payload: [{ id: "fill" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  const db = openDatabase(directory);
+  let encoding: string;
+  try {
+    encoding = String(db.prepare("SELECT body FROM finance_broker_history").get()?.body);
+  } finally {
+    db.close();
+  }
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    expect(await appendFinanceBrokerHistory(directory, body)).toEqual({
+      record: first.record,
+      appended: false,
+    });
+    expect(parse.mock.calls.filter(([raw]) => raw === encoding)).toHaveLength(1);
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("deduplicates cached normalized headers without retaining a returned payload mutation", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "normalized-append-proof",
+    venue: "alpaca:paper",
+    query: "activities:normalized-append",
+    cursor: "",
+    payload: [{ id: "fill", qty: "1" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  const { ref: _ref, ...raw } = first.record;
+  raw.body.accountId = ` ${body.accountId} `;
+  raw.body.query = ` ${body.query} `;
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET body=?,ref=? WHERE sequence=1").run(
+      JSON.stringify(raw),
+      caseflowFingerprint(raw),
+    );
+  } finally {
+    db.close();
+  }
+  const expected = (await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue))
+    .records[0];
+  const read = await appendFinanceBrokerHistory(directory, body);
+  read.record.body.payload[0].qty = "999";
+  expect(await appendFinanceBrokerHistory(directory, body)).toEqual({
+    appended: false,
+    record: expected,
+  });
 });
 
 it("preserves bounded prefix proofs when an append-only chain outgrows the cache", async () => {
