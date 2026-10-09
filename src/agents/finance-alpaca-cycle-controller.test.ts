@@ -1550,3 +1550,274 @@ it("uses the current candidate for account preparation rather than a stale first
   expect(f.read).not.toHaveBeenCalled();
   expect(f.execute).not.toHaveBeenCalled();
 });
+
+async function protectedTerminalFixture(filledQuantity = 1) {
+  const f = await fixture();
+  f.positions[0].qty = "2";
+  f.positions[0].market_value = "200";
+  f.account.cash = "800";
+  f.account.long_market_value = "200";
+  f.activities[1].qty = "2";
+  const stop = {
+    id: "original-stop",
+    symbol: "SPY",
+    side: "sell",
+    type: "stop",
+    time_in_force: "gtc",
+    status: "new",
+    qty: "2",
+    filled_qty: "0",
+    stop_price: "90",
+    limit_price: null,
+  };
+  f.openOrders.push(stop);
+  const originalRead = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (url, init) => {
+    const p = new URL(url).pathname;
+    if (p === "/v2/orders/original-stop") {
+      return { status: 200, body: JSON.stringify(stop) };
+    }
+    if (p === "/v2/positions/SPY") {
+      if (!f.positions.length) {
+        return { status: 404, body: "{}" };
+      }
+      return { status: 200, body: JSON.stringify(f.positions[0]) };
+    }
+    return originalRead(url, init);
+  });
+  const quote = await f.controller.executionQuoteProvider(
+    { instrument: "SPY", side: "sell", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  const intent: FinanceExecutionIntent = {
+    intentId: "terminal-protected-sell",
+    instrument: "SPY",
+    side: "sell",
+    quantity: filledQuantity === 2 ? 2 : 1,
+    orderType: "market",
+    referencePrice: quote.referencePrice,
+    referencePriceAt: quote.referencePriceAt,
+    runAuthorizationId: "test-run",
+    rationale: "synthetic protected reduction",
+  };
+  const budget = {
+    automation: "unattended" as const,
+    allowedInstruments: ["SPY"],
+    maxOrderNotional: 200,
+    maxInstrumentNotional: 500,
+    maxOrdersPerRun: 3,
+  };
+  const adapter: FinanceExecutionAdapter = {
+    id: "alpaca-venue",
+    venue: "alpaca:paper",
+    kind: "venue",
+    instruments: ["SPY"],
+    orderTypes: ["market"],
+    credentialsAuthority: "external",
+    supportsProtectedReduction: true,
+    execute: f.execute,
+  };
+  f.execute.mockRejectedValueOnce(new Error("sell outcome needs reconciliation"));
+  await expect(
+    placeFinanceOrder({
+      mode: "live_execution",
+      intent,
+      budget,
+      adapters: [adapter],
+      executionAdapterId: adapter.id,
+      committedInstrumentNotional: 0,
+      ordersPlacedThisRun: 0,
+      safetyContext: f.controller.createSafetyContext({
+        intent,
+        budget,
+        adapterId: adapter.id,
+        venue: adapter.venue,
+      }),
+    }),
+  ).rejects.toMatchObject({ code: "finance_execution_safety_unknown" });
+  stop.status = "canceled";
+  f.openOrders.splice(0);
+  const clientId = `lcx-${createHash("sha256")
+    .update(JSON.stringify(["paper", intent.runAuthorizationId, intent.intentId]))
+    .digest("hex")
+    .slice(0, 40)}`;
+  const terminal = {
+    id: "terminal-sell",
+    submitted_at: new Date().toISOString(),
+    client_order_id: clientId,
+    symbol: "SPY",
+    side: "sell",
+    qty: String(intent.quantity),
+    type: "market",
+    time_in_force: "day",
+    status: filledQuantity === 1 ? "filled" : "canceled",
+    filled_qty: String(filledQuantity),
+    filled_avg_price: filledQuantity ? "100" : null,
+    filled_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  f.orders.push(terminal);
+  f.positions[0].qty = String(2 - filledQuantity);
+  f.positions[0].market_value = String((2 - filledQuantity) * 100);
+  f.account.cash = String(800 + filledQuantity * 100);
+  f.account.long_market_value = f.positions[0].market_value;
+  if (filledQuantity === 2) {
+    f.positions.splice(0);
+  }
+  if (filledQuantity) {
+    f.activities.push({
+      id: "terminal-sell",
+      activity_type: "FILL",
+      type: "fill",
+      side: "sell",
+      symbol: "SPY",
+      qty: String(filledQuantity),
+      price: "100",
+      transaction_time: terminal.filled_at,
+    });
+  }
+  const transport = vi.fn<import("./finance-write-transport.js").FinanceWriteTransport>(
+    async (request) => {
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      expect(body.type).toBe("stop");
+      expect(body.client_order_id).toBe(`${clientId}-protect`);
+      const restored = {
+        ...body,
+        id: "restored-stop",
+        status: "new",
+        filled_qty: "0",
+        submitted_at: new Date().toISOString(),
+      };
+      f.orders.push(restored);
+      f.openOrders.push(restored);
+      return { status: 200, body: JSON.stringify(restored) };
+    },
+  );
+  return { ...f, intent, stop, terminal, transport };
+}
+
+it.each([0, 1, 2])(
+  "recovers a terminal protected sell with %s fills through the original protection owner",
+  async (filled) => {
+    const f = await protectedTerminalFixture(filled);
+    const controller = createFinanceAlpacaCycleController({
+      ...f.options,
+      protectedReductionRecoveryTransport: f.transport,
+    });
+    const result = await controller.inspectReconciliation(AbortSignal.timeout(5000));
+    expect(result.readiness).toMatchObject({ status: "ready", reasons: [] });
+    expect(f.transport).toHaveBeenCalledTimes(filled === 2 ? 0 : 1);
+    if (filled < 2) {
+      expect(JSON.parse(f.transport.mock.calls[0][0].body)).toMatchObject({
+        qty: String(2 - filled),
+        stop_price: "90",
+      });
+    }
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: f.directory,
+      accountId: f.accountId,
+      venue: "alpaca:paper",
+    });
+    expect(claims.at(-1)).toMatchObject({ status: "confirmed", fill: { filledQuantity: filled } });
+    const ledger = await readFinanceAccountPositionLedger(f.directory, {
+      accountId: f.accountId,
+      venue: "alpaca:paper",
+    });
+    expect(
+      ledger.receipts.filter((receipt) => receipt.intentId === f.intent.intentId),
+    ).toHaveLength(filled === 0 ? 0 : 1);
+    await controller.inspectReconciliation(AbortSignal.timeout(5000));
+    expect(f.transport).toHaveBeenCalledTimes(filled === 2 ? 0 : 1);
+    expect(f.execute).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([
+  "missing",
+  "nonterminal",
+  "wrong_identity",
+  "original_stop_changed",
+  "position_changed",
+  "competing_order",
+  "restore_failed",
+] as const)(
+  "keeps protected recovery unresolved for %s without repeating the sell",
+  async (failure) => {
+    const f = await protectedTerminalFixture();
+    if (failure === "missing") {
+      f.orders.splice(0);
+    }
+    if (failure === "nonterminal") {
+      f.terminal.status = "accepted";
+    }
+    if (failure === "wrong_identity") {
+      f.terminal.qty = "3";
+    }
+    if (failure === "original_stop_changed") {
+      f.stop.stop_price = "91";
+    }
+    if (failure === "position_changed") {
+      f.positions[0].qty = "2";
+    }
+    if (failure === "competing_order") {
+      f.openOrders.push({ id: "other-sell", symbol: "SPY", side: "sell", status: "new" });
+    }
+    if (failure === "restore_failed") {
+      f.transport.mockRejectedValueOnce(new Error("restoration transport unavailable"));
+    }
+    const controller = createFinanceAlpacaCycleController({
+      ...f.options,
+      protectedReductionRecoveryTransport: f.transport,
+    });
+    await expect(controller.inspectReconciliation(AbortSignal.timeout(5000))).rejects.toThrow(
+      "execution_recovery_incomplete",
+    );
+    expect(f.transport).toHaveBeenCalledTimes(failure === "restore_failed" ? 1 : 0);
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: f.directory,
+      accountId: f.accountId,
+      venue: "alpaca:paper",
+    });
+    expect(claims.at(-1)?.status).toBe("unknown");
+    if (failure === "restore_failed") {
+      const result = await controller.inspectReconciliation(AbortSignal.timeout(5000));
+      expect(result.readiness.status).toBe("ready");
+      expect(f.transport).toHaveBeenCalledTimes(2);
+      expect(f.execute).toHaveBeenCalledTimes(1);
+    }
+  },
+);
+
+it("reuses already restored original protection while completing the terminal claim without another POST", async () => {
+  const f = await protectedTerminalFixture();
+  const restored = {
+    id: "previously-restored",
+    client_order_id: `${f.terminal.client_order_id}-protect`,
+    symbol: "SPY",
+    side: "sell",
+    type: "stop",
+    time_in_force: "gtc",
+    status: "new",
+    qty: "1",
+    filled_qty: "0",
+    stop_price: "90",
+    submitted_at: new Date().toISOString(),
+  };
+  f.openOrders.push(restored);
+  f.orders.push(restored);
+  const controller = createFinanceAlpacaCycleController({
+    ...f.options,
+    protectedReductionRecoveryTransport: f.transport,
+  });
+  const result = await controller.inspectReconciliation(AbortSignal.timeout(5000));
+  expect(result.readiness.status).toBe("ready");
+  expect(f.transport).not.toHaveBeenCalled();
+  expect(f.execute).toHaveBeenCalledTimes(1);
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims.at(-1)?.status).toBe("confirmed");
+});

@@ -1153,6 +1153,7 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
       evidenceScope: {
         directory,
         accountId: "paper-account",
+        artifactRecallOptions: { config: {}, agentId: "main", workspaceDir: knowledgeWorkspace },
         instruments: ["SPY"],
         financialCapabilities: [
           expect.objectContaining({
@@ -1179,6 +1180,7 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
       evidenceScope: {
         directory,
         accountId: "paper-account",
+        artifactRecallOptions: { config: {}, agentId: "main", workspaceDir: knowledgeWorkspace },
         instruments: ["SPY"],
         financialCapabilities: [
           expect.objectContaining({

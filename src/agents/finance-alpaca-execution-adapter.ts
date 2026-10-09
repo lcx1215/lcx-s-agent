@@ -407,6 +407,119 @@ export async function restoreAlpacaPaperProtection(options: {
   }
 }
 
+/** Called by the original pending resolver while it owns the shared account lock.
+ * A missing/nonterminal sell never authorizes restoration or a repeated sell. */
+export async function recoverAlpacaPaperProtectedReduction(options: {
+  accountId: string;
+  intent: FinanceExecutionIntent;
+  positionQuantity: number;
+  protection: NonNullable<FinanceExecutionSafetyFacts["protectiveOrders"]>[number];
+  credentials: { keyId: string; secret: string };
+  read: FinanceUncachedFetch;
+  signal: AbortSignal;
+  postJson: NonNullable<AlpacaExecutionAdapterOptions["postJson"]>;
+}): Promise<FinanceExecutionFill | undefined> {
+  const { intent, protection, positionQuantity, signal, read } = options;
+  if (
+    intent.side !== "sell" ||
+    !Number.isFinite(positionQuantity) ||
+    positionQuantity <= 0 ||
+    protection.quantity !== positionQuantity ||
+    intent.quantity > positionQuantity
+  ) {
+    throw new Error("invalid protected reduction recovery binding");
+  }
+  const fill = await readAlpacaPaperTerminalOrder(options);
+  if (!fill) {
+    return undefined;
+  }
+  const headers = {
+    "APCA-API-KEY-ID": options.credentials.keyId,
+    "APCA-API-SECRET-KEY": options.credentials.secret,
+    "content-type": "application/json",
+  };
+  const get = (pathname: string) =>
+    bounded(() => read(`${PAPER_HOST}${pathname}`, { headers, signal }), signal);
+  const prior = await get(`/v2/orders/${encodeURIComponent(protection.id)}`);
+  if (prior.status !== 200) {
+    throw new Error("original protection recovery read unavailable");
+  }
+  const old = JSON.parse(prior.body) as Record<string, unknown>;
+  const orderType = protection.orderType ?? "stop";
+  if (
+    old.id !== protection.id ||
+    old.symbol !== intent.instrument ||
+    old.side !== "sell" ||
+    old.type !== orderType ||
+    old.time_in_force !== "gtc" ||
+    old.status !== "canceled" ||
+    asFiniteNumber(old.qty) !== protection.quantity ||
+    asFiniteNumber(old.filled_qty) !== 0 ||
+    asFiniteNumber(old.stop_price) !== protection.stopPrice ||
+    (orderType === "stop_limit"
+      ? asFiniteNumber(old.limit_price) !== protection.limitPrice
+      : old.limit_price !== undefined && old.limit_price !== null)
+  ) {
+    throw new Error("original protection recovery identity or terminal state mismatch");
+  }
+  const remaining = positionQuantity - fill.filledQuantity;
+  const verifyPosition = async () => {
+    const response = await get(`/v2/positions/${encodeURIComponent(intent.instrument)}`);
+    if (response.status === 404 && remaining === 0) {
+      return;
+    }
+    if (response.status !== 200) {
+      throw new Error("protected recovery position unavailable");
+    }
+    const position = JSON.parse(response.body) as Record<string, unknown>;
+    if (
+      position.symbol !== intent.instrument ||
+      position.side !== "long" ||
+      asFiniteNumber(position.qty) !== remaining
+    ) {
+      throw new Error("protected recovery position changed");
+    }
+  };
+  await verifyPosition();
+  const response = await get(
+    `/v2/orders?status=open&symbols=${encodeURIComponent(intent.instrument)}&limit=100&nested=true`,
+  );
+  if (response.status !== 200) {
+    throw new Error("protected recovery open orders unavailable");
+  }
+  const open: unknown = JSON.parse(response.body);
+  const clientId = `${clientOrderIdentity("paper", intent)}-protect`;
+  if (
+    !Array.isArray(open) ||
+    open.length > 1 ||
+    open.some(
+      (order: Record<string, unknown>) =>
+        remaining === 0 ||
+        !order ||
+        typeof order !== "object" ||
+        order.client_order_id !== clientId ||
+        order.symbol !== intent.instrument,
+    )
+  ) {
+    throw new Error("protected recovery has competing open orders");
+  }
+  if (remaining > 0) {
+    await restoreAlpacaPaperProtection({
+      intent,
+      quantity: remaining,
+      stopPrice: protection.stopPrice,
+      orderType,
+      ...(protection.limitPrice === undefined ? {} : { limitPrice: protection.limitPrice }),
+      headers,
+      signal,
+      read,
+      postJson: options.postJson,
+    });
+    await verifyPosition();
+  }
+  return fill;
+}
+
 export function createAlpacaExecutionAdapter(
   options: AlpacaExecutionAdapterOptions,
 ): FinanceExecutionAdapter {

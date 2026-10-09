@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { readAlpacaPaperTerminalOrder } from "./finance-alpaca-execution-adapter.js";
+import {
+  readAlpacaPaperTerminalOrder,
+  recoverAlpacaPaperProtectedReduction,
+} from "./finance-alpaca-execution-adapter.js";
 import {
   readAlpacaPaperSafetyQuote,
   AlpacaSafetyQuoteReadError,
@@ -27,6 +30,7 @@ import {
 import {
   createFinanceUncachedFetch,
   type FinanceUncachedFetch,
+  type FinanceWriteTransport,
 } from "./finance-write-transport.js";
 
 /** Local controller configuration, never accepted from a strategy or model response. */
@@ -98,6 +102,9 @@ export function createFinanceAlpacaCycleController(options: {
   allowCrypto?: boolean;
   /** Trusted maintenance opt-in: resolve unknown execution before minting a short quote lease. */
   recoverPendingBeforeQuote?: boolean;
+  /** Explicit original-owner capability to restore protection after a verified terminal sell.
+   * Omission leaves protected unknown claims blocked without any write. */
+  protectedReductionRecoveryTransport?: FinanceWriteTransport;
   /** Controller-only additional ownership guard, called inside the shared dispatch lock. */
   validateFacts?: (facts: FinanceExecutionSafetyFacts, signal: AbortSignal) => Promise<void>;
   read?: FinanceUncachedFetch;
@@ -275,8 +282,8 @@ export function createFinanceAlpacaCycleController(options: {
               return undefined;
             }
             const { intent, protectiveOrders, positionQuantity } = binding;
-            // A sell that consumed reserved protection also needs the existing
-            // protection-recovery owner. A terminal fill alone cannot complete it.
+            // A sell that consumed reserved protection cannot become confirmed
+            // until the original canceled stop and the remainder are verified.
             if (
               intent.side === "sell" &&
               protectiveOrders?.length &&
@@ -285,7 +292,33 @@ export function createFinanceAlpacaCycleController(options: {
                   positionQuantity -
                     protectiveOrders.reduce((sum, order) => sum + order.quantity, 0))
             ) {
-              return undefined;
+              if (
+                !options.protectedReductionRecoveryTransport ||
+                protectiveOrders.length !== 1 ||
+                positionQuantity === undefined ||
+                !instruments.has(intent.instrument)
+              ) {
+                return undefined;
+              }
+              const remainingAuthorityMs = Date.parse(operationExpiresAt()) - Date.now();
+              if (!Number.isFinite(remainingAuthorityMs) || remainingAuthorityMs <= 0) {
+                throw new Error("protected recovery policy expired");
+              }
+              const signal = AbortSignal.any([
+                recoverySignal,
+                AbortSignal.timeout(Math.min(remainingAuthorityMs, 2_147_483_647)),
+              ]);
+              return recoverAlpacaPaperProtectedReduction({
+                accountId: policy.accountId,
+                intent,
+                positionQuantity,
+                protection: protectiveOrders[0],
+                credentials,
+                read,
+                signal,
+                postJson: (url, init) =>
+                  options.protectedReductionRecoveryTransport!({ url, ...init }),
+              });
             }
             return readAlpacaPaperTerminalOrder({
               accountId: policy.accountId,

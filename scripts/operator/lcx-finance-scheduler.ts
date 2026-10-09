@@ -117,6 +117,7 @@ import {
 } from "../../src/agents/finance-trade-review-evidence.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
 import { FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME } from "../../src/agents/finance-universe-selection.js";
+import { createFinanceWriteTransport } from "../../src/agents/finance-write-transport.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
 import { loadConfig } from "../../src/config/config.js";
 import { applyConfigEnvVars } from "../../src/config/env-vars.js";
@@ -2063,6 +2064,13 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
         try {
           exitController = createFinanceAlpacaCycleController({
             directory: context.root.directory,
+            ...(args.includes("--place")
+              ? {
+                  protectedReductionRecoveryTransport: createFinanceWriteTransport({
+                    directory: context.root.directory,
+                  }),
+                }
+              : {}),
             policy,
             instruments: [target.instrument],
             feed: target.contract.feed,
@@ -2249,6 +2257,7 @@ function createIntradayControllerForOptions(directory: string, options: Schedule
   const args = options.extraArgs;
   return createFinanceAlpacaCycleController({
     directory,
+    protectedReductionRecoveryTransport: createFinanceWriteTransport({ directory }),
     instruments: options.intraday.executionInstruments,
     feed: args[args.indexOf("--execution-quote-feed") + 1] as "iex" | "sip",
     maxAgeMs: numericExtra(args, "--execution-max-age-ms"),

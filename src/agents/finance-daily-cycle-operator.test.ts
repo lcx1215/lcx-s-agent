@@ -782,6 +782,7 @@ it("installs the account controller from the explicit execution policy at the da
         directory: "/synthetic/finance",
         instruments: ["MSFT", "NVDA"],
         policy: { synthetic: true },
+        protectedReductionRecoveryTransport: expect.any(Function),
       }),
     );
     expect(mocks.cycle).toHaveBeenCalledWith(
@@ -847,6 +848,9 @@ it("checks reconciliation without collecting quotes or entering the trading cycl
       ordersSubmitted: 0,
     });
     expect(inspectReconciliation).toHaveBeenCalledOnce();
+    expect(createController).toHaveBeenCalledWith(
+      expect.not.objectContaining({ protectedReductionRecoveryTransport: expect.any(Function) }),
+    );
     expect(executionQuoteProvider).not.toHaveBeenCalled();
     expect(mocks.cycle).not.toHaveBeenCalled();
     await expect(

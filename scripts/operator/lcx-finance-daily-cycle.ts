@@ -63,6 +63,7 @@ import {
   createFinanceTradeReviewFinancialCapabilities,
   type FinanceTradeReviewEvidenceScope,
 } from "../../src/agents/finance-trade-review-evidence.js";
+import { createFinanceWriteTransport } from "../../src/agents/finance-write-transport.js";
 import { loadConfig } from "../../src/config/config.js";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 
@@ -710,6 +711,11 @@ export async function runFinanceDailyCycleOperator(
                 .createFinanceAlpacaCycleController
             )({
               directory,
+              ...(options.place && !options.checkExecution
+                ? {
+                    protectedReductionRecoveryTransport: createFinanceWriteTransport({ directory }),
+                  }
+                : {}),
               instruments,
               feed: options.executionQuoteFeed!,
               maxAgeMs: options.executionMaxAgeMs!,
