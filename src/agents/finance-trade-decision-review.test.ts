@@ -65,6 +65,37 @@ const request: FinanceTradeDecisionReviewRequest = {
   ],
 };
 
+it.each([
+  { financial: false, artifacts: false },
+  { financial: true, artifacts: false },
+  { financial: false, artifacts: true },
+  { financial: true, artifacts: true },
+])("loads optional evidence instructions only for exposed capabilities: %j", (availability) => {
+  let buildPrompt: ((payload: unknown) => string) | undefined;
+  createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: (_cfg, options) => {
+        buildPrompt = options?.buildPrompt;
+        return adapter(null);
+      },
+    },
+  );
+  const prompt = buildPrompt!({
+    ...request,
+    evidenceToolsAvailable: true,
+    ...(availability.financial
+      ? { evidenceFinancialCapabilities: [{ toolName: "retained_method", moduleIds: ["credit"] }] }
+      : {}),
+    ...(availability.artifacts ? { evidenceArtifactRecallAvailable: true } : {}),
+  });
+  expect(prompt.includes('action:"financial_capability"')).toBe(availability.financial);
+  expect(prompt.includes('action:"artifact_search"')).toBe(availability.artifacts);
+  expect(prompt).toContain("Built-in mathematical actions");
+  expect(prompt).toContain("Never add candidates or change instrument");
+  expect(prompt).toContain("execution authority");
+});
+
 const intradayRequest: FinanceIntradayTradeDecisionReviewRequest = {
   schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
   venue: "alpaca:paper",
