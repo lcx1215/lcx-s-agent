@@ -490,3 +490,73 @@ it("distinguishes partial coverage and excludes invalid stops from coverage", ()
     uncoveredQuantity: null,
   });
 });
+
+it.each([
+  "verify_cancellation",
+  "verify_position",
+  "verify_remaining_position",
+  "restore_protection",
+] as const)(
+  "retains bounded observations when protected reduction fails at %s",
+  async (failedStage) => {
+    const { executeFinanceProtectedReduction, FinanceProtectedReductionError } =
+      await import("./finance-protection-coordination.js");
+    let canceled = false,
+      positionReads = 0;
+    const execute = vi.fn(async () => ({ filledQuantity: 1 }));
+    const restore = vi.fn(async () => {
+      if (failedStage === "restore_protection") {
+        throw new Error("private transport detail");
+      }
+    });
+    const pending = executeFinanceProtectedReduction({
+      instrument: "SPY",
+      positionQuantity: 2,
+      sellQuantity: 1,
+      protection: { id: "stop", quantity: 2, stopPrice: 90 },
+      signal: AbortSignal.timeout(1000),
+      readStop: async () => {
+        if (canceled && failedStage === "verify_cancellation") {
+          throw new Error("private transport detail");
+        }
+        return {
+          id: "stop",
+          instrument: "SPY",
+          quantity: 2,
+          filledQuantity: 0,
+          stopPrice: 90,
+          status: canceled ? "canceled" : "new",
+        };
+      },
+      cancelStop: async () => {
+        canceled = true;
+      },
+      readPosition: async () => {
+        positionReads++;
+        if (
+          (positionReads === 1 && failedStage === "verify_position") ||
+          (positionReads === 2 && failedStage === "verify_remaining_position")
+        ) {
+          throw new Error("private transport detail");
+        }
+        return positionReads === 1 ? 2 : 1;
+      },
+      execute,
+      restoreProtection: restore,
+    });
+    await expect(pending).rejects.toBeInstanceOf(FinanceProtectedReductionError);
+    const entered =
+      failedStage === "verify_remaining_position" || failedStage === "restore_protection";
+    await expect(pending).rejects.toMatchObject({
+      diagnostic: {
+        stage: failedStage,
+        cancellationConfirmed: failedStage !== "verify_cancellation",
+        sellExecutionEntered: entered,
+        protectionRestored: false,
+        ...(entered ? { filledQuantity: 1 } : {}),
+      },
+    });
+    expect(execute).toHaveBeenCalledTimes(entered ? 1 : 0);
+    expect(restore).toHaveBeenCalledTimes(failedStage === "restore_protection" ? 1 : 0);
+  },
+);

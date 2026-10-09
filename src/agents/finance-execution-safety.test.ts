@@ -1584,3 +1584,52 @@ it.each([
     ).toBe(issue);
   },
 );
+
+it("persists protected reduction observations without retiring uncertainty or copying raw errors", async () => {
+  const { FinanceProtectedReductionError } = await import("./finance-protection-coordination.js");
+  const f = await fixture();
+  const diagnostic = {
+    stage: "verify_position" as const,
+    cancellationConfirmed: true,
+    sellExecutionEntered: false,
+    protectionRestored: false,
+  };
+  const execute = vi.fn(async () => {
+    throw new FinanceProtectedReductionError(
+      "private transport detail",
+      new Error("private credential detail"),
+      diagnostic,
+    );
+  });
+  const failing = { ...f.adapter, execute };
+  await expect(
+    placeFinanceOrder({
+      ...f.request,
+      adapters: [failing],
+      safetyContext: createFinanceExecutionSafetyContext(f.input),
+    }),
+  ).rejects.toMatchObject({
+    attempt: {
+      phase: "execute",
+      disposition: "outcome_unresolved",
+      protectedReduction: diagnostic,
+    },
+  });
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.input.stateDir,
+    accountId: f.input.accountId,
+    venue: f.input.venue,
+  });
+  expect(claims.at(-1)).toMatchObject({
+    status: "unknown",
+    failure: { protectedReduction: diagnostic },
+  });
+  expect(JSON.stringify(claims)).not.toContain("private");
+  const retried = await placeFinanceOrder({
+    ...f.request,
+    adapters: [failing],
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  });
+  expect(retried.status).toBe("refused");
+  expect(execute).toHaveBeenCalledTimes(1);
+});

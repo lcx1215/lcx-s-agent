@@ -23,6 +23,10 @@ import type {
   FinanceOrderSide,
   FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
+import {
+  FinanceProtectedReductionError,
+  type FinanceProtectedReductionDiagnostic,
+} from "./finance-protection-coordination.js";
 import { stableStringify } from "./stable-stringify.js";
 
 export const FINANCE_EXECUTION_SAFETY_FAILURE_STAGES = [
@@ -76,6 +80,7 @@ export type FinanceExecutionSafetyAttempt = Readonly<{
   phase: (typeof FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES)[number];
   disposition: (typeof FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS)[number];
   venueResponse?: Readonly<{ httpStatus?: number; brokerCode?: number }>;
+  protectedReduction?: FinanceProtectedReductionDiagnostic;
 }>;
 
 /** Typed adapter diagnostic. Only allowlisted numeric fields cross the persistence boundary. */
@@ -1025,7 +1030,7 @@ export async function withFinanceExecutionSafety(params: {
         });
         return { ok: true, fill, receipt };
       } catch (error) {
-        const attempt: FinanceExecutionSafetyAttempt =
+        const baseAttempt: FinanceExecutionSafetyAttempt =
           attemptPhase !== "receipt" && error instanceof FinanceExecutionSafetyDispatchError
             ? Object.freeze({
                 phase: error.executionStage === "pre_dispatch" ? "not_started" : "execute",
@@ -1048,6 +1053,10 @@ export async function withFinanceExecutionSafety(params: {
                 phase: attemptPhase,
                 disposition: attemptPhase === "not_started" ? "not_started" : "outcome_unresolved",
               });
+        const attempt: FinanceExecutionSafetyAttempt =
+          error instanceof FinanceProtectedReductionError
+            ? Object.freeze({ ...baseAttempt, protectedReduction: error.diagnostic })
+            : baseAttempt;
         failureStage =
           attempt.phase === "not_started"
             ? "reservation"

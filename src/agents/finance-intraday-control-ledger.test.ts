@@ -592,3 +592,35 @@ it.each([
     expect(recalled?.status).toBe("refused");
   },
 );
+
+it("reads back original protected reduction phase observations from the intraday outcome ledger", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-protection-diagnostic-"));
+  temporary.push(directory);
+  await appendFinanceIntradayDecision(directory, input);
+  const diagnostic = {
+    stage: "restore_protection" as const,
+    cancellationConfirmed: true,
+    sellExecutionEntered: true,
+    filledQuantity: 1,
+    protectionRestored: false,
+  };
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: input.signalId,
+    status: "uncertain",
+    reasons: ["execution_outcome_unresolved"],
+    executionSafetyFailure: {
+      stage: "execution",
+      category: "unexpected",
+      operation: "execute_order",
+      attempt: {
+        phase: "execute",
+        disposition: "outcome_unresolved",
+        protectedReduction: diagnostic,
+      },
+    },
+  });
+  expect(
+    (await readFinanceIntradayOutcome(directory, input.signalId))?.executionSafetyFailure?.attempt
+      ?.protectedReduction,
+  ).toEqual(diagnostic);
+});

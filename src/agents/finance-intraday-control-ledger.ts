@@ -18,6 +18,7 @@ import {
   FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES,
 } from "./finance-execution-safety.js";
 import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
+import { FINANCE_PROTECTED_REDUCTION_STAGES } from "./finance-protection-coordination.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
 import {
@@ -80,6 +81,16 @@ const FinanceIntradayExecutionSafetyFailureRecord = z
       .object({
         phase: z.enum(FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES),
         disposition: z.enum(FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS),
+        protectedReduction: z
+          .object({
+            stage: z.enum(FINANCE_PROTECTED_REDUCTION_STAGES),
+            cancellationConfirmed: z.boolean(),
+            sellExecutionEntered: z.boolean(),
+            filledQuantity: z.number().finite().nonnegative().optional(),
+            protectionRestored: z.boolean(),
+          })
+          .strict()
+          .optional(),
         venueResponse: z
           .object({
             httpStatus: z.number().int().min(100).max(599).optional(),

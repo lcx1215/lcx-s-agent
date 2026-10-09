@@ -157,6 +157,54 @@ export function planFinanceProtectedReduction(input: {
   };
 }
 
+export const FINANCE_PROTECTED_REDUCTION_STAGES = [
+  "read_protection",
+  "cancel_protection",
+  "verify_cancellation",
+  "verify_position",
+  "execute_sell",
+  "validate_fill",
+  "verify_rejected_position",
+  "verify_remaining_position",
+  "restore_protection",
+] as const;
+export type FinanceProtectedReductionDiagnostic = Readonly<{
+  stage: (typeof FINANCE_PROTECTED_REDUCTION_STAGES)[number];
+  cancellationConfirmed: boolean;
+  /** The sell callback was entered; this does not attest an HTTP submission. */
+  sellExecutionEntered: boolean;
+  filledQuantity?: number;
+  protectionRestored: boolean;
+}>;
+
+/** Bounded host observations only; raw errors remain transient causes. */
+export class FinanceProtectedReductionError extends Error {
+  readonly diagnostic: FinanceProtectedReductionDiagnostic;
+  constructor(message: string, cause: unknown, diagnostic: FinanceProtectedReductionDiagnostic) {
+    super(message, { cause });
+    if (
+      !FINANCE_PROTECTED_REDUCTION_STAGES.includes(diagnostic.stage) ||
+      typeof diagnostic.cancellationConfirmed !== "boolean" ||
+      typeof diagnostic.sellExecutionEntered !== "boolean" ||
+      typeof diagnostic.protectionRestored !== "boolean" ||
+      (diagnostic.filledQuantity !== undefined &&
+        (!Number.isFinite(diagnostic.filledQuantity) || diagnostic.filledQuantity < 0))
+    ) {
+      throw new Error("invalid protected reduction diagnostic");
+    }
+    this.name = "FinanceProtectedReductionError";
+    this.diagnostic = Object.freeze({
+      stage: diagnostic.stage,
+      cancellationConfirmed: diagnostic.cancellationConfirmed,
+      sellExecutionEntered: diagnostic.sellExecutionEntered,
+      ...(diagnostic.filledQuantity === undefined
+        ? {}
+        : { filledQuantity: diagnostic.filledQuantity }),
+      protectionRestored: diagnostic.protectionRestored,
+    });
+  }
+}
+
 /** Runs inside the shared execution account lock and after its durable claim.
  * One whole-position stop is supported; ambiguous/multi-stop books remain unresolved. */
 export async function executeFinanceProtectedReduction<
@@ -198,6 +246,36 @@ export async function executeFinanceProtectedReduction<
   if (protection.quantity !== options.positionQuantity) {
     throw new Error("protected reduction requires one whole-position stop");
   }
+  let stage: FinanceProtectedReductionDiagnostic["stage"] = "read_protection";
+  let cancellationConfirmed = false,
+    sellExecutionEntered = false,
+    protectionRestored = false;
+  let filledQuantity: number | undefined;
+  const failure = (message: string, cause?: unknown) =>
+    new FinanceProtectedReductionError(message, cause, {
+      stage,
+      cancellationConfirmed,
+      sellExecutionEntered,
+      filledQuantity,
+      protectionRestored,
+    });
+  const step = async <R>(
+    next: FinanceProtectedReductionDiagnostic["stage"],
+    work: () => Promise<R>,
+  ): Promise<R> => {
+    stage = next;
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof FinanceProtectedReductionError) {
+        throw error;
+      }
+      throw failure(
+        error instanceof Error ? error.message : "protected reduction operation failed",
+        error,
+      );
+    }
+  };
   const verify = (stop: Awaited<ReturnType<typeof options.readStop>>) => {
     if (
       stop.id !== protection.id ||
@@ -208,66 +286,84 @@ export async function executeFinanceProtectedReduction<
       stop.limitPrice !== protection.limitPrice ||
       stop.filledQuantity !== 0
     ) {
-      throw new Error("protection changed or filled during reduction");
+      throw failure("protection changed or filled during reduction");
     }
   };
-  signal.throwIfAborted();
-  const initial = await options.readStop();
+  const initial = await step("read_protection", async () => {
+    signal.throwIfAborted();
+    return options.readStop();
+  });
   verify(initial);
   if (initial.status !== "new") {
-    throw new Error("protective stop not ready for cancellation");
+    throw failure("protective stop not ready for cancellation");
   }
-  await options.cancelStop();
+  await step("cancel_protection", options.cancelStop);
   for (;;) {
-    signal.throwIfAborted();
-    const stop = await options.readStop();
+    const stop = await step("verify_cancellation", async () => {
+      signal.throwIfAborted();
+      return options.readStop();
+    });
     verify(stop);
     if (stop.status === "canceled") {
+      cancellationConfirmed = true;
       break;
     }
     if (!["new", "pending_cancel"].includes(stop.status)) {
-      throw new Error("protective cancellation unresolved");
+      throw failure("protective cancellation unresolved");
     }
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      };
-      const timer = setTimeout(() => {
-        signal.removeEventListener("abort", abort);
-        resolve();
-      }, 100);
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) {
-        abort();
-      }
-    });
+    await step(
+      "verify_cancellation",
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener("abort", abort);
+            resolve();
+          }, 100);
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) {
+            abort();
+          }
+        }),
+    );
   }
-  const before = await options.readPosition();
+  const before = await step("verify_position", options.readPosition);
   if (before !== options.positionQuantity) {
-    throw new Error("position changed during protective cancellation");
+    throw failure("position changed during protective cancellation");
   }
   let result: T;
   try {
+    stage = "execute_sell";
     signal.throwIfAborted();
+    sellExecutionEntered = true;
     result = await options.execute();
   } catch (error) {
     if (options.isDefinitelyRejected?.(error)) {
-      signal.throwIfAborted();
-      if ((await options.readPosition()) !== before) {
-        throw new Error("rejected sell position changed", { cause: error });
+      const rejectedPosition = await step("verify_rejected_position", async () => {
+        signal.throwIfAborted();
+        return options.readPosition();
+      });
+      if (rejectedPosition !== before) {
+        throw failure("rejected sell position changed", error);
       }
-      await options.restoreProtection(
-        before,
-        protection.stopPrice,
-        protectionType,
-        protection.limitPrice,
+      await step("restore_protection", () =>
+        options.restoreProtection(
+          before,
+          protection.stopPrice,
+          protectionType,
+          protection.limitPrice,
+        ),
       );
+      protectionRestored = true;
       throw error;
     }
     // The sell may have filled. Re-arming the old quantity would risk a short position.
-    throw new Error("protected reduction outcome requires reconciliation", { cause: error });
+    throw failure("protected reduction outcome requires reconciliation", error);
   }
+  stage = "validate_fill";
   const remaining = before - result.filledQuantity;
   if (
     !Number.isFinite(remaining) ||
@@ -275,19 +371,23 @@ export async function executeFinanceProtectedReduction<
     result.filledQuantity < 0 ||
     result.filledQuantity > options.sellQuantity
   ) {
-    throw new Error("invalid protected reduction fill");
+    throw failure("invalid protected reduction fill");
   }
-  if ((await options.readPosition()) !== remaining) {
-    throw new Error("post-reduction position requires reconciliation");
+  filledQuantity = result.filledQuantity;
+  if ((await step("verify_remaining_position", options.readPosition)) !== remaining) {
+    throw failure("post-reduction position requires reconciliation");
   }
   if (remaining > 0) {
-    signal.throwIfAborted();
-    await options.restoreProtection(
-      remaining,
-      protection.stopPrice,
-      protectionType,
-      protection.limitPrice,
-    );
+    await step("restore_protection", async () => {
+      signal.throwIfAborted();
+      await options.restoreProtection(
+        remaining,
+        protection.stopPrice,
+        protectionType,
+        protection.limitPrice,
+      );
+    });
+    protectionRestored = true;
   }
   return result;
 }
