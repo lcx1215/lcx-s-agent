@@ -1254,6 +1254,24 @@ function projectFinanceBudgetFacts(
       continue;
     }
     const projected = pick(original, keys, `${section}.`);
+    if (section === "intradayExecution" && Array.isArray(original.topReasons)) {
+      projected.topReasons = original.topReasons
+        .filter(
+          (row) =>
+            isPlainRecord(row) &&
+            typeof row.reason === "string" &&
+            jsonBytes(row.reason) <= 240 &&
+            typeof row.count === "number" &&
+            Number.isSafeInteger(row.count) &&
+            row.count >= 0,
+        )
+        .slice(0, 2)
+        .map((row) => pick(row, ["reason", "count"], "intradayExecution.topReasons."));
+      omitted.delete("intradayExecution.topReasons");
+      if (original.topReasons.length > (projected.topReasons as unknown[]).length) {
+        omitted.add("intradayExecution.topReasons.omitted_reasons");
+      }
+    }
     if (Array.isArray(original.accounts)) {
       const accountKeys =
         section === "positionManagement"

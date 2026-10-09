@@ -191,6 +191,9 @@ it("projects critical source-timed finance facts after backlog pressure without 
       placed: 2,
       uncertain: 1,
       missingOutcome: 1,
+      topReasons: [
+        { reason: "account_execution_safety_claim_pending_before_model_review", count: 40 },
+      ],
     },
     positionManagement: {
       status: "present",
@@ -248,7 +251,11 @@ it("projects critical source-timed finance facts after backlog pressure without 
         accountWork: finance.scheduler.runtime.accountWork,
       },
     },
-    intradayExecution: { uncertain: 1, missingOutcome: 1 },
+    intradayExecution: {
+      uncertain: 1,
+      missingOutcome: 1,
+      topReasons: finance.intradayExecution.topReasons,
+    },
     positionManagement: {
       accounts: [
         {
@@ -315,6 +322,41 @@ it("names omitted detail and keeps missing economics unknown rather than inventi
   });
   expect(JSON.stringify(bounded.perception)).not.toContain("netMatchedPnl");
   expect(bounded.report.overBudget).toBe(false);
+});
+it("bounds refusal explanations and reports malformed or oversized omitted reasons", () => {
+  const source = {
+    intradayExecution: {
+      status: "present",
+      topReasons: [
+        { reason: "x".repeat(500), count: 1 },
+        { reason: "invalid", count: -1 },
+        { reason: "observed_first", count: 4 },
+        { reason: "observed_second", count: 3 },
+        { reason: "observed_third", count: 2 },
+      ],
+    },
+    history: "x".repeat(8000),
+  };
+  const bounded = boundPerception({
+    observedAt: "now",
+    ownerTotals: {},
+    boundaries: [],
+    backlog: [{ note: "x".repeat(5500) }],
+    controlRoom: { financeAutomaticLifecycle: source },
+  });
+  expect(bounded.perception.controlRoom.financeAutomaticLifecycle).toMatchObject({
+    intradayExecution: {
+      topReasons: [
+        { reason: "observed_first", count: 4 },
+        { reason: "observed_second", count: 3 },
+      ],
+    },
+    budgetProjection: {
+      omittedFields: expect.arrayContaining(["intradayExecution.topReasons.omitted_reasons"]),
+    },
+  });
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
+  expect(source.intradayExecution.topReasons).toHaveLength(5);
 });
 
 it("keeps source-timed actionable finance gaps when less than 600 bytes remain", () => {
