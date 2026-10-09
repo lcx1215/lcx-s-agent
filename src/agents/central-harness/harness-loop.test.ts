@@ -49,6 +49,87 @@ function registry(execute: CentralToolSpec["execute"]) {
 }
 afterEach(() => vi.useRealTimers());
 
+it.each([null, -12.5])(
+  "carries account-scoped economics and cost gaps into the next decision (pnl=%s)",
+  async (pnl) => {
+    const economics = {
+      accountId: "fixture-paper-account",
+      venue: "alpaca:paper",
+      baselineSource: "sealed_broker_history",
+      diagnostic: {
+        status: pnl === null ? "incomplete_cost_coverage" : "realized_trade_pnl_after_fees",
+        pnlBasis: "broker_fills_after_supported_fees_only",
+        historyStatus: "reconciled",
+        feeCoverageComplete: pnl !== null,
+        realizedTradePnlAfterFees: pnl,
+        netProfitability: "not_proven",
+        executionThresholdPromotionEligible: false,
+        blockers: [
+          "this projection does not include current open-position marks or full account equity",
+          "dividends, other corporate actions, borrow, financing, and an aligned benchmark are not included",
+        ],
+      },
+    };
+    const spec: CentralToolSpec = {
+      ownerId: "finance_position_ledger_read",
+      name: "finance_position_ledger_read",
+      label: "fixture",
+      description: "fixture",
+      boundary: [],
+      allowedSideEffects: [],
+      approve: () => ({ ok: true }),
+      execute: async () => ({
+        schemaVersion: "lcx_finance_position_ledger_read_v2",
+        status: "ready",
+        ledgerDirectory: "fixture://host-owned-ledger",
+        databasePath: "fixture://host-owned-database",
+        positions: Array.from({ length: 100 }, () => ({ instrument: "FIXTURE", quantity: 1 })),
+        headRef: "a".repeat(64),
+        brokerTradeEconomics: economics,
+      }),
+    };
+    const options = {
+      perception,
+      registry: new Map([[spec.ownerId, spec]]),
+      brain: {
+        propose: async () => ({
+          kind: "proposed" as const,
+          provider: "fixture",
+          modelId: "fixture",
+          plan: {
+            actions: [{ ownerId: spec.ownerId, args: { brokerAccountId: economics.accountId } }],
+            note: "read recorded account economics",
+          },
+        }),
+      },
+    };
+    const first = await runCentralHarnessCycle(options);
+    expect(first.steps[0].outcome?.brokerTradeEconomics).toEqual(economics);
+    expect(first.steps[0].outcomeDroppedKeys).toContain("positions");
+    expect(Buffer.byteLength(JSON.stringify(first.steps[0].outcome))).toBeLessThanOrEqual(4096);
+    const backlog = compactReceipts([first], 10);
+    expect(backlog[0].outcomes[0].outcome?.brokerTradeEconomics).toEqual(economics);
+    expect(backlog[0].outcomes[0].args).toEqual({ brokerAccountId: economics.accountId });
+    expect(boundPerception({ ...perception, backlog }).report.overBudget).toBe(false);
+    const next = await runCentralHarnessCycle({
+      ...options,
+      perception: { ...perception, backlog },
+      brain: {
+        propose: async (seen: CentralPerception) => {
+          expect(seen.backlog).toEqual(backlog);
+          return {
+            kind: "proposed",
+            provider: "fixture",
+            modelId: "fixture",
+            plan: { actions: [], note: "cost and account-return limits remain unresolved" },
+          };
+        },
+      },
+    });
+    expect(next.steps).toHaveLength(0);
+  },
+);
+
 it("names oversized bar-source comparisons instead of exceeding the existing read-page budget", async () => {
   const sourceSelection = {
     allSourcesDivergentDates: Array.from({ length: 500 }, (_, i) => `WBD@${i}`),

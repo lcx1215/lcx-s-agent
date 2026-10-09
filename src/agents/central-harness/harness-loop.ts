@@ -381,7 +381,8 @@ async function runCycle(
               typeof step.args.textOffset === "number" ||
               typeof step.args.textLimit === "number")) ||
           (step.ownerId === "finance_position_ledger_read" &&
-            ["receipt", "order", "fill", "fee"].includes(String(step.args.historyKind)))
+            (["receipt", "order", "fill", "fee"].includes(String(step.args.historyKind)) ||
+              typeof step.args.brokerAccountId === "string"))
             ? CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES
             : CENTRAL_STEP_OUTCOME_BUDGET_BYTES;
         const boundedOutcome = boundObjectSection(
@@ -709,7 +710,10 @@ export function compactReceipts(
   // pressure must not treat later no-op cycles as consumption of a tool result.
   const isLargeReadPage = (step: CentralStep): boolean =>
     step.ownerId === "finance_bar_ledger" ||
-    (step.ownerId === "finance_position_ledger_read" && isPlainRecord(step.outcome?.history));
+    (step.ownerId === "finance_position_ledger_read" &&
+      (isPlainRecord(step.outcome?.history) ||
+        (isPlainRecord(step.outcome?.brokerTradeEconomics) &&
+          isPlainRecord(step.outcome.brokerTradeEconomics.diagnostic))));
   const argumentIdentity = (step: CentralStep) =>
     JSON.stringify([step.ownerId, canonicalContinuationValue(step.args)]);
   const latestAttempts = new Map<string, CentralStep>();
@@ -800,7 +804,9 @@ export function compactReceipts(
       outcome.outcome &&
       (outcome.ownerId === "finance_bar_ledger" ||
         (outcome.ownerId === "finance_position_ledger_read" &&
-          isPlainRecord(outcome.outcome.history))),
+          (isPlainRecord(outcome.outcome.history) ||
+            (isPlainRecord(outcome.outcome.brokerTradeEconomics) &&
+              isPlainRecord(outcome.outcome.brokerTradeEconomics.diagnostic))))),
     );
   const carriesFocusPage = (entry: CompactBacklogEntry): boolean =>
     entry.outcomes.some(isFocusPage);
@@ -969,6 +975,27 @@ function compactCentralStepOutcome(
       history: source.history,
       ...(source.historyDroppedKeys ? { historyDroppedKeys: source.historyDroppedKeys } : {}),
     };
+  }
+  if (
+    ownerId === "finance_position_ledger_read" &&
+    source.schemaVersion === "lcx_finance_position_ledger_read_v2" &&
+    isPlainRecord(source.brokerTradeEconomics) &&
+    isPlainRecord(source.brokerTradeEconomics.diagnostic)
+  ) {
+    // A scoped account read needs its full cost caveats before host paths and
+    // the separate all-receipts position view. Retain named omissions as usual.
+    const priorityKeys = [
+      "schemaVersion",
+      "status",
+      "asOf",
+      "asOfCaveat",
+      "brokerTradeEconomics",
+      "headRef",
+    ];
+    return Object.fromEntries([
+      ...priorityKeys.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]),
+      ...Object.entries(source).filter(([key]) => !priorityKeys.includes(key)),
+    ]);
   }
   if (
     ownerId !== "finance_strategy_rule_ledger_read" ||
