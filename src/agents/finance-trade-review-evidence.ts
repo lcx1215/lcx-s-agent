@@ -22,6 +22,23 @@ import { createQuantMathTool } from "./tools/quant-math-tool.js";
 export const FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS = 4;
 export const FINANCE_TRADE_REVIEW_INITIAL_MODEL_CALLS = 3;
 export const FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS = 4;
+// The reviewer and durable execution receipts share this failure contract.
+export const FinanceTradeReviewFailureCodeSchema = z.enum([
+  "output_contract",
+  "reviewer_unavailable",
+  "prompt_input_invalid",
+  "prompt_budget_exceeded",
+  "output_invalid",
+  "output_truncated",
+  "provider_auth",
+  "provider_payment_required",
+  "provider_rate_limit",
+  "process_error",
+  "output_limit",
+  "runtime_timeout",
+  "call_budget_exhausted",
+]);
+export type FinanceTradeReviewFailureCode = z.infer<typeof FinanceTradeReviewFailureCodeSchema>;
 const Text = z.string().min(1).max(120);
 const MathEvidenceRequestSchema = z
   .object({

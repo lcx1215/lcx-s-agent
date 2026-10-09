@@ -23,6 +23,7 @@ import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-co
 import {
   FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS,
   FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS,
+  FinanceTradeReviewFailureCodeSchema,
   FinanceTradeReviewModelCallEvidenceSchema,
   FinanceTradeReviewToolEvidenceSchema,
 } from "./finance-trade-review-evidence.js";
@@ -211,20 +212,6 @@ const RecordSchema = z
   .strict();
 export type FinanceIntradayDecisionRecord = z.infer<typeof RecordSchema> & { ref: string };
 
-const ReviewFailureCode = z.enum([
-  "output_contract",
-  "reviewer_unavailable",
-  "output_invalid",
-  "output_truncated",
-  "provider_auth",
-  "provider_payment_required",
-  "provider_rate_limit",
-  "process_error",
-  "output_limit",
-  "runtime_timeout",
-  "call_budget_exhausted",
-]);
-
 const IntradayReviewCandidateSchema = z
   .object({
     candidateId: Text,
@@ -353,7 +340,7 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
       .max(FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS)
       .optional(),
     decision: IntradayReviewDecisionSchema.optional(),
-    failureCode: ReviewFailureCode.optional(),
+    failureCode: FinanceTradeReviewFailureCodeSchema.optional(),
   })
   .strict()
   .superRefine((receipt, context) => {

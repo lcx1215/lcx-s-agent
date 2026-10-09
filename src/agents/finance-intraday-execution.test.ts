@@ -55,6 +55,7 @@ import {
   type FinanceTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewer,
 } from "./finance-trade-decision-review.js";
+import { FinanceTradeReviewFailureCodeSchema } from "./finance-trade-review-evidence.js";
 
 const readerMocks = vi.hoisted(() => ({ readUniverse: vi.fn() }));
 vi.mock("./finance-research-runner.js", async (importOriginal) => {
@@ -2152,8 +2153,7 @@ describe("intraday decision execution bridge", () => {
 
   it.each([
     "unavailable",
-    "output_truncated",
-    "provider_payment_required",
+    ...FinanceTradeReviewFailureCodeSchema.options,
     "veto",
     "invalid",
     "uncertain_execution",
@@ -2163,6 +2163,8 @@ describe("intraday decision execution bridge", () => {
   ] as const)(
     "keeps review failure advisory but preserves valid veto and contract gates (%s)",
     async (reviewMode) => {
+      const parsedFailure = FinanceTradeReviewFailureCodeSchema.safeParse(reviewMode);
+      const failureCode = parsedFailure.success ? parsedFailure.data : undefined;
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-review-gate-"));
       temporary.push(directory);
       const strategyBinding = await activeRuleBinding(directory);
@@ -2223,7 +2225,7 @@ describe("intraday decision execution bridge", () => {
                 },
               ],
             })
-          : reviewMode === "output_truncated" || reviewMode === "provider_payment_required"
+          : failureCode !== undefined
             ? async () => ({
                 status: "failed",
                 attempted: true,
@@ -2232,7 +2234,7 @@ describe("intraday decision execution bridge", () => {
                 latencyMs: 3,
                 providerCallObserved: true,
                 adapterAttested: true,
-                failureCode: reviewMode,
+                failureCode,
               })
             : reviewMode === "invalid"
               ? ((async () => ({
@@ -2322,10 +2324,7 @@ describe("intraday decision execution bridge", () => {
       expect(result).toMatchObject({
         status: uncertainMode ? "uncertain" : "refused",
       });
-      const reviewFailed =
-        reviewMode === "unavailable" ||
-        reviewMode === "output_truncated" ||
-        reviewMode === "provider_payment_required";
+      const reviewFailed = reviewMode === "unavailable" || failureCode !== undefined;
       expect(runOrder).toHaveBeenCalledTimes(reviewFailed || attemptMode ? 1 : 0);
       const outcome = await readFinanceIntradayOutcome(directory, signalId);
       expect(outcome).toMatchObject({
@@ -2333,8 +2332,8 @@ describe("intraday decision execution bridge", () => {
         tradeDecisionReview:
           reviewMode === "unavailable"
             ? { status: "failed", failureCode: "reviewer_unavailable" }
-            : reviewMode === "output_truncated" || reviewMode === "provider_payment_required"
-              ? { status: "failed", failureCode: reviewMode }
+            : failureCode !== undefined
+              ? { status: "failed", failureCode }
               : reviewMode === "invalid"
                 ? { status: "failed", failureCode: "output_invalid" }
                 : {

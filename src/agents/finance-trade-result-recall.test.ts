@@ -305,9 +305,13 @@ it("reads exact useful fields when an unrelated payload exceeds the full-details
   expect(read.mock.calls.length).toBeLessThanOrEqual(11);
 });
 
-it.each([false, true])(
-  "keeps placed execution distinct from failed model review (narrow=%s)",
-  async (narrow) => {
+it.each(
+  ["provider_payment_required", "prompt_input_invalid", "prompt_budget_exceeded"].flatMap(
+    (failureCode) => [false, true].map((narrow) => ({ failureCode, narrow })),
+  ),
+)(
+  "keeps placed execution distinct from failed model review ($failureCode, narrow=$narrow)",
+  async ({ failureCode, narrow }) => {
     const padding = narrow ? "large unrelated data".repeat(4000) : undefined;
     await seed({
       padding,
@@ -315,7 +319,7 @@ it.each([false, true])(
       reasons: [],
       review: {
         status: "failed",
-        failureCode: "provider_payment_required",
+        failureCode,
         request: { asOf: oldTime },
       },
     });
@@ -325,7 +329,7 @@ it.each([false, true])(
       recordedResult: {
         outcome: "placed",
         reviewStatus: "failed",
-        reviewFailureCode: "provider_payment_required",
+        reviewFailureCode: failureCode,
       },
     });
     expect(result).not.toHaveProperty("recordedResult.reviewDecision");

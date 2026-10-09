@@ -18,6 +18,7 @@ import {
   FINANCE_TRADE_REVIEW_INITIAL_MODEL_CALLS,
   FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS,
   FinanceTradeReviewEvidenceRequestSchema,
+  FinanceTradeReviewFailureCodeSchema,
   FinanceTradeReviewModelCallEvidenceSchema,
   type FinanceTradeReviewModelCallEvidence,
   FinanceTradeReviewToolEvidenceSchema,
@@ -25,6 +26,7 @@ import {
   describeFinanceTradeReviewFinancialCapabilities,
   type FinanceTradeReviewEvidenceScope,
   type FinanceTradeReviewEvidenceRequest,
+  type FinanceTradeReviewFailureCode,
   type FinanceTradeReviewToolEvidence,
 } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-router.js";
@@ -157,20 +159,7 @@ export type FinanceTradeDecision = Readonly<{
   expectationGap?: FinanceExpectationGap;
 }>;
 
-export type FinanceTradeDecisionReviewFailureCode =
-  | "output_contract"
-  | "reviewer_unavailable"
-  | "prompt_input_invalid"
-  | "prompt_budget_exceeded"
-  | "output_invalid"
-  | "output_truncated"
-  | "provider_auth"
-  | "provider_payment_required"
-  | "provider_rate_limit"
-  | "process_error"
-  | "output_limit"
-  | "runtime_timeout"
-  | "call_budget_exhausted";
+export type FinanceTradeDecisionReviewFailureCode = FinanceTradeReviewFailureCode;
 
 export type FinanceTradeDecisionReviewResult = Readonly<{
   status: "completed" | "failed";
@@ -329,22 +318,10 @@ export function isValidFinanceTradeDecisionReviewResult(
     return false;
   }
   if (value.status === "failed") {
-    const failureCodes: readonly unknown[] = [
-      "output_contract",
-      "reviewer_unavailable",
-      "prompt_input_invalid",
-      "prompt_budget_exceeded",
-      "output_invalid",
-      "output_truncated",
-      "provider_auth",
-      "provider_payment_required",
-      "provider_rate_limit",
-      "process_error",
-      "output_limit",
-      "runtime_timeout",
-      "call_budget_exhausted",
-    ];
-    return failureCodes.includes(value.failureCode) && value.decisions === undefined;
+    return (
+      FinanceTradeReviewFailureCodeSchema.safeParse(value.failureCode).success &&
+      value.decisions === undefined
+    );
   }
   return (
     value.attempted &&
