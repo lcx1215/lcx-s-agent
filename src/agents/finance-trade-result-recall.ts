@@ -31,7 +31,7 @@ export function createFinanceTradeResultRecallCapability(options: {
     toolName: "finance_trade_result_recall",
     moduleIds: ["portfolio_risk_gates", "technical_timing", "finance_learning_memory"],
     description:
-      "Read a prior execution result for this account, Paper venue and instrument, preferring the same direction before review cutoff. Choose the newest native decision among at most four verified originals; capture time is not operation time. No current account facts, strategy edge, self-recall or new research.",
+      "Read a prior execution result for this account, Paper venue and instrument, preferring the same direction before review cutoff. Choose the newest native decision among at most four verified originals; capture time is not operation time. Partial reasons retain gaps; model review status is separate from execution. No current account facts, strategy edge, self-recall or new research.",
     execute: async ({ candidate, asOf, accountId, venue }, signal) => {
       signal.throwIfAborted();
       const cutoff = typeof asOf === "string" ? Date.parse(asOf) : NaN;
@@ -79,7 +79,7 @@ export function createFinanceTradeResultRecallCapability(options: {
         if (metadata?.owner !== OWNER || typeof metadata.id !== "string") {
           continue;
         }
-        const read = record(
+        let read = record(
           (
             await tool.execute(
               "trade-review-result-read",
@@ -89,6 +89,128 @@ export function createFinanceTradeResultRecallCapability(options: {
           ).details,
         );
         signal.throwIfAborted();
+        let reasonFragment: string | undefined;
+        if (
+          read?.available === false &&
+          read.gap === "artifact_field_budget_exceeded" &&
+          read.sourceAvailable === true &&
+          typeof read.sourceSha256 === "string" &&
+          hash.test(read.sourceSha256)
+        ) {
+          const original = read;
+          // Reuse exact fields through the original guarded reader. Never raise its
+          // budget, parse a whole-record preview or combine different source versions.
+          const field = async (pointer: string, optional = false, partial = false) => {
+            signal.throwIfAborted();
+            const selected = record(
+              (
+                await tool.execute(
+                  "trade-review-result-field",
+                  { action: "read", id: metadata.id, field: pointer, asOf },
+                  signal,
+                )
+              ).details,
+            );
+            signal.throwIfAborted();
+            if (!selected || (selected.available !== true && selected.sourceAvailable !== true)) {
+              throw new Error(
+                typeof selected?.gap === "string"
+                  ? selected.gap
+                  : "finance_recall_original_unavailable",
+              );
+            }
+            const identity = record(selected.artifact);
+            if (
+              (selected.available === true
+                ? identity?.id !== metadata.id || identity?.owner !== OWNER
+                : selected.artifactId !== metadata.id) ||
+              selected.sourceSha256 !== original.sourceSha256 ||
+              selected.sourceObservedAt !== original.sourceObservedAt ||
+              selected.sourceCutoff !== original.sourceCutoff
+            ) {
+              throw new Error("finance_recall_source_changed_during_selection");
+            }
+            if (
+              selected.available !== true &&
+              !(optional && selected.gap === "artifact_field_missing") &&
+              !(partial && selected.gap === "artifact_field_budget_exceeded")
+            ) {
+              throw new Error(
+                typeof selected.gap === "string"
+                  ? selected.gap
+                  : "finance_recall_original_unavailable",
+              );
+            }
+            return selected;
+          };
+          try {
+            const account = await field("/value/details/accountId");
+            const priorVenue = await field("/value/details/venue");
+            if (account.selectedValue !== accountId || priorVenue.selectedValue !== venue) {
+              continue;
+            }
+            const prior = await field("/value/details/decision");
+            const priorInput = FinanceIntradayDecisionInput.safeParse(
+              record(prior.selectedValue)?.input,
+            );
+            if (
+              !priorInput.success ||
+              priorInput.data.instrument !== candidate.instrument ||
+              priorInput.data.signalId === candidate.candidateId
+            ) {
+              continue;
+            }
+            const signalId = await field("/value/details/outcome/signalId");
+            const status = await field("/value/details/outcome/status");
+            const reasons = await field("/value/details/outcome/reasons", false, true);
+            if (reasons.available !== true) {
+              reasonFragment =
+                typeof reasons.selectedPreview === "string"
+                  ? excerpt(reasons.selectedPreview, 70)
+                  : "";
+            }
+            const priorReview = await field(
+              "/value/details/outcome/tradeDecisionReview/decision",
+              true,
+            );
+            const priorReviewTime = await field(
+              "/value/details/outcome/tradeDecisionReview/request/asOf",
+              true,
+            );
+            const priorReviewStatus = await field(
+              "/value/details/outcome/tradeDecisionReview/status",
+              true,
+            );
+            const priorReviewFailure = await field(
+              "/value/details/outcome/tradeDecisionReview/failureCode",
+              true,
+            );
+            read = {
+              ...account,
+              selectedValue: {
+                accountId: account.selectedValue,
+                venue: priorVenue.selectedValue,
+                decision: prior.selectedValue,
+                outcome: {
+                  signalId: signalId.selectedValue,
+                  status: status.selectedValue,
+                  reasons: reasons.available === true ? reasons.selectedValue : [],
+                  tradeDecisionReview: {
+                    decision: priorReview.selectedValue,
+                    request: { asOf: priorReviewTime.selectedValue },
+                    status: priorReviewStatus.selectedValue,
+                    failureCode: priorReviewFailure.selectedValue,
+                  },
+                },
+              },
+            };
+          } catch (error) {
+            signal.throwIfAborted();
+            readGap =
+              error instanceof Error ? error.message : "finance_recall_original_unavailable";
+            continue;
+          }
+        }
         if (read?.available !== true) {
           readGap =
             typeof read?.gap === "string" ? read.gap : "finance_recall_original_unavailable";
@@ -147,9 +269,18 @@ export function createFinanceTradeResultRecallCapability(options: {
           .slice(0, 2)
           .map((reason) => excerpt(reason, 70));
         const priorDecision = record(review?.decision);
+        const reviewStatus =
+          review?.status === "completed" || review?.status === "failed" ? review.status : undefined;
         const truncatedFields = (outcome.reasons as string[])
           .slice(0, 2)
           .flatMap((reason, index) => (reason !== reasons[index] ? [`reasons.${index}`] : []));
+        if (
+          reviewStatus === "failed" &&
+          typeof review?.failureCode === "string" &&
+          Buffer.byteLength(review.failureCode) > 80
+        ) {
+          truncatedFields.push("reviewFailureCode");
+        }
         if (
           typeof priorDecision?.rationale === "string" &&
           Buffer.byteLength(priorDecision.rationale) > 80
@@ -166,8 +297,24 @@ export function createFinanceTradeResultRecallCapability(options: {
             signalId: input.data.signalId,
             decisionRecordedAt: decision.recordedAt ?? null,
             outcome: outcome.status,
+            ...(reviewStatus ? { reviewStatus } : {}),
+            ...(reviewStatus === "failed" && typeof review?.failureCode === "string"
+              ? { reviewFailureCode: excerpt(review.failureCode, 80) }
+              : {}),
+            ...(reviewStatus === "completed" &&
+            (priorDecision?.decision === "approve" || priorDecision?.decision === "veto")
+              ? { reviewDecision: priorDecision.decision }
+              : {}),
             reasons,
-            omittedReasonCount: outcome.reasons.length - reasons.length,
+            omittedReasonCount:
+              reasonFragment === undefined ? outcome.reasons.length - reasons.length : null,
+            ...(reasonFragment === undefined
+              ? {}
+              : {
+                  reasonSelectionGap: "artifact_field_budget_exceeded",
+                  reasonFragmentFormat: "json_prefix_not_complete_reasons",
+                  reasonFragmentJson: reasonFragment,
+                }),
             ...(truncatedFields.length ? { truncatedFields } : {}),
             ...(typeof priorDecision?.rationale === "string"
               ? { reviewRationale: excerpt(priorDecision.rationale, 80) }

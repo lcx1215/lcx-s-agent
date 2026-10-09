@@ -89,6 +89,9 @@ async function seed(
     sourceTime?: string;
     reasons?: string[];
     summary?: string;
+    padding?: string;
+    review?: Record<string, unknown>;
+    status?: "placed" | "refused" | "uncertain";
   } = {},
 ) {
   const id = options.id ?? "prior-result";
@@ -107,11 +110,13 @@ async function seed(
   const details = {
     accountId: options.accountId ?? "paper-a",
     venue: options.venue ?? "alpaca:paper",
+    ...(options.padding ? { unusedResearch: options.padding } : {}),
     decision: { input, recordedAt: options.decisionRecordedAt ?? oldTime, ref: "b".repeat(64) },
     outcome: {
       signalId,
-      status: "refused",
+      status: options.status ?? "refused",
       reasons: options.reasons ?? ["spread_cost_exceeds_edge"],
+      ...(options.review ? { tradeDecisionReview: options.review } : {}),
     },
   };
   const relativePath = `state/artifacts/${id}.json`;
@@ -288,7 +293,142 @@ it("can pass over a verified foreign result without disclosing it", async () => 
   expect(result).toMatchObject({ ok: true, sourceArtifactId: "prior-result" });
   expect(JSON.stringify(result)).not.toContain("foreign-private-reason");
 });
-it("names corrupted, truncated and missing originals without leaking their text", async () => {
+it("reads exact useful fields when an unrelated payload exceeds the full-details budget", async () => {
+  const source = await seed({ padding: "unneeded research".repeat(5000) });
+  const read = vi.spyOn(ArtifactStore.prototype, "read");
+  expect(await run()).toMatchObject({
+    ok: true,
+    sourceArtifactId: source.id,
+    sourceSha256: source.sha256,
+    recordedResult: { reasons: ["spread_cost_exceeds_edge"] },
+  });
+  expect(read.mock.calls.length).toBeLessThanOrEqual(11);
+});
+
+it.each([false, true])(
+  "keeps placed execution distinct from failed model review (narrow=%s)",
+  async (narrow) => {
+    const padding = narrow ? "large unrelated data".repeat(4000) : undefined;
+    await seed({
+      padding,
+      status: "placed",
+      reasons: [],
+      review: {
+        status: "failed",
+        failureCode: "provider_payment_required",
+        request: { asOf: oldTime },
+      },
+    });
+    const result = await run();
+    expect(result).toMatchObject({
+      ok: true,
+      recordedResult: {
+        outcome: "placed",
+        reviewStatus: "failed",
+        reviewFailureCode: "provider_payment_required",
+      },
+    });
+    expect(result).not.toHaveProperty("recordedResult.reviewDecision");
+  },
+);
+
+it.each([
+  { accountId: "other-account" },
+  { venue: "alpaca:live" },
+  { instrument: "BBB" },
+  { signalId: candidate.candidateId },
+  { sourceTime: "2026-10-01T00:00:00.000Z" },
+  { review: { request: { asOf: "2026-10-01T00:00:00.000Z" } } },
+])(
+  "preserves original scope and event-time checks during narrow selection: %j",
+  async (options) => {
+    await seed({
+      ...options,
+      padding: "large unrelated data".repeat(4000),
+      reasons: ["private foreign or future reason"],
+    });
+    const result = await run();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain("private foreign or future reason");
+  },
+);
+
+it("does not combine field selections after the original source changes", async () => {
+  await seed({ padding: "large unrelated data".repeat(4000) });
+  const originalRead = Reflect.get(ArtifactStore.prototype, "read");
+  const reader = vi.spyOn(ArtifactStore.prototype, "read");
+  let reads = 0;
+  reader.mockImplementation(async function (this: ArtifactStore, ...args) {
+    const result = await originalRead.apply(this, args);
+    if (++reads === 2) {
+      return { ...result, artifact: { ...result.artifact, sha256: "c".repeat(64) } };
+    }
+    return result;
+  });
+  expect(await run()).toMatchObject({
+    ok: false,
+    gap: "finance_recall_source_changed_during_selection",
+  });
+  expect(reads).toBe(2);
+});
+
+it("honors cancellation in the narrow-read fallback without issuing more reads", async () => {
+  await seed({ padding: "large unrelated data".repeat(4000) });
+  const controller = new AbortController();
+  const originalRead = Reflect.get(ArtifactStore.prototype, "read");
+  const reader = vi.spyOn(ArtifactStore.prototype, "read");
+  let reads = 0;
+  reader.mockImplementation(async function (this: ArtifactStore, ...args) {
+    const result = await originalRead.apply(this, args);
+    if (++reads === 2) {
+      controller.abort();
+    }
+    return result;
+  });
+  await expect(
+    createFinanceTradeResultRecallCapability({ config: cfg, workspaceDir: root }).execute(
+      {
+        moduleId: request.moduleId,
+        candidate,
+        accountId: "paper-a",
+        venue: "alpaca:paper",
+        asOf,
+        question: request.question,
+      },
+      controller.signal,
+    ),
+  ).rejects.toThrow();
+  expect(reads).toBe(2);
+});
+
+it("passes useful oversized reason fragments through the original tool budget without calling them complete", async () => {
+  const source = await seed({
+    signalId: `intraday-${"c".repeat(64)}`,
+    reasons: ["风险".repeat(20000)],
+  });
+  const [evidence] = await createFinanceTradeReviewEvidenceExecutor({
+    directory: root,
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
+      config: cfg,
+      workspaceDir: root,
+    }),
+  })([request], packet, new AbortController().signal);
+  expect(evidence.status).toBe("completed");
+  expect(JSON.parse(evidence.summary).result).toMatchObject({
+    sourceSha256: source.sha256,
+    recordedResult: {
+      omittedReasonCount: null,
+      reasonSelectionGap: "artifact_field_budget_exceeded",
+      reasonFragmentFormat: "json_prefix_not_complete_reasons",
+    },
+  });
+  expect(JSON.stringify(evidence)).toContain("风险");
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+});
+
+it("names corrupted and missing originals while retaining a verified oversized reason fragment", async () => {
   await seed();
   await fs.writeFile(
     path.join(root, "state/artifacts/prior-result.json"),
@@ -296,7 +436,15 @@ it("names corrupted, truncated and missing originals without leaking their text"
   );
   expect(await run()).toMatchObject({ ok: false, gap: "artifact_original_hash_mismatch" });
   await seed({ id: "oversized", reasons: ["risk".repeat(20000)], observedAt: asOf });
-  expect(await run()).toMatchObject({ ok: false });
+  expect(await run()).toMatchObject({
+    ok: true,
+    recordedResult: {
+      reasons: [],
+      omittedReasonCount: null,
+      reasonSelectionGap: "artifact_field_budget_exceeded",
+      reasonFragmentFormat: "json_prefix_not_complete_reasons",
+    },
+  });
   await fs.rm(path.join(root, "state/artifacts/oversized.json"));
   expect(await run()).toMatchObject({ ok: false, gap: "artifact_original_hash_mismatch" });
 });
