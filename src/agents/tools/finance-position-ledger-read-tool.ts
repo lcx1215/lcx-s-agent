@@ -198,7 +198,7 @@ const FinancePositionLedgerReadSchema = Type.Object({
   brokerAccountId: Type.Optional(
     Type.String({
       description:
-        "Optional explicit Alpaca paper account id. Reads reconstructed broker history and brokerSnapshot: latest retained native positions and stop coverage with source time/ref, freshness and explicit omissions. This is a stored snapshot, not a fresh network request; it does not read credentials.",
+        "Optional explicit Alpaca paper account id. Omit asOf with this account-wide read. Reads reconstructed broker history and brokerSnapshot: latest retained native positions and stop coverage with its own source time/ref, freshness and explicit omissions. This is a stored snapshot, not a fresh network request; it does not read credentials.",
     }),
   ),
   initialCapital: Type.Optional(
