@@ -54,7 +54,9 @@ export async function evaluateFinanceFeedback(options: {
   brain: CentralBrain;
   workspaceDir: string;
   evidenceKind: "fixture" | "model_call" | "deterministic";
+  scenario?: "source_recovery" | "provided_evidence";
 }) {
+  const scenario = options.scenario ?? "source_recovery";
   // Refuse reuse so a previous run cannot supply evidence or change the answer.
   await fs.mkdir(options.workspaceDir, { recursive: false });
   const primary = path.join(options.workspaceDir, "absent");
@@ -84,7 +86,25 @@ export async function evaluateFinanceFeedback(options: {
     workspaceDir: options.workspaceDir,
     financeLedgerDirectories: [primary, backup],
   }).get("finance_position_ledger_read")!;
+  const projectEvidence = (result: Record<string, unknown>, directory: string) => ({
+    status: result.status,
+    reason: result.reason,
+    positions: result.positions,
+    unrealizedPnl: result.unrealizedPnl,
+    source: directory,
+    basis: "synthetic",
+  });
+  const started = performance.now();
   let evidence: Record<string, unknown> | undefined;
+  if (scenario === "provided_evidence") {
+    // The host supplies an actual isolated tool result, never a guessed answer.
+    evidence = projectEvidence(
+      await spec.execute({ directory: backup }, AbortSignal.timeout(5_000)),
+      backup,
+    );
+  }
+  const sourceEvidenceReadyBeforeDecision = evidence?.status === "ready";
+  const hostEvidenceReads = scenario === "provided_evidence" ? 1 : 0;
   const observations: Array<Record<string, unknown>> = [];
   let toolCalls = 0;
   let duplicateCalls = 0;
@@ -114,21 +134,13 @@ export async function evaluateFinanceFeedback(options: {
           observations.push(result);
           // Preserve task evidence explicitly; verbose paths must not crowd numeric
           // answers out of the generic 512-byte step digest.
-          evidence = {
-            status: result.status,
-            reason: result.reason,
-            positions: result.positions,
-            unrealizedPnl: result.unrealizedPnl,
-            source: directory,
-            basis: "synthetic",
-          };
+          evidence = projectEvidence(result, directory);
           return result;
         },
       },
     ],
   ]);
   const receipts: CentralRunReceipt[] = [];
-  const started = performance.now();
   for (let round = 0; round < 3; round++) {
     const receipt = await runCentralHarnessCycle({
       brain: options.brain,
@@ -143,8 +155,13 @@ export async function evaluateFinanceFeedback(options: {
           financeFeedbackTask: {
             primary,
             backup,
-            instruction:
-              'This task uses only synthetic data. Read primary first; if absent, inspect backup. Discover and use finance_position_ledger_read with args {directory: exact path}, one action per cycle. An absent book does not mean zero holdings. After actual tool evidence is ready, stop calling tools and return actions: [] with note containing JSON {"status":"ready","quantity":number,"unrealizedPnl":number,"basis":"synthetic"}. Do not guess numbers. Other capabilities are unavailable for this task.',
+            instruction: [
+              "This task uses only synthetic data.",
+              scenario === "provided_evidence"
+                ? "The host has supplied the original ledger tool result in financeEvidence. Use this sufficient evidence directly; no new source read is needed."
+                : "Read primary first; if absent, inspect backup. Discover and use finance_position_ledger_read with args {directory: exact path}, one action per cycle. An absent book does not mean zero holdings.",
+              'After actual tool evidence is ready, stop calling tools and return actions: [] with note containing JSON {"status":"ready","quantity":number,"unrealizedPnl":number,"basis":"synthetic"}. Do not guess numbers. Other capabilities are unavailable for this task.',
+            ].join(" "),
           },
           ...(evidence ? { financeEvidence: evidence } : {}),
         },
@@ -167,16 +184,34 @@ export async function evaluateFinanceFeedback(options: {
     answer.unrealizedPnl === 200 &&
     answer.basis === "synthetic";
   const feedbackFollowed =
-    observations[0]?.status === "absent" && observations[1]?.status === "ready";
+    scenario === "provided_evidence"
+      ? sourceEvidenceReadyBeforeDecision && toolCalls === 0
+      : observations[0]?.status === "absent" && observations[1]?.status === "ready";
   const finalStopped =
     receipts.at(-1)?.actionsProposed === 0 && receipts.at(-1)?.brainCall.outcome === "completed";
   const invalidProposals = receipts.reduce(
     (sum, receipt) => sum + receipt.actionsBlockedByGate + Math.max(0, receipt.actionsProposed - 1),
     0,
   );
+  // Caller labels cannot substitute for the original adapter-observation receipts.
+  const modelCallEvidencePresent = receipts.every((receipt) => {
+    const call = receipt.brainCall.modelCall;
+    return (
+      receipt.brainCall.outcome === "completed" &&
+      call?.adapterInvoked === true &&
+      call.providerCallObserved &&
+      /^[a-f0-9]{64}$/u.test(call.observationIdSha256 ?? "")
+    );
+  });
+  const modelEvidenceMissing = options.evidenceKind === "model_call" && !modelCallEvidencePresent;
   return {
-    evidenceKind: options.evidenceKind,
+    requestedEvidenceKind: options.evidenceKind,
+    evidenceKind: modelEvidenceMissing ? "fixture" : options.evidenceKind,
+    modelCallEvidencePresent,
+    evidenceGap: modelEvidenceMissing ? "model_call_receipt_missing" : undefined,
     scope: "synthetic_ledger_feedback" as const,
+    scenario,
+    sourceEvidenceReadyBeforeDecision,
     answer,
     answerCorrect,
     feedbackFollowed,
@@ -186,9 +221,12 @@ export async function evaluateFinanceFeedback(options: {
       feedbackFollowed &&
       finalStopped &&
       duplicateCalls === 0 &&
-      invalidProposals === 0,
+      invalidProposals === 0 &&
+      !modelEvidenceMissing,
     elapsedMs: performance.now() - started,
+    hostEvidenceReads,
     toolCalls,
+    totalToolReads: toolCalls + hostEvidenceReads,
     duplicateCalls,
     invalidProposals,
     receipts,

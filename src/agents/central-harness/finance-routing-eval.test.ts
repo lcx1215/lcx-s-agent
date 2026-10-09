@@ -16,10 +16,10 @@ const task: FinanceRoutingCase = {
   requiredModules: ["macro_rates_inflation"],
   allowedModules: ["macro_rates_inflation"],
 };
-async function run(brain: CentralBrain) {
+async function run(brain: CentralBrain, evidenceKind: "fixture" | "model_call" = "fixture") {
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-route-eval-"));
   dirs.push(workspaceDir);
-  return evaluateFinanceRouting({ testCase: task, brain, workspaceDir, evidenceKind: "fixture" });
+  return evaluateFinanceRouting({ testCase: task, brain, workspaceDir, evidenceKind });
 }
 function brain(moduleId?: string, extras = {}): CentralBrain {
   return {
@@ -55,6 +55,13 @@ function brain(moduleId?: string, extras = {}): CentralBrain {
   };
 }
 describe("finance routing comparison through the real Harness", () => {
+  it("does not credit a scripted route as model-call evidence from a caller label", async () => {
+    const result = await run(brain("macro_rates_inflation"), "model_call");
+    expect(result.verdict).toBe("not_assessable");
+    expect(result.evidenceKind).toBe("fixture");
+    expect(result.requestedEvidenceKind).toBe("model_call");
+    expect(result.modelCallEvidencePresent).toBe(false);
+  });
   it("does not credit an explicit model selection that merely equals rule routing", async () => {
     const result = await run(brain("macro_rates_inflation"));
     expect(result.verdict).toBe("equal");

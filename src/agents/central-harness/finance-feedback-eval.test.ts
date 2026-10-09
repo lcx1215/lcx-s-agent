@@ -8,16 +8,60 @@ const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
-async function run(brain: CentralBrain) {
+async function run(
+  brain: CentralBrain,
+  options: {
+    scenario?: "source_recovery" | "provided_evidence";
+    evidenceKind?: "fixture" | "model_call" | "deterministic";
+  } = {},
+) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-feedback-"));
   roots.push(root);
   return evaluateFinanceFeedback({
     brain,
     workspaceDir: path.join(root, "run"),
-    evidenceKind: "fixture",
+    evidenceKind: options.evidenceKind ?? "fixture",
+    scenario: options.scenario,
   });
 }
 describe("finance feedback evaluation", () => {
+  it("accepts a direct answer from sufficient original tool evidence without another tool read", async () => {
+    const result = await run(financeFeedbackRuleBrain, { scenario: "provided_evidence" });
+    expect(result.passed).toBe(true);
+    expect(result.answer).toMatchObject({ quantity: 10, unrealizedPnl: 200 });
+    expect(result.toolCalls).toBe(0);
+    expect(result.hostEvidenceReads).toBe(1);
+    expect(result.totalToolReads).toBe(1);
+    expect(result.receipts).toHaveLength(1);
+    expect(result.finalStopped).toBe(true);
+    expect(result.sourceEvidenceReadyBeforeDecision).toBe(true);
+  });
+  it("does not credit extra reads when sufficient evidence was already supplied", async () => {
+    const result = await run(
+      {
+        propose: async (perception, signal) =>
+          financeFeedbackRuleBrain.propose(
+            {
+              ...perception,
+              controlRoom: { financeFeedbackTask: perception.controlRoom.financeFeedbackTask },
+            },
+            signal,
+          ),
+      },
+      { scenario: "provided_evidence" },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.toolCalls).toBeGreaterThan(0);
+  });
+  it("does not label a successful scripted decision as a model-call acceptance", async () => {
+    const result = await run(financeFeedbackRuleBrain, { evidenceKind: "model_call" });
+    expect(result.answerCorrect).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(result.modelCallEvidencePresent).toBe(false);
+    expect(result.evidenceKind).toBe("fixture");
+    expect(result.requestedEvidenceKind).toBe("model_call");
+    expect(result.evidenceGap).toBe("model_call_receipt_missing");
+  });
   it("runs two real ledger reads and derives the exact answer through the rule baseline", async () => {
     const result = await run(financeFeedbackRuleBrain);
     expect(result.passed).toBe(true);

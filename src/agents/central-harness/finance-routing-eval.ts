@@ -117,8 +117,15 @@ export async function evaluateFinanceRouting(options: {
   const unnecessaryDelta = candidate
     ? candidate.unnecessary.length - baseline.unnecessary.length
     : undefined;
+  const call = receipt.brainCall.modelCall;
+  const modelCallEvidencePresent =
+    receipt.brainCall.outcome === "completed" &&
+    call?.adapterInvoked === true &&
+    call.providerCallObserved &&
+    /^[a-f0-9]{64}$/u.test(call.observationIdSha256 ?? "");
+  const modelEvidenceMissing = options.evidenceKind === "model_call" && !modelCallEvidencePresent;
   const verdict =
-    missingDelta === undefined || unnecessaryDelta === undefined
+    modelEvidenceMissing || missingDelta === undefined || unnecessaryDelta === undefined
       ? "not_assessable"
       : missingDelta === 0 && unnecessaryDelta === 0
         ? "equal"
@@ -129,7 +136,10 @@ export async function evaluateFinanceRouting(options: {
             : "mixed";
   return {
     caseId: testCase.id,
-    evidenceKind: options.evidenceKind,
+    requestedEvidenceKind: options.evidenceKind,
+    evidenceKind: modelEvidenceMissing ? "fixture" : options.evidenceKind,
+    modelCallEvidencePresent,
+    evidenceGap: modelEvidenceMissing ? "model_call_receipt_missing" : undefined,
     scope: "module_selection_only" as const,
     baseline,
     candidate,
