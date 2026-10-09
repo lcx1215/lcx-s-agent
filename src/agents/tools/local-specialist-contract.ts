@@ -17,7 +17,7 @@ export const LOCAL_SPECIALIST_PROFILES = {
   extract: {
     model: "Qwen3.5-2B-4bit",
     purpose:
-      "Extract source-complete verbatim quotes from supplied text. Cover all source text including signs, units, dates and uncertainty; do not omit caveats.",
+      "Extract source-complete verbatim quotes in source order from supplied text. Preserve each occurrence, signs, units, dates and uncertainty; do not reorder or omit caveats.",
   },
   summarize: {
     model: "Qwen3.5-2B-4bit",
@@ -85,19 +85,15 @@ export function validateLocalSpecialistOutput(
   if (!quotesValid) {
     return false;
   }
-  // Conservative completeness gate: preserve every substantive source character,
-  // including caveats. Merely finding each quote in the input cannot prove this.
-  const covered = new Uint8Array(text.length);
+  // Consume each occurrence once in source order. Character coverage alone can
+  // mistake repeated words or a shuffled alphabet for the original meaning.
+  let cursor = 0;
   for (const item of value.facts as Array<{ quote: string }>) {
-    let from = 0;
-    for (;;) {
-      const start = text.indexOf(item.quote, from);
-      if (start < 0) {
-        break;
-      }
-      covered.fill(1, start, start + item.quote.length);
-      from = start + item.quote.length;
+    const start = text.indexOf(item.quote, cursor);
+    if (start < 0 || /\S/u.test(text.slice(cursor, start))) {
+      return false;
     }
+    cursor = start + item.quote.length;
   }
-  return text.split("").every((char, index) => covered[index] === 1 || /\s/u.test(char));
+  return !/\S/u.test(text.slice(cursor));
 }

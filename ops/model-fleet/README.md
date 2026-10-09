@@ -27,9 +27,12 @@ and disable this plugin to roll back. Preserve other plugins and authentication.
 | Qwen3.5 0.8B 4bit | Candidate comparison; not automatically routed              |
 | Llama 3.2 1B      | Manual English baseline reserve                             |
 
-Local text and vision share one process lock. Weights unload after each call.
-Persistent availability means the host restores registrations on startup, not
-that every model occupies memory continuously. Cloud slots remain explicit and
+Local text and vision share one inference lock. Text weights load on the first
+request and remain in the resident worker for reuse until that worker stops;
+vision runs use their existing process lifecycle. A protocol-ready worker may
+still have cold weights and no successful inference. Persistent availability
+means the host restores registrations on startup, not that every declared
+candidate or reserve is installed or occupies memory. Cloud slots remain explicit and
 paid when invoked; local preprocessing makes no API calls. Reserve models are
 not started automatically. All local outputs require review.
 
@@ -40,3 +43,11 @@ real `local_specialist` call, a synthetic `local_vision` call, and
 `state/model-fleet-runtime.json` under the configured workspace. Confirm its PID
 matches the gateway, then repeat the roster call after a scoped restart.
 Installation checks alone do not prove tool registration or inference quality.
+
+The daemon-free `serve` entry starts the same local text worker through the core
+service owner. Its `GET /healthz` reports protocol readiness, weight state and
+successful-inference evidence without calling a model. It does not expose the
+Gateway's `tools/invoke` HTTP endpoint; verify local tool inference separately
+without routing an agent request through a paid model merely to test health.
+Keep extraction quotes in source order, preserve repeated occurrences and
+return the original source to the supervising agent when the contract fails.

@@ -31,6 +31,33 @@ describe("local specialist boundaries", () => {
       validateLocalSpecialistOutput("classify", { label: "buy" }, "text", ["finance", "other"]),
     ).toBe(false);
   });
+  it.each([
+    {
+      text: "费用未知，不代表免费。",
+      quotes: [...new Set("费用未知，不代表免费。")],
+    },
+    { text: "价格下跌；价格上涨。", quotes: ["价格", "下跌；", "上涨。"] },
+    { text: "收入下降；利润未披露。", quotes: ["利润未披露。", "收入下降；"] },
+  ])("rejects fragmented or reordered extraction of $text", ({ text, quotes }) => {
+    expect(
+      validateLocalSpecialistOutput(
+        "extract",
+        { facts: quotes.map((quote) => ({ quote })), missing: [] },
+        text,
+        [],
+      ),
+    ).toBe(false);
+  });
+  it("accepts ordered repeated quotes and whitespace between source spans", () => {
+    expect(
+      validateLocalSpecialistOutput(
+        "extract",
+        { facts: [{ quote: "价格" }, { quote: "价格" }], missing: [] },
+        " 价格\n价格 ",
+        [],
+      ),
+    ).toBe(true);
+  });
   it("bounds workload before loading any weights", async () => {
     const tool = createLocalSpecialistTool({ modelRoot: "/nonexistent" });
     await expect(
@@ -117,6 +144,31 @@ describe("agent-supervised local preprocessing", () => {
     const next = await tool.execute("again", classifyArgs);
     expect(next.details).toMatchObject({ status: "fallback_to_agent" });
     expect(invoke).toHaveBeenCalledTimes(2);
+  });
+  it("returns every source without caching a fragmented extraction", async () => {
+    const text = "费用未知，不代表免费。";
+    const { tool, invoke } = await controlledTool({
+      facts: [...new Set(text)].map((quote) => ({ quote })),
+      missing: [],
+    });
+    const result = await tool.execute("fragments", {
+      task: "extract",
+      records: [
+        { id: "a", text },
+        { id: "b", text },
+      ],
+    });
+    expect(result.details).toMatchObject({
+      status: "batch_partial",
+      fallbackCount: 2,
+      reusedCount: 0,
+      sourceRecordsRetained: true,
+      results: [
+        { id: "a", details: { status: "fallback_to_agent", source: { text } } },
+        { id: "b", details: { status: "fallback_to_agent", source: { text } } },
+      ],
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
   it("accepts source-complete quotes but still requires agent review", async () => {
     const text = "收入12亿元；利润未披露。";
