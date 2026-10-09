@@ -18,14 +18,14 @@ Back up that configuration before changing it. Configure explicit `slotModels`
 Restart only the authorized existing gateway. Restore the saved configuration
 and disable this plugin to roll back. Preserve other plugins and authentication.
 
-| Model             | Assignment                                                  |
-| ----------------- | ----------------------------------------------------------- |
-| Qwen3.5 2B 4bit   | Short summaries, verbatim extraction, preliminary labels    |
-| Qwen3 VL 2B 3bit  | Supplied images and charts                                  |
-| Qwen3 VL 4B 4bit  | Manual vision comparison reserve                            |
-| Qwen3 0.6B        | Isolated existing training experiment; no promotion implied |
-| Qwen3.5 0.8B 4bit | Candidate comparison; not automatically routed              |
-| Llama 3.2 1B      | Manual English baseline reserve                             |
+| Model             | Assignment                                                              |
+| ----------------- | ----------------------------------------------------------------------- |
+| Qwen3.5 2B 4bit   | Reviewed verbatim extraction and preliminary labels; summaries disabled |
+| Qwen3 VL 2B 3bit  | Supplied images and charts                                              |
+| Qwen3 VL 4B 4bit  | Manual vision comparison reserve                                        |
+| Qwen3 0.6B        | Isolated existing training experiment; no promotion implied             |
+| Qwen3.5 0.8B 4bit | Candidate comparison; not automatically routed                          |
+| Llama 3.2 1B      | Manual English baseline reserve                                         |
 
 Local text and vision share one inference lock. Text weights load on the first
 request and remain in the resident worker for reuse until that worker stops;
@@ -51,3 +51,7 @@ Gateway's `tools/invoke` HTTP endpoint; verify local tool inference separately
 without routing an agent request through a paid model merely to test health.
 Keep extraction quotes in source order, preserve repeated occurrences and
 return the original source to the supervising agent when the contract fails.
+Inference completion is not a valid task result. A failed batch must retain its
+sources; later batches can still use the original supervised worker. Qualify a
+specific workload before expanding duties. For simply preserving supplied text,
+use the original text directly; copying it alone does not justify model inference.
