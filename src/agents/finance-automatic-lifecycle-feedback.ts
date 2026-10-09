@@ -106,6 +106,7 @@ function readSchedulerRuntime(directory: string, observedAt: string) {
     status: progress.status,
     pidPresent: pid !== null,
     ...(typeof fields.phase === "string" ? { phase: fields.phase } : {}),
+    ...("accountWork" in progress ? { accountWork: progress.accountWork } : {}),
     ...(typeof fields.placementEnabled === "boolean"
       ? { placementEnabled: fields.placementEnabled }
       : {}),

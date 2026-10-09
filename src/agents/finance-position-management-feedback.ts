@@ -72,7 +72,11 @@ export async function readFinancePositionManagementFeedback(params: {
         unresolvedOrderCount: protection.unresolved.length,
         needsInspection: fresh && (holdings.some(needsReview) || protection.unresolved.length > 0),
         holdings: holdings
-          .toSorted((a, b) => Number(needsReview(b)) - Number(needsReview(a)))
+          .toSorted(
+            (a, b) =>
+              Number(b.status !== "covered") - Number(a.status !== "covered") ||
+              Number(needsReview(b)) - Number(needsReview(a)),
+          )
           .slice(0, 4)
           .map((p) => ({
             ...p,

@@ -132,6 +132,47 @@ it("keeps the exact account scope when two accounts hold the same instrument", a
     });
   }
 });
+it("keeps uncovered holdings ahead of covered out-of-rule positions within the detail budget", async () => {
+  const symbols = ["AAA", "BBB", "CCC", "DDD", "TLT", "ZZZ"];
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "synthetic",
+    venue: "alpaca:paper",
+    query: `reconciliation:${at}`,
+    cursor: "",
+    payload: [
+      {
+        observedAt: at,
+        positions: symbols.map((symbol) => ({ symbol, qty: "1" })),
+        openOrders: symbols.slice(0, 4).map((symbol) => ({ ...stop, id: symbol, symbol })),
+      },
+    ],
+  });
+  const result = await readFinancePositionManagementFeedback({
+    directory,
+    observedAt: at,
+    rules: [{ ruleId: "tlt", state: "active", instruments: ["TLT"] }],
+  });
+  expect(result).toMatchObject({
+    needsInspection: true,
+    accounts: [
+      {
+        uncoveredCount: 2,
+        outsideActiveRuleCount: 5,
+        holdings: [
+          { instrument: "TLT", status: "no_recognized_stop" },
+          { instrument: "ZZZ", status: "no_recognized_stop" },
+          { instrument: "AAA", status: "covered" },
+          { instrument: "BBB", status: "covered" },
+        ],
+        omittedHoldings: 2,
+      },
+    ],
+  });
+  expect(
+    "accounts" in result && Buffer.byteLength(JSON.stringify(result.accounts)),
+  ).toBeLessThanOrEqual(1600);
+});
 it("keeps stale and future observations visible without treating them as current action evidence", async () => {
   await snapshot();
   for (const observedAt of ["2026-09-27T10:06:00.000Z", "2026-09-27T09:59:00.000Z"]) {

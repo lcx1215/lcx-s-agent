@@ -1230,6 +1230,18 @@ function projectFinanceBudgetFacts(
         "scheduler.runtime.",
       ),
     };
+    if (
+      isPlainRecord(source.scheduler.runtime) &&
+      isPlainRecord(source.scheduler.runtime.accountWork)
+    ) {
+      const runtime = (result.scheduler as { runtime: Record<string, unknown> }).runtime;
+      runtime.accountWork = pick(
+        source.scheduler.runtime.accountWork,
+        ["status", "observedAt", "activeWork", "queuedWork", "reconciliationPending", "reason"],
+        "scheduler.runtime.accountWork.",
+      );
+      omitted.delete("scheduler.runtime.accountWork");
+    }
     for (const key of Object.keys(source.scheduler)) {
       if (key !== "runtime") {
         omitted.add(`scheduler.${key}`);
@@ -1265,6 +1277,22 @@ function projectFinanceBudgetFacts(
               (issue): issue is string => typeof issue === "string" && jsonBytes(issue) <= 160,
             )
             .slice(0, 2);
+        }
+        if (
+          section === "positionManagement" &&
+          isPlainRecord(account) &&
+          Array.isArray(account.holdings)
+        ) {
+          selected.holdings = account.holdings
+            .filter((holding) => isPlainRecord(holding) && holding.status !== "covered")
+            .slice(0, 2)
+            .map((holding) =>
+              pick(
+                holding,
+                ["instrument", "status", "positionQuantity", "uncoveredQuantity"],
+                "positionManagement.accounts.holdings.",
+              ),
+            );
         }
         return selected;
       });

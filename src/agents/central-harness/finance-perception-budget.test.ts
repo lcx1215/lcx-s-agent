@@ -172,7 +172,17 @@ it("projects critical source-timed finance facts after backlog pressure without 
     observedAt: "2026-10-06T17:10:00.000Z",
     nextTask: "inspect_finance_position_management",
     scheduler: {
-      runtime: { status: "responsive", placementEnabled: true },
+      runtime: {
+        status: "responsive",
+        placementEnabled: true,
+        accountWork: {
+          status: "busy",
+          observedAt: "2026-10-06T17:10:00.000Z",
+          activeWork: "trading",
+          queuedWork: 1,
+          reconciliationPending: true,
+        },
+      },
       history: "中".repeat(2600),
     },
     intradayExecution: {
@@ -192,6 +202,15 @@ it("projects critical source-timed finance facts after backlog pressure without 
           observedAt: "2026-10-06T17:09:00.000Z",
           freshness: "stale",
           uncoveredCount: 3,
+          holdings: [
+            {
+              instrument: "TLT",
+              status: "no_recognized_stop",
+              positionQuantity: 130,
+              uncoveredQuantity: 130,
+            },
+            { instrument: "AAA", status: "covered", positionQuantity: 1, uncoveredQuantity: 0 },
+          ],
         },
       ],
     },
@@ -222,9 +241,30 @@ it("projects critical source-timed finance facts after backlog pressure without 
   expect(projected).toMatchObject({
     observedAt: finance.observedAt,
     nextTask: finance.nextTask,
-    scheduler: { runtime: { status: "responsive", placementEnabled: true } },
+    scheduler: {
+      runtime: {
+        status: "responsive",
+        placementEnabled: true,
+        accountWork: finance.scheduler.runtime.accountWork,
+      },
+    },
     intradayExecution: { uncertain: 1, missingOutcome: 1 },
-    positionManagement: { accounts: [{ freshness: "stale", uncoveredCount: 3 }] },
+    positionManagement: {
+      accounts: [
+        {
+          freshness: "stale",
+          uncoveredCount: 3,
+          holdings: [
+            {
+              instrument: "TLT",
+              status: "no_recognized_stop",
+              positionQuantity: 130,
+              uncoveredQuantity: 130,
+            },
+          ],
+        },
+      ],
+    },
     economicFeedback: {
       accounts: [
         {
@@ -237,7 +277,10 @@ it("projects critical source-timed finance facts after backlog pressure without 
     },
     budgetProjection: {
       kind: "critical_finance_facts",
-      omittedFields: expect.arrayContaining(["scheduler.history"]),
+      omittedFieldCount: expect.any(Number),
+      omittedFields: expect.arrayContaining([
+        "positionManagement.accounts.details_or_additional_accounts",
+      ]),
     },
   });
   expect(Buffer.byteLength(JSON.stringify(projected))).toBeLessThanOrEqual(2048);

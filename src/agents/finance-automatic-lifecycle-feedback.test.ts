@@ -172,6 +172,41 @@ it("requests runtime inspection when file authorization is standing but resident
   });
   expect(feedback.nextTask).toBe("inspect_finance_scheduler_runtime");
 });
+it("retains validated account work separately from the idle scheduler phase", async () => {
+  const observedAt = "2026-10-09T16:00:00.000Z";
+  fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+  const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+  fs.mkdirSync(lock);
+  const progress = {
+    pid: process.pid,
+    observedAt,
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: true,
+    venue: "alpaca",
+    accountWork: {
+      schemaVersion: "lcx_finance_account_work_v1",
+      observedAt,
+      activeWork: "trading",
+      queuedWork: 1,
+      reconciliationPending: true,
+    },
+  };
+  for (const [value, status] of [
+    [progress.accountWork, "busy"],
+    [undefined, "unavailable"],
+    [{ ...progress.accountWork, queuedWork: -1 }, "invalid"],
+    [{ ...progress.accountWork, observedAt: "2026-10-09T15:00:00.000Z" }, "stale"],
+  ] as const) {
+    fs.writeFileSync(
+      path.join(lock, "progress.json"),
+      JSON.stringify({ ...progress, accountWork: value }),
+    );
+    expect(await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt })).toMatchObject({
+      scheduler: { runtime: { phase: "idle", accountWork: { status } } },
+    });
+  }
+});
 
 it("projects directional calibration separately from blocked paper execution promotion", async () => {
   fs.writeFileSync(
