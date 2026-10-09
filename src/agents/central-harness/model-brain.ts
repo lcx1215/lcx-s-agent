@@ -72,16 +72,17 @@ export const CENTRAL_TOOL_CATALOG_BUDGET_BYTES = 24_576;
 /** The model must discover the same registry the deterministic gate will use. */
 export function buildCentralToolCatalog(tools: readonly CentralToolSpec[]): string {
   const catalog = [
-    "Registered owner/capability actions (exact ownerId values):",
-    JSON.stringify(
-      tools.map((tool) => ({
-        ownerId: tool.ownerId,
-        description: tool.description,
-        inputKeys: tool.inputKeys ?? [],
-        boundary: tool.boundary,
-        allowedSideEffects: tool.allowedSideEffects,
-      })),
-    ),
+    "Registered owner/capability actions (exact ownerId values; each row follows columns in order):",
+    JSON.stringify({
+      columns: ["ownerId", "description", "inputKeys", "boundary", "allowedSideEffects"],
+      rows: tools.map((tool) => [
+        tool.ownerId,
+        tool.description,
+        tool.inputKeys ?? [],
+        tool.boundary,
+        tool.allowedSideEffects,
+      ]),
+    }),
     "Use only an exact registered ownerId. Tool registration is not authority: every proposal is independently gated.",
   ].join("\n");
   if (Buffer.byteLength(catalog) > CENTRAL_TOOL_CATALOG_BUDGET_BYTES) {
