@@ -49,6 +49,51 @@ function registry(execute: CentralToolSpec["execute"]) {
 }
 afterEach(() => vi.useRealTimers());
 
+it("marks an explicit tool rejection red while preserving bounded self-recovery", async () => {
+  const spec: CentralToolSpec = {
+    ownerId: "finance_position_ledger_read",
+    name: "fixture",
+    label: "fixture",
+    description: "fixture",
+    boundary: [],
+    allowedSideEffects: [],
+    approve: () => ({ ok: true }),
+    execute: async () => ({
+      ok: false,
+      status: "unsupported_scope",
+      reason: "broker_history_as_of_filter_not_supported",
+    }),
+  };
+  const receipt = await runCentralHarnessCycle({
+    perception,
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async () => ({
+        kind: "proposed",
+        provider: "fixture",
+        modelId: "fixture",
+        plan: {
+          actions: [
+            {
+              ownerId: spec.ownerId,
+              args: { brokerAccountId: "fixture", asOf: perception.observedAt },
+            },
+          ],
+          note: "read native protection",
+        },
+      }),
+    },
+  });
+  expect(receipt.steps[0]).toMatchObject({
+    status: "ran_ok",
+    observedOk: false,
+    outcome: { ok: false },
+  });
+  expect(receipt.nextAction).toBe("follow_up_on_owners_reporting_not_ok");
+  expect(compactReceipts([receipt], 10)[0].notOk).toEqual([spec.ownerId]);
+  expect(nextCycleContinuation(receipt, 1, 2)).toMatchObject({ run: true });
+});
+
 it.each([null, -12.5])(
   "carries account-scoped economics and cost gaps into the next decision (pnl=%s)",
   async (pnl) => {

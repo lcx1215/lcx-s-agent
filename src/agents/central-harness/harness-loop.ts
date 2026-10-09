@@ -338,8 +338,12 @@ async function runCycle(
       if (digestSource !== undefined) {
         // A successful dispatch may still return unavailable evidence. Preserve
         // the host verdict when present; otherwise surface the tool's verdict.
-        if (step.observedOk === undefined && typeof digestSource.available === "boolean") {
-          step.observedOk = digestSource.available;
+        if (step.observedOk === undefined) {
+          if (typeof digestSource.available === "boolean") {
+            step.observedOk = digestSource.available;
+          } else if (typeof digestSource.ok === "boolean") {
+            step.observedOk = digestSource.ok;
+          }
         }
         const archived = isPlainRecord(observation)
           ? hostArtifactBusinessOutcomes.get(observation)
