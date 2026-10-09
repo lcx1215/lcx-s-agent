@@ -37,6 +37,40 @@ it("caps noisy output without preventing the child from exiting", async () => {
   expect(result.stderr).toHaveLength(1024 * 1024);
 });
 
+it("preserves JSON evidence when UTF-8 characters span real stdout and stderr chunks", async () => {
+  const expected = JSON.stringify({ reason: "证据更新🧠，先核对再判断", gap: "尚缺当前价格" });
+  const script = `
+    const body=Buffer.from(${JSON.stringify(expected)});
+    const splits=[body.indexOf(Buffer.from('证'))+1,body.indexOf(Buffer.from('🧠'))+2];
+    const chunks=[body.subarray(0,splits[0]),body.subarray(splits[0],splits[1]),body.subarray(splits[1])];
+    (async()=>{for(const chunk of chunks){
+      process.stdout.write(chunk);process.stderr.write(chunk);
+      await new Promise(resolve=>setTimeout(resolve,60));
+    }})();
+  `;
+  const result = await runFinanceCycleProcess({ argv: ["-e", script], cwd, timeoutMs: 3000 });
+  expect(result).toMatchObject({ ok: true, outputTruncated: false });
+  expect(result.stdout).toBe(expected);
+  expect(result.stderr).toBe(expected);
+  expect(JSON.parse(result.stdout)).toEqual(JSON.parse(expected));
+});
+
+it.each([1, 2])(
+  "retains a contiguous Unicode prefix at output capacity with %s units left",
+  async (left) => {
+    const prefix = "x".repeat(1024 * 1024 - left);
+    const script = `
+    process.stdout.write('x'.repeat(${prefix.length})+'🧠');
+    ${left === 1 ? "setTimeout(()=>process.stdout.write('Z'),60);" : ""}
+  `;
+    const result = await runFinanceCycleProcess({ argv: ["-e", script], cwd, timeoutMs: 3000 });
+    expect(result.ok).toBe(true);
+    expect(result.outputTruncated).toBe(left === 1);
+    expect(result.stdout).toHaveLength(prefix.length + (left === 2 ? 2 : 0));
+    expect(result.stdout).toBe(prefix + (left === 2 ? "🧠" : ""));
+  },
+);
+
 it("reports a spawn error for an inaccessible working directory", async () => {
   const result = await runFinanceCycleProcess({
     argv: ["-e", "0"],

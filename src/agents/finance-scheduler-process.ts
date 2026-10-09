@@ -53,16 +53,26 @@ export async function runFinanceCycleProcess(params: {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const append = (key: "stdout" | "stderr", chunk: unknown) => {
-      const text = String(chunk);
+    const full = { stdout: false, stderr: false };
+    const append = (key: "stdout" | "stderr", text: string) => {
+      if (full[key]) {
+        return;
+      }
       const remaining = OUTPUT_LIMIT - result[key].length;
-      result[key] += text.slice(0, remaining);
+      let end = Math.min(text.length, remaining);
+      const last = text.charCodeAt(end - 1);
+      if (end < text.length && last >= 0xd800 && last <= 0xdbff) {
+        end -= 1;
+      }
+      result[key] += text.slice(0, end);
       if (text.length > remaining) {
         result.outputTruncated = true;
+        // Preserve a contiguous prefix; later chunks must not fill the space left by a cut glyph.
+        full[key] = true;
       }
     };
-    child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
-    child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
+    child.stdout.setEncoding("utf8").on("data", (text: string) => append("stdout", text));
+    child.stderr.setEncoding("utf8").on("data", (text: string) => append("stderr", text));
     const terminate = (status: "timed_out" | "cancelled") => {
       if (termination || result.status === "spawn_error") {
         return;
