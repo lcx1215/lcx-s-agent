@@ -18,9 +18,29 @@ import {
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
 import { readFinancePaperPromotions } from "./finance-paper-promotion.js";
+import {
+  financeResearchPortfolioContextSchema,
+  type FinanceResearchPortfolioContext,
+} from "./finance-research-portfolio-plan.js";
 import { readFinanceSchedulerState } from "./finance-scheduler-state.js";
 import { financeResearchScoredPath } from "./finance-state-dir.js";
 let root: string;
+const researchContext: FinanceResearchPortfolioContext = {
+  accountId: "fixture-account",
+  venue: "alpaca",
+  validityMinutes: 60,
+  conflictPolicy: "block",
+  activeStrategyIds: ["fixture-strategy"],
+  requiredInstruments: ["AAPL"],
+};
+function writeResearchContext(): string {
+  const filename = path.join(root, "context.json");
+  fs.writeFileSync(
+    filename,
+    JSON.stringify(financeResearchPortfolioContextSchema.parse(researchContext)),
+  );
+  return filename;
+}
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-"));
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -66,6 +86,7 @@ describe("durable scheduler claims on the unified lifecycle", () => {
   it.each(["rejected", "candidate"])(
     "does not turn unaccepted research %s into a successful trading cycle",
     async (status) => {
+      const contextPath = writeResearchContext();
       mocks.run.mockResolvedValue({
         exitCode: 0,
         status: "succeeded",
@@ -86,7 +107,7 @@ describe("durable scheduler claims on the unified lifecycle", () => {
           "--dir",
           root,
           "--research-portfolio-context",
-          path.join(root, "context.json"),
+          contextPath,
           "--research-ask",
           "Review opportunities",
         ]),
@@ -103,6 +124,7 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     },
   );
   it("runs the trading cycle after an accepted research plan", async () => {
+    const contextPath = writeResearchContext();
     mocks.run.mockResolvedValueOnce({
       exitCode: 0,
       status: "succeeded",
@@ -126,14 +148,52 @@ describe("durable scheduler claims on the unified lifecycle", () => {
         "--dir",
         root,
         "--research-portfolio-context",
-        path.join(root, "context.json"),
+        contextPath,
         "--research-ask",
         "Review opportunities",
       ]),
     ).toBe(0);
     expect(mocks.run).toHaveBeenCalledTimes(2);
+    const researchArgs: readonly string[] = mocks.run.mock.calls[0][0].argv;
+    const frozenContextPath = researchArgs[researchArgs.indexOf("--portfolio-context") + 1];
+    expect(frozenContextPath).not.toBe(contextPath);
+    expect(JSON.parse(fs.readFileSync(frozenContextPath, "utf8"))).toEqual(researchContext);
+    const executionArgs: readonly string[] = mocks.run.mock.calls[1][0].argv;
+    expect(executionArgs).toContain(path.join(root, "research-portfolio-plan-latest.json"));
     expect(readFinanceSchedulerState(root).lastSucceeded.day).toBe("2026-09-22");
   });
+  it.each([
+    { body: undefined, reason: "controller_evidence_read_failed" },
+    { body: "{invalid", reason: "controller_evidence_invalid_scope" },
+    {
+      body: JSON.stringify({ ...researchContext, venue: "live" }),
+      reason: "controller_evidence_invalid_scope",
+    },
+  ])(
+    "refuses invalid research context before child dispatch: $reason $body",
+    async ({ body, reason }) => {
+      const contextPath = path.join(root, "context.json");
+      if (body !== undefined) {
+        fs.writeFileSync(contextPath, body);
+      }
+      expect(
+        await runFinanceScheduler([
+          "--once",
+          "day",
+          "--dir",
+          root,
+          "--research-portfolio-context",
+          contextPath,
+          "--research-ask",
+          "Review opportunities",
+        ]),
+      ).toBe(1);
+      expect(mocks.run).not.toHaveBeenCalled();
+      const state = readFinanceSchedulerState(root);
+      expect(state.lastSucceeded.day).toBeUndefined();
+      expect(state.lastRun?.execution).toMatchObject({ outcome: "not_run", blockReason: reason });
+    },
+  );
   it("preserves old interrupted claim without dispatch", async () => {
     fs.writeFileSync(
       path.join(root, "daily-cycle-2026-09-22-day.json"),
