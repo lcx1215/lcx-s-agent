@@ -78,7 +78,7 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
     label: "Finance Market Collection Refresh",
     name: "finance_market_collection_refresh",
     description:
-      "Inspect or explicitly fetch structured US-market collections such as public news, options chains, dividends, splits, official macro series, SEC filings, company profiles, and free-tier EOD history. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
+      "Inspect or explicitly fetch structured US-market collections such as public news, options chains, dividends, splits, official macro series, SEC filings, company profiles, and free-tier EOD history. For merger or symbol-change questions, use event_calendar with sourceIds=[alpaca_corporate_actions]; action data does not prove account payment or an order cancellation cause. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
     parameters: FinanceMarketCollectionRefreshSchema,
     execute: async (_toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();

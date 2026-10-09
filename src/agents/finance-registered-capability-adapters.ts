@@ -33,6 +33,7 @@ export type Capability = {
   extraHeaders?: Record<string, string>;
   snapshot?: boolean;
   delayStatus?: "delayed" | "end_of_day";
+  sourceTimestampMeaning?: string;
   sample?: FinanceMarketCollectionAdapter["sampleRequest"];
   accepts?: (request: FinanceMarketCollectionRequest) => boolean;
   documentation?: string;
@@ -335,7 +336,7 @@ export function createRegisteredCapabilityAdapters(
                 c.id === "alpaca_daily_history"
                   ? "new_york_session_date_label_not_close_time"
                   : row.time
-                    ? "observation_or_fiscal_period_not_publication"
+                    ? (c.sourceTimestampMeaning ?? "observation_or_fiscal_period_not_publication")
                     : "retrieved_snapshot_provider_timestamp_unavailable",
             },
           }));

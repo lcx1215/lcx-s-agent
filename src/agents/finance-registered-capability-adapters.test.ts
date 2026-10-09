@@ -17,6 +17,130 @@ const request = {
   limit: 20,
 };
 describe("registered provider capabilities", () => {
+  it("discovers corporate actions through the existing event collection without a request", () => {
+    let calls = 0;
+    const options = {
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      fetchImpl: async () => {
+        calls++;
+        throw new Error("inspection must stay offline");
+      },
+    };
+    const input = { ...request, instrument: "WBD", collection: "event_calendar" as const };
+    expect(
+      inspectFinanceMarketCollectionRegistry(
+        input,
+        createFinanceMarketCollectionRegistry(options),
+      ).candidateAdapters.some((adapter) => adapter.id === "alpaca_corporate_actions"),
+    ).toBe(true);
+    expect(calls).toBe(0);
+    expect(
+      createRegisteredCapabilityAdapters({ alpacaApiKeyId: "test-id" }).some(
+        (adapter) => adapter.id === "alpaca_corporate_actions",
+      ),
+    ).toBe(false);
+  });
+
+  it("retains merger and incomplete action evidence without claiming cancellation or payment", async () => {
+    let calls = 0;
+    const adapters = createRegisteredCapabilityAdapters({
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      fetchImpl: async (input, init) => {
+        calls++;
+        const url = new URL(String(input));
+        expect(url.origin + url.pathname).toBe("https://data.alpaca.markets/v1/corporate-actions");
+        expect(url.searchParams.get("symbols")).toBe("WBD");
+        expect(url.searchParams.get("start")).toBe("2026-09-01");
+        expect(url.searchParams.get("end")).toBe("2026-09-08");
+        expect(url.searchParams.get("data_quality")).toBe("all");
+        expect(init?.headers).toMatchObject({
+          "APCA-API-KEY-ID": "test-id",
+          "APCA-API-SECRET-KEY": "test-secret",
+        });
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              corporate_actions: {
+                cash_mergers: [
+                  { id: "past", acquiree_symbol: "WBD", process_date: "2026-09-07", rate: 31.01 },
+                  { id: "future", acquiree_symbol: "WBD", process_date: "2026-09-09" },
+                  { id: "outside", acquiree_symbol: "WBD", process_date: "2026-08-31" },
+                ],
+                name_changes: [{ id: "partial", old_symbol: "WBD", new_symbol: "NEW" }],
+              },
+              next_page_token: "more-pages",
+            }),
+        };
+      },
+    });
+    const adapter = adapters.find((item) => item.id === "alpaca_corporate_actions");
+    expect(adapter).toBeDefined();
+    const records = await adapter!.collect(
+      {
+        ...request,
+        instrument: "WBD",
+        collection: "event_calendar",
+        fromDate: "2026-09-01",
+        toDate: "2026-09-08",
+      },
+      new AbortController().signal,
+    );
+    expect(calls).toBe(1);
+    expect(
+      records
+        .map((record) => record.data.id)
+        .toSorted((a, b) => String(a).localeCompare(String(b))),
+    ).toEqual(["partial", "past"]);
+    const past = records.find((record) => record.data.id === "past")!;
+    expect(past.sourceTimestamp).toBe("2026-09-07T00:00:00.000Z");
+    expect(past.data.sourceTimestampMeaning).toBe(
+      "process_date_not_announcement_or_account_posting",
+    );
+    expect(past.data).toMatchObject({
+      actionType: "cash_mergers",
+      rate: 31.01,
+      processDateUnknown: false,
+    });
+    const partial = records.find((record) => record.data.id === "partial")!;
+    expect(partial.sourceTimestamp).toBe(partial.observedAt);
+    expect(partial.data.sourceTimestampMeaning).toContain("timestamp_unavailable");
+    expect(partial.data.processDateUnknown).toBe(true);
+    for (const record of records) {
+      expect(record.delayStatus).toBe("delayed");
+      expect(record.data).toMatchObject({
+        dataQuality: "all_including_incomplete",
+        publicationTimeUnknown: true,
+        continuationRequired: true,
+        executionGrade: false,
+        accountPostingVerified: false,
+        cancellationCauseVerified: false,
+      });
+      expect(record.data).not.toHaveProperty("paymentReceived");
+    }
+  });
+
+  it("keeps denied corporate-action access failed and does not substitute account facts", async () => {
+    const adapters = createRegisteredCapabilityAdapters({
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      fetchImpl: async () => ({ ok: false, status: 403, text: async () => "forbidden" }),
+    }).filter((adapter) => adapter.id === "alpaca_corporate_actions");
+    expect(adapters).toHaveLength(1);
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: { ...request, instrument: "WBD", collection: "event_calendar" },
+      adapters,
+      retry: { attempts: 1 },
+    });
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.records).toEqual([]);
+    expect(receipt.sourceAttempts[0]?.status).toBe("failed");
+    expect(receipt.boundary).toBe("finance_market_collection_research_only");
+  });
+
   it("keeps the full 100-plus endpoint catalog discoverable for on-demand system calls", () => {
     const credentials = {
       alphaVantageApiKey: "test",
