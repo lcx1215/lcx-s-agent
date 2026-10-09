@@ -409,7 +409,7 @@ function compactFinanceNightIntradayDecision(decision: FinanceNightIntradayDecis
                   ...(review.toolEvidence === undefined
                     ? {}
                     : {
-                        toolEvidence: review.toolEvidence.slice(0, 2).map((item) => ({
+                        toolEvidence: review.toolEvidence.slice(-2).map((item) => ({
                           action: item.action,
                           candidateId: item.candidateId,
                           asOf: item.asOf,
@@ -425,7 +425,7 @@ function compactFinanceNightIntradayDecision(decision: FinanceNightIntradayDecis
                   ...(review.modelCallEvidence === undefined
                     ? {}
                     : {
-                        modelCallEvidence: review.modelCallEvidence.slice(0, 2).map((call) => ({
+                        modelCallEvidence: review.modelCallEvidence.slice(-2).map((call) => ({
                           attempt: call.attempt,
                           callId: call.callId,
                           payloadSha256: call.payloadSha256,

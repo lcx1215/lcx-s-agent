@@ -21,6 +21,8 @@ import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
 import {
+  FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS,
+  FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS,
   FinanceTradeReviewModelCallEvidenceSchema,
   FinanceTradeReviewToolEvidenceSchema,
 } from "./finance-trade-review-evidence.js";
@@ -325,7 +327,7 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
     request: IntradayReviewRequestSchema,
     status: z.enum(["completed", "failed"]),
     attempted: z.boolean(),
-    modelCalls: z.number().int().nonnegative().max(2).optional(),
+    modelCalls: z.number().int().nonnegative().max(FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS).optional(),
     provider: Text,
     modelId: Text,
     latencyMs: z.number().finite().nonnegative(),
@@ -344,8 +346,12 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
       })
       .strict()
       .optional(),
-    toolEvidence: FinanceTradeReviewToolEvidenceSchema.array().max(2).optional(),
-    modelCallEvidence: FinanceTradeReviewModelCallEvidenceSchema.array().max(2).optional(),
+    toolEvidence: FinanceTradeReviewToolEvidenceSchema.array()
+      .max(FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS)
+      .optional(),
+    modelCallEvidence: FinanceTradeReviewModelCallEvidenceSchema.array()
+      .max(FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS)
+      .optional(),
     decision: IntradayReviewDecisionSchema.optional(),
     failureCode: ReviewFailureCode.optional(),
   })

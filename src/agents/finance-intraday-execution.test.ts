@@ -2609,7 +2609,9 @@ describe("intraday decision execution bridge", () => {
 
   it.each([
     { mode: "approve", calls: 2, gate: true },
-    { mode: "first_used_two", calls: 1, gate: false },
+    { mode: "first_used_two", calls: 2, gate: true },
+    { mode: "first_used_three", calls: 2, gate: true },
+    { mode: "first_over_budget", calls: 1, gate: false },
     { mode: "first_refresh_deadline", calls: 1, gate: false },
     { mode: "veto", calls: 2, gate: false },
     { mode: "failed", calls: 2, gate: false },
@@ -2674,7 +2676,7 @@ describe("intraday decision execution bridge", () => {
     let reviewerCalls = 0;
     const reviewer = vi.fn<FinanceTradeDecisionReviewer>(async (request, _signal, options) => {
       const second = ++reviewerCalls === 2;
-      expect(options?.maxModelCalls).toBe(second ? 1 : 2);
+      expect(options?.maxModelCalls).toBe(second ? 1 : 3);
       clock += second && mode === "deadline" ? 60_000 : 1_000;
       if (second && mode === "cancel") {
         abort.abort();
@@ -2696,7 +2698,14 @@ describe("intraday decision execution bridge", () => {
       return {
         ...result,
         quoteApprovalPolicy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
-        modelCalls: mode === "first_used_two" || (second && mode === "over_budget") ? 2 : 1,
+        modelCalls:
+          mode === "first_over_budget"
+            ? 4
+            : !second && mode === "first_used_three"
+              ? 3
+              : (!second && mode === "first_used_two") || (second && mode === "over_budget")
+                ? 2
+                : 1,
         decisions: [
           {
             ...result.decisions[0],
@@ -2762,10 +2771,8 @@ describe("intraday decision execution bridge", () => {
         category: "deadline_exceeded",
       });
     }
-    if (mode === "first_used_two") {
-      expect(stored?.reasons).toEqual([
-        "intraday quote re-review refused: original candidate model-call budget exhausted",
-      ]);
+    if (mode === "first_over_budget") {
+      expect(stored?.tradeDecisionReview?.failureCode).toBe("output_invalid");
     }
     if (calls === 2) {
       const first = stored!.tradeDecisionReviewHistory![0];

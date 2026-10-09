@@ -18,6 +18,10 @@ import { createFinanceLearningCapabilityInspectTool } from "./tools/finance-lear
 import { createQuantLabTool } from "./tools/quant-lab-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 
+// One candidate budget covers evidence follow-ups and any quote re-review.
+export const FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS = 4;
+export const FINANCE_TRADE_REVIEW_INITIAL_MODEL_CALLS = 3;
+export const FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS = 4;
 const Text = z.string().min(1).max(120);
 const MathEvidenceRequestSchema = z
   .object({
@@ -96,7 +100,7 @@ export type FinanceTradeReviewEvidenceRequest = z.infer<
 >;
 export const FinanceTradeReviewModelCallEvidenceSchema = z
   .object({
-    attempt: z.union([z.literal(1), z.literal(2)]),
+    attempt: z.number().int().min(1).max(FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS),
     callId: z.string().min(1).max(240),
     payloadSha256: z.string().regex(/^[a-f\d]{64}$/u),
     outputSha256: z

@@ -416,7 +416,54 @@ describe("account gate before unattended placement", () => {
     await cycleParams.tradeDecisionReviewer(reviewRequest, AbortSignal.timeout(1000));
 
     expect(factory).toHaveBeenCalledTimes(1);
+    expect(factory).toHaveBeenCalledWith(undefined);
     expect(reviewer).toHaveBeenCalledWith(reviewRequest, expect.any(AbortSignal));
+  });
+  it("binds daily tool access to the original controller account and validated universe", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "daily-review-tools-"));
+    try {
+      const policyPath = path.join(directory, "paper-policy.json");
+      await fs.writeFile(policyPath, "{}");
+      const reviewer = vi.fn(async () => ({
+        status: "failed" as const,
+        attempted: false,
+        provider: "fixture",
+        modelId: "fixture",
+        latencyMs: 0,
+        providerCallObserved: false,
+        adapterAttested: false,
+        failureCode: "reviewer_unavailable" as const,
+      }));
+      const factory = vi.fn(() => reviewer as FinanceTradeDecisionReviewer);
+      await runFinanceDailyCycleOperator(
+        [
+          ...args.map((arg) => (arg === "/synthetic/finance" ? directory : arg)),
+          "--execution-policy",
+          policyPath,
+        ],
+        {
+          createController: vi.fn(() => ({ accountId: "verified-paper" }) as never),
+          createTradeDecisionReviewer: factory,
+        },
+      );
+      expect(factory).not.toHaveBeenCalled();
+      const cycleParams = mocks.cycle.mock.calls[0][0];
+      await cycleParams.tradeDecisionReviewer(
+        { schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA },
+        new AbortController().signal,
+      );
+      expect(factory).toHaveBeenCalledWith({
+        directory,
+        accountId: "verified-paper",
+        instruments: ["MSFT", "NVDA"],
+      });
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
   it("allows Paper execution while adversity evidence remains promotion-only", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });

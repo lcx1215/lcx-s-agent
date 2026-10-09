@@ -59,7 +59,12 @@ import {
   createFinanceTradeDecisionReviewer,
   type FinanceTradeDecisionReviewer,
 } from "../../src/agents/finance-trade-decision-review.js";
+import {
+  createFinanceTradeReviewFinancialCapabilities,
+  type FinanceTradeReviewEvidenceScope,
+} from "../../src/agents/finance-trade-review-evidence.js";
 import { loadConfig } from "../../src/config/config.js";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 
 // Named in `finance-state-dir.ts` alongside the rest of the plane: the cycle writes these and the
 // calibration reader reads them back, so the names are declared once.
@@ -321,7 +326,9 @@ export async function runFinanceDailyCycleOperator(
   argv: readonly string[] = process.argv.slice(2),
   deps: {
     createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider;
-    createTradeDecisionReviewer?: () => FinanceTradeDecisionReviewer;
+    createTradeDecisionReviewer?: (
+      scope?: FinanceTradeReviewEvidenceScope,
+    ) => FinanceTradeDecisionReviewer;
     syncHistory?: typeof syncConfiguredAlpacaPaperHistory;
     createController?: typeof createFinanceAlpacaCycleController;
   } = {},
@@ -738,8 +745,28 @@ export async function runFinanceDailyCycleOperator(
                 try {
                   reviewer = (
                     deps.createTradeDecisionReviewer ??
-                    (() => createFinanceTradeDecisionReviewer(loadConfig()))
-                  )();
+                    ((scope) => {
+                      const config = loadConfig();
+                      return createFinanceTradeDecisionReviewer(config, {
+                        evidenceScope: scope
+                          ? {
+                              ...scope,
+                              financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
+                                workspaceDir:
+                                  process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
+                                  DEFAULT_WORKSPACE_DIR,
+                                config,
+                                agentId: "main",
+                              }),
+                            }
+                          : undefined,
+                      });
+                    })
+                  )(
+                    controller
+                      ? { directory, accountId: controller.accountId, instruments }
+                      : undefined,
+                  );
                 } catch {
                   reviewerUnavailable = true;
                 }

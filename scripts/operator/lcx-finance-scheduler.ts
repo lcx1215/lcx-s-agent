@@ -1411,7 +1411,7 @@ function createIntradayTradeDecisionReviewer(
   evidenceScope?: FinanceTradeReviewEvidenceScope,
 ) {
   try {
-    // Each reviewer owns a single-call model adapter, so scope it to one decision.
+    // Scope the existing shared model budget and tool loop to one candidate.
     const config = loadConfig();
     const financialCapabilities = evidenceScope
       ? createFinanceTradeReviewFinancialCapabilities({

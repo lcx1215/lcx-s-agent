@@ -1880,3 +1880,204 @@ it("consumes asset fee source valuation and persists its boundary without invent
   await appendFinanceIntradayOutcome(scope.directory, outcome);
   expect(await readFinanceIntradayOutcome(scope.directory, "signal")).toEqual(outcome);
 });
+
+it("continues a specific doubt after the first real tool result and retains both rounds in DB and feedback", async () => {
+  const scope = await fixture();
+  const payloads: unknown[] = [];
+  const fixtureModel = scripted(
+    [
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [{ candidateId: "signal", action: "daily_closes" }],
+        hypothesis: "Check the retained price path first.",
+      },
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [{ candidateId: "signal", action: "max_drawdown" }],
+        hypothesis: "Quantify the historical downside of that path.",
+      },
+      decision,
+    ],
+    payloads,
+  );
+  const reviewer = createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: fixtureModel.factory,
+      evidenceScope: scope,
+    },
+  );
+  const result = await reviewer(packet, new AbortController().signal);
+  expect(result).toMatchObject({ status: "completed", modelCalls: 3 });
+  expect(result.toolEvidence?.map(({ action }) => action)).toEqual([
+    "daily_closes",
+    "max_drawdown",
+  ]);
+  const second = payloads[1] as {
+    toolEvidence: unknown[];
+    evidenceToolsAvailable: boolean;
+    evidenceHistory: unknown[];
+  };
+  const third = payloads[2] as {
+    toolEvidence: unknown[];
+    evidenceToolsAvailable?: boolean;
+    evidenceHistory: unknown[];
+  };
+  expect(second.evidenceToolsAvailable).toBe(true);
+  expect(second.evidenceHistory).toHaveLength(1);
+  expect(second.toolEvidence).toEqual(result.toolEvidence?.slice(0, 1));
+  expect(third.evidenceToolsAvailable).toBeUndefined();
+  expect(third.toolEvidence).toEqual(result.toolEvidence);
+  expect(third.evidenceHistory).toHaveLength(2);
+  expect(result.modelCallEvidence?.map(({ resultKind }) => resultKind)).toEqual([
+    "evidence_request",
+    "evidence_request",
+    "decision",
+  ]);
+  await appendFinanceIntradayDecision(scope.directory, {
+    signalId: "signal",
+    instrument: "AAA",
+    sessionDate: "2026-09-30",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: asOf,
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  const { decisions: _decisions, ...metadata } = result;
+  const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+    ...metadata,
+    request: packet,
+    decision: result.decisions?.[0],
+  });
+  await appendFinanceIntradayOutcome(scope.directory, {
+    signalId: "signal",
+    status: "refused",
+    reasons: ["model veto"],
+    tradeDecisionReview: receipt,
+  });
+  expect(
+    (await readFinanceIntradayOutcome(scope.directory, "signal"))?.tradeDecisionReview
+      ?.modelCallEvidence,
+  ).toEqual(result.modelCallEvidence);
+  const night = await buildFinanceNightReviewEvidence({
+    directory: scope.directory,
+    asOf: new Date().toISOString(),
+    etDate: "2026-09-30",
+    settlement: {
+      scoredFiled: { appended: 0, skipped: 0 },
+      reflection: {},
+      pending: [],
+      declined: [],
+      issues: [],
+    },
+  });
+  const projected = JSON.parse(
+    night.find((item) => item.source === "finance-intraday-control-ledger")!.text,
+  ).decisions[0].outcome.tradeDecisionReview;
+  expect(projected.modelCallEvidence).toEqual(result.modelCallEvidence?.slice(-2));
+  expect(projected.omittedModelCallEvidenceCount).toBe(1);
+  expect(projected.modelCallEvidence.at(-1).resultKind).toBe("decision");
+});
+
+it("does not rerun a retained tool when a follow-up repeats it alongside a new request", async () => {
+  const scope = await fixture();
+  const execute = vi.fn(async () => ({
+    available: true,
+    status: "completed",
+    result: { finding: "retained method" },
+  }));
+  const request = {
+    candidateId: "signal",
+    action: "financial_capability",
+    toolName: "fixture_method",
+    moduleId: "credit_liquidity" as const,
+    question: "Check the candidate method.",
+  };
+  const model = scripted([
+    {
+      schemaVersion: packet.schemaVersion,
+      evidenceRequests: [request],
+      hypothesis: "Read the retained method.",
+    },
+    {
+      schemaVersion: packet.schemaVersion,
+      evidenceRequests: [request, { candidateId: "signal", action: "max_drawdown" }],
+      hypothesis: "Add the missing historical risk calculation.",
+    },
+    decision,
+  ]);
+  const reviewer = createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: model.factory,
+      evidenceScope: {
+        ...scope,
+        financialCapabilities: [
+          {
+            toolName: "fixture_method",
+            moduleIds: ["credit_liquidity"],
+            description: "retained test method",
+            execute,
+          },
+        ],
+      },
+    },
+  );
+  const result = await reviewer(packet, new AbortController().signal);
+  expect(result).toMatchObject({ status: "completed", modelCalls: 3 });
+  expect(result.toolEvidence).toHaveLength(2);
+  expect(execute).toHaveBeenCalledTimes(1);
+});
+
+it.each(["repeat_only", "no_decision_slot", "tool_budget", "provider_failed"] as const)(
+  "stops the original adaptive loop without losing earlier evidence (%s)",
+  async (mode) => {
+    const scope = await fixture();
+    const ask = (actions: string[]) => ({
+      schemaVersion: packet.schemaVersion,
+      hypothesis: "Resolve this specific remaining historical risk doubt.",
+      evidenceRequests: actions.map((action) => ({ candidateId: "signal", action })),
+    });
+    const outputs =
+      mode === "tool_budget"
+        ? [
+            ask(["daily_closes", "max_drawdown"]),
+            ask(["z_score"]),
+            ask(["returns_from_levels", "broker_fill_feedback"]),
+            decision,
+          ]
+        : [
+            ask(["daily_closes"]),
+            mode === "provider_failed"
+              ? new ModelAdapterError("provider_payment_required")
+              : ask([mode === "repeat_only" ? "daily_closes" : "max_drawdown"]),
+            decision,
+          ];
+    const fixtureModel = scripted(outputs);
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: fixtureModel.factory,
+        evidenceScope: scope,
+      },
+    );
+    const result = await reviewer(packet, new AbortController().signal, {
+      maxModelCalls: mode === "no_decision_slot" ? 2 : 4,
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      modelCalls: mode === "tool_budget" ? 3 : 2,
+      failureCode:
+        mode === "provider_failed"
+          ? "provider_payment_required"
+          : mode === "repeat_only"
+            ? "output_invalid"
+            : "call_budget_exhausted",
+    });
+    expect(result.toolEvidence).toHaveLength(mode === "tool_budget" ? 3 : 1);
+    expect(result.toolEvidence?.[0]).toMatchObject({ action: "daily_closes", status: "completed" });
+    expect(fixtureModel.model.invoke).toHaveBeenCalledTimes(mode === "tool_budget" ? 3 : 2);
+  },
+);

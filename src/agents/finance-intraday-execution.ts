@@ -51,6 +51,10 @@ import {
   type FinanceTradeDecisionReviewResult,
   type FinanceTradeDecisionReviewer,
 } from "./finance-trade-decision-review.js";
+import {
+  FINANCE_TRADE_REVIEW_INITIAL_MODEL_CALLS,
+  FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS,
+} from "./finance-trade-review-evidence.js";
 
 type Controller = Required<
   Pick<
@@ -520,7 +524,7 @@ export async function executeFinanceIntradayDecision(params: {
     | ((
         quote: FinanceDailyCycleExecutionQuote,
         checkedAt: number,
-        maxModelCalls: 1 | 2,
+        maxModelCalls: 1 | 2 | 3 | 4,
       ) => Promise<boolean>)
     | undefined;
   const reviewHistory = () => (tradeDecisionReviewHistory ? { tradeDecisionReviewHistory } : {});
@@ -966,7 +970,11 @@ export async function executeFinanceIntradayDecision(params: {
         });
         return reviewContractAnomaly;
       };
-      const reviewContractAnomaly = await performReview(quote, reviewAtMs, 2);
+      const reviewContractAnomaly = await performReview(
+        quote,
+        reviewAtMs,
+        FINANCE_TRADE_REVIEW_INITIAL_MODEL_CALLS,
+      );
       const reviewResult = tradeDecisionReview!;
       const reviewedDecision = reviewResult.decision;
       if (
@@ -1083,7 +1091,7 @@ export async function executeFinanceIntradayDecision(params: {
           tradeDecisionReview.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY &&
           comparison.reason ===
             "intraday reviewed execution prices changed; a new model review is required" &&
-          Math.max(1, tradeDecisionReview.modelCalls ?? 1) < 2 &&
+          Math.max(1, tradeDecisionReview.modelCalls ?? 1) < FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS &&
           now() < reviewDeadlineAt;
         let refusal = comparison.reason;
         if (
@@ -1091,7 +1099,7 @@ export async function executeFinanceIntradayDecision(params: {
           tradeDecisionReview.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY &&
           comparison.reason ===
             "intraday reviewed execution prices changed; a new model review is required" &&
-          Math.max(1, tradeDecisionReview.modelCalls ?? 1) >= 2
+          Math.max(1, tradeDecisionReview.modelCalls ?? 1) >= FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS
         ) {
           refusal =
             "intraday quote re-review refused: original candidate model-call budget exhausted";

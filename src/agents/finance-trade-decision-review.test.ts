@@ -119,6 +119,64 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("uses the bound tool loop for a daily candidate without changing its execution authority", async () => {
+  const execute = vi.fn(async () => ({
+    ok: true,
+    sourceUpdatedAt: "2026-09-22T12:00:00.000Z",
+    finding: "A historical method is not a current market fact.",
+  }));
+  const first = adapter({
+    schemaVersion: request.schemaVersion,
+    hypothesis: "Check the retained method's scope for this daily candidate.",
+    evidenceRequests: [
+      {
+        candidateId: request.candidates[0].candidateId,
+        action: "financial_capability",
+        toolName: "retained_method",
+        moduleId: "credit_liquidity",
+        question: "Does this method supply current market evidence?",
+      },
+    ],
+  });
+  const second = adapter({
+    schemaVersion: request.schemaVersion,
+    decisions: [
+      {
+        candidateId: request.candidates[0].candidateId,
+        decision: "veto",
+        rationale:
+          "The retrieved historical method does not resolve the candidate's current evidence gap.",
+      },
+    ],
+  });
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
+      evidenceScope: {
+        directory: "/fixture-retained-method-only",
+        accountId: "paper-fixture",
+        instruments: ["SPY"],
+        financialCapabilities: [
+          {
+            toolName: "retained_method",
+            moduleIds: ["credit_liquidity"],
+            description: "Retained method only",
+            execute,
+          },
+        ],
+      },
+    },
+  )(request, AbortSignal.timeout(1000));
+  expect(result).toMatchObject({ status: "completed", modelCalls: 2 });
+  expect(result).not.toHaveProperty("quoteApprovalPolicy");
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(second.invoke).mock.calls[0][0].payload).toMatchObject({
+    candidates: request.candidates,
+    toolEvidence: [{ accountId: "paper-fixture", status: "completed" }],
+  });
+});
+
 it("uses the host financial catalog, consumes a non-math result, and keeps the exact candidate", async () => {
   const execute = vi.fn<FinanceTradeReviewFinancialCapability["execute"]>(async (input) => {
     expect(input.moduleId).toBe("company_fundamentals_value");
@@ -1333,6 +1391,7 @@ it.each([
         {},
         {
           adapterFactory: factory,
+          maxCandidateModelCalls: 2,
           evidenceScope: { directory, accountId: "paper-fixture", instruments: ["SPY"] },
         },
       );
@@ -1442,7 +1501,10 @@ describe("candidate-wide reviewer call budget", () => {
       models.push(model);
       return model;
     });
-    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: factory });
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: factory, maxCandidateModelCalls: 2 },
+    );
     expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
       status: "completed",
       modelCalls: 1,
@@ -1502,7 +1564,7 @@ describe("candidate-wide reviewer call budget", () => {
         },
       },
     };
-    const reviewer = createFinanceTradeDecisionReviewer(cfg);
+    const reviewer = createFinanceTradeDecisionReviewer(cfg, { maxCandidateModelCalls: 2 });
     expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
       status: "completed",
       modelCalls: 1,
@@ -1522,7 +1584,10 @@ describe("candidate-wide reviewer call budget", () => {
   it("caps injected adapters at two calls even when they never reserve or report misleading output metadata", async () => {
     const model = adapter(approval());
     const factory = vi.fn(() => model);
-    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: factory });
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: factory, maxCandidateModelCalls: 2 },
+    );
     for (let call = 0; call < 4; call++) {
       const result = await reviewer(intradayRequest, new AbortController().signal, {
         maxModelCalls: 1,
@@ -1567,7 +1632,7 @@ describe("candidate-wide reviewer call budget", () => {
   it.each([
     null,
     { maxModelCalls: 0 },
-    { maxModelCalls: 3 },
+    { maxModelCalls: 5 },
     { maxModelCalls: 1.5 },
     { maxModelCalls: "1" },
     { maxModelCalls: 1, resetBudget: true },
@@ -1670,4 +1735,53 @@ describe("candidate-wide reviewer call budget", () => {
       ),
     ).toMatchObject({ status: "failed", failureCode: "output_contract" });
   });
+});
+
+it("keeps the default four-call native budget shared across re-entry and skips unused follow-ups", async () => {
+  const nativeBudgets: NonNullable<
+    Parameters<typeof createConfiguredFinanceModelAdapter>[1]
+  >["callBudget"][] = [];
+  const factory = vi.fn<typeof createConfiguredFinanceModelAdapter>((_cfg, options) => {
+    nativeBudgets.push(options!.callBudget);
+    return {
+      ...adapter({
+        schemaVersion: intradayRequest.schemaVersion,
+        decisions: [
+          {
+            candidateId: intradayRequest.candidates[0].candidateId,
+            decision: "approve",
+            rationale: "Supplied facts suffice.",
+          },
+        ],
+      }),
+      invoke: vi.fn(async () => {
+        options!.callBudget!.reserve();
+        return {
+          schemaVersion: intradayRequest.schemaVersion,
+          decisions: [
+            {
+              candidateId: intradayRequest.candidates[0].candidateId,
+              decision: "approve",
+              rationale: "Supplied facts suffice.",
+            },
+          ],
+        };
+      }),
+    };
+  });
+  const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: factory });
+  for (let run = 0; run < 4; run += 1) {
+    expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+      status: "completed",
+      modelCalls: 1,
+    });
+  }
+  expect(await reviewer(intradayRequest, new AbortController().signal)).toMatchObject({
+    status: "failed",
+    modelCalls: 0,
+    failureCode: "call_budget_exhausted",
+  });
+  expect(new Set(nativeBudgets).size).toBe(1);
+  expect(nativeBudgets[0]!.snapshot()).toEqual({ limit: 4, reserved: 4, remaining: 0 });
+  expect(factory).toHaveBeenCalledTimes(4);
 });
