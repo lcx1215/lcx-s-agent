@@ -38,6 +38,46 @@ function reply(value: unknown) {
   return { status: 200, body: JSON.stringify(value) };
 }
 describe("Alpaca raw history sync", () => {
+  it("retains only requested streams while reporting all unique observations and stale revisions", async () => {
+    const { directory, accountId } = await setup(async () => reply([]));
+    const append = (query: string, payload: Record<string, unknown>[]) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload,
+      });
+    await append("orders:new", [
+      { id: "same", updated_at: "2026-10-08T00:00:00Z", status: "filled" },
+    ]);
+    await append("orders:old", [{ id: "same", updated_at: "2026-10-07T00:00:00Z", status: "new" }]);
+    await append("activities:partial", [{ id: "same", fragment: "useful incomplete evidence" }]);
+    await append("reconciliation:large", [
+      { observedAt: "2026-10-08T00:00:00Z", positions: [{ symbol: "SPY" }] },
+    ]);
+    await append("sync_receipt:complete", [{ status: "raw_history_synced" }]);
+    const full = await readFinanceBrokerHistory(directory, accountId);
+    const selected = await readFinanceBrokerHistory(directory, accountId, {
+      streams: ["orders", "activities"],
+    });
+    expect(selected.facts).toEqual(
+      full.facts.filter(({ stream }) => ["orders", "activities"].includes(stream)),
+    );
+    expect(selected).toMatchObject({
+      pageCount: 5,
+      totalFactCount: 4,
+      observationCount: 3,
+      omittedFactCount: 2,
+      headRef: full.headRef,
+    });
+    expect(selected.facts[0]?.fact.status).toBe("filled");
+    expect(selected.facts[1]?.fact.fragment).toBe("useful incomplete evidence");
+    expect((await readFinanceBrokerHistory(directory, accountId, { streams: [] })).facts).toEqual(
+      [],
+    );
+  });
   it("retains native parent legs and child facts without counting legs as pagination rows", async () => {
     const urls: URL[] = [];
     const options = await setup(async (raw) => {

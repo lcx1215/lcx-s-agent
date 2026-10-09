@@ -5,7 +5,8 @@ import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { readFinanceIntradayDecisions } from "./finance-intraday-control-ledger.js";
 import {
   readFinanceBrokerHistoryActivities,
-  readFinanceBrokerHistoryRecords,
+  reduceFinanceBrokerHistoryRecords,
+  type BrokerHistoryRecord,
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
@@ -535,25 +536,28 @@ export async function readFinanceBrokerInstrumentFeedback(options: {
     ) {
       return unavailable("invalid_scope_or_cutoff");
     }
-    const history = await readFinanceBrokerHistoryRecords(
+    const history = await reduceFinanceBrokerHistoryRecords(
       options.directory,
       options.accountId,
       scope.venue,
+      { selected: undefined as BrokerHistoryRecord | undefined, invalidTime: false },
+      (state, record) => {
+        if (record.body.query.startsWith("reconciliation:")) {
+          const at = time(record.body.payload[0]?.observedAt);
+          if (!Number.isFinite(at)) {
+            state.invalidTime = true;
+          } else if (at <= cutoff) {
+            state.selected = record;
+          }
+        }
+        return state;
+      },
     );
     historyHeadRef = history.headRef;
-    const snapshots = history.records.filter((record) =>
-      record.body.query.startsWith("reconciliation:"),
-    );
-    let selected: (typeof snapshots)[number] | undefined;
-    for (const record of snapshots) {
-      const at = time(record.body.payload[0]?.observedAt);
-      if (!Number.isFinite(at)) {
-        return unavailable("snapshot_time_unverified");
-      }
-      if (at <= cutoff) {
-        selected = record;
-      }
+    if (history.value.invalidTime) {
+      return unavailable("snapshot_time_unverified");
     }
+    const selected = history.value.selected;
     if (!selected) {
       return unavailable("missing_snapshot_at_cutoff");
     }
@@ -576,39 +580,53 @@ export async function readFinanceBrokerInstrumentFeedback(options: {
       return unavailable("snapshot_reconciliation_unverified");
     }
     const identities = new Map<string, string>();
-    const activities: Record<string, unknown>[] = [];
-    for (const record of history.records) {
-      if (record.sequence > selected.sequence || !record.body.query.startsWith("activities:")) {
-        continue;
-      }
-      for (const row of record.body.payload) {
-        if (typeof row.id !== "string" || !row.id) {
-          return unavailable("activity_identity_unverified");
-        }
-        const fingerprint = caseflowFingerprint(row);
-        const previous = identities.get(row.id);
-        if (previous !== undefined) {
-          if (previous !== fingerprint) {
-            return unavailable("conflicting_activity_identity");
-          }
-          continue;
-        }
-        identities.set(row.id, fingerprint);
-        const occurred = row.transaction_time ?? row.created_at ?? row.date;
+    const collected = await reduceFinanceBrokerHistoryRecords(
+      options.directory,
+      options.accountId,
+      scope.venue,
+      { activities: [] as Record<string, unknown>[], reason: undefined as string | undefined },
+      (state, record) => {
         if (
-          row.activity_type === "FILL" ||
-          row.activity_type === "CFEE" ||
-          row.activity_type === "FEE" ||
-          occurred !== undefined
+          state.reason ||
+          record.sequence > selected.sequence ||
+          !record.body.query.startsWith("activities:")
         ) {
-          const at = time(occurred);
-          if (!Number.isFinite(at) || at > time(observedAt) || at > cutoff) {
-            return unavailable("activity_time_unverified_or_future");
-          }
+          return state;
         }
-        activities.push(row);
-      }
+        for (const row of record.body.payload) {
+          if (typeof row.id !== "string" || !row.id) {
+            return { ...state, reason: "activity_identity_unverified" };
+          }
+          const fingerprint = caseflowFingerprint(row);
+          const previous = identities.get(row.id);
+          if (previous !== undefined) {
+            if (previous !== fingerprint) {
+              return { ...state, reason: "conflicting_activity_identity" };
+            }
+            continue;
+          }
+          identities.set(row.id, fingerprint);
+          const occurred = row.transaction_time ?? row.created_at ?? row.date;
+          if (
+            row.activity_type === "FILL" ||
+            row.activity_type === "CFEE" ||
+            row.activity_type === "FEE" ||
+            occurred !== undefined
+          ) {
+            const at = time(occurred);
+            if (!Number.isFinite(at) || at > time(observedAt) || at > cutoff) {
+              return { ...state, reason: "activity_time_unverified_or_future" };
+            }
+          }
+          state.activities.push(row);
+        }
+        return state;
+      },
+    );
+    if (collected.value.reason) {
+      return unavailable(collected.value.reason);
     }
+    const activities = collected.value.activities;
     const economics = summarizeFinanceBrokerFillsByInstrument(activities, true).find(
       (row) => row.instrument === options.instrument,
     ) ?? { instrument: options.instrument, ...summarizeFinanceBrokerFills([], true) };

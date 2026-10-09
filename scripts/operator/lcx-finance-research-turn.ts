@@ -487,10 +487,12 @@ export async function runFinanceResearchTurn(
       const brokerHistory = await readFinanceBrokerHistory(
         stateDirectory,
         deps.control.recovery.accountId,
+        { streams: ["orders", "activities", "sync_receipt"] },
       );
       const brokerReconciliation = await reconcileFinanceBrokerHistory(
         stateDirectory,
         deps.control.recovery.accountId,
+        brokerHistory,
       );
       const observations = brokerHistory.facts
         .filter(({ stream }) => stream === "orders" || stream === "activities")
@@ -536,8 +538,8 @@ export async function runFinanceResearchTurn(
           feeTotals: brokerReconciliation.feeTotals,
           brokerPositions: brokerReconciliation.positions,
           reconciliationWarnings: brokerReconciliation.warnings,
-          observationCount: brokerHistory.facts.filter(({ stream }) => stream !== "sync_receipt")
-            .length,
+          observationCount: brokerHistory.observationCount,
+          omittedFactCount: brokerHistory.omittedFactCount,
           visibleLimit: 20,
           observations,
         });

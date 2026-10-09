@@ -3,7 +3,7 @@ import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transpo
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   appendFinanceBrokerHistory,
-  readFinanceBrokerHistoryRecords,
+  reduceFinanceBrokerHistoryRecords,
 } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -225,50 +225,71 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
 }
 
 /** Explicit account selection; raw observations are not a broker position snapshot. */
-export async function readFinanceBrokerHistory(directory: string, accountId: string) {
+export async function readFinanceBrokerHistory(
+  directory: string,
+  accountId: string,
+  options: { streams?: readonly string[] } = {},
+) {
   if (!accountId.trim()) {
     throw new Error("history account required");
   }
-  const read = await readFinanceBrokerHistoryRecords(directory, accountId, "alpaca:paper");
-  const records = read.records;
-  const facts = new Map<string, { stream: string; fact: Record<string, unknown> }>();
-  for (const record of records) {
-    if (record.body.kind !== "broker_history") {
-      continue;
-    }
-    const stream = record.body.query.split(":", 1)[0];
-    for (const fact of record.body.payload) {
-      // Preserve raw revisions in the ledger, but expose one observation per
-      // broker identity to research. Orders and activities have separate IDs.
-      const nativeId = typeof fact.id === "string" ? fact.id.trim() : "";
-      const key =
-        (stream === "orders" || stream === "activities") && nativeId
-          ? `${stream}:id:${nativeId}`
-          : `${stream}:content:${caseflowFingerprint(fact)}`;
-      const previous = facts.get(key);
-      const previousTime = Date.parse(
-        typeof previous?.fact.updated_at === "string" ? previous.fact.updated_at : "",
-      );
-      const nextTime = Date.parse(typeof fact.updated_at === "string" ? fact.updated_at : "");
-      if (
-        Number.isFinite(previousTime) &&
-        (!Number.isFinite(nextTime) || nextTime < previousTime)
-      ) {
-        continue;
+  const selectedStreams = options.streams ? new Set(options.streams) : undefined;
+  const latestTimes = new Map<string, number>();
+  const factCounts = new Map<string, number>();
+  const read = await reduceFinanceBrokerHistoryRecords(
+    directory,
+    accountId,
+    "alpaca:paper",
+    new Map<string, { stream: string; fact: Record<string, unknown> }>(),
+    (facts, record) => {
+      if (record.body.kind !== "broker_history") {
+        return facts;
       }
-      // Reinsertion keeps recently observed identities at the end for bounded
-      // history consumers. A stale broker revision must not displace a newer one.
-      facts.delete(key);
-      facts.set(key, { stream, fact });
-    }
-  }
+      const stream = record.body.query.split(":", 1)[0];
+      for (const fact of record.body.payload) {
+        // Preserve raw revisions in the ledger, but expose one observation per
+        // broker identity to research. Orders and activities have separate IDs.
+        const nativeId = typeof fact.id === "string" ? fact.id.trim() : "";
+        const key =
+          (stream === "orders" || stream === "activities") && nativeId
+            ? `${stream}:id:${nativeId}`
+            : `${stream}:content:${caseflowFingerprint(fact)}`;
+        const previousTime = latestTimes.get(key);
+        const nextTime = Date.parse(typeof fact.updated_at === "string" ? fact.updated_at : "");
+        if (
+          previousTime !== undefined &&
+          Number.isFinite(previousTime) &&
+          (!Number.isFinite(nextTime) || nextTime < previousTime)
+        ) {
+          continue;
+        }
+        if (!latestTimes.has(key)) {
+          factCounts.set(stream, (factCounts.get(stream) ?? 0) + 1);
+        }
+        latestTimes.set(key, nextTime);
+        if (selectedStreams && !selectedStreams.has(stream)) {
+          continue;
+        }
+        // Reinsertion keeps recently observed identities at the end for bounded
+        // history consumers. A stale broker revision must not displace a newer one.
+        facts.delete(key);
+        facts.set(key, { stream, fact });
+      }
+      return facts;
+    },
+  );
   return {
+    directory,
     accountId,
     venue: "alpaca:paper",
-    pageCount: records.length,
-    facts: [...facts.values()],
+    pageCount: read.recordCount,
+    facts: [...read.value.values()],
+    totalFactCount: latestTimes.size,
+    observationCount: latestTimes.size - (factCounts.get("sync_receipt") ?? 0),
+    omittedFactCount: latestTimes.size - read.value.size,
+    streamScope: selectedStreams ? [...selectedStreams] : null,
     headRef: read.headRef,
-    historyStatus: records.length ? "raw_observations_only" : "missing",
+    historyStatus: read.recordCount ? "raw_observations_only" : "missing",
     positionsReconciled: false,
     feesInterpreted: false,
   } as const;

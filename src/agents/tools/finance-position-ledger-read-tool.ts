@@ -830,7 +830,9 @@ export function createFinancePositionLedgerReadTool(options?: {
       const historyHead = historyBook?.brokerHistory.sourceHeadRef;
       const orderHistory =
         historyKind === "order"
-          ? await readFinanceBrokerHistory(location.directory, historyAccountId!)
+          ? await readFinanceBrokerHistory(location.directory, historyAccountId!, {
+              streams: ["orders"],
+            })
           : null;
       const orderRows = orderHistory ? projectBrokerOrderFacts(orderHistory.facts) : null;
       const history =

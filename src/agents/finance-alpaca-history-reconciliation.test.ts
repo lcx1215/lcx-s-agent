@@ -19,6 +19,26 @@ afterEach(async () => {
 });
 
 describe("Alpaca broker history reconciliation", () => {
+  it("reuses only the exact book observation with every required history stream", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "broker-observation-"));
+    directories.push(directory);
+    const accountId = "selected";
+    const raw = await readFinanceBrokerHistory(directory, accountId, {
+      streams: ["orders", "activities", "sync_receipt"],
+    });
+    expect(await reconcileFinanceBrokerHistory(directory, accountId, raw)).toEqual(
+      await reconcileFinanceBrokerHistory(directory, accountId),
+    );
+    await expect(reconcileFinanceBrokerHistory(directory, "other", raw)).rejects.toThrow(
+      "observation scope mismatch",
+    );
+    await expect(
+      reconcileFinanceBrokerHistory(directory + "-other", accountId, raw),
+    ).rejects.toThrow("observation scope mismatch");
+    await expect(
+      reconcileFinanceBrokerHistory(directory, accountId, { ...raw, streamScope: ["orders"] }),
+    ).rejects.toThrow("requires orders, activities and sync receipts");
+  });
   it("projects old fills and fees without manufacturing execution receipts", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-history-reconcile-"));
     directories.push(directory);

@@ -283,8 +283,29 @@ function syncWasComplete(facts: readonly Fact[]): boolean {
 export async function reconcileFinanceBrokerHistory(
   directory: string,
   accountId: string,
+  /** Reuse only a matching observation from this caller's current read; never cache across runs. */
+  observedHistory?: Awaited<ReturnType<typeof readFinanceBrokerHistory>>,
 ): Promise<FinanceBrokerHistoryReconciliation> {
-  const raw = await readFinanceBrokerHistory(directory, accountId);
+  if (
+    observedHistory &&
+    (observedHistory.directory !== directory ||
+      observedHistory.accountId !== accountId ||
+      observedHistory.venue !== "alpaca:paper")
+  ) {
+    throw new Error("broker history observation scope mismatch");
+  }
+  const requiredStreams = ["orders", "activities", "sync_receipt"];
+  if (
+    observedHistory?.streamScope &&
+    requiredStreams.some((stream) => !observedHistory.streamScope?.includes(stream))
+  ) {
+    throw new Error("broker history observation requires orders, activities and sync receipts");
+  }
+  const raw =
+    observedHistory ??
+    (await readFinanceBrokerHistory(directory, accountId, {
+      streams: ["orders", "activities", "sync_receipt"],
+    }));
   const activities = raw.facts.filter(({ stream }) => stream === "activities");
   const orders = raw.facts.filter(({ stream }) => stream === "orders");
   const fills: FinanceBrokerFillObservation[] = [];
@@ -475,7 +496,7 @@ export async function reconcileFinanceBrokerHistory(
   ).length;
   const complete = syncWasComplete(raw.facts);
   const historyStatus =
-    raw.facts.filter(({ stream }) => stream !== "sync_receipt").length === 0
+    raw.observationCount === 0
       ? "missing"
       : complete &&
           invalidFillCount === 0 &&

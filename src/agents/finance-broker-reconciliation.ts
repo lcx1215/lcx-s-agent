@@ -6,7 +6,7 @@ import {
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   appendFinanceBrokerHistory,
-  readFinanceBrokerHistoryRecords,
+  reduceFinanceBrokerHistoryRecords,
   readFinanceLatestBrokerReconciliations,
 } from "./finance-position-ledger.js";
 import { classifyFinanceProtectionOrders } from "./finance-protection-coordination.js";
@@ -32,14 +32,28 @@ export function brokerSymbol(value: unknown): string {
   return value.endsWith("USD") && !value.includes("/") ? `${value.slice(0, -3)}/USD` : value;
 }
 
-/** Economic events, not order snapshots: never count both receipts and broker fills. */
-export function reconcileFinanceBrokerActivities(input: {
-  activities: readonly Record<string, unknown>[];
+type BrokerSnapshotFacts = {
   positions: readonly Record<string, unknown>[];
   cash: number;
   completeFromInception: boolean;
-  asOf?: string;
-}) {
+};
+
+/** Economic events, not order snapshots: never count both receipts and broker fills. */
+export function reconcileFinanceBrokerActivities(
+  input: BrokerSnapshotFacts & {
+    activities: readonly Record<string, unknown>[];
+    asOf?: string;
+  },
+) {
+  const accumulator = createBrokerActivityAccumulator(input.asOf);
+  for (const row of input.activities) {
+    accumulator.observe(row);
+  }
+  return accumulator.finish(input);
+}
+
+/** The same accounting reducer runs before the final broker snapshot freshness lease. */
+function createBrokerActivityAccumulator(asOf?: string) {
   const quantities = new Map<string, number>();
   const identities = new Map<string, string>();
   const issues: string[] = [];
@@ -49,7 +63,7 @@ export function reconcileFinanceBrokerActivities(input: {
   const cashComponents = { fillCash: 0, feeCash: 0, otherCash: 0 };
   const add = (symbol: string, qty: number) =>
     quantities.set(symbol, (quantities.get(symbol) ?? 0) + qty);
-  for (const row of input.activities) {
+  const observe = (row: Record<string, unknown>) => {
     try {
       if (typeof row.id !== "string" || !row.id) {
         throw new Error("activity identity missing");
@@ -60,7 +74,7 @@ export function reconcileFinanceBrokerActivities(input: {
         if (previous !== fingerprint) {
           issues.push(`conflicting_activity:${row.id}`);
         }
-        continue;
+        return;
       }
       identities.set(row.id, fingerprint);
       if (row.activity_type === "FILL") {
@@ -77,7 +91,7 @@ export function reconcileFinanceBrokerActivities(input: {
         cash -= signed * price;
         cashComponents.fillCash -= signed * price;
       } else if (row.activity_type === "CFEE" || row.activity_type === "FEE") {
-        if (input.asOf !== undefined) {
+        if (asOf !== undefined) {
           // Settlement dates may be future-dated even when the fee has already occurred.
           const occurredAt = row.transaction_time ?? row.created_at ?? row.date;
           const timestamp = (value: unknown, allowDate: boolean): number => {
@@ -96,7 +110,7 @@ export function reconcileFinanceBrokerActivities(input: {
               ? Date.parse(value)
               : NaN;
           };
-          const cutoff = timestamp(input.asOf, false);
+          const cutoff = timestamp(asOf, false);
           const occurred = timestamp(occurredAt, true);
           if (!Number.isFinite(cutoff) || !Number.isFinite(occurred) || occurred > cutoff) {
             throw new Error("fee occurrence outside cutoff or unknown");
@@ -137,46 +151,49 @@ export function reconcileFinanceBrokerActivities(input: {
     } catch {
       issues.push(`unsupported_activity:${typeof row.id === "string" ? row.id : "missing"}`);
     }
-  }
-  const actual = new Map<string, number>();
-  for (const row of input.positions) {
-    const symbol = brokerSymbol(row.symbol);
-    if (actual.has(symbol)) {
-      throw new Error("duplicate broker position");
-    }
-    actual.set(symbol, number(row.qty));
-  }
-  const differences = [...new Set([...quantities.keys(), ...actual.keys()])]
-    .map((instrument) => ({
-      instrument,
-      historicalQuantity: quantities.get(instrument) ?? 0,
-      brokerQuantity: actual.get(instrument) ?? 0,
-      unexplainedQuantity: (actual.get(instrument) ?? 0) - (quantities.get(instrument) ?? 0),
-    }))
-    .filter((row) => Math.abs(row.unexplainedQuantity) > 1e-10);
-  const cashDifference = input.cash - cash;
-  if (!input.completeFromInception) {
-    issues.push("history_not_complete_from_inception");
-  }
-  if (!Number.isFinite(input.cash) || Math.abs(cashDifference) > 0.01) {
-    issues.push("cash_difference");
-  }
-  return {
-    status:
-      issues.length === 0 && differences.length === 0
-        ? ("reconciled" as const)
-        : ("unresolved" as const),
-    quantities: [...quantities].map(([instrument, quantity]) => ({ instrument, quantity })),
-    fees,
-    cashFromActivities: cash,
-    cashComponents,
-    brokerCash: input.cash,
-    cashDifference,
-    differences,
-    issues,
-    // A quantity gap is not evidence of a fee, even when it matches a published rate.
-    feesInterpreted: issues.length === 0 && differences.length === 0,
   };
+  const finish = (input: BrokerSnapshotFacts) => {
+    const actual = new Map<string, number>();
+    for (const row of input.positions) {
+      const symbol = brokerSymbol(row.symbol);
+      if (actual.has(symbol)) {
+        throw new Error("duplicate broker position");
+      }
+      actual.set(symbol, number(row.qty));
+    }
+    const differences = [...new Set([...quantities.keys(), ...actual.keys()])]
+      .map((instrument) => ({
+        instrument,
+        historicalQuantity: quantities.get(instrument) ?? 0,
+        brokerQuantity: actual.get(instrument) ?? 0,
+        unexplainedQuantity: (actual.get(instrument) ?? 0) - (quantities.get(instrument) ?? 0),
+      }))
+      .filter((row) => Math.abs(row.unexplainedQuantity) > 1e-10);
+    const cashDifference = input.cash - cash;
+    if (!input.completeFromInception) {
+      issues.push("history_not_complete_from_inception");
+    }
+    if (!Number.isFinite(input.cash) || Math.abs(cashDifference) > 0.01) {
+      issues.push("cash_difference");
+    }
+    return {
+      status:
+        issues.length === 0 && differences.length === 0
+          ? ("reconciled" as const)
+          : ("unresolved" as const),
+      quantities: [...quantities].map(([instrument, quantity]) => ({ instrument, quantity })),
+      fees,
+      cashFromActivities: cash,
+      cashComponents,
+      brokerCash: input.cash,
+      cashDifference,
+      differences,
+      issues,
+      // A quantity gap is not evidence of a fee, even when it matches a published rate.
+      feesInterpreted: issues.length === 0 && differences.length === 0,
+    };
+  };
+  return { observe, finish };
 }
 
 export type FinanceQuantityDifferenceIsolation = Readonly<{
@@ -359,10 +376,19 @@ export async function syncFinanceBrokerReconciliation(
   }
   // Validate the durable history before sampling the final account snapshot so
   // local replay work does not consume the short account-fact freshness lease.
-  const rawHistory = await readFinanceBrokerHistoryRecords(
+  const history = await reduceFinanceBrokerHistoryRecords(
     options.directory,
     options.accountId,
     "alpaca:paper",
+    createBrokerActivityAccumulator(options.until),
+    (accumulator, record) => {
+      if (record.body.query.startsWith("activities:")) {
+        for (const activity of record.body.payload) {
+          accumulator.observe(activity);
+        }
+      }
+      return accumulator;
+    },
   );
   const positions = await get("/v2/positions");
   const orders = await get("/v2/orders?status=open&limit=500&nested=true");
@@ -376,12 +402,8 @@ export async function syncFinanceBrokerReconciliation(
   ) {
     throw new Error("invalid broker snapshot");
   }
-  const result = reconcileFinanceBrokerActivities({
-    activities: rawHistory.records
-      .filter((record) => record.body.query.startsWith("activities:"))
-      .flatMap((record) => record.body.payload),
+  const result = history.value.finish({
     positions,
-    asOf: options.until,
     cash: number(last.cash),
     completeFromInception:
       synced.status === "raw_history_synced" &&
@@ -431,7 +453,7 @@ export async function syncFinanceBrokerReconciliation(
     observedAt: new Date().toISOString(),
     positions,
     openOrders: orders,
-    historyHeadRef: rawHistory.headRef,
+    historyHeadRef: history.headRef,
   };
   await appendFinanceBrokerHistory(options.directory, {
     kind: "broker_history",

@@ -895,7 +895,7 @@ const BrokerHistoryRecordSchema = z
     body: BrokerHistoryBodySchema,
   })
   .strict();
-type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
+export type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
 
 // Only bounded hash proofs are retained, never payloads or database freshness claims.
 // A different encoding is a miss; every scan still parses/schema-checks every row
@@ -1002,29 +1002,54 @@ export async function appendFinanceBrokerHistory(directory: string, body: Broker
     db.close();
   }
 }
-export async function readFinanceBrokerHistoryRecords(
+/** Pure local projection: verify the global chain, retaining only caller-owned state. */
+export async function reduceFinanceBrokerHistoryRecords<T>(
   directory: string,
   accountId: string,
   venue: string,
+  initial: T,
+  reduce: (value: T, record: BrokerHistoryRecord) => T,
 ) {
   if (!accountId.trim() || !venue.trim()) {
     throw new Error("broker history requires account and venue");
   }
   const db = await openReadOnly(directory);
   if (!db) {
-    return { records: [], headRef: null };
+    return { value: initial, headRef: null, recordCount: 0 };
   }
   try {
-    const records: BrokerHistoryRecord[] = [];
+    let value = initial;
+    let headRef: string | null = null;
+    let recordCount = 0;
     for (const record of readBrokerHistoryRows(db)) {
       if (record.body.accountId === accountId && record.body.venue === venue) {
-        records.push(record);
+        value = reduce(value, record);
+        headRef = record.ref;
+        recordCount += 1;
       }
     }
-    return { records, headRef: records.at(-1)?.ref ?? null };
+    return { value, headRef, recordCount };
   } finally {
     db.close();
   }
+}
+
+export async function readFinanceBrokerHistoryRecords(
+  directory: string,
+  accountId: string,
+  venue: string,
+) {
+  const read = await reduceFinanceBrokerHistoryRecords(
+    directory,
+    accountId,
+    venue,
+    [] as BrokerHistoryRecord[],
+    (records, record) => {
+      records.push(record);
+      return records;
+    },
+  );
+  return { records: read.value, headRef: read.headRef };
 }
 
 /** Economics projection: validate the full chain without retaining repeated source pages. */

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { BrokerHistoryRecord } from "./finance-position-ledger.js";
 const syncMocks = vi.hoisted(() => ({
   append: vi.fn(),
   history: vi.fn(),
@@ -11,6 +12,20 @@ vi.mock("./finance-alpaca-history-sync.js", () => ({
 vi.mock("./finance-position-ledger.js", () => ({
   appendFinanceBrokerHistory: syncMocks.append,
   readFinanceBrokerHistoryRecords: syncMocks.readHistory,
+  reduceFinanceBrokerHistoryRecords: async <T>(
+    directory: string,
+    accountId: string,
+    venue: string,
+    initial: T,
+    reduce: (value: T, record: BrokerHistoryRecord) => T,
+  ) => {
+    const history = await syncMocks.readHistory(directory, accountId, venue);
+    return {
+      value: history.records.reduce(reduce, initial),
+      headRef: history.headRef,
+      recordCount: history.records.length,
+    };
+  },
   readFinanceLatestBrokerReconciliations: syncMocks.latest,
 }));
 import {

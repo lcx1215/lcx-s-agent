@@ -14,7 +14,6 @@ import {
 import {
   projectFinancePositions,
   readFinanceLatestBrokerReconciliations,
-  readFinanceBrokerHistoryRecords,
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
@@ -1080,29 +1079,9 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
     if (!scoped) {
       return readFinanceLatestBrokerReconciliations(params.directory);
     }
-    const history = await readFinanceBrokerHistoryRecords(
-      params.directory,
-      params.accountId ?? "",
-      params.venue ?? "",
-    );
-    const latest = history.records.findLast((record) =>
-      record.body.query.startsWith("reconciliation:"),
-    );
-    return {
-      records: latest
-        ? [
-            {
-              ref: latest.ref,
-              accountId: latest.body.accountId,
-              sequence: latest.sequence,
-              venue: latest.body.venue,
-              superseded: history.headRef !== latest.ref,
-              snapshot: latest.body.payload[0],
-            },
-          ]
-        : [],
-      omittedAccounts: 0,
-    };
+    return readFinanceLatestBrokerReconciliations(params.directory, {
+      scope: { accountId: params.accountId ?? "", venue: params.venue ?? "" },
+    });
   };
   const [brokerProfit, brokerReconciliations] = await Promise.all([
     readFinanceBrokerProfitFeedback(params.directory, params.asOf),
@@ -1174,16 +1153,29 @@ export async function buildFinanceNightReviewEvidence(params: {
   /** Include a fail-closed typed scope only for scheduler night research runs. */
   includeResearchScope?: boolean;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
+  const positionRead = readFinancePositionLedger(params.directory, { asOf: params.asOf });
+  const reconciliationRead = readFinanceLatestBrokerReconciliations(params.directory);
   const [positions, strategyRules, decisions, brokerProfit, brokerReconciliations, scopedHoldings] =
     await Promise.all([
-      readFinancePositionLedger(params.directory, { asOf: params.asOf }),
+      positionRead,
       readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
       readFinanceIntradayDecisions(params.directory, {
         sessionDate: params.etDate,
         asOf: params.asOf,
       }),
-      readFinanceBrokerProfitFeedback(params.directory, params.asOf),
-      readFinanceLatestBrokerReconciliations(params.directory),
+      readFinanceBrokerProfitFeedback(params.directory, params.asOf, {
+        positionObservation: {
+          directory: params.directory,
+          asOf: params.asOf,
+          read: () => positionRead,
+        },
+        reconciliationObservation: {
+          directory: params.directory,
+          asOf: params.asOf,
+          read: () => reconciliationRead,
+        },
+      }),
+      reconciliationRead,
       readFinanceLatestBrokerReconciliations(params.directory, { asOf: params.asOf }),
     ]);
   const outcomesBySignal = await readFinanceIntradayOutcomes(

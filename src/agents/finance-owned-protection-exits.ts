@@ -1,6 +1,9 @@
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
-import { readFinanceBrokerHistoryRecords } from "./finance-position-ledger.js";
+import {
+  reduceFinanceBrokerHistoryRecords,
+  type BrokerHistoryRecord,
+} from "./finance-position-ledger.js";
 
 export type FinanceOwnedProtectionExitFill = Readonly<{
   activityId: string;
@@ -106,40 +109,38 @@ function numberMatches(left: number, right: number): boolean {
   return Math.abs(left - right) <= QUANTITY_EPSILON;
 }
 
-function latestBrokerFacts(
-  records: Awaited<ReturnType<typeof readFinanceBrokerHistoryRecords>>["records"],
-): readonly BrokerFact[] {
-  const facts = new Map<string, BrokerFact>();
-  for (const record of records) {
-    const stream = record.body.query.split(":", 1)[0];
-    if (stream !== "orders" && stream !== "activities") {
+function retainLatestBrokerFacts(
+  facts: Map<string, BrokerFact>,
+  record: BrokerHistoryRecord,
+): Map<string, BrokerFact> {
+  const stream = record.body.query.split(":", 1)[0];
+  if (stream !== "orders" && stream !== "activities") {
+    return facts;
+  }
+  for (const fact of record.body.payload) {
+    const id = text(fact.id);
+    if (!id) {
       continue;
     }
-    for (const fact of record.body.payload) {
-      const id = text(fact.id);
-      if (!id) {
-        continue;
-      }
-      const key = `${stream}:id:${id}`;
-      const previous = facts.get(key);
-      const previousUpdatedAt = instant(previous?.fact.updated_at);
-      const nextUpdatedAt = instant(fact.updated_at);
-      // Match the broker-history reader's rule: a stale revision cannot replace a newer one.
-      if (
-        previousUpdatedAt !== undefined &&
-        (nextUpdatedAt === undefined || nextUpdatedAt < previousUpdatedAt)
-      ) {
-        continue;
-      }
-      facts.delete(key);
-      facts.set(key, {
-        stream,
-        fact,
-        historyRef: record.ref,
-      });
+    const key = `${stream}:id:${id}`;
+    const previous = facts.get(key);
+    const previousUpdatedAt = instant(previous?.fact.updated_at);
+    const nextUpdatedAt = instant(fact.updated_at);
+    // Match the broker-history reader's rule: a stale revision cannot replace a newer one.
+    if (
+      previousUpdatedAt !== undefined &&
+      (nextUpdatedAt === undefined || nextUpdatedAt < previousUpdatedAt)
+    ) {
+      continue;
     }
+    facts.delete(key);
+    facts.set(key, {
+      stream,
+      fact,
+      historyRef: record.ref,
+    });
   }
-  return Object.freeze([...facts.values()]);
+  return facts;
 }
 
 function brokerOrderId(fact: Record<string, unknown>): string | undefined {
@@ -203,12 +204,14 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
   if (!params.accountId.trim() || params.venue !== "alpaca:paper") {
     throw new Error("owned protection exits require an exact Alpaca paper account and venue");
   }
-  const history = await readFinanceBrokerHistoryRecords(
+  const history = await reduceFinanceBrokerHistoryRecords(
     params.directory,
     params.accountId,
     params.venue,
+    new Map<string, BrokerFact>(),
+    retainLatestBrokerFacts,
   );
-  const observations = latestBrokerFacts(history.records);
+  const observations = [...history.value.values()];
   const orders = new Map(
     observations
       .filter((observation) => observation.stream === "orders")

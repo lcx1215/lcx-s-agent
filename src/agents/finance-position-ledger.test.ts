@@ -27,6 +27,7 @@ import {
   readFinancePositionRecords,
   readFinanceLatestBrokerReconciliations,
   readFinanceBrokerHistoryRecords,
+  reduceFinanceBrokerHistoryRecords,
   readFinanceBrokerHistoryActivities,
 } from "./finance-position-ledger.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
@@ -976,6 +977,15 @@ it.each(["body", "sequence", "previousRef", "tail"] as const)(
     await expect(
       readFinanceBrokerHistoryRecords(directory, "account-a", "alpaca:paper"),
     ).rejects.toThrow("broker history chain mismatch");
+    await expect(
+      reduceFinanceBrokerHistoryRecords(
+        directory,
+        "account-a",
+        "alpaca:paper",
+        0,
+        (count) => count + 1,
+      ),
+    ).rejects.toThrow("broker history chain mismatch");
     await expect(readFinanceLatestBrokerReconciliations(directory)).rejects.toThrow(
       "broker history chain mismatch",
     );
@@ -1032,6 +1042,31 @@ it("streams scoped observations and latest snapshots without losing global tail 
   const appended = await appendFinanceBrokerHistory(directory, { ...body, query: "new" });
   expect(appended.record.sequence).toBe(4);
   expect(appended.record.previousRef).toBe(tail.record.ref);
+});
+
+it("projects scoped history without creating missing storage or retaining unrelated books", async () => {
+  const directory = await storeDirectory();
+  expect(
+    await reduceFinanceBrokerHistoryRecords(directory, "selected", "alpaca:paper", 0, (n) => n + 1),
+  ).toEqual({ value: 0, headRef: null, recordCount: 0 });
+  await expect(fs.stat(financePositionLedgerPath(directory))).rejects.toThrow();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "selected",
+    venue: "alpaca:paper",
+    query: "activities:test",
+    cursor: "",
+    payload: [{ id: "one" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  await appendFinanceBrokerHistory(directory, { ...body, accountId: "foreign" });
+  await appendFinanceBrokerHistory(directory, { ...body, venue: "other:paper" });
+  expect(
+    await reduceFinanceBrokerHistoryRecords(directory, "selected", "alpaca:paper", 0, (n) => n + 1),
+  ).toEqual({ value: 1, headRef: first.record.ref, recordCount: 1 });
+  await expect(
+    reduceFinanceBrokerHistoryRecords(directory, " ", "alpaca:paper", 0, (n) => n),
+  ).rejects.toThrow("requires account and venue");
 });
 
 it("retains an exact reconciliation book older than the default three-book view", async () => {
