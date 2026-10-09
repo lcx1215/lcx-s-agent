@@ -53,6 +53,10 @@ export async function readFinanceAccountTradingBook(params: {
   accountId: string;
   venue: string;
 }): Promise<FinanceAccountTradingBook> {
+  // This book's broker adapter is Paper-only; never relabel its positions as another venue.
+  if (params.venue !== "alpaca:paper") {
+    throw new Error("account trading book requires the exact Alpaca paper venue");
+  }
   const execution = await readFinanceAccountPositionLedger(params.directory, {
     accountId: params.accountId,
     venue: params.venue,

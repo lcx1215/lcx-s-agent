@@ -163,3 +163,13 @@ it("falls back to execution receipts when broker history is unavailable", async 
   expect(book.brokerBaselineUsable).toBe(false);
   expect(book.positions[0]).toMatchObject({ instrument: "SPY", quantity: 1 });
 });
+
+it.each(["paper", "alpaca:live"])(
+  "does not expose Paper broker positions under venue %s",
+  async (venue) => {
+    const f = await fixture();
+    await expect(
+      readFinanceAccountTradingBook({ directory: f.directory, accountId: f.accountId, venue }),
+    ).rejects.toThrow("account trading book requires the exact Alpaca paper venue");
+  },
+);

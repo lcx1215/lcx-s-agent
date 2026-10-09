@@ -350,6 +350,7 @@ it("uses a reconciled broker-history baseline while keeping receipt coverage exp
       {
         id: "fill-spy",
         activity_type: "FILL",
+        type: "fill",
         order_id: "order-spy",
         symbol: "SPY",
         side: "buy",
