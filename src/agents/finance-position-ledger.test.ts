@@ -853,6 +853,147 @@ it("reuses canonical hashing only for byte-identical history, while returning fr
   }
 });
 
+it("keeps header normalization and fresh payloads when reusing verified byte-identical rows", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "normalized-proof",
+    venue: "alpaca:paper",
+    query: "activities:proof",
+    cursor: "",
+    payload: [{ id: "fill", qty: "1" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  const { ref: _ref, ...raw } = first.record;
+  raw.body.accountId = " normalized-proof ";
+  raw.body.venue = " alpaca:paper ";
+  raw.body.query = " activities:proof ";
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET body=?,ref=? WHERE sequence=1").run(
+      JSON.stringify(raw),
+      caseflowFingerprint(raw),
+    );
+  } finally {
+    db.close();
+  }
+  const cold = await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  expect(cold.records[0].body).toEqual(body);
+  cold.records[0].body.payload[0].qty = "999";
+  const warm = await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  expect(warm.records[0].body).toEqual(body);
+});
+
+it("retains full payload normalization when the original schema transformed a raw field", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "payload-transform-proof",
+    venue: "alpaca:paper",
+    query: "activities:proof",
+    cursor: "",
+    payload: [{ id: "fill", qty: "1" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  const { ref: _ref, ...raw } = first.record;
+  raw.body.payload[0] = JSON.parse('{"id":"fill","qty":"1","__proto__":{"polluted":true}}');
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET body=?,ref=? WHERE sequence=1").run(
+      JSON.stringify(raw),
+      caseflowFingerprint(raw),
+    );
+  } finally {
+    db.close();
+  }
+  const cold = await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  const warm = await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  expect(warm).toEqual(cold);
+  expect(Object.getPrototypeOf(warm.records[0].body.payload[0])).toBe(Object.prototype);
+});
+
+it("fully validates newly encoded payloads even after an earlier proof was cached", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "changed-payload-proof",
+    venue: "alpaca:paper",
+    query: "activities:proof",
+    cursor: "",
+    payload: [{ id: "fill" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  const { ref: _ref, ...record } = first.record;
+  const raw = { ...record, body: { ...record.body, payload: ["invalid record"] } };
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET body=?,ref=? WHERE sequence=1").run(
+      JSON.stringify(raw),
+      caseflowFingerprint(raw),
+    );
+  } finally {
+    db.close();
+  }
+  await expect(
+    readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue),
+  ).rejects.toThrow();
+});
+
+it("preserves bounded prefix proofs when an append-only chain outgrows the cache", async () => {
+  vi.resetModules();
+  const freshLedger = await import("./finance-position-ledger.js");
+  const freshCaseflow = await import("./finance-caseflow.js");
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "proof-capacity",
+    venue: "alpaca:paper",
+    query: "activities:capacity",
+    cursor: "",
+    payload: [{ id: "fill" }],
+  };
+  const first = await freshLedger.appendFinanceBrokerHistory(directory, body);
+  let previousRef = first.record.ref;
+  const db = openDatabase(directory);
+  try {
+    // Bulk fixture construction avoids quadratic append validation; the reader still
+    // validates every synthetic row through the real schema and global chain.
+    db.exec("BEGIN IMMEDIATE");
+    const insert = db.prepare(
+      "INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)",
+    );
+    for (let sequence = 2; sequence <= 50_001; sequence += 1) {
+      const row = { sequence, previousRef, body };
+      previousRef = freshCaseflow.caseflowFingerprint(row);
+      insert.run(sequence, previousRef, JSON.stringify(row));
+    }
+    db.exec("COMMIT");
+  } finally {
+    db.close();
+  }
+  const read = () =>
+    freshLedger.reduceFinanceBrokerHistoryRecords(
+      directory,
+      body.accountId,
+      body.venue,
+      0,
+      (sum, record) => sum + record.sequence,
+    );
+  const cold = await read();
+  expect(cold).toEqual({ value: 1_250_075_001, recordCount: 50_001, headRef: previousRef });
+  const fingerprint = vi.spyOn(freshCaseflow, "caseflowFingerprint");
+  try {
+    expect(await read()).toEqual(cold);
+    expect(fingerprint).toHaveBeenCalledTimes(1);
+  } finally {
+    fingerprint.mockRestore();
+  }
+}, 20_000);
+
 it("rejects changed references even when serialized history has already been verified", async () => {
   const directory = await storeDirectory();
   const body = {

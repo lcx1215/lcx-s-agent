@@ -897,11 +897,13 @@ const BrokerHistoryRecordSchema = z
   .strict();
 export type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
 
-// Only bounded hash proofs are retained, never payloads or database freshness claims.
-// A different encoding is a miss; every scan still parses/schema-checks every row
-// and checks its current stored ref, predecessor and sequence across all accounts.
+// Identical bytes may reuse a payload schema proof only when parsing preserved that payload.
+// Headers still parse/normalize on every read; no payload or freshness claim is cached.
+const BrokerHistoryHeaderSchema = BrokerHistoryRecordSchema.extend({
+  body: BrokerHistoryBodySchema.extend({ payload: z.unknown() }),
+});
 const BROKER_HISTORY_HASH_PROOF_LIMIT = 50_000;
-const brokerHistoryHashProofs = new Map<string, string>();
+const brokerHistoryHashProofs = new Map<string, { ref: string; payloadUnchanged: boolean }>();
 
 /** Validate every account's chain while retaining only the caller's selected rows. */
 function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
@@ -917,10 +919,15 @@ function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRe
       throw new Error("invalid broker history row");
     }
     const raw: unknown = JSON.parse(row.body);
-    const record = BrokerHistoryRecordSchema.parse(raw);
     const encodedHash = createHash("sha256").update(row.body).digest("hex");
-    const provedRef = brokerHistoryHashProofs.get(encodedHash);
-    const canonicalRef = provedRef ?? caseflowFingerprint(raw);
+    const proof = brokerHistoryHashProofs.get(encodedHash);
+    // The exact encoding was fully schema-checked before this proof was admitted.
+    const record = (
+      proof?.payloadUnchanged
+        ? BrokerHistoryHeaderSchema.parse(raw)
+        : BrokerHistoryRecordSchema.parse(raw)
+    ) as z.infer<typeof BrokerHistoryRecordSchema>;
+    const canonicalRef = proof?.ref ?? caseflowFingerprint(raw);
     if (
       canonicalRef !== row.ref ||
       record.previousRef !== previousRef ||
@@ -928,14 +935,16 @@ function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRe
     ) {
       throw new Error("broker history chain mismatch");
     }
-    if (provedRef === undefined) {
-      if (brokerHistoryHashProofs.size >= BROKER_HISTORY_HASH_PROOF_LIMIT) {
-        const oldest = brokerHistoryHashProofs.keys().next().value;
-        if (oldest !== undefined) {
-          brokerHistoryHashProofs.delete(oldest);
-        }
-      }
-      brokerHistoryHashProofs.set(encodedHash, canonicalRef);
+    // Retain the verified prefix at capacity: FIFO eviction would churn the whole
+    // cache on every ordered full scan. Uncached tail bytes still receive full checks.
+    if (proof === undefined && brokerHistoryHashProofs.size < BROKER_HISTORY_HASH_PROOF_LIMIT) {
+      brokerHistoryHashProofs.set(encodedHash, {
+        ref: canonicalRef,
+        // A transforming schema must still run on later reads (for example __proto__ keys).
+        payloadUnchanged:
+          JSON.stringify(record.body.payload) ===
+          JSON.stringify((raw as z.infer<typeof BrokerHistoryRecordSchema>).body.payload),
+      });
     }
     previousRef = row.ref;
     yield { ...record, ref: row.ref };
