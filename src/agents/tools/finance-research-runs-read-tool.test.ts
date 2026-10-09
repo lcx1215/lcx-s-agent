@@ -72,6 +72,34 @@ it("lists stored runs with their manifest revision", async () => {
   expect(payload.runs?.[0]?.files).toBe(2);
 });
 
+it("keeps the most recently updated run visible before applying the list limit", async () => {
+  const root = await workspace();
+  const runsDir = path.join(root, "state", "finance-research-runs");
+  for (const [id, modifiedAt] of [
+    ["2026-09-20", "2026-09-20T00:00:00.000Z"],
+    ["2026-10-09", "2026-10-09T00:00:00.000Z"],
+    ["revised-old-run", "2026-10-10T00:00:00.000Z"],
+  ]) {
+    const dir = path.join(runsDir, id);
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, "runtime.json");
+    await fs.writeFile(file, JSON.stringify({ manifest: { revision: id } }));
+    await fs.utimes(file, new Date(modifiedAt), new Date(modifiedAt));
+  }
+  const readOriginal = vi.spyOn(safeRead, "readFileWithinRoot");
+  const payload = await call({ workspaceDir: root, action: "list", limit: 1 });
+  expect(payload.totalRuns).toBe(3);
+  expect(payload.runs).toEqual([
+    expect.objectContaining({ id: "revised-old-run", revision: "revised-old-run" }),
+  ]);
+  expect(readOriginal).toHaveBeenCalledTimes(1);
+  expect(readOriginal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      relativePath: "state/finance-research-runs/revised-old-run/runtime.json",
+    }),
+  );
+});
+
 it("returns a readable root run ID and lets a caller consume its file index", async () => {
   const root = await workspace();
   try {
@@ -82,8 +110,8 @@ it("returns a readable root run ID and lets a caller consume its file index", as
       JSON.stringify(saved),
     );
     const listing = await call({ workspaceDir: root, action: "list" });
-    expect(listing.runs?.map((run) => run.id)).toEqual([".", "2026-09-20/morning"]);
-    const run = listing.runs?.[0]?.id;
+    expect(listing.runs?.map((run) => run.id).toSorted()).toEqual([".", "2026-09-20/morning"]);
+    const run = listing.runs?.find((run) => run.id === ".")?.id;
     const index = await call({ workspaceDir: root, action: "read", run });
     expect(index).toMatchObject({ ok: true, available: true, files: ["saved-result.json"] });
     expect(

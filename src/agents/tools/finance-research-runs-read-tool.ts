@@ -243,7 +243,7 @@ function addGap(context: Context, target: string, error: unknown): void {
   cancelled(context.signal);
   context.gaps.push({ path: path.relative(context.root, target), reason: reason(error) });
 }
-async function describeRun(context: Context, id: string) {
+async function describeRun(context: Context, id: string, includeManifest = true) {
   const dir = path.join(context.dir, id);
   const names = await jsonFiles(context, dir);
   let bytes = 0;
@@ -265,16 +265,7 @@ async function describeRun(context: Context, id: string) {
       modifiedAt = at;
     }
   }
-  let manifest: Record<string, unknown> | undefined;
-  if (names.includes("runtime.json")) {
-    try {
-      manifest = asRecord(
-        asRecord((await readOriginal(context, path.join(dir, "runtime.json"))).json)?.manifest,
-      );
-    } catch (error) {
-      addGap(context, path.join(dir, "runtime.json"), error);
-    }
-  }
+  const manifest = includeManifest ? await readRunManifest(context, id, names) : undefined;
   return {
     id,
     files: names.length,
@@ -283,6 +274,20 @@ async function describeRun(context: Context, id: string) {
     revision: asString(manifest?.revision),
     models: asStringArray(manifest?.models),
   };
+}
+async function readRunManifest(context: Context, id: string, knownNames?: string[]) {
+  const dir = path.join(context.dir, id);
+  const names = knownNames ?? (await jsonFiles(context, dir));
+  if (names.includes("runtime.json")) {
+    try {
+      return asRecord(
+        asRecord((await readOriginal(context, path.join(dir, "runtime.json"))).json)?.manifest,
+      );
+    } catch (error) {
+      addGap(context, path.join(dir, "runtime.json"), error);
+    }
+  }
+  return undefined;
 }
 function selectField(value: unknown, field: string): unknown {
   if (field.length > 1024 || (field && !field.startsWith("/")) || /~(?![01])/u.test(field)) {
@@ -378,7 +383,7 @@ export function createFinanceResearchRunsReadTool(): AnyAgentTool {
     label: "Finance research runs",
     parameters: FinanceResearchRunsReadSchema,
     description:
-      "Read-only stored finance research: list, bounded search, or read a file/JSON Pointer field. Full original SHA and time are retained; large results return explicit preview and omitted keys. Never calls models or network; no runs reports available:false.",
+      "Read-only stored finance research: list most recently modified runs first, bounded search, or read a file/JSON Pointer field. Modified time is storage recency, not evidence validity. Full original SHA and time are retained; large results return explicit preview and omitted keys. Never calls models or network; no runs reports available:false.",
     execute: async (_toolCallId, params, signal) => {
       let context: Context | undefined;
       let readSource: Record<string, unknown> | undefined;
@@ -511,9 +516,24 @@ export function createFinanceResearchRunsReadTool(): AnyAgentTool {
           throw new ReadGap("finance_research_action_invalid");
         }
         const maximum = limit(readNumberParam(params, "limit"), 20, 100);
+        // Rank metadata before limiting; old directories must not hide current results.
+        // Only selected runs need their manifest bodies read.
+        const described = [];
+        for (const run of runs) {
+          described.push(await describeRun(context, run, false));
+        }
+        described.sort(
+          (a, b) =>
+            (b.modifiedAt ?? "").localeCompare(a.modifiedAt ?? "") || a.id.localeCompare(b.id),
+        );
         const listed = [];
-        for (const run of runs.slice(0, maximum)) {
-          listed.push(await describeRun(context, run));
+        for (const run of described.slice(0, maximum)) {
+          const manifest = await readRunManifest(context, run.id);
+          listed.push({
+            ...run,
+            revision: asString(manifest?.revision),
+            models: asStringArray(manifest?.models),
+          });
         }
         cancelled(signal);
         return respond({
