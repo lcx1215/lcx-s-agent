@@ -408,7 +408,30 @@ function knowledgeProjection(output: Record<string, unknown>, priority: Record<s
       ) {
         selected[qualified] = record[key];
       } else {
+        // Preserve only a bounded prefix of this selected field; its tail remains unknown.
         omitted.push(qualified);
+        const json = JSON.stringify(record[key]);
+        const bytes = Buffer.from(json, "utf8");
+        for (let limit = 160; limit >= 16; limit -= 16) {
+          let end = Math.min(bytes.length, limit);
+          while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+            end--;
+          }
+          const fragment = {
+            fragmentFormat: "json_prefix_not_complete_value",
+            jsonPrefix: bytes.subarray(0, end).toString("utf8"),
+            originalJsonBytes: bytes.length,
+          };
+          if (
+            Buffer.byteLength(
+              JSON.stringify({ ...priority, knowledge: { ...selected, [qualified]: fragment } }),
+              "utf8",
+            ) <= 1000
+          ) {
+            selected[qualified] = fragment;
+            break;
+          }
+        }
       }
     }
   }

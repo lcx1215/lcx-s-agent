@@ -1478,6 +1478,119 @@ it("preserves scoped custom read values with unknown source time and whole-field
   expect(execute).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  ["text", "未覆盖剩余条件。".repeat(200)],
+  ["array", ["未覆盖剩余条件。".repeat(200), "tail constraint"]],
+])(
+  "retains a scoped partial %s knowledge field without implying complete constraints",
+  async (_kind, value) => {
+    const raw = {
+      ok: true,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+      entry: { riskGateNotes: value, requiredInputs: ["current spread"], baseCase: "bounded case" },
+    };
+    const capability: FinanceTradeReviewFinancialCapability = {
+      toolName: "host_local_read",
+      moduleIds: ["credit_liquidity"],
+      description: "Actual host read",
+      execute: async () => raw,
+    };
+    const [result] = await createFinanceTradeReviewEvidenceExecutor({
+      directory: "unused",
+      accountId: "paper-a",
+      instruments: ["AAA"],
+      financialCapabilities: [capability],
+    })(
+      [{ ...financialRequest, toolName: capability.toolName }],
+      packet,
+      new AbortController().signal,
+    );
+    const summary = JSON.parse(result.summary);
+    const fragment = summary.result.knowledge["entry.riskGateNotes"];
+    expect(fragment).toMatchObject({
+      fragmentFormat: "json_prefix_not_complete_value",
+      originalJsonBytes: Buffer.byteLength(JSON.stringify(value)),
+    });
+    expect(JSON.stringify(value).startsWith(fragment.jsonPrefix)).toBe(true);
+    expect(fragment.jsonPrefix).toContain("未覆盖");
+    expect(fragment.jsonPrefix).not.toContain("\uFFFD");
+    expect(Buffer.byteLength(fragment.jsonPrefix)).toBeLessThanOrEqual(160);
+    expect(summary.result.knowledge["entry.requiredInputs"]).toEqual(["current spread"]);
+    expect(summary.result.knowledge["entry.baseCase"]).toBe("bounded case");
+    expect(summary.result.omittedKnowledgeFieldCount).toBe(1);
+    expect(result.resultSha256).toBe(
+      createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+    );
+    expect(result).toMatchObject({ status: "completed", accountId: "paper-a", asOf });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(2048);
+  },
+);
+
+it("passes partial knowledge from the original file reader into the existing next decision call", async () => {
+  const scope = await fixture();
+  const { contractPath } = await seedKnowledge(scope.directory);
+  const original = await fs.readFile(contractPath, "utf8");
+  const longNotes =
+    "Preserve the exact stop. " + "Other constraints require precise lookup. ".repeat(100);
+  await fs.writeFile(
+    contractPath,
+    original.replace("Preserve the exact stop and verify costs.", longNotes),
+  );
+  const before = await fs.readFile(contractPath);
+  const capabilities = createFinanceTradeReviewFinancialCapabilities({
+    workspaceDir: scope.directory,
+  });
+  const payloads: unknown[] = [];
+  const prompts: string[] = [];
+  const model = scripted(
+    [
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [financialRequest],
+        hypothesis: "Read recorded stop constraints",
+      },
+      decision,
+    ],
+    payloads,
+  );
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: (_config, options) => ({
+        ...model.model,
+        invoke: async (call, signal) => {
+          prompts.push(options!.buildPrompt!(call.payload));
+          return model.model.invoke(call, signal);
+        },
+      }),
+      evidenceScope: { ...scope, financialCapabilities: capabilities },
+    },
+  )(packet, new AbortController().signal);
+  expect(result).toMatchObject({
+    status: "completed",
+    modelCalls: 2,
+    toolEvidence: [{ status: "completed" }],
+  });
+  const evidence = result.toolEvidence![0];
+  const summary = JSON.parse(evidence.summary);
+  expect(summary.result.knowledge["entry.riskGateNotes"]).toMatchObject({
+    fragmentFormat: "json_prefix_not_complete_value",
+  });
+  expect(summary.result.knowledge["entry.riskGateNotes"].jsonPrefix).toContain(
+    "Preserve the exact stop.",
+  );
+  expect(JSON.stringify(payloads[1])).toContain("json_prefix_not_complete_value");
+  expect(prompts[0]).not.toContain("Its unseen tail remains unknown");
+  expect(prompts[1]).toContain("Its unseen tail remains unknown");
+  expect(prompts[1]).toContain("incompleteness alone is not a veto");
+  expect(JSON.stringify(payloads[1])).toContain(evidence.resultSha256);
+  expect(await fs.readFile(contractPath)).toEqual(before);
+  expect(result.modelCallEvidence![1].toolEvidenceSha256).toBe(
+    createHash("sha256").update(JSON.stringify(result.toolEvidence)).digest("hex"),
+  );
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+});
+
 it("degrades an oversized financial projection to named unknown while keeping full raw SHA and scope within 2048 bytes", async () => {
   const raw = Object.fromEntries(
     Array.from({ length: 200 }, (_, i) => [`field_${i}`, "中".repeat(300)]),

@@ -403,6 +403,18 @@ function reviewPrompt(payload: unknown): string {
       : []),
     ...(isRecord(payload) &&
     Array.isArray(payload.toolEvidence) &&
+    payload.toolEvidence.some(
+      (value) =>
+        isRecord(value) &&
+        typeof value.summary === "string" &&
+        value.summary.includes("json_prefix_not_complete_value"),
+    )
+      ? [
+          "A selected knowledge field marked json_prefix_not_complete_value is a partial JSON prefix, not a complete value or a complete set of risks or required inputs. Its unseen tail remains unknown; do not infer absent constraints or parse it as complete JSON. Use useful partial evidence within its recorded source scope; incompleteness alone is not a veto.",
+        ]
+      : []),
+    ...(isRecord(payload) &&
+    Array.isArray(payload.toolEvidence) &&
     payload.toolEvidence.some((value) => isRecord(value) && value.action === "broker_fill_feedback")
       ? [
           "Consume broker_fill_feedback as historical instrument FIFO accounting only. Cash reconciliation does not prove fee allocation; netMatchedPnl=null and zero closed matches do not establish profitable trading. recordedCashFeePnlBounds bound only possible allocation of recorded cash fees; never substitute them for exact or full-cost net profit, add instrument ranges, or make a new trading gate from them. reportedAssetFeeValuation is broker qty-times-price source valuation, not a cash charge or allocated closed-lot cost; never subtract it again or infer a fee order link. These results are not strategy attribution, account return or expected return for the candidate. State how the supported result or limitation affects your judgment without inventing a veto requirement.",
