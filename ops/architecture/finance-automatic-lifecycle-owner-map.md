@@ -65,6 +65,12 @@ retains its provenance and missing context; partial evidence is not complete
 evidence. Prove improvement by tracing a real candidate's tool result into its
 judgment and subsequent outcome, not by counting agents, modules or trades.
 
+The original execution-feedback recall verifies native account, venue, instrument,
+direction and event times. Within its four-original budget, prefer the same native
+direction before ranking operation time. Label the historical side and any
+opposite-direction fallback; a search-summary match is not proof of direction.
+This is prior context for judgment, not a new execution gate or automatic veto.
+
 ## Profit-first quantitative rule
 
 Directional hit rate is a forecast-classification measure, not economic

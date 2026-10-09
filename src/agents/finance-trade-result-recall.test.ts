@@ -82,6 +82,7 @@ async function seed(
     accountId?: string;
     venue?: string;
     instrument?: string;
+    action?: "buy" | "sell";
     signalId?: string;
     owner?: string;
     observedAt?: string;
@@ -100,7 +101,7 @@ async function seed(
     signalId,
     instrument: options.instrument ?? "AAA",
     sessionDate: "2026-09-29",
-    action: "buy",
+    action: options.action ?? "buy",
     reason: "opening_range_breakout",
     referencePrice: 100,
     referencePriceAt: options.sourceTime ?? oldTime,
@@ -213,6 +214,54 @@ it("ranks native operation time rather than capture time after historical index 
     },
   });
   expect(read).toHaveBeenCalledTimes(2);
+});
+it.each([undefined, "unneeded research".repeat(5000)])(
+  "prefers verified native direction over a newer opposite operation in legacy summaries (case %#)",
+  async (padding) => {
+    const sameDirection = await seed({ id: "prior-buy", signalId: "prior-buy", padding });
+    await seed({
+      id: "newer-sell",
+      signalId: "prior-sell",
+      action: "sell",
+      observedAt: asOf,
+      decisionRecordedAt: "2026-09-30T13:00:00.000Z",
+      reasons: ["close prior position"],
+    });
+    const read = vi.spyOn(ArtifactStore.prototype, "read");
+    expect(await run()).toMatchObject({
+      ok: true,
+      sourceArtifactId: sameDirection.id,
+      recordedResult: { side: "buy", directionMatch: true },
+    });
+    if (padding === undefined) {
+      expect(read).toHaveBeenCalledTimes(2);
+    }
+  },
+);
+it("labels an opposite-direction fallback instead of presenting it as the current side", async () => {
+  const source = await seed({ action: "sell", reasons: ["position exit condition"] });
+  const capabilities = createFinanceTradeReviewFinancialCapabilities({
+    config: cfg,
+    workspaceDir: root,
+  });
+  const evidence = (
+    await createFinanceTradeReviewEvidenceExecutor({
+      directory: root,
+      accountId: "paper-a",
+      instruments: ["AAA"],
+      financialCapabilities: capabilities,
+    })([request], packet, new AbortController().signal)
+  )[0];
+  expect(evidence.status).toBe("completed");
+  expect(JSON.parse(evidence.summary).result).toMatchObject({
+    sourceArtifactId: source.id,
+    recordedResult: {
+      side: "sell",
+      directionMatch: false,
+      reasons: ["position exit condition"],
+    },
+  });
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
 });
 it("retains the original account boundary and four reads when precise matches belong to another account", async () => {
   await seed({ summary: "AAA buy: refused" });

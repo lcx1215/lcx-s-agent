@@ -71,7 +71,9 @@ export function createFinanceTradeResultRecallCapability(options: {
         );
       }
       let readGap: string | undefined;
-      let selected: { recordedAt: number; result: Record<string, unknown> } | undefined;
+      let selected:
+        | { recordedAt: number; directionMatch: boolean; result: Record<string, unknown> }
+        | undefined;
       // The native ledger schemas depend on review evidence; load at use, not factory setup.
       const { FinanceIntradayDecisionInput } = await import("./finance-intraday-control-ledger.js");
       for (const item of found.artifacts.slice(0, SEARCH_LIMIT)) {
@@ -262,7 +264,14 @@ export function createFinanceTradeResultRecallCapability(options: {
         }
         const recordedAt =
           typeof decision.recordedAt === "string" ? Date.parse(decision.recordedAt) : -Infinity;
-        if (selected && selected.recordedAt >= recordedAt) {
+        const directionMatch = input.data.action === candidate.side;
+        // Search phrases may occur in legacy context. Rank the verified native
+        // direction, then operation time, rather than trusting the summary.
+        if (
+          selected &&
+          ((selected.directionMatch && !directionMatch) ||
+            (selected.directionMatch === directionMatch && selected.recordedAt >= recordedAt))
+        ) {
           continue;
         }
         const reasons = (outcome.reasons as string[])
@@ -295,6 +304,8 @@ export function createFinanceTradeResultRecallCapability(options: {
           ...(read.sourceCutoff === undefined ? {} : { sourceCutoff: read.sourceCutoff }),
           recordedResult: {
             signalId: input.data.signalId,
+            side: input.data.action,
+            directionMatch,
             decisionRecordedAt: decision.recordedAt ?? null,
             outcome: outcome.status,
             ...(reviewStatus ? { reviewStatus } : {}),
@@ -321,7 +332,7 @@ export function createFinanceTradeResultRecallCapability(options: {
               : {}),
           },
         };
-        selected = { recordedAt, result };
+        selected = { recordedAt, directionMatch, result };
       }
       if (selected) {
         return selected.result;
