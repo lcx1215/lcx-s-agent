@@ -678,7 +678,7 @@ export async function executeFinanceIntradayDecision(params: {
         )
       : undefined;
     // Size before review from trusted remaining funds. The final locked gate still
-    // rereads broker facts; no resize of a reviewed candidate or a protective exit.
+    // rereads broker facts; a reviewed discretionary candidate is not resized.
     const orderCaps =
       entryHeadroom !== undefined && entryHeadroom > 0
         ? {
@@ -686,6 +686,25 @@ export async function executeFinanceIntradayDecision(params: {
             maxOrderNotional: Math.min(params.caps.maxOrderNotional, entryHeadroom),
           }
         : params.caps;
+    const exitNotionalCap = Math.min(orderCaps.maxOrderNotional, orderCaps.maxInstrumentNotional);
+    const boundedExitQuantity = (price: number): number => {
+      if (
+        !Number.isFinite(exitNotionalCap) ||
+        exitNotionalCap <= 0 ||
+        sellQuantity * price <= exitNotionalCap
+      ) {
+        return sellQuantity;
+      }
+      let quantity = Math.min(sellQuantity, Math.floor(exitNotionalCap / price));
+      if (quantity * price > exitNotionalCap) {
+        quantity--;
+      }
+      return Math.max(0, quantity);
+    };
+    // Appreciated inventory can exceed the entry-sized per-order cap. Reduce only
+    // an owned tranche; original fill/protection owners retain the remainder.
+    // A refreshed quote may shrink this tranche but cannot enlarge it.
+    const initialSellQuantity = boundedExitQuantity(referencePrice);
     const orderRequest = (price: number): FinanceAlpacaRunRequest => ({
       credentialStateDirectory: params.directory,
       createSafetyContext: params.controller.createSafetyContext,
@@ -729,7 +748,9 @@ export async function executeFinanceIntradayDecision(params: {
       },
       instruments: [input.instrument],
       strategyClass: "A",
-      ...(input.action === "sell" ? { quantityOverride: sellQuantity } : {}),
+      ...(input.action === "sell"
+        ? { quantityOverride: Math.min(initialSellQuantity, boundedExitQuantity(price)) }
+        : {}),
       mode: "paper",
       signal,
     });
@@ -1284,7 +1305,12 @@ export async function executeFinanceIntradayDecision(params: {
       status: "placed",
       receiptId: result.receipt.receiptId,
       reasons: protectiveExit
-        ? ["strategy-owned protective exit; discretionary model review bypassed"]
+        ? [
+            "strategy-owned protective exit; discretionary model review bypassed",
+            ...(Math.min(initialSellQuantity, boundedExitQuantity(referencePrice)) < sellQuantity
+              ? ["owned exit tranche sized within unchanged notional caps"]
+              : []),
+          ]
         : [],
       tradeDecisionReview,
       ...reviewHistory(),

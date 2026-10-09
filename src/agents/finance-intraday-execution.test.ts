@@ -13,7 +13,10 @@ import {
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceDailyAccountBook } from "./finance-daily-cycle.js";
-import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import {
+  buildFinanceExecutionReceipt,
+  type FinanceExecutionReceipt,
+} from "./finance-execution-adapter.js";
 import {
   createFinanceExecutionSafetyContext,
   FinanceExecutionSafetyFactsError,
@@ -37,9 +40,11 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
   resolveFinanceIntradayActiveRuleContract,
 } from "./finance-intraday-paper.js";
+import { readFinanceIntradayOwnedPositions } from "./finance-intraday-position.js";
 import {
   appendFinanceBrokerHistory,
   appendFinanceExecutionReceipt,
+  readFinancePositionRecords,
 } from "./finance-position-ledger.js";
 import {
   activateFinanceStrategyRule,
@@ -1679,9 +1684,24 @@ describe("intraday decision execution bridge", () => {
     { reason: "opening_range_stop", retired: true },
     { reason: "reward_target", retired: true },
     { reason: "pre_close", retired: true },
+    { reason: "reward_target", retired: false, exitCap: 1000 },
+    { reason: "reward_target", retired: true, exitCap: 1000 },
+    { reason: "reward_target", retired: false, exitInstrumentCap: 1000 },
+    { reason: "reward_target", retired: false, exitCap: 1000, refreshedBid: 200 },
+    { reason: "reward_target", retired: false, exitCap: 1000, refreshedBid: 80 },
   ] as const)(
     "executes owned protective exit without model veto or replay (%j)",
-    async ({ reason, retired }) => {
+    async (scenario) => {
+      const { reason, retired } = scenario;
+      const cappedExit = "exitCap" in scenario || "exitInstrumentCap" in scenario;
+      const maxOrderNotional =
+        "exitCap" in scenario && typeof scenario.exitCap === "number" ? scenario.exitCap : 5000;
+      const maxInstrumentNotional =
+        "exitInstrumentCap" in scenario && typeof scenario.exitInstrumentCap === "number"
+          ? scenario.exitInstrumentCap
+          : 10000;
+      const refreshedBid = "refreshedBid" in scenario ? scenario.refreshedBid : undefined;
+      const expectedQuantity = !cappedExit ? 17.5 : refreshedBid === 200 ? 5 : 9;
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));
       temporary.push(directory);
       const strategyBinding = await activeRuleBinding(directory);
@@ -1764,20 +1784,48 @@ describe("intraday decision execution bridge", () => {
         });
       }
       const receipt = { receiptId: "receipt-1" } as never;
-      const runOrderMock = vi.fn(async (_request: Parameters<typeof runFinanceAlpacaOrder>[0]) => ({
-        ok: true as const,
-        receipt,
-        notes: [],
-      }));
+      const runOrderMock = vi.fn(async (order: Parameters<typeof runFinanceAlpacaOrder>[0]) => {
+        const compiled = compileFinanceAlpacaOrderIntent(order);
+        expect(compiled.ok).toBe(true);
+        if (!compiled.ok) {
+          throw new Error("fixture exit compilation failed");
+        }
+        return {
+          ok: true as const,
+          receipt: cappedExit
+            ? buildFinanceExecutionReceipt({
+                intent: compiled.intent,
+                adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+                fill: {
+                  filledQuantity: compiled.intent.quantity,
+                  fillPrice: compiled.intent.referencePrice,
+                  filledAt: "2026-09-18T15:00:02.000Z",
+                  venueRef: "alpaca:paper:bounded-exit",
+                  terminalOrderIdentity: { orderId: "bounded-exit", terminal: true },
+                },
+                recordedAt: "2026-09-18T15:00:02.000Z",
+                accountId: "paper-account",
+              })
+            : receipt,
+          notes: [],
+        };
+      });
       const runOrder = runOrderMock as unknown as typeof runFinanceAlpacaOrder;
-      const recordFill = vi.fn(async () => ({
-        recorded: true,
-        marked: true,
-        quantity: 17.5,
-        notional: 1890,
-        committedNotional: 1890,
-        refusal: null,
-      }));
+      const recordFill = vi.fn(
+        async (fill: { directory: string; receipt: FinanceExecutionReceipt }) => {
+          if (cappedExit) {
+            await appendFinanceExecutionReceipt(fill.directory, fill.receipt);
+          }
+          return {
+            recorded: true,
+            marked: true,
+            quantity: expectedQuantity,
+            notional: cappedExit ? expectedQuantity * (refreshedBid ?? 107.9) : 1890,
+            committedNotional: cappedExit ? expectedQuantity * (refreshedBid ?? 107.9) : 1890,
+            refusal: null,
+          };
+        },
+      );
       const tradeDecisionReviewer = approvingReviewer();
       const controller = {
         accountId: "paper-account",
@@ -1816,13 +1864,25 @@ describe("intraday decision execution bridge", () => {
           askPrice: 108,
           maxAgeMs: 30_000,
         })),
+        ...(refreshedBid === undefined
+          ? {}
+          : {
+              prepareExecutionQuote: vi.fn(async () => ({
+                referencePrice: refreshedBid,
+                referencePriceAt: "2026-09-18T15:00:02.000Z",
+                sourceUrlOrArtifact: "fixture-refreshed",
+                bidPrice: refreshedBid,
+                askPrice: refreshedBid + 0.1,
+                maxAgeMs: 30_000,
+              })),
+            }),
         createSafetyContext: vi.fn(() => ({ kind: "controller_execution_safety" as const })),
       };
       const request = {
         directory,
         decision,
         controller,
-        caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+        caps: { maxOrderNotional, maxInstrumentNotional, maxOrdersPerRun: 1 },
         tradeDecisionReviewer,
         now: () => Date.parse("2026-09-18T15:00:02.000Z"),
         runOrder,
@@ -1882,15 +1942,38 @@ describe("intraday decision execution bridge", () => {
       expect(runOrderMock).toHaveBeenCalledTimes(1);
       expect(tradeDecisionReviewer).not.toHaveBeenCalled();
       expect(await readFinanceIntradayOutcome(directory, "intraday-sell-1")).toMatchObject({
-        reasons: ["strategy-owned protective exit; discretionary model review bypassed"],
+        reasons: cappedExit
+          ? [
+              "strategy-owned protective exit; discretionary model review bypassed",
+              "owned exit tranche sized within unchanged notional caps",
+            ]
+          : ["strategy-owned protective exit; discretionary model review bypassed"],
       });
       expect(runOrderMock.mock.calls[0]?.[0]).toMatchObject({
-        quantityOverride: 17.5,
+        quantityOverride: expectedQuantity,
         mode: "paper",
       });
+      if (cappedExit) {
+        const actualOrder = runOrderMock.mock.calls[0][0];
+        const compiled = compileFinanceAlpacaOrderIntent(actualOrder);
+        expect(
+          compiled.ok && compiled.intent.quantity * compiled.intent.referencePrice,
+        ).toBeLessThanOrEqual(1000);
+        const records = await readFinancePositionRecords(directory);
+        const remaining = await readFinanceIntradayOwnedPositions({
+          directory,
+          accountId: "paper-account",
+          instrument: "SPY",
+          receipts: records.receipts,
+        });
+        expect(remaining.positions[0].quantity).toBe(17.5 - expectedQuantity);
+      }
       expect(await executeFinanceIntradayDecision(request)).toMatchObject({
         status: "already_terminal",
-        outcome: { status: "placed", receiptId: "receipt-1" },
+        outcome: {
+          status: "placed",
+          receiptId: cappedExit ? expect.stringMatching(/^exec-/) : "receipt-1",
+        },
       });
       expect(runOrderMock).toHaveBeenCalledTimes(1);
       expect(tradeDecisionReviewer).not.toHaveBeenCalled();
