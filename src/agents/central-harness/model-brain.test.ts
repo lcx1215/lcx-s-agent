@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConfiguredFinanceModelAdapter } from "../configured-finance-model-adapter.js";
 import {
+  buildCentralBrainPrompt,
   buildCentralToolCatalog,
   CENTRAL_TOOL_CATALOG_BUDGET_BYTES,
   createCentralBrain,
@@ -11,6 +12,22 @@ vi.mock("../configured-finance-model-adapter.js", () => ({
 }));
 afterEach(() => vi.resetAllMocks());
 describe("central tool discovery context", () => {
+  it("describes the existing explicit-account native snapshot without relabeling receipt history", () => {
+    const prompt = buildCentralBrainPrompt({
+      observedAt: "2026-10-09T00:00:00.000Z",
+      ownerTotals: {},
+      controlRoom: {},
+      backlog: [],
+      boundaries: ["no_execution_authority"],
+    });
+    expect(prompt).toContain(
+      "explicit brokerAccountId also returns a stored native brokerSnapshot",
+    );
+    expect(prompt).toContain("not a live refresh");
+    expect(prompt).toContain("cannot be combined with asOf");
+    expect(prompt).toContain("not the current broker holdings");
+    expect(prompt).not.toContain("brokerAccountId scopes only the broker economic diagnostic");
+  });
   it("carries every registered argument and authority boundary through one shared table header", () => {
     const tools = [...createCentralToolRegistry().values()];
     const catalog = buildCentralToolCatalog(tools);
