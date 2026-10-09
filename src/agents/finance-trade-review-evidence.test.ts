@@ -1845,6 +1845,415 @@ it("keeps a retained causal check ahead of verbose risk notes while marking thei
   expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
 });
 
+it("recovers one omitted method field from the exact prior result without rerunning its producer", async () => {
+  const raw = {
+    ok: true,
+    sourceUpdatedAt: "2026-09-29T00:00:00.000Z",
+    candidateCount: 2,
+    applicationStatus: "application_ready",
+    appliedCapabilities: [
+      {
+        capabilityName: "Stored funding method",
+        applicationBoundary: "research_only",
+        causalCheck: "Funding may affect liquidity.",
+        riskChecks: ["Keep the risk boundary. ".repeat(100)],
+        implementationCheck:
+          "Compare observed funding and spreads; do not infer current stress from the method alone.",
+      },
+    ],
+  };
+  const execute = vi.fn(async () => raw);
+  const request = { ...financialRequest, toolName: "host_local_read" };
+  const executor = createFinanceTradeReviewEvidenceExecutor({
+    directory: "unused",
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: [
+      {
+        toolName: request.toolName,
+        moduleIds: ["credit_liquidity"],
+        description: "Stored method",
+        execute,
+      },
+    ],
+  });
+  const [first] = await executor([request], packet, new AbortController().signal);
+  const [selected] = await executor(
+    [
+      {
+        ...request,
+        field: "/appliedCapabilities/0/implementationCheck",
+        sourceResultSha256: first.resultSha256,
+      },
+    ],
+    packet,
+    new AbortController().signal,
+  );
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(selected.status, selected.summary).toBe("completed");
+  expect(selected.resultSha256).toBe(first.resultSha256);
+  const summary = JSON.parse(selected.summary);
+  expect(summary.result.field).toBe("/appliedCapabilities/0/implementationCheck");
+  expect(summary.result.sourceResultSha256).toBe(first.resultSha256);
+  expect(summary.result.knowledge["appliedCapabilities.0.implementationCheck"]).toBe(
+    raw.appliedCapabilities[0].implementationCheck,
+  );
+  expect(Object.keys(summary.result.knowledge)).toEqual([
+    "appliedCapabilities.0.implementationCheck",
+  ]);
+  expect(Buffer.byteLength(JSON.stringify(selected))).toBeLessThanOrEqual(2048);
+});
+
+function methodFieldFixture(
+  raw: Record<string, unknown> = {
+    ok: true,
+    updatedAt: "2026-09-29T00:00:00.000Z",
+    appliedCapabilities: [{ implementationCheck: "Check funding before applying." }],
+  },
+) {
+  const execute = vi.fn(async () => raw);
+  const scope = {
+    directory: "unused",
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: [
+      {
+        toolName: "host_local_read",
+        moduleIds: ["credit_liquidity" as const],
+        description: "Stored method",
+        execute,
+      },
+    ],
+  };
+  const request = { ...financialRequest, toolName: "host_local_read" };
+  const localPacket: FinanceIntradayTradeDecisionReviewRequest = {
+    ...packet,
+    candidates: [{ ...packet.candidates[0] }],
+  };
+  return {
+    raw,
+    execute,
+    scope,
+    request,
+    localPacket,
+    executor: createFinanceTradeReviewEvidenceExecutor(scope),
+  };
+}
+
+it.each(["orphan", "hash", "question", "packet", "cutoff", "account", "directory", "candidate"])(
+  "does not read or rerun an unbound method selection (%s)",
+  async (change) => {
+    const run = methodFieldFixture();
+    const [first] =
+      change === "orphan"
+        ? []
+        : await run.executor([run.request], run.localPacket, new AbortController().signal);
+    const selection = {
+      ...run.request,
+      field: "/appliedCapabilities/0/implementationCheck",
+      sourceResultSha256: first?.resultSha256 ?? "a".repeat(64),
+    };
+    let selectedPacket = run.localPacket;
+    if (change === "hash") {
+      selection.sourceResultSha256 = "b".repeat(64);
+    }
+    if (change === "question") {
+      selection.question = "A different question";
+    }
+    if (change === "packet") {
+      selectedPacket = { ...run.localPacket };
+    }
+    if (change === "cutoff") {
+      selectedPacket = { ...run.localPacket, asOf: "2026-09-30T14:01:00.000Z" };
+    }
+    if (change === "account") {
+      run.scope.accountId = "paper-b";
+    }
+    if (change === "directory") {
+      run.scope.directory = "another-directory";
+    }
+    if (change === "candidate") {
+      Reflect.set(selectedPacket.candidates[0], "side", "sell");
+    }
+    const [result] = await run.executor([selection], selectedPacket, new AbortController().signal);
+    expect(result.status).toBe("unavailable");
+    expect(result.summary).toContain(
+      change === "hash"
+        ? "financial_capability_source_hash_mismatch"
+        : "financial_capability_source_not_retained",
+    );
+    expect(result.summary).not.toContain("Check funding before applying.");
+    expect(run.execute).toHaveBeenCalledTimes(change === "orphan" ? 0 : 1);
+  },
+);
+
+it("keeps sealed method fields despite later mutation and exposes missing fields without replay", async () => {
+  const run = methodFieldFixture();
+  const [first] = await run.executor([run.request], run.localPacket, new AbortController().signal);
+  const cards = run.raw.appliedCapabilities as { implementationCheck: string }[];
+  cards[0].implementationCheck = "Later unbound mutation";
+  const selected = {
+    ...run.request,
+    field: "/appliedCapabilities/0/implementationCheck",
+    sourceResultSha256: first.resultSha256,
+  };
+  const [result, missing] = await run.executor(
+    [selected, { ...selected, field: "/entry/baseCase" }],
+    run.localPacket,
+    new AbortController().signal,
+  );
+  expect(
+    JSON.parse(result.summary).result.knowledge["appliedCapabilities.0.implementationCheck"],
+  ).toBe("Check funding before applying.");
+  expect(result.resultSha256).toBe(first.resultSha256);
+  expect(missing.status).toBe("unavailable");
+  expect(missing.summary).toContain("stored_knowledge_field_missing");
+  expect(run.execute).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  "/entry/config",
+  "/entry/__proto__",
+  "/appliedCapabilities/2/implementationCheck",
+  "/appliedCapabilities/0/implementationCheck/0",
+  "../secret",
+])("rejects a method pointer outside the declared fields (%s)", (field) => {
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      ...financialRequest,
+      field,
+      sourceResultSha256: "a".repeat(64),
+    }).success,
+  ).toBe(false);
+});
+it("requires a field and source hash together and does not widen artifact search", () => {
+  const field = "/entry/baseCase",
+    sourceResultSha256 = "a".repeat(64);
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({ ...financialRequest, field }).success,
+  ).toBe(false);
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({ ...financialRequest, sourceResultSha256 })
+      .success,
+  ).toBe(false);
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      candidateId: "signal",
+      action: "artifact_search",
+      owner: "workflow_delivery",
+      query: "method",
+      field,
+      sourceResultSha256,
+    }).success,
+  ).toBe(false);
+});
+
+it.each(["unavailable", "future"])(
+  "does not retain an inadmissible method result for field recovery (%s)",
+  async (kind) => {
+    const run = methodFieldFixture({
+      ok: kind !== "unavailable",
+      updatedAt: kind === "future" ? "2026-10-01T00:00:00.000Z" : "2026-09-29T00:00:00.000Z",
+      appliedCapabilities: [{ implementationCheck: "Not admissible as evidence." }],
+    });
+    const [first] = await run.executor(
+      [run.request],
+      run.localPacket,
+      new AbortController().signal,
+    );
+    expect(first.status).toBe("unavailable");
+    const [selected] = await run.executor(
+      [
+        {
+          ...run.request,
+          field: "/appliedCapabilities/0/implementationCheck",
+          sourceResultSha256: first.resultSha256,
+        },
+      ],
+      run.localPacket,
+      new AbortController().signal,
+    );
+    expect(selected.status).toBe("unavailable");
+    expect(selected.summary).toContain("financial_capability_source_not_retained");
+    expect(run.execute).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("retains at most four method results per original review packet", async () => {
+  const run = methodFieldFixture();
+  const results = [];
+  for (let index = 0; index < 5; index++) {
+    const [result] = await run.executor(
+      [{ ...run.request, question: `Stored condition ${index}` }],
+      run.localPacket,
+      new AbortController().signal,
+    );
+    results.push(result);
+  }
+  expect(results.map((result) => JSON.parse(result.summary).result.fieldReadAvailable)).toEqual([
+    true,
+    true,
+    true,
+    true,
+    false,
+  ]);
+  const [selected] = await run.executor(
+    [
+      {
+        ...run.request,
+        question: "Stored condition 4",
+        field: "/appliedCapabilities/0/implementationCheck",
+        sourceResultSha256: results[4].resultSha256,
+      },
+    ],
+    run.localPacket,
+    new AbortController().signal,
+  );
+  expect(selected.status).toBe("unavailable");
+  expect(selected.summary).toContain("financial_capability_source_not_retained");
+  expect(run.execute).toHaveBeenCalledTimes(5);
+});
+
+it("does not advertise an earlier retained hash as recovery for a later oversized result", async () => {
+  const run = methodFieldFixture();
+  const [first] = await run.executor([run.request], run.localPacket, new AbortController().signal);
+  run.raw.bulk = "x".repeat(65536);
+  const [later] = await run.executor([run.request], run.localPacket, new AbortController().signal);
+  expect(later.resultSha256).not.toBe(first.resultSha256);
+  expect(JSON.parse(later.summary).result.fieldReadAvailable).toBe(false);
+  const [selected] = await run.executor(
+    [
+      {
+        ...run.request,
+        field: "/appliedCapabilities/0/implementationCheck",
+        sourceResultSha256: later.resultSha256,
+      },
+    ],
+    run.localPacket,
+    new AbortController().signal,
+  );
+  expect(selected.status).toBe("unavailable");
+  expect(selected.summary).toContain("financial_capability_source_hash_mismatch");
+  expect(run.execute).toHaveBeenCalledTimes(2);
+});
+
+it("bounds retained source bodies and preserves UTF8 partial selected conditions", async () => {
+  for (const oversized of [false, true]) {
+    const value = "先核对口径。".repeat(300);
+    const run = methodFieldFixture({
+      ok: true,
+      appliedCapabilities: [{ implementationCheck: value }],
+      ...(oversized ? { bulk: "x".repeat(65536) } : {}),
+    });
+    const [first] = await run.executor(
+      [run.request],
+      run.localPacket,
+      new AbortController().signal,
+    );
+    expect(JSON.parse(first.summary).result.fieldReadAvailable).toBe(!oversized);
+    const [result] = await run.executor(
+      [
+        {
+          ...run.request,
+          field: "/appliedCapabilities/0/implementationCheck",
+          sourceResultSha256: first.resultSha256,
+        },
+      ],
+      run.localPacket,
+      new AbortController().signal,
+    );
+    if (oversized) {
+      expect(result.status).toBe("unavailable");
+      expect(result.summary).toContain("financial_capability_source_not_retained");
+    } else {
+      const fragment = JSON.parse(result.summary).result.knowledge[
+        "appliedCapabilities.0.implementationCheck"
+      ];
+      expect(fragment.fragmentFormat).toBe("json_prefix_not_complete_value");
+      expect(fragment.jsonPrefix).toContain("先核对口径。");
+      expect(fragment.jsonPrefix).not.toContain("\uFFFD");
+    }
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(2048);
+    expect(run.execute).toHaveBeenCalledTimes(1);
+  }
+});
+
+it("feeds a source-bound method selection to the original third review call within the same budget (scripted)", async () => {
+  const run = methodFieldFixture();
+  const prompts: string[] = [];
+  let calls = 0;
+  const adapter: LogicalAgentModelAdapter = {
+    id: "fixture",
+    provider: "offline-scripted",
+    modelId: "fixture",
+    mode: "adapter",
+    capabilities: ["quality_harness"],
+    requiredTools: [],
+    requiredSideEffects: [],
+    invoke: async (call) => {
+      calls++;
+      if (calls === 1) {
+        return {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [run.request],
+          hypothesis: "Read the retained method.",
+        };
+      }
+      const payload = call.payload as { toolEvidence: { resultSha256: string; summary: string }[] };
+      if (calls === 2) {
+        return {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [
+            {
+              ...run.request,
+              field: "/appliedCapabilities/0/implementationCheck",
+              sourceResultSha256: payload.toolEvidence[0].resultSha256,
+            },
+          ],
+          hypothesis: "Read the exact implementation condition.",
+        };
+      }
+      const selected = JSON.parse(payload.toolEvidence[1].summary).result.knowledge[
+        "appliedCapabilities.0.implementationCheck"
+      ];
+      expect(selected).toBe("Check funding before applying.");
+      return {
+        schemaVersion: packet.schemaVersion,
+        decisions: [
+          {
+            candidateId: "signal",
+            decision: "veto",
+            rationale: `Scripted transport check: ${selected}`,
+          },
+        ],
+      };
+    },
+  };
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    {
+      evidenceScope: run.scope,
+      adapterFactory: (_config, options) => ({
+        ...adapter,
+        invoke: async (call, signal) => {
+          prompts.push(options!.buildPrompt!(call.payload));
+          return adapter.invoke(call, signal);
+        },
+      }),
+    },
+  )(run.localPacket, new AbortController().signal);
+  expect(result).toMatchObject({ status: "completed", modelCalls: 3, adapterAttested: false });
+  expect(result.toolEvidence).toHaveLength(2);
+  expect(result.decisions![0].rationale).toContain("Check funding before applying.");
+  expect(prompts[0]).toContain(
+    "sourceResultSha256 copied from that prior toolEvidence.resultSha256",
+  );
+  expect(run.execute).toHaveBeenCalledTimes(1);
+  expect(result.modelCallEvidence![2].toolEvidenceSha256).toBe(
+    createHash("sha256").update(JSON.stringify(result.toolEvidence)).digest("hex"),
+  );
+});
+
 it.each([false, true])(
   "carries retained method checks into the original review follow-up (partial=%s, scripted)",
   async (partial) => {

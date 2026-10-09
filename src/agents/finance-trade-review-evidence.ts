@@ -40,6 +40,25 @@ export const FinanceTradeReviewFailureCodeSchema = z.enum([
   "call_budget_exhausted",
 ]);
 export type FinanceTradeReviewFailureCode = z.infer<typeof FinanceTradeReviewFailureCodeSchema>;
+const KNOWLEDGE_FIELDS = [
+  "capabilityName",
+  "applicationBoundary",
+  "whatChangesMyMind",
+  "causalCheck",
+  "riskGateNotes",
+  "riskChecks",
+  "doNotUseFor",
+  "requiredInputs",
+  "implementationCheck",
+  "useFor",
+  "requiredEvidenceCategories",
+  "evidenceSummary",
+  "baseCase",
+  "bearCase",
+  "keyCausalChain",
+  "sourceArticlePath",
+] as const;
+const MAX_RETAINED_KNOWLEDGE_RESULT_BYTES = 64 * 1024;
 const Text = z.string().min(1).max(120);
 const HistorySourceSchema = z
   .object({
@@ -157,8 +176,24 @@ export const FinanceTradeReviewEvidenceRequestSchema = z.union([
         .trim()
         .min(1)
         .refine((value) => Buffer.byteLength(value, "utf8") <= 240),
+      field: z
+        .string()
+        .regex(
+          new RegExp(
+            `^/(?:entry|appliedCapabilities/[01])/(?:${KNOWLEDGE_FIELDS.join("|")})$`,
+            "u",
+          ),
+        )
+        .optional(),
+      sourceResultSha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/u)
+        .optional(),
     })
-    .strict(),
+    .strict()
+    .refine(
+      (request) => (request.field === undefined) === (request.sourceResultSha256 === undefined),
+    ),
 ]);
 export type FinanceTradeReviewEvidenceRequest = z.infer<
   typeof FinanceTradeReviewEvidenceRequestSchema
@@ -437,7 +472,11 @@ function summarizeEvidence(
   return summaryText;
 }
 
-function knowledgeProjection(output: Record<string, unknown>, priority: Record<string, unknown>) {
+function knowledgeProjection(
+  output: Record<string, unknown>,
+  priority: Record<string, unknown>,
+  field?: string,
+) {
   const omitted: string[] = [];
   const records: [string, Record<string, unknown>][] = [];
   if (output.entry && typeof output.entry === "object") {
@@ -451,30 +490,19 @@ function knowledgeProjection(output: Record<string, unknown>, priority: Record<s
     });
   }
   const selected: Record<string, unknown> = {};
+  const selectedKey = field?.slice(1).replaceAll("/", ".");
+  let matchedField = false;
   for (const [prefix, record] of records) {
     // Retained methods need their application checks, not only names and risk labels.
-    for (const key of [
-      "capabilityName",
-      "applicationBoundary",
-      "whatChangesMyMind",
-      "causalCheck",
-      "riskGateNotes",
-      "riskChecks",
-      "doNotUseFor",
-      "requiredInputs",
-      "implementationCheck",
-      "useFor",
-      "requiredEvidenceCategories",
-      "evidenceSummary",
-      "baseCase",
-      "bearCase",
-      "keyCausalChain",
-      "sourceArticlePath",
-    ]) {
+    for (const key of KNOWLEDGE_FIELDS) {
       if (record[key] === undefined) {
         continue;
       }
       const qualified = `${prefix}.${key}`;
+      if (selectedKey !== undefined && selectedKey !== qualified) {
+        continue;
+      }
+      matchedField = true;
       if (
         Buffer.byteLength(
           JSON.stringify({ ...priority, knowledge: { ...selected, [qualified]: record[key] } }),
@@ -510,6 +538,9 @@ function knowledgeProjection(output: Record<string, unknown>, priority: Record<s
       }
     }
   }
+  if (field !== undefined && !matchedField) {
+    throw new Error("stored_knowledge_field_missing");
+  }
   return {
     ...priority,
     ...(Object.keys(selected).length ? { knowledge: selected } : {}),
@@ -537,6 +568,7 @@ type HistoryReadIdentity = {
 /** Bounded tool batches reuse validated history only within the same host review packet. */
 export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeReviewEvidenceScope) {
   let selectedArtifacts = new Map<string, { owner: string; sha256: string }>();
+  let knowledgeResults = new Map<string, { json: string; sha256: string }>();
   let observations = new Map<
     string,
     { bars: z.infer<typeof Bar>[]; identity: HistoryReadIdentity; ref: string }
@@ -594,12 +626,14 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
     if (packet !== observationPacket || scopeKey !== observationScope) {
       observations = new Map();
       selectedArtifacts = new Map();
+      knowledgeResults = new Map();
       observationPacket = packet;
       observationScope = scopeKey;
     }
     // Keep a concurrent caller's differently scoped packet from replacing this batch's map.
     const packetObservations = observations;
     const packetArtifacts = selectedArtifacts;
+    const packetKnowledgeResults = knowledgeResults;
     const ledger = createCalculationLedger({ maxEntries: 2 });
     const barTool = createFinanceBarLedgerTool();
     const math = createQuantMathTool();
@@ -787,6 +821,15 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           continue;
         }
         if (request.action === "financial_capability") {
+          const knowledgeKey = digest({
+            candidate,
+            accountId: scope.accountId,
+            asOf: packet.asOf,
+            venue: packet.venue,
+            toolName: request.toolName,
+            moduleId: request.moduleId,
+            question: request.question,
+          });
           let output: unknown;
           let resultSha256: string | undefined;
           let provenance: Record<string, unknown> = {};
@@ -797,17 +840,29 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             interpretation: "stored_knowledge_not_current_market_account_or_point_in_time_facts",
           };
           try {
-            output = await capabilities.get(request.toolName)!.execute(
-              {
-                moduleId: request.moduleId,
-                candidate,
-                question: request.question,
-                asOf: packet.asOf,
-                accountId: scope.accountId,
-                venue: packet.venue,
-              },
-              signal,
-            );
+            if (request.field !== undefined) {
+              const prior = packetKnowledgeResults.get(knowledgeKey);
+              if (!prior) {
+                throw new Error("financial_capability_source_not_retained");
+              }
+              if (prior.sha256 !== request.sourceResultSha256) {
+                throw new Error("financial_capability_source_hash_mismatch");
+              }
+              // Select the sealed prior result; do not rerun a producer or mix source versions.
+              output = JSON.parse(prior.json);
+            } else {
+              output = await capabilities.get(request.toolName)!.execute(
+                {
+                  moduleId: request.moduleId,
+                  candidate,
+                  question: request.question,
+                  asOf: packet.asOf,
+                  accountId: scope.accountId,
+                  venue: packet.venue,
+                },
+                signal,
+              );
+            }
             signal.throwIfAborted();
             requireFiniteResult(output);
             if (!output || typeof output !== "object" || Array.isArray(output)) {
@@ -857,7 +912,25 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             ) {
               status = "unavailable";
             }
-            priority = knowledgeProjection(record, priority);
+            if (request.field === undefined && status === "completed") {
+              const json = JSON.stringify(record);
+              if (
+                Buffer.byteLength(json, "utf8") <= MAX_RETAINED_KNOWLEDGE_RESULT_BYTES &&
+                createHash("sha256").update(json).digest("hex") === resultSha256 &&
+                (packetKnowledgeResults.has(knowledgeKey) ||
+                  packetKnowledgeResults.size < FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS)
+              ) {
+                packetKnowledgeResults.set(knowledgeKey, { json, sha256: resultSha256 });
+              }
+            }
+            priority.fieldReadAvailable =
+              status === "completed" &&
+              packetKnowledgeResults.get(knowledgeKey)?.sha256 === resultSha256;
+            if (request.field !== undefined) {
+              priority.field = request.field;
+              priority.sourceResultSha256 = request.sourceResultSha256;
+            }
+            priority = knowledgeProjection(record, priority, request.field);
           } catch (error) {
             signal.throwIfAborted();
             status = "unavailable";
@@ -867,6 +940,9 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
                 "nonfinite mathematical result",
                 "stored knowledge result missing",
                 "stored knowledge timestamp invalid or after review cutoff",
+                "stored_knowledge_field_missing",
+                "financial_capability_source_not_retained",
+                "financial_capability_source_hash_mismatch",
               ].includes(error.message)
                 ? error.message
                 : "financial_capability_unavailable";
@@ -893,7 +969,10 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             boundary: financialBoundary,
           };
           try {
-            evidence.summary = summarizeEvidence(output, priority);
+            evidence.summary = summarizeEvidence(
+              request.field === undefined || status === "unavailable" ? output : {},
+              priority,
+            );
             if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048) {
               throw new Error("financial knowledge projection exceeds budget");
             }
