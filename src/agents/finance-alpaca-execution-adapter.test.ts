@@ -869,6 +869,105 @@ it("restores a remaining stop idempotently after a lost response", async () => {
   expect(posts).toBe(1);
   expect(stored?.qty).toBe("1");
 });
+it("bounds pending protection queries and resumes by the same order identity without posting", async () => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  const controller = new AbortController();
+  let status = "accepted";
+  const read = vi.fn(async (url: string) => ({
+    status: 200,
+    body: JSON.stringify({
+      id: "pending-stop",
+      client_order_id: new URL(url).searchParams.get("client_order_id"),
+      symbol: baseIntent.instrument,
+      side: "sell",
+      type: "stop",
+      time_in_force: "gtc",
+      qty: "1",
+      stop_price: "90",
+      filled_qty: "0",
+      status,
+    }),
+  }));
+  const postJson = vi.fn(async () => ({ status: 200, body: "{}" }));
+  const options = {
+    intent: { ...baseIntent, side: "sell" as const },
+    quantity: 1,
+    stopPrice: 90,
+    headers: {},
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]),
+    read,
+    postJson,
+  };
+  try {
+    const pending = restoreAlpacaPaperProtection(options).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(await pending).toMatchObject({
+      message: "remaining protection awaiting working confirmation",
+    });
+    expect(read).toHaveBeenCalledTimes(9);
+    expect(postJson).not.toHaveBeenCalled();
+    status = "new";
+    await restoreAlpacaPaperProtection(options);
+    expect(read).toHaveBeenCalledTimes(10);
+    expect(new Set(read.mock.calls.map(([url]) => url)).size).toBe(1);
+    expect(postJson).not.toHaveBeenCalled();
+  } finally {
+    controller.abort();
+  }
+}, 15000);
+it("waits for a matching pending-new protection to become working without posting", async () => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  let reads = 0;
+  const postJson = vi.fn(async () => ({ status: 200, body: "{}" }));
+  await restoreAlpacaPaperProtection({
+    intent: { ...baseIntent, side: "sell" },
+    quantity: 1,
+    stopPrice: 90,
+    headers: {},
+    signal: AbortSignal.timeout(1000),
+    read: async (url) => ({
+      status: 200,
+      body: JSON.stringify({
+        id: "transitioning-stop",
+        client_order_id: new URL(url).searchParams.get("client_order_id"),
+        symbol: baseIntent.instrument,
+        side: "sell",
+        type: "stop",
+        time_in_force: "gtc",
+        qty: "1",
+        stop_price: "90",
+        filled_qty: "0",
+        status: ++reads === 1 ? "pending_new" : "new",
+      }),
+    }),
+    postJson,
+  });
+  expect(reads).toBe(2);
+  expect(postJson).not.toHaveBeenCalled();
+});
+it("rejects a mismatched pending protection before polling", async () => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  const read = vi.fn(async () => ({
+    status: 200,
+    body: JSON.stringify({ id: "wrong-stop", status: "accepted", symbol: "WRONG" }),
+  }));
+  const postJson = vi.fn(async () => ({ status: 200, body: "{}" }));
+  await expect(
+    restoreAlpacaPaperProtection({
+      intent: { ...baseIntent, side: "sell" },
+      quantity: 1,
+      stopPrice: 90,
+      headers: {},
+      signal: AbortSignal.timeout(1000),
+      read,
+      postJson,
+    }),
+  ).rejects.toThrow("remaining protection identity or state mismatch");
+  expect(read).toHaveBeenCalledOnce();
+  expect(postJson).not.toHaveBeenCalled();
+});
 it("restores stop-limit type and price idempotently after a lost response", async () => {
   const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
   let stored: Record<string, unknown> | undefined;

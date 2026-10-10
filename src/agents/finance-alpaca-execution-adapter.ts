@@ -338,7 +338,7 @@ export async function restoreAlpacaPaperProtection(options: {
     throw new Error("invalid protective order restoration intent");
   }
   const clientId = `${clientOrderIdentity("paper", intent)}-protect`;
-  const matchesProtection = (stop: Record<string, unknown>) =>
+  const matchesProtectionIdentity = (stop: Record<string, unknown>) =>
     stop.client_order_id === clientId &&
     stop.symbol === intent.instrument &&
     stop.side === "sell" &&
@@ -349,7 +349,6 @@ export async function restoreAlpacaPaperProtection(options: {
     (orderType === "stop_limit"
       ? asFiniteNumber(stop.limit_price) === options.limitPrice
       : stop.limit_price === undefined || stop.limit_price === null) &&
-    stop.status === "new" &&
     asFiniteNumber(stop.filled_qty) === 0 &&
     typeof stop.id === "string" &&
     !!stop.id;
@@ -394,15 +393,26 @@ export async function restoreAlpacaPaperProtection(options: {
     throw new Error("remaining protection not confirmed");
   }
   let stop = JSON.parse(response.body) as Record<string, unknown>;
+  let pendingPolls = 0;
   while (["accepted", "pending_new"].includes(typeof stop.status === "string" ? stop.status : "")) {
-    await bounded(() => delay(100, undefined, { signal }), signal);
+    if (!matchesProtectionIdentity(stop)) {
+      throw new Error("remaining protection identity or state mismatch");
+    }
+    // A queued stop can stay accepted throughout a closed session. Release the
+    // account lock after bounded observation; recovery looks up the same ID.
+    if (pendingPolls >= 8) {
+      throw new Error("remaining protection awaiting working confirmation");
+    }
+    const intervalMs = Math.min(100 * 2 ** pendingPolls, 1000);
+    pendingPolls += 1;
+    await bounded(() => delay(intervalMs, undefined, { signal }), signal);
     response = await lookup();
     if (response.status !== 200) {
       throw new Error("remaining protection status unavailable");
     }
     stop = JSON.parse(response.body) as Record<string, unknown>;
   }
-  if (!matchesProtection(stop)) {
+  if (!matchesProtectionIdentity(stop) || stop.status !== "new") {
     throw new Error("remaining protection identity or state mismatch");
   }
 }
