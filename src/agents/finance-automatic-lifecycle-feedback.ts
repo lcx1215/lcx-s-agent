@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
+import { FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES } from "./finance-execution-safety.js";
 import { readFinanceIntradayExecutionCoverage } from "./finance-intraday-control-ledger.js";
 import {
   FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON,
@@ -83,7 +85,96 @@ function compactExecutionOutcome(
   return intents === 0 ? "no_trade" : "not_executed";
 }
 
-function readSchedulerRuntime(directory: string, observedAt: string) {
+const schedulerReconciliationObservationSchema = z.object({
+  schemaVersion: z.literal("lcx_alpaca_order_stream_observation_v1"),
+  pid: z.number().int().positive(),
+  venue: z.literal("alpaca:paper"),
+  observedAt: z.string().datetime({ offset: true }),
+  reconciliation: z.object({
+    lastAttemptAt: z.string().datetime({ offset: true }).nullable(),
+    lastReadbackAt: z.string().datetime({ offset: true }).nullable(),
+    lastSucceededAt: z.string().datetime({ offset: true }).nullable(),
+    lastReadinessStatus: z
+      .enum(["ready", "restricted", "blocked", "reconciled", "unresolved", "unavailable"])
+      .nullable(),
+    lastErrorCode: z
+      .enum([
+        ...FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES,
+        "progress_observation_failed",
+        "reconciliation_failed",
+        "stream_unavailable",
+      ])
+      .nullable(),
+  }),
+});
+
+async function readSchedulerReconciliation(
+  directory: string,
+  pid: number | null,
+  processPresent: boolean,
+  observedAt: string,
+) {
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await fs.open(path.join(directory, "alpaca-order-stream-latest.json"), "r");
+    const buffer = Buffer.alloc(16 * 1024 + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > 16 * 1024) {
+      return {
+        status: "unavailable",
+        needsInspection: true,
+        reason: "reconciliation_observation_too_large",
+      };
+    }
+    const record = schedulerReconciliationObservationSchema.parse(
+      JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")),
+    );
+    if (!processPresent || record.pid !== pid) {
+      return {
+        status: "unavailable",
+        needsInspection: true,
+        reason: "reconciliation_owner_mismatch",
+      };
+    }
+    const now = Date.parse(observedAt),
+      ageMs = now - Date.parse(record.observedAt);
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 300000) {
+      return {
+        status: "stale",
+        observedAt: record.observedAt,
+        needsInspection: true,
+        reason: "reconciliation_observation_not_current",
+      };
+    }
+    const readbackAgeMs =
+      record.reconciliation.lastReadbackAt === null
+        ? Infinity
+        : now - Date.parse(record.reconciliation.lastReadbackAt);
+    return {
+      status: "present",
+      observedAt: record.observedAt,
+      ...record.reconciliation,
+      needsInspection:
+        record.reconciliation.lastErrorCode !== null ||
+        !["ready", "reconciled"].includes(record.reconciliation.lastReadinessStatus ?? "") ||
+        readbackAgeMs < 0 ||
+        readbackAgeMs > 300000,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    return {
+      status: "unavailable",
+      needsInspection: true,
+      reason: "reconciliation_observation_unreadable",
+    };
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+async function readSchedulerRuntime(directory: string, observedAt: string) {
   let pid: number | null = null;
   try {
     pid = readFinanceSchedulerPid(directory);
@@ -102,9 +193,16 @@ function readSchedulerRuntime(directory: string, observedAt: string) {
     Number.isFinite(Date.parse(observedAt)) ? Date.parse(observedAt) : Date.now(),
   );
   const fields = progress as Record<string, unknown>;
+  const reconciliation = await readSchedulerReconciliation(
+    directory,
+    pid,
+    processPresent,
+    observedAt,
+  );
   return {
     status: progress.status,
     pidPresent: pid !== null,
+    ...(reconciliation ? { reconciliation } : {}),
     ...(typeof fields.phase === "string" ? { phase: fields.phase } : {}),
     ...("accountWork" in progress ? { accountWork: progress.accountWork } : {}),
     ...(typeof fields.placementEnabled === "boolean"
@@ -386,7 +484,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       Promise.resolve(readFinanceSchedulerState(state.directory)),
       readLatestCycleByMode(state.directory),
     ]);
-    const schedulerRuntime = readSchedulerRuntime(state.directory, observedAt);
+    const schedulerRuntime = await readSchedulerRuntime(state.directory, observedAt);
     let currentReadiness: Record<string, unknown>;
     try {
       const snapshot = await readFinanceRuleReadinessState({
@@ -539,15 +637,18 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         ? runtimeIntradayPolicyStatus
         : runtimePolicyStatus;
     const runtimeVenue = "venue" in schedulerRuntime ? schedulerRuntime.venue : undefined;
-    const schedulerRuntimeNeedsInspection = schedulerRuntime.pidPresent
-      ? schedulerRuntime.status !== "responsive" ||
-        runtimePlacementEnabled !== true ||
-        (runtimeVenue === "paper"
-          ? false
-          : runtimeVenue !== "alpaca" ||
-            (runtimeEffectivePolicyStatus !== "current" &&
-              runtimeEffectivePolicyStatus !== "until_revoked"))
-      : schedulerHasHistory;
+    const schedulerRuntimeNeedsInspection =
+      ("reconciliation" in schedulerRuntime &&
+        schedulerRuntime.reconciliation?.needsInspection === true) ||
+      (schedulerRuntime.pidPresent
+        ? schedulerRuntime.status !== "responsive" ||
+          runtimePlacementEnabled !== true ||
+          (runtimeVenue === "paper"
+            ? false
+            : runtimeVenue !== "alpaca" ||
+              (runtimeEffectivePolicyStatus !== "current" &&
+                runtimeEffectivePolicyStatus !== "until_revoked"))
+        : schedulerHasHistory);
     const nextTask = positionManagement.needsInspection
       ? "inspect_finance_position_management"
       : failedCycleModes.length > 0 || scheduler.lastRun?.ok === false

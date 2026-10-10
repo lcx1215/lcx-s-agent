@@ -27,8 +27,8 @@ export async function recoverConfirmedFinanceExecutions(params: {
     failures: [] as { claimId: string; reason: string }[],
   };
   let claims;
-  try {
-    if (params.resolvePending) {
+  if (params.resolvePending) {
+    try {
       await reconcileFinanceExecutionClaims({
         stateDir: params.safetyStateDir,
         accountId: params.accountId,
@@ -36,7 +36,21 @@ export async function recoverConfirmedFinanceExecutions(params: {
         signal: params.signal,
         resolve: params.resolvePending,
       });
+    } catch {
+      // Broker recovery can fail while locally confirmed receipts remain valid.
+      // Keep the failure blocking execution, then deliver verified local results.
+      result.failures.push({
+        claimId: "pending",
+        reason: params.signal?.aborted
+          ? "recovery_cancelled"
+          : "pending_execution_resolution_unavailable",
+      });
+      if (params.signal?.aborted) {
+        return result;
+      }
     }
+  }
+  try {
     claims = await readFinanceExecutionSafetyClaims({
       stateDir: params.safetyStateDir,
       accountId: params.accountId,

@@ -1272,6 +1272,28 @@ function projectFinanceBudgetFacts(
       );
       omitted.delete("scheduler.runtime.accountWork");
     }
+    if (
+      isPlainRecord(source.scheduler.runtime) &&
+      isPlainRecord(source.scheduler.runtime.reconciliation)
+    ) {
+      const runtime = (result.scheduler as { runtime: Record<string, unknown> }).runtime;
+      runtime.reconciliation = pick(
+        source.scheduler.runtime.reconciliation,
+        [
+          "status",
+          "observedAt",
+          "lastAttemptAt",
+          "lastReadbackAt",
+          "lastSucceededAt",
+          "lastReadinessStatus",
+          "lastErrorCode",
+          "needsInspection",
+          "reason",
+        ],
+        "scheduler.runtime.reconciliation.",
+      );
+      omitted.delete("scheduler.runtime.reconciliation");
+    }
     for (const key of Object.keys(source.scheduler)) {
       if (key !== "runtime") {
         omitted.add(`scheduler.${key}`);
@@ -1390,6 +1412,21 @@ function projectFinanceBudgetFacts(
   // A fixed 2KB projection can still exceed the remaining shared budget. Keep
   // source-timed action gaps as whole JSON, and explicitly leave details unknown.
   const minimal = pick(source, ["status", "observedAt", "nextTask"], "");
+  if (
+    isPlainRecord(source.scheduler) &&
+    isPlainRecord(source.scheduler.runtime) &&
+    isPlainRecord(source.scheduler.runtime.reconciliation)
+  ) {
+    minimal.scheduler = {
+      runtime: {
+        reconciliation: pick(
+          source.scheduler.runtime.reconciliation,
+          ["status", "observedAt", "lastErrorCode", "needsInspection", "reason"],
+          "scheduler.runtime.reconciliation.",
+        ),
+      },
+    };
+  }
   const minimalSections: readonly [string, readonly string[]][] = [
     ["intradayExecution", ["scope", "uncertain", "missingOutcome", "needsExecutionInspection"]],
     ["positionManagement", ["needsInspection"]],

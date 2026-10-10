@@ -439,3 +439,38 @@ it("keeps the leading refusal cause when the full projection cannot fit", () => 
   });
   expect(bounded.report.injectedBytes).toBeLessThanOrEqual(budget);
 });
+it("keeps source-timed recovery failure in the minimal finance projection", () => {
+  const reconciliation = {
+    status: "present",
+    observedAt: "2026-10-10T04:45:00Z",
+    lastErrorCode: "execution_recovery_incomplete",
+    needsInspection: true,
+  };
+  const finance = {
+    status: "present",
+    observedAt: reconciliation.observedAt,
+    nextTask: "inspect_finance_scheduler_runtime",
+    scheduler: { runtime: { status: "responsive", reconciliation } },
+    positionManagement: { needsInspection: false },
+    history: "x".repeat(8400),
+  };
+  const base = {
+    observedAt: finance.observedAt,
+    ownerTotals: {},
+    backlog: [{ note: "x".repeat(7300) }],
+    boundaries: [],
+    controlRoom: {},
+  };
+  const budget = Buffer.byteLength(JSON.stringify(base)) + 620;
+  const bounded = boundPerception(
+    { ...base, controlRoom: { financeAutomaticLifecycle: finance } },
+    budget,
+  );
+  expect(bounded.perception.controlRoom.financeAutomaticLifecycle).toMatchObject({
+    scheduler: { runtime: { reconciliation } },
+    budgetProjection: { omittedFieldCount: expect.any(Number) },
+  });
+  expect(buildCentralBrainPrompt(bounded.perception)).toContain("execution_recovery_incomplete");
+  expect(boundPerception(bounded.perception, budget).perception).toEqual(bounded.perception);
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(budget);
+});

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FinanceAlpacaOrderStreamOptions } from "./finance-alpaca-order-stream.js";
+import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +43,51 @@ afterEach(() => {
   if (root) {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+it.each([
+  {
+    error: new FinanceExecutionSafetyFactsError("execution_recovery_incomplete"),
+    expected: "execution_recovery_incomplete",
+  },
+  { error: new Error("untrusted raw provider details"), expected: "reconciliation_failed" },
+])("persists only the trusted reconciliation category $expected", async ({ error, expected }) => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-stream-error-"));
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    if (String(chunk).includes("Alpaca stream reconciliation failed")) {
+      setImmediate(() => process.emit("SIGTERM"));
+    }
+    return true;
+  });
+  mocks.close.mockResolvedValue(undefined);
+  let streamOptions: FinanceAlpacaOrderStreamOptions | undefined;
+  mocks.stream.mockImplementation((options: FinanceAlpacaOrderStreamOptions) => {
+    streamOptions = options;
+    return { start: mocks.start, close: mocks.close };
+  });
+  mocks.start.mockImplementation(() => streamOptions?.onWake("connected"));
+  mocks.history.mockRejectedValue(error);
+  expect(
+    await runFinanceScheduler([
+      "--loop",
+      "--dir",
+      root,
+      "--venue",
+      "alpaca",
+      "--sync-alpaca-history",
+      "--no-source-heartbeat",
+    ]),
+  ).toBe(143);
+  const observation = JSON.parse(
+    fs.readFileSync(path.join(root, "alpaca-order-stream-latest.json"), "utf8"),
+  );
+  expect(observation.reconciliation).toMatchObject({
+    lastErrorCode: expected,
+    lastReadinessStatus: "unavailable",
+    lastSucceededAt: null,
+  });
+  expect(JSON.stringify(observation)).not.toContain("untrusted raw provider details");
+  expect(mocks.cycle).not.toHaveBeenCalled();
 });
 
 describe("resident Paper stream wiring", () => {

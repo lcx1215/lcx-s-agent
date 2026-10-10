@@ -43,6 +43,7 @@ import {
   isFinanceCycleSlotDue,
 } from "../../src/agents/finance-cycle-schedule.js";
 import { FINANCE_RISK_BUDGET_ANY_INSTRUMENT } from "../../src/agents/finance-execution-adapter.js";
+import { FinanceExecutionSafetyFactsError } from "../../src/agents/finance-execution-safety.js";
 import { runFinanceHistoricalPositionMaintenance } from "../../src/agents/finance-historical-position-maintenance.js";
 import { executeFinanceIntradayDecision } from "../../src/agents/finance-intraday-execution.js";
 import { readFinanceIntradayLedger } from "../../src/agents/finance-intraday-ledger.js";
@@ -3002,7 +3003,9 @@ export async function runFinanceScheduler(
           reconciliation.lastErrorCode =
             error instanceof SchedulerProgressBeforeDispatchError
               ? "progress_observation_failed"
-              : "reconciliation_failed";
+              : error instanceof FinanceExecutionSafetyFactsError
+                ? error.category
+                : "reconciliation_failed";
           reconciliation.lastReadinessStatus = "unavailable";
           writeStreamStatus();
           process.stderr.write(

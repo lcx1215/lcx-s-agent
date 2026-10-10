@@ -140,6 +140,154 @@ it("preserves file and resident until-revoked authorization metadata in lifecycl
   });
   expect(feedback.nextTask).not.toBe("inspect_finance_scheduler_runtime");
 });
+it("reads current reconciliation failures into the next lifecycle observation and sees recovery", async () => {
+  const observedAt = "2026-10-10T04:45:00.000Z";
+  fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+  const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt,
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyAuthorizationMode: "until_revoked",
+      executionPolicyExpiresAt: null,
+      intradayControllerPolicyAuthorizationMode: "until_revoked",
+      intradayControllerPolicyExpiresAt: null,
+      intraday: { enabled: true },
+    }),
+  );
+  const filename = path.join(directory, "alpaca-order-stream-latest.json");
+  const observation = {
+    schemaVersion: "lcx_alpaca_order_stream_observation_v1",
+    pid: process.pid,
+    observedAt,
+    venue: "alpaca:paper",
+    reconciliation: {
+      lastAttemptAt: observedAt,
+      lastReadbackAt: null,
+      lastSucceededAt: null,
+      lastReadinessStatus: "unavailable",
+      lastErrorCode: "execution_recovery_incomplete",
+    },
+    rawPrivateDetails: "never expose this field",
+  };
+  fs.writeFileSync(filename, JSON.stringify(observation));
+  const failed = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(failed).toMatchObject({
+    scheduler: {
+      runtime: {
+        reconciliation: {
+          status: "present",
+          observedAt,
+          lastErrorCode: "execution_recovery_incomplete",
+          needsInspection: true,
+        },
+      },
+    },
+    nextTask: "inspect_finance_scheduler_runtime",
+  });
+  expect(JSON.stringify(failed)).not.toContain("never expose this field");
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({
+      ...observation,
+      reconciliation: {
+        ...observation.reconciliation,
+        lastReadbackAt: observedAt,
+        lastSucceededAt: observedAt,
+        lastReadinessStatus: "ready",
+        lastErrorCode: null,
+      },
+    }),
+  );
+  const recovered = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(recovered).toMatchObject({
+    scheduler: { runtime: { reconciliation: { lastErrorCode: null, needsInspection: false } } },
+  });
+  expect(recovered).not.toMatchObject({ nextTask: "inspect_finance_scheduler_runtime" });
+});
+
+it.each([
+  ["stale", "stale", "reconciliation_observation_not_current"],
+  ["future", "stale", "reconciliation_observation_not_current"],
+  ["wrong_pid", "unavailable", "reconciliation_owner_mismatch"],
+  ["absent_owner", "unavailable", "reconciliation_owner_mismatch"],
+  ["oversized", "unavailable", "reconciliation_observation_too_large"],
+  ["malformed", "unavailable", "reconciliation_observation_unreadable"],
+  ["unknown_error", "unavailable", "reconciliation_observation_unreadable"],
+  ["wrong_venue", "unavailable", "reconciliation_observation_unreadable"],
+  ["old_readback", "present", undefined],
+  ["future_readback", "present", undefined],
+] as const)(
+  "does not treat %s reconciliation metadata as recovered",
+  async (scenario, status, reason) => {
+    const observedAt = "2026-10-10T04:45:00.000Z";
+    if (scenario !== "absent_owner") {
+      fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+    }
+    const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+    fs.mkdirSync(lock);
+    fs.writeFileSync(
+      path.join(lock, "progress.json"),
+      JSON.stringify({
+        pid: process.pid,
+        observedAt,
+        phase: "idle",
+        timeoutMs: 900000,
+        placementEnabled: true,
+        venue: "alpaca",
+        executionPolicyAuthorizationMode: "until_revoked",
+        executionPolicyExpiresAt: null,
+        intradayControllerPolicyAuthorizationMode: "until_revoked",
+        intradayControllerPolicyExpiresAt: null,
+        intraday: { enabled: true },
+      }),
+    );
+    const observation = {
+      schemaVersion: "lcx_alpaca_order_stream_observation_v1",
+      pid: scenario === "wrong_pid" ? process.pid + 1 : process.pid,
+      observedAt:
+        scenario === "stale"
+          ? "2026-10-10T04:39:59.000Z"
+          : scenario === "future"
+            ? "2026-10-10T04:45:01.000Z"
+            : observedAt,
+      venue: scenario === "wrong_venue" ? "alpaca:live" : "alpaca:paper",
+      reconciliation: {
+        lastAttemptAt: observedAt,
+        lastReadbackAt:
+          scenario === "old_readback"
+            ? "2026-10-10T04:39:59.000Z"
+            : scenario === "future_readback"
+              ? "2026-10-10T04:45:01.000Z"
+              : observedAt,
+        lastSucceededAt: observedAt,
+        lastReadinessStatus: "ready",
+        lastErrorCode: scenario === "unknown_error" ? "raw secret provider detail" : null,
+      },
+      ...(scenario === "oversized" ? { irrelevant: "x".repeat(16384) } : {}),
+    };
+    fs.writeFileSync(
+      path.join(directory, "alpaca-order-stream-latest.json"),
+      scenario === "malformed" ? "{incomplete" : JSON.stringify(observation),
+    );
+    const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+    expect(feedback).toMatchObject({
+      scheduler: {
+        runtime: {
+          reconciliation: { status, needsInspection: true, ...(reason ? { reason } : {}) },
+        },
+      },
+      nextTask: "inspect_finance_scheduler_runtime",
+    });
+    expect(JSON.stringify(feedback)).not.toContain("raw secret provider detail");
+  },
+);
 
 it("requests runtime inspection when file authorization is standing but resident intraday policy expired", async () => {
   const observedAt = "2026-09-23T12:00:00.000Z";

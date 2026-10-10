@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,12 +14,14 @@ import {
   createFinanceExecutionSafetyContext,
   type FinanceExecutionSafetyContextInput,
   type FinanceExecutionSafetyFacts,
+  type FinanceExecutionSafetyClaim,
 } from "./finance-execution-safety.js";
 import {
   appendFinanceExecutionReceipt,
   readFinanceAccountPositionLedger,
   readFinancePositionRecords,
 } from "./finance-position-ledger.js";
+import { stableStringify } from "./stable-stringify.js";
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -157,6 +160,52 @@ it("recovers confirmed-before-SQLite crash window twice with exactly the origina
       })
     ).ledger.positions[0].quantity,
   ).toBe(1);
+});
+it("delivers confirmed receipts even when a different pending broker lookup fails", async () => {
+  const f = await runConfirmed();
+  const entries = (await fs.readFile(f.journal, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as FinanceExecutionSafetyClaim);
+  const first = entries[0];
+  if (!first.binding) {
+    throw new Error("fixture binding missing");
+  }
+  const binding = {
+    ...first.binding,
+    intent: { ...first.binding.intent, intentId: "other-pending" },
+  };
+  const id = createHash("sha256")
+    .update(
+      stableStringify([
+        binding.accountId,
+        binding.venue,
+        binding.intent.runAuthorizationId,
+        binding.intent.intentId,
+      ]),
+    )
+    .digest("hex");
+  await fs.appendFile(
+    f.journal,
+    JSON.stringify({ ...first, id, binding, status: "unknown" }) + "\n",
+  );
+  const before = await fs.readFile(f.journal, "utf8");
+  const resolvePending = vi.fn(async () => {
+    throw new Error("broker unavailable; raw details must not cross the feedback boundary");
+  });
+  const recovered = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+  expect(recovered.failures).toEqual([
+    { claimId: "pending", reason: "pending_execution_resolution_unavailable" },
+  ]);
+  expect(recovered.pendingReconciliation).toEqual([id]);
+  expect(recovered.replayed).toHaveLength(1);
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toEqual([f.receipt]);
+  expect(await fs.readFile(f.journal, "utf8")).toBe(before);
+  const repeated = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+  expect(repeated.alreadyRecorded).toEqual(recovered.replayed);
+  expect(repeated.pendingReconciliation).toEqual([id]);
+  expect(repeated.failures).toEqual(recovered.failures);
+  expect(resolvePending).toHaveBeenCalledTimes(2);
 });
 it("classifies confirmed venue zero-fill terminal cancellation without writing a receipt or position", async () => {
   const f = await runConfirmed();
@@ -448,6 +497,6 @@ it("cancellation preserves an unknown claim even if its resolver ignores the sig
       return new Promise(() => {});
     },
   });
-  expect(result.failures).toHaveLength(1);
+  expect(result.failures).toEqual([{ claimId: "pending", reason: "recovery_cancelled" }]);
   expect(await fs.readFile(f.journal, "utf8")).toBe(before);
 });
