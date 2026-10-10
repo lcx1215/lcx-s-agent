@@ -467,7 +467,7 @@ export const FinanceIntradayOutcomeInput = FinanceIntradayOutcomeBase.extend({
 export type FinanceIntradayOutcomeInput = z.infer<typeof FinanceIntradayOutcomeInput>;
 
 /** Reads remain compatible with older outcomes that stored only stage and category. */
-const FinanceIntradayOutcomeRecord = FinanceIntradayOutcomeBase.extend({
+export const FinanceIntradayOutcomeRecord = FinanceIntradayOutcomeBase.extend({
   executionSafetyFailure: FinanceIntradayExecutionSafetyFailureRecord.optional(),
 }).strict();
 export type FinanceIntradayOutcomeRecord = z.infer<typeof FinanceIntradayOutcomeRecord>;

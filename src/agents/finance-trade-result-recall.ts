@@ -75,7 +75,8 @@ export function createFinanceTradeResultRecallCapability(options: {
         | { recordedAt: number; directionMatch: boolean; result: Record<string, unknown> }
         | undefined;
       // The native ledger schemas depend on review evidence; load at use, not factory setup.
-      const { FinanceIntradayDecisionInput } = await import("./finance-intraday-control-ledger.js");
+      const { FinanceIntradayDecisionInput, FinanceIntradayOutcomeRecord } =
+        await import("./finance-intraday-control-ledger.js");
       for (const item of found.artifacts.slice(0, SEARCH_LIMIT)) {
         const metadata = record(item);
         if (metadata?.owner !== OWNER || typeof metadata.id !== "string") {
@@ -187,6 +188,11 @@ export function createFinanceTradeResultRecallCapability(options: {
               "/value/details/outcome/tradeDecisionReview/failureCode",
               true,
             );
+            const executionFailure = await field("/value/details/outcome/executionFailure", true);
+            const executionSafetyFailure = await field(
+              "/value/details/outcome/executionSafetyFailure",
+              true,
+            );
             read = {
               ...account,
               selectedValue: {
@@ -197,6 +203,8 @@ export function createFinanceTradeResultRecallCapability(options: {
                   signalId: signalId.selectedValue,
                   status: status.selectedValue,
                   reasons: reasons.available === true ? reasons.selectedValue : [],
+                  executionFailure: executionFailure.selectedValue,
+                  executionSafetyFailure: executionSafetyFailure.selectedValue,
                   tradeDecisionReview: {
                     decision: priorReview.selectedValue,
                     request: { asOf: priorReviewTime.selectedValue },
@@ -277,6 +285,18 @@ export function createFinanceTradeResultRecallCapability(options: {
         const reasons = (outcome.reasons as string[])
           .slice(0, 2)
           .map((reason) => excerpt(reason, 70));
+        // Native diagnostic enums distinguish an execution/data failure from strategy evidence.
+        // Keep the existing legacy read contract; never propagate raw provider error text.
+        const failure = FinanceIntradayOutcomeRecord.shape.executionFailure.safeParse(
+          outcome.executionFailure,
+        );
+        const safety = FinanceIntradayOutcomeRecord.shape.executionSafetyFailure.safeParse(
+          outcome.executionSafetyFailure,
+        );
+        const diagnosticGaps = [
+          ...(failure.success ? [] : ["execution_failure_invalid"]),
+          ...(safety.success ? [] : ["execution_safety_failure_invalid"]),
+        ];
         const priorDecision = record(review?.decision);
         const reviewStatus =
           review?.status === "completed" || review?.status === "failed" ? review.status : undefined;
@@ -308,6 +328,40 @@ export function createFinanceTradeResultRecallCapability(options: {
             directionMatch,
             decisionRecordedAt: decision.recordedAt ?? null,
             outcome: outcome.status,
+            ...(failure.success && failure.data ? { executionFailure: failure.data } : {}),
+            ...(safety.success && safety.data
+              ? {
+                  executionSafetyFailure: {
+                    stage: safety.data.stage,
+                    category: safety.data.category,
+                    ...(safety.data.operation ? { operation: safety.data.operation } : {}),
+                    ...(safety.data.provider
+                      ? {
+                          provider: {
+                            reason: safety.data.provider.reason,
+                            ...(safety.data.provider.stage
+                              ? { stage: safety.data.provider.stage }
+                              : {}),
+                          },
+                        }
+                      : {}),
+                    ...(safety.data.attempt
+                      ? {
+                          attempt: {
+                            phase: safety.data.attempt.phase,
+                            disposition: safety.data.attempt.disposition,
+                          },
+                        }
+                      : {}),
+                  },
+                  ...(safety.data.provider?.accountArithmetic ||
+                  safety.data.attempt?.protectedReduction ||
+                  safety.data.attempt?.venueResponse
+                    ? { omittedDiagnosticDetails: true }
+                    : {}),
+                }
+              : {}),
+            ...(diagnosticGaps.length ? { diagnosticGaps } : {}),
             ...(reviewStatus ? { reviewStatus } : {}),
             ...(reviewStatus === "failed" && typeof review?.failureCode === "string"
               ? { reviewFailureCode: excerpt(review.failureCode, 80) }

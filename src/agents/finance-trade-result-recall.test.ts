@@ -4,7 +4,12 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { ArtifactStore } from "../memory/artifact-store.js";
-import { FinanceIntradayDecisionInput } from "./finance-intraday-control-ledger.js";
+import {
+  FinanceIntradayDecisionInput,
+  FinanceIntradayDecisionReviewReceiptSchema,
+  appendFinanceIntradayOutcome,
+  readFinanceIntradayOutcome,
+} from "./finance-intraday-control-ledger.js";
 import {
   createFinanceTradeDecisionReviewer,
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
@@ -92,6 +97,8 @@ async function seed(
     summary?: string;
     padding?: string;
     review?: Record<string, unknown>;
+    executionFailure?: Record<string, unknown>;
+    executionSafetyFailure?: Record<string, unknown>;
     status?: "placed" | "refused" | "uncertain";
   } = {},
 ) {
@@ -118,6 +125,10 @@ async function seed(
       status: options.status ?? "refused",
       reasons: options.reasons ?? ["spread_cost_exceeds_edge"],
       ...(options.review ? { tradeDecisionReview: options.review } : {}),
+      ...(options.executionFailure ? { executionFailure: options.executionFailure } : {}),
+      ...(options.executionSafetyFailure
+        ? { executionSafetyFailure: options.executionSafetyFailure }
+        : {}),
     },
   };
   const relativePath = `state/artifacts/${id}.json`;
@@ -330,6 +341,178 @@ it("keeps exact native signal identity, flags omitted text and preserves the req
   });
   expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
 });
+it.each([false, true])(
+  "retains the native quote failure rather than a generic strategy rejection (narrow=%s)",
+  async (narrow) => {
+    const executionFailure = {
+      stage: "initial_quote",
+      category: "unexpected",
+      elapsedMs: 34186,
+      stageElapsedMs: 254,
+      quote: { reason: "alpaca_safety_facts_inconsistent", stage: "quote_values" },
+    };
+    await seed({
+      padding: narrow ? "unrelated".repeat(10000) : undefined,
+      reasons: ["intraday_execution_unexpected_error"],
+      executionFailure,
+    });
+    expect(await run()).toMatchObject({ recordedResult: { executionFailure } });
+    const evidence = (
+      await createFinanceTradeReviewEvidenceExecutor({
+        directory: root,
+        accountId: "paper-a",
+        instruments: ["AAA"],
+        financialCapabilities: [
+          createFinanceTradeResultRecallCapability({ config: cfg, workspaceDir: root }),
+        ],
+      })([request], packet, new AbortController().signal)
+    )[0];
+    expect(evidence.status).toBe("completed");
+    expect(JSON.parse(evidence.summary).result.recordedResult).toMatchObject({ executionFailure });
+    expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+  },
+);
+
+it("keeps malformed diagnostic fields explicit without leaking raw error text", async () => {
+  await seed({ executionFailure: { stage: "initial_quote", category: "raw provider secret" } });
+  const result = await run();
+  expect(result).toMatchObject({
+    recordedResult: { diagnosticGaps: ["execution_failure_invalid"] },
+  });
+  expect(result).not.toHaveProperty("recordedResult.executionFailure");
+  expect(JSON.stringify(result)).not.toContain("raw provider secret");
+});
+
+it.each([false, true])(
+  "retains legacy/current safety classification without copying detailed provider diagnostics (%s)",
+  async (current) => {
+    await seed({
+      padding: current ? "unrelated".repeat(10000) : undefined,
+      executionSafetyFailure: {
+        stage: "execution",
+        category: "unexpected",
+        ...(current ? { operation: "execute_order" } : {}),
+        attempt: {
+          phase: "execute",
+          disposition: "outcome_unresolved",
+          venueResponse: { httpStatus: 503 },
+        },
+      },
+    });
+    const result = await run();
+    expect(result).toMatchObject({
+      recordedResult: {
+        executionSafetyFailure: {
+          stage: "execution",
+          category: "unexpected",
+          attempt: { phase: "execute", disposition: "outcome_unresolved" },
+        },
+        omittedDiagnosticDetails: true,
+      },
+    });
+    expect(result).not.toHaveProperty(
+      "recordedResult.executionSafetyFailure.attempt.venueResponse",
+    );
+    if (current) {
+      expect(result).toHaveProperty(
+        "recordedResult.executionSafetyFailure.operation",
+        "execute_order",
+      );
+    } else {
+      expect(result).not.toHaveProperty("recordedResult.executionSafetyFailure.operation");
+    }
+  },
+);
+
+it("delivers the persisted technical diagnosis into call2 and retains its changed rationale in native SQLite", async () => {
+  const source = await seed({
+    reasons: ["intraday_execution_unexpected_error"],
+    executionFailure: {
+      stage: "initial_quote",
+      category: "unexpected",
+      elapsedMs: 34186,
+      stageElapsedMs: 254,
+      quote: { reason: "alpaca_safety_facts_inconsistent", stage: "quote_values" },
+    },
+  });
+  let calls = 0;
+  const model: LogicalAgentModelAdapter = {
+    id: "fixture",
+    provider: "offline-scripted",
+    modelId: "fixture",
+    mode: "adapter",
+    capabilities: ["quality_harness"],
+    requiredTools: [],
+    requiredSideEffects: [],
+    invoke: async (call) => {
+      if (++calls === 1) {
+        return {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [request],
+          hypothesis: "Was the earlier failure technical or strategy evidence?",
+        };
+      }
+      const payload = call.payload as { toolEvidence: { summary: string }[] };
+      const prior = JSON.parse(payload.toolEvidence[0].summary).result.recordedResult;
+      const classified = prior.executionFailure?.quote?.stage === "quote_values";
+      return {
+        schemaVersion: packet.schemaVersion,
+        decisions: [
+          {
+            candidateId: candidate.candidateId,
+            decision: "approve",
+            rationale: classified
+              ? "Earlier failure was quote data inconsistency; evaluate the current quote separately, not as evidence of strategy loss."
+              : "Earlier execution cause is unknown; no strategy conclusion follows.",
+          },
+        ],
+      };
+    },
+  };
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: () => model,
+      evidenceScope: {
+        directory: root,
+        accountId: "paper-a",
+        instruments: ["AAA"],
+        financialCapabilities: [
+          createFinanceTradeResultRecallCapability({ config: cfg, workspaceDir: root }),
+        ],
+      },
+    },
+  )(packet, new AbortController().signal);
+  expect(result.status).toBe("completed");
+  expect(result.decisions?.[0].rationale).toContain("quote data inconsistency");
+  expect(result.modelCalls).toBe(2);
+  expect(JSON.stringify(result.toolEvidence)).toContain(source.sha256);
+  const review = FinanceIntradayDecisionReviewReceiptSchema.parse({
+    request: packet,
+    status: result.status,
+    attempted: result.attempted,
+    provider: result.provider,
+    modelId: result.modelId,
+    latencyMs: result.latencyMs,
+    providerCallObserved: result.providerCallObserved,
+    adapterAttested: result.adapterAttested,
+    modelCalls: result.modelCalls,
+    modelCallEvidence: result.modelCallEvidence,
+    toolEvidence: result.toolEvidence,
+    decision: result.decisions?.[0],
+  });
+  await appendFinanceIntradayOutcome(root, {
+    signalId: candidate.candidateId,
+    status: "refused",
+    reasons: ["isolated test has no execution authority"],
+    tradeDecisionReview: review,
+  });
+  const saved = await readFinanceIntradayOutcome(root, candidate.candidateId);
+  expect(saved?.tradeDecisionReview?.decision?.rationale).toBe(result.decisions?.[0].rationale);
+  expect(saved?.status).toBe("refused");
+  expect(saved?.tradeDecisionReview?.providerCallObserved).toBe(false);
+});
+
 it("can pass over a verified foreign result without disclosing it", async () => {
   await seed();
   await seed({
@@ -351,7 +534,7 @@ it("reads exact useful fields when an unrelated payload exceeds the full-details
     sourceSha256: source.sha256,
     recordedResult: { reasons: ["spread_cost_exceeds_edge"] },
   });
-  expect(read.mock.calls.length).toBeLessThanOrEqual(11);
+  expect(read.mock.calls.length).toBeLessThanOrEqual(13);
 });
 
 it.each(
