@@ -48,6 +48,31 @@ actual result, and incorporate it into the judgment before proceeding. Use exact
 math tools for calculations. Broader research and specialist review remain
 available when the task or existing contract requires them.
 
+An intraday reviewer may veto with `strategyReassessment`: a concrete mechanism
+contradiction, an observable recheck condition, and an optional alternative
+research hypothesis. The original outcome ledger retains it. Before a later
+discretionary review, the original execution owner supplies the latest appraisal
+from the same account, instrument, rule and activation, excluding the current
+signal and evidence after the decision cutoff. Automatic carry-forward expires
+after 24 hours; the original history remains available for selective recall.
+The model must record `strategyFeedbackResponse` against that prior signal:
+`still_relevant` requires a current veto and reassessment, while `resolved` permits
+a fresh decision and stops carrying the old concern. Account/data failures or a
+recent loss alone do not establish strategy invalidation. Protective exits retain
+their original review bypass. If the scoped recheck is unavailable, refuse that
+candidate and retain the unresolved appraisal rather than silently applying the
+same rule through model-failure fallback; other fallback paths remain unchanged.
+No new store, scheduler or execution authority is
+introduced.
+
+Lifecycle feedback exposes unresolved appraisals to the existing Harness, behind
+position, recovery and execution uncertainty priorities. The existing
+`finance_research_run` planning owner may scope a mechanism/alternative question;
+its plan-only receipt does not prove modules ran or a replacement was activated.
+The original research/thesis contracts and activation/execution gates still own
+those steps. An offline carry-forward test proves wiring, not natural model
+adaptation, strategy profitability or permission to deploy a new strategy.
+
 When recorded daily prices conflict, the original evidence loop can return bounded
 retained provenance choices. A non-pair math request may explicitly select one
 exact origin and source label through the existing bar reader. No source is

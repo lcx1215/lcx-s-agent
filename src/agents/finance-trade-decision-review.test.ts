@@ -11,6 +11,8 @@ import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
   readFinanceIntradayOutcome,
+  readFinanceIntradayStrategyFeedback,
+  readFinanceIntradayExecutionCoverage,
 } from "./finance-intraday-control-ledger.js";
 import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
 import {
@@ -19,9 +21,11 @@ import {
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
   createFinanceTradeDecisionReviewer,
   isValidFinanceTradeDecisionReviewResult,
+  parseFinanceTradeDecisionReviewOutput,
   type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewHostOptions,
+  type FinanceTradeDecision,
 } from "./finance-trade-decision-review.js";
 import type { FinanceTradeReviewFinancialCapability } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError } from "./logical-agent-model-router.js";
@@ -147,7 +151,264 @@ const intradayRequest: FinanceIntradayTradeDecisionReviewRequest = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it.each(["still_relevant", "resolved"] as const)(
+  "rechecks persisted strategy doubts in the original model call and records %s",
+  async (disposition) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "strategy-feedback-"));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-23T19:29:59.000Z"));
+    const reassessment = {
+      reason: "Spread erases this breakout's conditional upside.",
+      recheckWhen: "Compare a fresh spread with this candidate's target distance.",
+      alternativeHypothesis: "A range-reversion mechanism may fit; research only.",
+    };
+    const binding = {
+      declarationRef: "a".repeat(64),
+      activationRef: "b".repeat(64),
+      declaredInstruments: ["SPY"],
+      parameters: {
+        openingRangeBars: 6,
+        rewardRisk: 2,
+        intervalSeconds: 300 as const,
+        feed: "iex" as const,
+      },
+      scope: "strategy_universe" as const,
+    };
+    const base = {
+      instrument: "SPY",
+      sessionDate: "2026-09-23",
+      action: "buy" as const,
+      reason: "opening_range_breakout" as const,
+      referencePrice: 500,
+      referencePriceAt: "2026-09-23T19:29:59.000Z",
+      datasetHeadRef: "c".repeat(64),
+      strategyRule: "opening_range_breakout_long_next_bar_v1" as const,
+      strategyBinding: binding,
+    };
+    const receipt = (
+      packet: FinanceIntradayTradeDecisionReviewRequest,
+      decision: {
+        candidateId: string;
+        decision: "approve" | "veto";
+        rationale: string;
+        strategyReassessment?: FinanceTradeDecision["strategyReassessment"];
+        strategyFeedbackResponse?: {
+          signalId: string;
+          disposition: "still_relevant" | "resolved";
+          reason: string;
+        };
+      },
+    ) =>
+      FinanceIntradayDecisionReviewReceiptSchema.parse({
+        request: packet,
+        status: "completed",
+        attempted: true,
+        provider: "offline-scripted",
+        modelId: "fixture",
+        latencyMs: 0,
+        providerCallObserved: false,
+        adapterAttested: false,
+        decision,
+      });
+    try {
+      await appendFinanceIntradayDecision(directory, { ...base, signalId: "prior-doubt" });
+      const priorPacket: FinanceIntradayTradeDecisionReviewRequest = {
+        ...intradayRequest,
+        accountId: "paper-a",
+        asOf: new Date().toISOString(),
+        candidates: [{ ...intradayRequest.candidates[0], candidateId: "prior-doubt" }],
+      };
+      await appendFinanceIntradayOutcome(directory, {
+        signalId: "prior-doubt",
+        status: "refused",
+        reasons: ["model veto"],
+        tradeDecisionReview: receipt(priorPacket, {
+          candidateId: "prior-doubt",
+          decision: "veto",
+          rationale: reassessment.reason,
+          strategyReassessment: reassessment,
+        }),
+      });
+      vi.setSystemTime(new Date(intradayRequest.asOf));
+      const scope = {
+        accountId: "paper-a",
+        instrument: "SPY",
+        ruleId: base.strategyRule,
+        activationRef: binding.activationRef,
+        asOf: intradayRequest.asOf,
+        excludeSignalId: intradayRequest.candidates[0].candidateId,
+      };
+      const feedback = await readFinanceIntradayStrategyFeedback(directory, scope);
+      expect(feedback).toMatchObject({
+        origin: "model_hypothesis",
+        signalId: "prior-doubt",
+        reassessment,
+      });
+      for (const changed of [
+        { accountId: "paper-b" },
+        { instrument: "TLT" },
+        { activationRef: "d".repeat(64) },
+        { ruleId: "other" },
+        { asOf: "2026-09-23T19:29:58.000Z" },
+        { asOf: "2026-09-25T19:30:00.000Z" },
+      ]) {
+        expect(
+          await readFinanceIntradayStrategyFeedback(directory, { ...scope, ...changed }),
+        ).toBeUndefined();
+      }
+      const packet: FinanceIntradayTradeDecisionReviewRequest = {
+        ...intradayRequest,
+        accountId: "paper-a",
+        strategyFeedback: feedback,
+      };
+      const model: LogicalAgentModelAdapter = {
+        ...adapter(null),
+        requiredSideEffects: [],
+        observe: undefined,
+        invoke: vi.fn(async (call) => {
+          const supplied = call.payload as FinanceIntradayTradeDecisionReviewRequest;
+          expect(supplied.strategyFeedback).toEqual(feedback);
+          return {
+            schemaVersion: packet.schemaVersion,
+            decisions: [
+              {
+                candidateId: packet.candidates[0].candidateId,
+                decision: disposition === "resolved" ? "approve" : "veto",
+                rationale:
+                  disposition === "resolved"
+                    ? "Fresh quote resolves the old spread doubt."
+                    : "Current spread still erases upside; leave cash.",
+                strategyFeedbackResponse: {
+                  signalId: supplied.strategyFeedback!.signalId,
+                  disposition,
+                  reason:
+                    disposition === "resolved"
+                      ? "Current spread is narrower relative to the supplied target distance."
+                      : "Current spread remains larger than the supplied target distance.",
+                },
+                ...(disposition === "still_relevant" ? { strategyReassessment: reassessment } : {}),
+              },
+            ],
+          };
+        }),
+      };
+      const result = await createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model })(
+        packet,
+        new AbortController().signal,
+      );
+      expect(result.status).toBe("completed");
+      expect(result.providerCallObserved).toBe(false);
+      expect(model.invoke).toHaveBeenCalledOnce();
+      await appendFinanceIntradayDecision(directory, {
+        ...base,
+        signalId: packet.candidates[0].candidateId,
+      });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId: packet.candidates[0].candidateId,
+        status: "refused",
+        reasons: ["isolated fixture has no execution authority"],
+        tradeDecisionReview: receipt(packet, result.decisions![0]),
+      });
+      expect(
+        (await readFinanceIntradayOutcome(directory, packet.candidates[0].candidateId))
+          ?.tradeDecisionReview?.decision?.strategyFeedbackResponse?.disposition,
+      ).toBe(disposition);
+      const next = await readFinanceIntradayStrategyFeedback(directory, {
+        ...scope,
+        excludeSignalId: "next-signal",
+      });
+      expect(next?.signalId).toBe(
+        disposition === "resolved" ? undefined : packet.candidates[0].candidateId,
+      );
+      const coverage = await readFinanceIntradayExecutionCoverage(directory, packet.asOf);
+      expect("strategyReassessments" in coverage ? coverage.strategyReassessments?.length : 0).toBe(
+        disposition === "resolved" ? 0 : 1,
+      );
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("rejects silent, forged and contradictory responses to supplied strategy feedback", () => {
+  const packet: FinanceIntradayTradeDecisionReviewRequest = {
+    ...intradayRequest,
+    accountId: "paper-a",
+    strategyFeedback: {
+      origin: "model_hypothesis",
+      signalId: "old",
+      decisionRef: "a".repeat(64),
+      outcomeRef: "b".repeat(64),
+      accountId: "paper-a",
+      instrument: "SPY",
+      ruleId: intradayRequest.ruleIds[0],
+      activationRef: "c".repeat(64),
+      observedAt: "2026-09-23T19:29:00.000Z",
+      expiresAt: "2026-09-24T19:29:00.000Z",
+      reassessment: { reason: "Mechanism contradicted", recheckWhen: "Fresh evidence" },
+    },
+  };
+  const decision = {
+    candidateId: packet.candidates[0].candidateId,
+    decision: "approve",
+    rationale: "Current evidence",
+  };
+  for (const extra of [
+    {},
+    {
+      strategyFeedbackResponse: {
+        signalId: "wrong",
+        disposition: "resolved",
+        reason: "new evidence",
+      },
+    },
+    {
+      strategyFeedbackResponse: {
+        signalId: "old",
+        disposition: "still_relevant",
+        reason: "unchanged",
+      },
+    },
+    {
+      strategyReassessment: { reason: "not suitable", recheckWhen: "later" },
+      strategyFeedbackResponse: {
+        signalId: "old",
+        disposition: "resolved",
+        reason: "new evidence",
+      },
+    },
+  ]) {
+    expect(
+      parseFinanceTradeDecisionReviewOutput(
+        { schemaVersion: packet.schemaVersion, decisions: [{ ...decision, ...extra }] },
+        packet,
+      ),
+    ).toBeUndefined();
+  }
+  const output = {
+    schemaVersion: packet.schemaVersion,
+    decisions: [
+      {
+        ...decision,
+        strategyFeedbackResponse: {
+          signalId: "old",
+          disposition: "resolved",
+          reason: "Current conditions resolve it",
+        },
+      },
+    ],
+  };
+  expect(parseFinanceTradeDecisionReviewOutput(output, packet)).toBeDefined();
+  expect(
+    parseFinanceTradeDecisionReviewOutput(output, { ...packet, accountId: "paper-b" }),
+  ).toBeUndefined();
+  expect(
+    parseFinanceTradeDecisionReviewOutput(output, { ...packet, asOf: "2026-09-25T00:00:00.000Z" }),
+  ).toBeUndefined();
 });
 
 it("uses the bound tool loop for a daily candidate without changing its execution authority", async () => {

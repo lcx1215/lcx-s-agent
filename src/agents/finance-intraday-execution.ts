@@ -25,6 +25,7 @@ import {
   FinanceIntradayDecisionReviewReceiptSchema,
   readFinanceIntradayOutcome,
   readFinanceIntradayDecisions,
+  readFinanceIntradayStrategyFeedback,
   type FinanceIntradayDecisionRecord,
   type FinanceIntradayDecisionReviewReceipt,
   type FinanceIntradayOutcomeInput,
@@ -818,6 +819,18 @@ export async function executeFinanceIntradayDecision(params: {
           horizon: "intraday",
         }),
       );
+      const strategyFeedback = input.strategyBinding
+        ? await waitForPreparation(signal, () =>
+            readFinanceIntradayStrategyFeedback(params.directory, {
+              accountId: params.controller.accountId,
+              instrument: input.instrument,
+              ruleId: input.strategyRule,
+              activationRef: input.strategyBinding!.activationRef,
+              asOf: new Date(observedAtMs).toISOString(),
+              excludeSignalId: input.signalId,
+            }),
+          )
+        : undefined;
       // Local evidence reads also consume the quote lease. Reuse the original
       // freshness gate before spending model budget, and report the actual age.
       const reviewAtMs = now();
@@ -844,6 +857,8 @@ export async function executeFinanceIntradayDecision(params: {
       const reviewRequest: FinanceIntradayTradeDecisionReviewRequest = {
         schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
         venue: "alpaca:paper",
+        accountId: params.controller.accountId,
+        ...(strategyFeedback ? { strategyFeedback } : {}),
         asOf: new Date(reviewAtMs).toISOString(),
         signalAnchor: input.signalId,
         ruleIds: [input.strategyRule],
@@ -1002,6 +1017,24 @@ export async function executeFinanceIntradayDecision(params: {
       );
       const reviewResult = tradeDecisionReview!;
       const reviewedDecision = reviewResult.decision;
+      if (strategyFeedback && reviewResult.status === "failed") {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: [
+            "strategy_applicability_recheck_unavailable",
+            `priorSignalId=${strategyFeedback.signalId}`,
+          ],
+          tradeDecisionReview,
+          ...reviewHistory(),
+        });
+        return Object.freeze({
+          status: "refused" as const,
+          outcome: outcome.input,
+          tradeDecisionReview,
+          ...reviewHistory(),
+        });
+      }
       if (
         reviewContractAnomaly ||
         (reviewResult.status === "completed" && !reviewedDecision) ||

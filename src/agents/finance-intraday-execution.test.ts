@@ -28,6 +28,7 @@ import {
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayOutcome,
+  readFinanceIntradayStrategyFeedback,
   type FinanceIntradayStrategyBinding,
 } from "./finance-intraday-control-ledger.js";
 import { executeFinanceIntradayDecision } from "./finance-intraday-execution.js";
@@ -96,6 +97,177 @@ function approvingReviewer() {
     ],
   }));
 }
+
+it.each(["still_relevant", "resolved", "unavailable"] as const)(
+  "the original execution entry automatically consumes a prior strategy veto: %s",
+  async (disposition) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-strategy-adoption-"));
+    temporary.push(directory);
+    let clock = Date.parse("2026-09-18T15:00:02.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(clock);
+    try {
+      const strategyBinding = await activeRuleBinding(directory);
+      const input = {
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy" as const,
+        reason: "opening_range_breakout" as const,
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T15:00:01.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "c".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      };
+      const reassessment = {
+        reason: "Current price structure contradicts this breakout mechanism.",
+        recheckWhen: "Reassess against a new closed-bar structure.",
+        alternativeHypothesis: "Inspect range reversion through the existing research owner.",
+      };
+      const reviewer = vi.fn(async (packet: FinanceTradeDecisionReviewRequest) => {
+        if (packet.schemaVersion !== "lcx_finance_intraday_trade_decision_review_v1") {
+          throw new Error("expected intraday packet");
+        }
+        const first = packet.candidates[0].candidateId === "strategy-prior";
+        if (first) {
+          expect(packet.strategyFeedback).toBeUndefined();
+        } else {
+          expect(packet.strategyFeedback).toMatchObject({
+            signalId: "strategy-prior",
+            accountId: "paper-account",
+            activationRef: strategyBinding.activationRef,
+            reassessment,
+          });
+        }
+        if (!first && disposition === "unavailable") {
+          return {
+            status: "failed" as const,
+            attempted: true,
+            provider: "offline-scripted",
+            modelId: "fixture",
+            latencyMs: 0,
+            providerCallObserved: false,
+            adapterAttested: false,
+            failureCode: "provider_payment_required" as const,
+          };
+        }
+        return {
+          status: "completed" as const,
+          attempted: true,
+          provider: "offline-scripted",
+          modelId: "fixture",
+          latencyMs: 0,
+          providerCallObserved: false,
+          adapterAttested: false,
+          decisions: [
+            {
+              candidateId: packet.candidates[0].candidateId,
+              decision:
+                !first && disposition === "resolved" ? ("approve" as const) : ("veto" as const),
+              rationale:
+                first || disposition === "still_relevant"
+                  ? reassessment.reason
+                  : "New packet facts resolve the earlier structure doubt.",
+              ...(first || disposition === "still_relevant"
+                ? { strategyReassessment: reassessment }
+                : {}),
+              ...(!first
+                ? {
+                    strategyFeedbackResponse: {
+                      signalId: "strategy-prior",
+                      disposition:
+                        disposition === "resolved"
+                          ? ("resolved" as const)
+                          : ("still_relevant" as const),
+                      reason:
+                        disposition === "resolved"
+                          ? "The new closed-bar structure supports this candidate."
+                          : "New closed-bar structure still contradicts this candidate.",
+                    },
+                  }
+                : {}),
+            },
+          ],
+        };
+      });
+      const runOrder = vi.fn(async () => ({
+        ok: false as const,
+        refusals: ["isolated fixture final gate refused"],
+      }));
+      const common = {
+        directory,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: async () => ({
+            accountId: "paper-account",
+            venue: "alpaca:paper" as const,
+            observedAt: "2026-09-18T15:00:01.000Z",
+            expiresAt: "2026-09-18T15:01:01.000Z",
+            equity: 100000,
+            positions: [],
+          }),
+          executionQuoteProvider: async () => ({
+            referencePrice: 100,
+            referencePriceAt: "2026-09-18T15:00:01.000Z",
+            sourceUrlOrArtifact: "fixture://quote",
+            bidPrice: 99.9,
+            askPrice: 100,
+            maxAgeMs: 30000,
+          }),
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 5000, maxInstrumentNotional: 10000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: () => clock,
+        runOrder: runOrder as never,
+      };
+      const first = (
+        await appendFinanceIntradayDecision(directory, { ...input, signalId: "strategy-prior" })
+      ).record;
+      await executeFinanceIntradayDecision({ ...common, decision: first });
+      clock += 1000;
+      vi.setSystemTime(clock);
+      const second = (
+        await appendFinanceIntradayDecision(directory, { ...input, signalId: "strategy-next" })
+      ).record;
+      await executeFinanceIntradayDecision({ ...common, decision: second });
+      expect(reviewer).toHaveBeenCalledTimes(2);
+      expect(runOrder).toHaveBeenCalledTimes(disposition === "resolved" ? 1 : 0);
+      const stored = await readFinanceIntradayOutcome(directory, second.input.signalId);
+      if (disposition === "unavailable") {
+        expect(stored?.reasons).toContain("strategy_applicability_recheck_unavailable");
+        expect(stored?.tradeDecisionReview).toMatchObject({
+          status: "failed",
+          failureCode: "provider_payment_required",
+        });
+      } else {
+        expect(stored?.tradeDecisionReview?.decision?.strategyFeedbackResponse).toMatchObject({
+          signalId: "strategy-prior",
+          disposition,
+        });
+      }
+      const next = await readFinanceIntradayStrategyFeedback(directory, {
+        accountId: "paper-account",
+        instrument: "SPY",
+        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        activationRef: strategyBinding.activationRef,
+        asOf: new Date(clock).toISOString(),
+        excludeSignalId: "third",
+      });
+      expect(next?.signalId).toBe(
+        disposition === "resolved"
+          ? undefined
+          : disposition === "unavailable"
+            ? "strategy-prior"
+            : "strategy-next",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 async function activeRuleBinding(
   directory: string,

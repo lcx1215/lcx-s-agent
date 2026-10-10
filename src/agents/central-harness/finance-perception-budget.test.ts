@@ -5,6 +5,60 @@ import {
   runCentralHarnessCycle,
 } from "./harness-loop.js";
 import { buildCentralBrainPrompt } from "./model-brain.js";
+it("retains a multilingual strategy doubt and recheck condition through the existing shared budget", () => {
+  const observedAt = "2026-10-10T05:00:00Z";
+  const finance = {
+    status: "present",
+    observedAt,
+    nextTask: "inspect_finance_strategy_applicability",
+    intradayExecution: {
+      status: "present",
+      candidates: 2,
+      placed: 1,
+      refused: 1,
+      uncertain: 0,
+      missingOutcome: 0,
+      needsExecutionInspection: false,
+      strategyReassessments: [
+        {
+          signalId: "prior",
+          accountId: "paper-account",
+          instrument: "SPY",
+          ruleId: "orb-v1",
+          observedAt,
+          reassessment: {
+            reason: "价差超过当前候选的目标距离，突破机制没有支持。".repeat(8),
+            recheckWhen: "对比新报价价差与目标距离。",
+            alternativeHypothesis: "通过原研究入口检查区间回归假设。",
+          },
+        },
+      ],
+    },
+    history: "x".repeat(13000),
+  };
+  const bounded = boundPerception({
+    observedAt,
+    ownerTotals: {},
+    backlog: [],
+    boundaries: [],
+    controlRoom: { financeAutomaticLifecycle: finance },
+  });
+  const projected = bounded.perception.controlRoom.financeAutomaticLifecycle as {
+    intradayExecution: {
+      strategyReassessments: { reassessment: { reason: string; recheckWhen: string } }[];
+    };
+    budgetProjection: { omittedFieldCount: number };
+  };
+  const doubt = projected.intradayExecution.strategyReassessments[0];
+  expect(doubt.reassessment.reason).toContain("价差超过当前候选");
+  expect(doubt.reassessment.reason).toMatch(/…$/u);
+  expect(doubt.reassessment.reason).not.toContain("\uFFFD");
+  expect(doubt.reassessment.recheckWhen).toBe("对比新报价价差与目标距离。");
+  expect(projected.budgetProjection.omittedFieldCount).toBeGreaterThan(0);
+  expect(buildCentralBrainPrompt(bounded.perception)).toContain("区间回归假设");
+  expect(bounded.report.overBudget).toBe(false);
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(bounded.report.budgetBytes);
+});
 it("retains finance execution coverage above the former 3KB cap within the total budget", () => {
   const financeAutomaticLifecycle = {
     scheduler: { history: "x".repeat(3200) },

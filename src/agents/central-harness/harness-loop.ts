@@ -1306,6 +1306,48 @@ function projectFinanceBudgetFacts(
       continue;
     }
     const projected = pick(original, keys, `${section}.`);
+    if (section === "intradayExecution" && Array.isArray(original.strategyReassessments)) {
+      projected.strategyReassessments = original.strategyReassessments
+        .slice(0, 1)
+        .flatMap((row) => {
+          if (!isPlainRecord(row) || !isPlainRecord(row.reassessment)) {
+            return [];
+          }
+          const reassessment: Record<string, unknown> = {};
+          for (const key of ["reason", "recheckWhen", "alternativeHypothesis"]) {
+            const text = row.reassessment[key];
+            if (typeof text !== "string") {
+              continue;
+            }
+            // Preserve useful multilingual fragments in the unchanged shared budget.
+            let kept = "";
+            for (const char of text) {
+              if (jsonBytes(kept + char + "…") > 240) {
+                break;
+              }
+              kept += char;
+            }
+            reassessment[key] = kept === text ? text : `${kept}…`;
+            if (kept !== text) {
+              omitted.add(`intradayExecution.strategyReassessments.reassessment.${key}`);
+            }
+          }
+          return [
+            {
+              ...pick(
+                row,
+                ["signalId", "accountId", "instrument", "ruleId", "observedAt"],
+                "intradayExecution.strategyReassessments.",
+              ),
+              reassessment,
+            },
+          ];
+        });
+      omitted.delete("intradayExecution.strategyReassessments");
+      if (original.strategyReassessments.length > 1) {
+        omitted.add("intradayExecution.strategyReassessments.additional_scopes");
+      }
+    }
     if (section === "intradayExecution" && Array.isArray(original.topReasons)) {
       projected.topReasons = original.topReasons
         .filter(

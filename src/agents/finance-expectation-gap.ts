@@ -1,4 +1,35 @@
 import { z } from "zod";
+
+/** A scoped model hypothesis, never a strategy activation or parameter change. */
+export const FinanceStrategyReassessmentSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(240),
+    recheckWhen: z.string().trim().min(1).max(240),
+    alternativeHypothesis: z.string().trim().min(1).max(240).optional(),
+  })
+  .strict();
+export const FinanceStrategyFeedbackResponseSchema = z
+  .object({
+    signalId: z.string().trim().min(1),
+    disposition: z.enum(["still_relevant", "resolved"]),
+    reason: z.string().trim().min(1).max(240),
+  })
+  .strict();
+export const FinanceStrategyReviewFeedbackSchema = z
+  .object({
+    origin: z.literal("model_hypothesis"),
+    signalId: z.string().trim().min(1),
+    decisionRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    outcomeRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    accountId: z.string().trim().min(1),
+    instrument: z.string().trim().min(1),
+    ruleId: z.string().trim().min(1),
+    activationRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    observedAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+    reassessment: FinanceStrategyReassessmentSchema,
+  })
+  .strict();
 import { financeAlpacaMarketSessionIssue } from "./finance-alpaca-market-calendar.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
 

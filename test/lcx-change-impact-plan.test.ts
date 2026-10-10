@@ -45,6 +45,12 @@ async function runPlan(changedFile: string) {
 }
 
 describe("lcx-change-impact-plan", () => {
+  it("keeps strategy judgment contracts in the existing unattended finance lane", async () => {
+    const result = await runPlan("src/agents/finance-expectation-gap.ts");
+    expect(result.ok).toBe(true);
+    expect(result.unmatchedFiles).toEqual([]);
+    expect(result.impacts.some((impact) => impact.id === "finance_unattended_cycle")).toBe(true);
+  });
   it("routes the commit helper alone to its original hook regression", async () => {
     const result = await runPlan("scripts/committer");
     expect(result.ok).toBe(true);

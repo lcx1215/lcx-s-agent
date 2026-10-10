@@ -551,7 +551,10 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
       };
     }
-    const intradayExecution = await readFinanceIntradayExecutionCoverage(state.directory);
+    const intradayExecution = await readFinanceIntradayExecutionCoverage(
+      state.directory,
+      observedAt,
+    );
     const positionManagement = await readFinancePositionManagementFeedback({
       directory: state.directory,
       observedAt,
@@ -655,16 +658,22 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         ? "inspect_failed_finance_cycle"
         : schedulerRuntimeNeedsInspection
           ? "inspect_finance_scheduler_runtime"
-          : intradayExecution.status === "present" && intradayExecution.needsExecutionInspection
+          : intradayExecution.status === "present" &&
+              (intradayExecution.uncertain > 0 || intradayExecution.missingOutcome > 0)
             ? "inspect_unexecuted_finance_candidates"
-            : currentReadiness.status !== "present" ||
-                Number(currentReadiness.unreadyActiveRuleCount) > 0
-              ? "inspect_finance_readiness"
-              : latestProposal && latestProposal.proposalId !== latestPromotion?.proposalId
-                ? "review_directional_calibration_proposal"
-                : latestPromotion === null
-                  ? "prepare_reconciled_net_trade_economics_evidence"
-                  : "monitor_net_trade_economics_promotion";
+            : "strategyReassessments" in intradayExecution &&
+                intradayExecution.strategyReassessments?.length
+              ? "inspect_finance_strategy_applicability"
+              : intradayExecution.status === "present" && intradayExecution.needsExecutionInspection
+                ? "inspect_unexecuted_finance_candidates"
+                : currentReadiness.status !== "present" ||
+                    Number(currentReadiness.unreadyActiveRuleCount) > 0
+                  ? "inspect_finance_readiness"
+                  : latestProposal && latestProposal.proposalId !== latestPromotion?.proposalId
+                    ? "review_directional_calibration_proposal"
+                    : latestPromotion === null
+                      ? "prepare_reconciled_net_trade_economics_evidence"
+                      : "monitor_net_trade_economics_promotion";
     return Object.freeze({
       schemaVersion: FINANCE_AUTOMATIC_LIFECYCLE_FEEDBACK_SCHEMA_VERSION,
       status: "present",

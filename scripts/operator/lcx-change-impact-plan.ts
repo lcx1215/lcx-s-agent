@@ -209,6 +209,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/finance-intent-compiler(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-intraday-(?:execution|control-ledger)(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-trade-(?:decision-review|review-evidence|result-recall)(?:\.test)?\.ts$/u,
+      /^src\/agents\/finance-expectation-gap(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-night-review-context(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-alpaca-run\.ts$/u,
       /^src\/agents\/finance-alpaca-execution-adapter\.ts$/u,

@@ -17,7 +17,12 @@ import {
   FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS,
   FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES,
 } from "./finance-execution-safety.js";
-import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
+import {
+  FinanceExpectationGapSchema,
+  FinanceStrategyReassessmentSchema,
+  FinanceStrategyFeedbackResponseSchema,
+  FinanceStrategyReviewFeedbackSchema,
+} from "./finance-expectation-gap.js";
 import { FINANCE_PROTECTED_REDUCTION_STAGES } from "./finance-protection-coordination.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
@@ -277,6 +282,8 @@ const IntradayReviewRequestSchema = z
   .object({
     schemaVersion: z.literal("lcx_finance_intraday_trade_decision_review_v1"),
     venue: z.literal("alpaca:paper"),
+    accountId: Text.optional(),
+    strategyFeedback: FinanceStrategyReviewFeedbackSchema.optional(),
     asOf: Iso,
     signalAnchor: Text,
     ruleIds: z.array(Text).min(1),
@@ -317,6 +324,8 @@ const IntradayReviewDecisionSchema = z
     decision: z.enum(["approve", "veto"]),
     rationale: Text.max(800),
     expectationGap: FinanceExpectationGapSchema.optional(),
+    strategyReassessment: FinanceStrategyReassessmentSchema.optional(),
+    strategyFeedbackResponse: FinanceStrategyFeedbackResponseSchema.optional(),
   })
   .strict();
 
@@ -356,6 +365,22 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
   .strict()
   .superRefine((receipt, context) => {
     const candidateId = receipt.request.candidates[0]?.candidateId;
+    const decision = receipt.decision;
+    const feedback = receipt.request.strategyFeedback;
+    if (
+      decision &&
+      ((decision.strategyReassessment && decision.decision !== "veto") ||
+        (feedback
+          ? decision.strategyFeedbackResponse?.signalId !== feedback.signalId
+          : decision.strategyFeedbackResponse !== undefined) ||
+        (decision.strategyFeedbackResponse?.disposition === "still_relevant" &&
+          !decision.strategyReassessment))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "strategy feedback must be explicitly reassessed for this exact prior signal",
+      });
+    }
     if (receipt.status === "completed") {
       if (
         !receipt.attempted ||
@@ -700,7 +725,10 @@ export async function readFinanceIntradayDecisions(
 }
 
 /** Read-only bounded execution coverage; a placement is not a fill or profit. */
-export async function readFinanceIntradayExecutionCoverage(directory: string) {
+export async function readFinanceIntradayExecutionCoverage(
+  directory: string,
+  asOf = new Date().toISOString(),
+) {
   const filename = financeIntradayControlLedgerPath(directory);
   try {
     await fs.stat(filename);
@@ -714,7 +742,7 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
   const db = new DatabaseSync(filename, { readOnly: true });
   try {
     const rows = db
-      .prepare(`SELECT d.ref, d.body, d.signal_id, o.body AS outcome
+      .prepare(`SELECT d.ref, d.body, d.signal_id, o.body AS outcome, o.recorded_at AS outcomeRecordedAt
       FROM finance_intraday_decisions d LEFT JOIN finance_intraday_outcomes o ON o.signal_id=d.signal_id
       ORDER BY d.sequence DESC LIMIT 100`)
       .all();
@@ -732,6 +760,15 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
     >();
     const unresolved: { signalId: string; action: string; reason: string; status: string }[] = [];
     const signalTimes: string[] = [];
+    const strategyScopes = new Set<string>();
+    const strategyReassessments: {
+      signalId: string;
+      accountId: string;
+      instrument: string;
+      ruleId: string;
+      observedAt: string;
+      reassessment: z.infer<typeof FinanceStrategyReassessmentSchema>;
+    }[] = [];
     for (const row of rows) {
       if (typeof row.body !== "string" || caseflowFingerprint(JSON.parse(row.body)) !== row.ref) {
         throw new Error("intraday coverage decision integrity mismatch");
@@ -775,6 +812,41 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
           count: (current?.count ?? 0) + 1,
         });
       }
+      const review = outcome?.tradeDecisionReview;
+      if (
+        review?.status === "completed" &&
+        review.request.accountId &&
+        (review.decision?.strategyReassessment || review.decision?.strategyFeedbackResponse)
+      ) {
+        const scope = [
+          review.request.accountId,
+          record.input.instrument,
+          record.input.strategyRule,
+          record.input.strategyBinding?.activationRef,
+        ].join(":");
+        const at = Date.parse(review.request.asOf),
+          cutoff = Date.parse(asOf);
+        if (
+          !strategyScopes.has(scope) &&
+          Date.parse(record.recordedAt) <= cutoff &&
+          typeof row.outcomeRecordedAt === "string" &&
+          Date.parse(row.outcomeRecordedAt) <= cutoff &&
+          at <= cutoff &&
+          at + 86400000 > cutoff
+        ) {
+          strategyScopes.add(scope);
+          if (review.decision.strategyReassessment && strategyReassessments.length < 2) {
+            strategyReassessments.push({
+              signalId: record.input.signalId,
+              accountId: review.request.accountId,
+              instrument: record.input.instrument,
+              ruleId: record.input.strategyRule,
+              observedAt: review.request.asOf,
+              reassessment: review.decision.strategyReassessment,
+            });
+          }
+        }
+      }
       if (outcome?.status !== "placed" && unresolved.length < 4) {
         unresolved.push({
           signalId: record.input.signalId,
@@ -804,9 +876,106 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
         .toSorted((a, b) => b.count - a.count)
         .slice(0, 4),
       recentUnexecuted: unresolved,
+      ...(strategyReassessments.length ? { strategyReassessments } : {}),
       interpretation:
         "Historical signal coverage, not current market readiness. Placed is not filled. Refusal can be correct; missed-opportunity PnL is not assessed. Never replay an unresolved signal automatically.",
     };
+  } finally {
+    db.close();
+  }
+}
+
+/** Project the most recent scoped appraisal from the original outcome book; no second state. */
+export async function readFinanceIntradayStrategyFeedback(
+  directory: string,
+  params: {
+    accountId: string;
+    instrument: string;
+    ruleId: string;
+    activationRef: string;
+    asOf: string;
+    excludeSignalId: string;
+  },
+): Promise<z.infer<typeof FinanceStrategyReviewFeedbackSchema> | undefined> {
+  const cutoff = Date.parse(params.asOf);
+  if (!Number.isFinite(cutoff)) {
+    throw new Error("invalid strategy feedback cutoff");
+  }
+  const filename = financeIntradayControlLedgerPath(directory);
+  try {
+    await fs.stat(filename);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(filename, { readOnly: true });
+  try {
+    const row = db
+      .prepare(`SELECT d.ref, d.body, o.body AS outcome, o.recorded_at
+      FROM finance_intraday_decisions d JOIN finance_intraday_outcomes o ON o.signal_id=d.signal_id
+      WHERE d.signal_id<>? AND o.recorded_at<=? AND o.recorded_at>=?
+      AND json_extract(d.body,'$.input.instrument')=?
+      AND json_extract(d.body,'$.input.strategyRule')=?
+      AND json_extract(d.body,'$.input.strategyBinding.activationRef')=?
+      AND json_extract(o.body,'$.tradeDecisionReview.request.accountId')=?
+      AND json_extract(o.body,'$.tradeDecisionReview.status')='completed'
+      AND (json_type(o.body,'$.tradeDecisionReview.decision.strategyReassessment')='object'
+        OR json_type(o.body,'$.tradeDecisionReview.decision.strategyFeedbackResponse')='object')
+      ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 1`)
+      .get(
+        params.excludeSignalId,
+        params.asOf,
+        new Date(cutoff - 86400000).toISOString(),
+        params.instrument,
+        params.ruleId,
+        params.activationRef,
+        params.accountId,
+      );
+    if (!row) {
+      return undefined;
+    }
+    if (
+      typeof row.body !== "string" ||
+      typeof row.outcome !== "string" ||
+      row.outcome.length > 131072 ||
+      caseflowFingerprint(JSON.parse(row.body)) !== row.ref
+    ) {
+      throw new Error("strategy feedback source unavailable or integrity mismatch");
+    }
+    const decision = RecordSchema.parse(JSON.parse(row.body));
+    const outcome = FinanceIntradayOutcomeRecord.parse(JSON.parse(row.outcome));
+    const review = outcome.tradeDecisionReview!;
+    const at = Date.parse(review.request.asOf);
+    if (
+      outcome.signalId !== decision.input.signalId ||
+      review.decision?.candidateId !== outcome.signalId ||
+      review.request.candidates[0].instrument !== params.instrument ||
+      review.request.candidates[0].strategyRule !== params.ruleId ||
+      Date.parse(decision.recordedAt) > cutoff ||
+      at > cutoff ||
+      !Number.isFinite(at)
+    ) {
+      throw new Error("strategy feedback scope or cutoff mismatch");
+    }
+    if (at + 86400000 <= cutoff || !review.decision.strategyReassessment) {
+      return undefined;
+    }
+    return FinanceStrategyReviewFeedbackSchema.parse({
+      origin: "model_hypothesis",
+      signalId: outcome.signalId,
+      decisionRef: row.ref,
+      outcomeRef: caseflowFingerprint(outcome),
+      accountId: params.accountId,
+      instrument: params.instrument,
+      ruleId: params.ruleId,
+      activationRef: params.activationRef,
+      observedAt: review.request.asOf,
+      expiresAt: new Date(at + 86400000).toISOString(),
+      reassessment: review.decision.strategyReassessment,
+    });
   } finally {
     db.close();
   }
