@@ -49,6 +49,89 @@ function registry(execute: CentralToolSpec["execute"]) {
 }
 afterEach(() => vi.useRealTimers());
 
+it.each(["count", "bytes"] as const)(
+  "keeps the latest host-bound result beside older verified selections under %s pressure",
+  async (pressure) => {
+    const base = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: registry(async () => ({ observedOk: true, value: 1 })),
+    });
+    const selected: CentralRunReceipt[] = Array.from({ length: 8 }, (_, index) => ({
+      ...base,
+      runId: `old-selection-${index}`,
+      observedAt: new Date(Date.parse(perception.observedAt) + index * 1000).toISOString(),
+      steps: [
+        {
+          ...base.steps[0],
+          ownerId: "artifact_memory_recall",
+          args: { action: "read", id: `artifact-${"a".repeat(64)}`, field: `/value/rows/${index}` },
+          outcome: {
+            available: true,
+            action: "read",
+            artifactId: `artifact-${"a".repeat(64)}`,
+            field: `/value/rows/${index}`,
+            sourceSha256: "b".repeat(64),
+            selectedValue: { index, data: "x".repeat(pressure === "bytes" ? 700 : 20) },
+          },
+        },
+      ],
+    }));
+    const resultArtifact = {
+      status: "registered" as const,
+      reason: "ok",
+      id: `artifact-${"c".repeat(64)}`,
+      sha256: "d".repeat(64),
+    };
+    const latest: CentralRunReceipt = {
+      ...base,
+      runId: "latest-result",
+      observedAt: new Date(Date.parse(perception.observedAt) + 10000).toISOString(),
+      steps: [
+        {
+          ...base.steps[0],
+          ownerId: "finance_strategy_rule_ledger_read",
+          args: { includeBodies: true },
+          resultArtifact,
+          outcome: {
+            status: "ready",
+            ruleCount: 4,
+            activeRuleCount: 2,
+            ruleSummary: "Newest rule body result.",
+          },
+        },
+      ],
+    };
+    const noop: CentralRunReceipt = {
+      ...base,
+      runId: "later-noop",
+      observedAt: new Date(Date.parse(perception.observedAt) + 11000).toISOString(),
+      steps: [],
+    };
+    const backlog = compactReceipts([...selected, latest, noop], pressure === "count" ? 3 : 10);
+    const fresh = backlog
+      .flatMap((entry) => entry.outcomes)
+      .find((entry) => entry.resultArtifact?.id === resultArtifact.id);
+    expect(fresh).toMatchObject({
+      sourceObservedAt: latest.observedAt,
+      args: latest.steps[0].args,
+      resultArtifact,
+      outcome: latest.steps[0].outcome,
+    });
+    expect(
+      backlog.some((entry) =>
+        entry.outcomes.some(
+          (outcome) =>
+            outcome.ownerId === "artifact_memory_recall" && outcome.outcome?.selectedValue,
+        ),
+      ),
+    ).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8500);
+    expect(backlog[0].backlogEntriesOmitted).toBeGreaterThan(0);
+    expect(boundPerception({ ...perception, backlog }).report.overBudget).toBe(false);
+  },
+);
+
 it("marks an explicit tool rejection red while preserving bounded self-recovery", async () => {
   const spec: CentralToolSpec = {
     ownerId: "finance_position_ledger_read",

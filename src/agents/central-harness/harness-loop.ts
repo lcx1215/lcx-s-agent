@@ -870,24 +870,48 @@ export function compactReceipts(
         !outcome.outcomeDroppedKeys?.includes("outcome_superseded_in_backlog") &&
         !outcome.outcomeDroppedKeys?.includes("read_page_superseded_in_backlog"),
     );
+  // A fresh host-archived result still awaits a decision. Older exact reads
+  // cannot consume it merely by occupying the bounded recovery window.
+  const newestHostResult = mapped.findLast(
+    (entry) =>
+      entry.atMs > newestSelectionAt &&
+      carriesCurrentAttempt(entry) &&
+      entry.outcomes.some((outcome) => {
+        const artifact = outcome.resultArtifact;
+        return (
+          artifact &&
+          ["registered", "unchanged"].includes(artifact.status) &&
+          typeof artifact.id === "string" &&
+          /^artifact-[a-f0-9]{64}$/u.test(artifact.id) &&
+          typeof artifact.sha256 === "string" &&
+          /^[a-f0-9]{64}$/u.test(artifact.sha256)
+        );
+      }),
+  );
   while (
     mapped.length > 1 &&
     (mapped.length > bounded || jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit)
   ) {
     let removeIndex = mapped.findIndex(
       (entry) =>
-        !carriesFocusPage(entry) && !carriesSelection(entry) && !carriesCurrentAttempt(entry),
+        entry !== newestHostResult &&
+        !carriesFocusPage(entry) &&
+        !carriesSelection(entry) &&
+        !carriesCurrentAttempt(entry),
     );
     if (removeIndex < 0) {
       removeIndex = mapped.findIndex(
-        (entry) => !carriesFocusPage(entry) && !carriesSelection(entry),
+        (entry) =>
+          entry !== newestHostResult && !carriesFocusPage(entry) && !carriesSelection(entry),
       );
     }
     if (removeIndex < 0) {
-      removeIndex = mapped.findIndex((entry) => !carriesFocusPage(entry));
+      removeIndex = mapped.findIndex(
+        (entry) => entry !== newestHostResult && !carriesFocusPage(entry),
+      );
     }
-    if (removeIndex < 0 && mapped.length > bounded) {
-      removeIndex = 0;
+    if (removeIndex < 0) {
+      removeIndex = mapped.findIndex((entry) => entry !== newestHostResult);
     }
     if (removeIndex < 0) {
       break;
