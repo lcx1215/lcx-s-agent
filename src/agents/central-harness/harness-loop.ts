@@ -1442,6 +1442,32 @@ function projectFinanceBudgetFacts(
         Object.entries(details).filter(([key]) => key !== "accounts"),
       );
       omitted.add(`${section}.accounts`);
+    } else if (
+      section === "scheduler" &&
+      isPlainRecord(details) &&
+      isPlainRecord(details.runtime) &&
+      isPlainRecord(details.runtime.reconciliation)
+    ) {
+      // Drop scheduler detail before its execution-blocking observation. A
+      // strategy doubt must not displace an unresolved broker recovery failure.
+      result.scheduler = {
+        runtime: {
+          reconciliation: pick(
+            details.runtime.reconciliation,
+            ["status", "observedAt", "lastErrorCode", "needsInspection", "reason"],
+            "scheduler.runtime.reconciliation.",
+          ),
+        },
+      };
+      omitted.add("scheduler.runtime.details");
+    } else if (
+      section === "intradayExecution" &&
+      isPlainRecord(details) &&
+      Array.isArray(details.strategyReassessments) &&
+      details.strategyReassessments.length > 0
+    ) {
+      // The smaller projection below keeps the same scoped appraisal if it fits.
+      continue;
     } else {
       delete result[section];
       omitted.add(section);
@@ -1492,6 +1518,17 @@ function projectFinanceBudgetFacts(
     delete intraday.scope;
     minimal.intradayExecution = intraday;
     omitted.add("intradayExecution.scope");
+  }
+  if (
+    isPlainRecord(result.intradayExecution) &&
+    Array.isArray(result.intradayExecution.strategyReassessments) &&
+    result.intradayExecution.strategyReassessments.length > 0 &&
+    isPlainRecord(minimal.intradayExecution)
+  ) {
+    minimal.intradayExecution = {
+      ...minimal.intradayExecution,
+      strategyReassessments: result.intradayExecution.strategyReassessments,
+    };
   }
   for (const key of Object.keys(source)) {
     if (!Object.hasOwn(minimal, key)) {

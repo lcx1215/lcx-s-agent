@@ -59,6 +59,139 @@ it("retains a multilingual strategy doubt and recheck condition through the exis
   expect(bounded.report.overBudget).toBe(false);
   expect(bounded.report.injectedBytes).toBeLessThanOrEqual(bounded.report.budgetBytes);
 });
+it.each([false, true])(
+  "retains broker recovery failure beside a strategy doubt in the original crowded finance projection (long=%s)",
+  (long) => {
+    const observedAt = "2026-10-10T05:00:00Z";
+    const finance = {
+      schemaVersion: "lcx_finance_automatic_lifecycle_feedback_v2",
+      status: "present",
+      observedAt,
+      nextTask: "inspect_finance_position_management",
+      scheduler: {
+        runtime: {
+          status: "responsive",
+          phase: "idle",
+          pidPresent: true,
+          placementEnabled: true,
+          venue: "alpaca",
+          executionPolicyStatus: "until_revoked",
+          executionPolicyAuthorizationMode: "until_revoked",
+          executionPolicyExpiresAt: null,
+          accountWork: {
+            status: "idle",
+            observedAt,
+            activeWork: null,
+            queuedWork: 0,
+            reconciliationPending: false,
+          },
+          reconciliation: {
+            status: "present",
+            observedAt,
+            lastAttemptAt: observedAt,
+            lastReadbackAt: null,
+            lastSucceededAt: null,
+            lastReadinessStatus: "unavailable",
+            lastErrorCode: "execution_recovery_incomplete",
+            needsInspection: true,
+          },
+        },
+      },
+      intradayExecution: {
+        status: "present",
+        scope: "latest_100_recorded_signals",
+        newestSignalAt: observedAt,
+        candidates: 100,
+        placed: 0,
+        refused: 100,
+        uncertain: 0,
+        missingOutcome: 0,
+        needsExecutionInspection: true,
+        topReasons: [
+          { reason: "account_execution_safety_claim_pending_before_model_review", count: 100 },
+        ],
+        strategyReassessments: [
+          {
+            signalId: "isolated-prior-signal",
+            accountId: "paper-account",
+            instrument: "SPY",
+            ruleId: "orb-rule",
+            observedAt,
+            reassessment: {
+              reason: long
+                ? "具体机制疑点需要按原取证入口复查。".repeat(12)
+                : "Concrete mechanism contradiction.",
+              recheckWhen: long ? "Recheck current spread. ".repeat(8) : "Recheck current spread.",
+              alternativeHypothesis: long
+                ? "替代假设仍需原研究和激活门控。".repeat(12)
+                : "Existing research owner only.",
+            },
+          },
+        ],
+      },
+      positionManagement: {
+        status: "present",
+        needsInspection: true,
+        omittedAccounts: 0,
+        accounts: [
+          {
+            accountId: "paper-account",
+            venue: "alpaca:paper",
+            snapshotRef: "a".repeat(64),
+            observedAt,
+            freshness: "fresh",
+            uncoveredCount: 2,
+            outsideActiveRuleCount: 8,
+            unresolvedOrderCount: 1,
+            needsInspection: true,
+            holdings: [
+              {
+                instrument: "TLT",
+                status: "no_recognized_stop",
+                positionQuantity: 130,
+                uncoveredQuantity: 130,
+              },
+            ],
+          },
+        ],
+      },
+      economicFeedback: {
+        status: "present",
+        asOf: observedAt,
+        omittedAccounts: 0,
+        accounts: [
+          {
+            accountId: "paper-account",
+            venue: "alpaca:paper",
+            snapshotRef: "a".repeat(64),
+            status: "net_profit_unverified",
+            netMatchedPnl: null,
+            costScope: "broker_reported_activities_only_excludes_tax_fx_and_external_costs",
+            basis: "broker_fill_fifo_usd_not_strategy_attribution",
+            issues: ["fees_not_allocated_to_closed_lots"],
+          },
+        ],
+      },
+      history: "x".repeat(13000),
+    };
+    const bounded = boundPerception({
+      observedAt,
+      ownerTotals: {},
+      backlog: [],
+      boundaries: [],
+      controlRoom: { financeAutomaticLifecycle: finance },
+    });
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(prompt).toContain("execution_recovery_incomplete");
+    expect(prompt).toContain("isolated-prior-signal");
+    expect(prompt).toContain("Recheck current spread.");
+    expect(prompt).toContain("account_execution_safety_claim_pending_before_model_review");
+    expect(bounded.report.overBudget).toBe(false);
+    expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
+    expect(boundPerception(bounded.perception).perception).toEqual(bounded.perception);
+  },
+);
+
 it("retains finance execution coverage above the former 3KB cap within the total budget", () => {
   const financeAutomaticLifecycle = {
     scheduler: { history: "x".repeat(3200) },
