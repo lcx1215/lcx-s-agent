@@ -2522,15 +2522,32 @@ describe("central finance discovery context", () => {
     const catalog = buildCentralToolCatalog(tools);
     expect(Buffer.byteLength(catalog)).toBeLessThanOrEqual(CENTRAL_TOOL_CATALOG_BUDGET_BYTES);
     const prompt = buildCentralBrainPrompt(perception(), tools);
-    for (const ownerId of registry.keys()) {
-      expect(prompt, ownerId).toContain(`"ownerId":"${ownerId}"`);
-    }
-    expect(prompt).toContain(
-      '"ownerId":"quant_math","description":"Compute bounded quantitative metrics',
+    const table = JSON.parse(catalog.split("\n")[1]) as {
+      columns: string[];
+      rows: unknown[][];
+    };
+    expect(prompt).toContain(catalog);
+    expect(table.columns).toEqual([
+      "ownerId",
+      "description",
+      "inputKeys",
+      "boundary",
+      "allowedSideEffects",
+    ]);
+    expect(table.rows).toEqual(
+      tools.map((tool) => [
+        tool.ownerId,
+        tool.description,
+        tool.inputKeys ?? [],
+        tool.boundary,
+        tool.allowedSideEffects,
+      ]),
     );
-    expect(prompt).toContain('"inputKeys":["action","benchmark"');
-    expect(prompt).not.toContain('"ownerId":"finance_paper_rank_place"');
-    expect(prompt).not.toContain('"ownerId":"finance_source_sweep_read"');
+    const quant = table.rows.find((row) => row[0] === "quant_math");
+    expect(quant?.[1]).toMatch(/^Compute bounded quantitative metrics/u);
+    expect(quant?.[2]).toEqual(expect.arrayContaining(["action", "benchmark"]));
+    expect(table.rows.map((row) => row[0])).not.toContain("finance_paper_rank_place");
+    expect(table.rows.map((row) => row[0])).not.toContain("finance_source_sweep_read");
   });
 
   it("advertises a bounded catalog and the executable planning contract", () => {
