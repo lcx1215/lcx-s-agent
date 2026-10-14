@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { isSafeFinanceReadFailure } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
 import { FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES } from "./finance-execution-safety.js";
 import { readFinanceIntradayExecutionCoverage } from "./finance-intraday-control-ledger.js";
@@ -85,23 +86,63 @@ function compactExecutionOutcome(
   return intents === 0 ? "no_trade" : "not_executed";
 }
 
+const safeReadCode = z.string().refine((code) => isSafeFinanceReadFailure({ code }));
+const cleanupStatus = z.enum(["confirmed", "unconfirmed"]).optional();
+const readFailure = z
+  .object({
+    code: safeReadCode,
+    cleanupStatus,
+    stage: z
+      .enum([
+        "execution_recovery",
+        "broker_reconciliation",
+        "safety_claims",
+        "terminal_order",
+        "safety_facts",
+      ])
+      .optional(),
+    elapsedMs: z.number().finite().nonnegative().optional(),
+    request: z
+      .object({
+        endpoint: z.enum(["account", "positions", "activities", "orders", "other"]),
+        phase: z.enum(["request", "body"]),
+        code: safeReadCode,
+        elapsedMs: z.number().finite().nonnegative(),
+        cleanupStatus,
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 const schedulerReconciliationObservationSchema = z.object({
   schemaVersion: z.literal("lcx_alpaca_order_stream_observation_v1"),
   pid: z.number().int().positive(),
   venue: z.literal("alpaca:paper"),
   observedAt: z.string().datetime({ offset: true }),
   reconciliation: z.object({
+    lastSource: z.enum(["idle", "stream"]).nullable().optional(),
+    lastFailure: readFailure.nullable().optional(),
     lastAttemptAt: z.string().datetime({ offset: true }).nullable(),
     lastReadbackAt: z.string().datetime({ offset: true }).nullable(),
     lastSucceededAt: z.string().datetime({ offset: true }).nullable(),
     lastReadinessStatus: z
-      .enum(["ready", "restricted", "blocked", "reconciled", "unresolved", "unavailable"])
+      .enum([
+        "ready",
+        "restricted",
+        "blocked",
+        "reconciled",
+        "unresolved",
+        "unavailable",
+        "pending",
+      ])
       .nullable(),
     lastErrorCode: z
       .enum([
         ...FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES,
         "progress_observation_failed",
         "reconciliation_failed",
+        "account_read_failed",
         "stream_unavailable",
       ])
       .nullable(),

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 type DoctrineCheck = {
   id: string;
@@ -96,6 +96,48 @@ function checkTextContains(params: {
     summary: params.summary,
     evidence: missing,
   };
+}
+
+export function repoGuidanceChecks(agents: string | null): DoctrineCheck[] {
+  const lines = (agents ?? "")
+    .split(/\r?\n/u)
+    .filter((line) => !/\b(?:do not|never)\b|不得|禁止/iu.test(line));
+  const identityOk =
+    !!agents?.includes("https://github.com/lcx1215/lcx-s-agent") &&
+    /Upstream LCX Agent remains the runtime lineage|upstream is lineage/iu.test(agents);
+  const relativeOnly = lines.filter((line) =>
+    /(?:always|must|only).*repo-root-relative.*(?:file links|file references)|(?:file links|file references).*must.*(?:relative|repo-root)/iu.test(
+      line,
+    ),
+  );
+  const delegationOverride = lines.filter(
+    (line) =>
+      /(?:always|by default).*?(?:spawn|delegate|use).*?(?:subagents|sub-agents)|(?:spawn|delegate|use).*?(?:subagents|sub-agents).*?(?:by default|regardless of)/iu.test(
+        line,
+      ) && !/only when.*(?:allowed delegation|authoriz)|only if.*authoriz/iu.test(line),
+  );
+  return [
+    {
+      id: "repo_identity_lcx",
+      ok: identityOk,
+      summary: "repo guidance identifies LCX Agent and retains upstream lineage",
+      evidence: identityOk ? [] : ["missing canonical repository identity or upstream lineage"],
+    },
+    {
+      id: "codex_chat_file_link_precedence",
+      ok: agents !== null && relativeOnly.length === 0,
+      summary:
+        "repo file-link guidance inherits higher-priority app rules unless an actual conflict is declared",
+      evidence: agents === null ? ["AGENTS.md missing"] : relativeOnly,
+    },
+    {
+      id: "subagent_authorization_precedence",
+      ok: agents !== null && delegationOverride.length === 0,
+      summary:
+        "repo delegation guidance inherits platform and user authority; unconditional delegation remains a conflict",
+      evidence: agents === null ? ["AGENTS.md missing"] : delegationOverride,
+    },
+  ];
 }
 
 async function main() {
@@ -311,47 +353,7 @@ async function main() {
     evidence: packageEvidence,
   });
 
-  checks.push(
-    checkTextContains({
-      id: "repo_identity_lcx",
-      text: agents,
-      fileLabel: "AGENTS.md repository identity",
-      required: [
-        "https://github.com/lcx1215/lcx-s-agent",
-        "Upstream LCX Agent remains the runtime lineage",
-      ],
-      summary:
-        "repo guidance should identify the LCX fork without erasing upstream runtime lineage",
-    }),
-  );
-
-  checks.push(
-    checkTextContains({
-      id: "codex_chat_file_link_precedence",
-      text: agents,
-      fileLabel: "AGENTS.md file-reference rules",
-      required: [
-        "Codex Desktop chat",
-        "higher-priority app instructions require absolute local file links",
-      ],
-      summary:
-        "repo-root file references should not conflict with higher-priority Codex Desktop clickable-link rules",
-    }),
-  );
-
-  checks.push(
-    checkTextContains({
-      id: "subagent_authorization_precedence",
-      text: agents,
-      fileLabel: "AGENTS.md subagent rules",
-      required: [
-        "only when the active Codex/platform rules and the user have allowed delegation",
-        "explicit user authorization",
-      ],
-      summary:
-        "subagent preference should not override higher-priority Codex delegation restrictions",
-    }),
-  );
+  checks.push(...repoGuidanceChecks(agents));
 
   checks.push(
     checkTextContains({
@@ -434,4 +436,6 @@ async function main() {
   process.exitCode = result.ok ? 0 : 1;
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
+}

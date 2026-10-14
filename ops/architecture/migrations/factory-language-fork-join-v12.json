@@ -1,0 +1,18 @@
+{
+  "version": 12,
+  "kind": "descriptive_process_source_alignment",
+  "scenarios": ["external_visible_language_waterflow"],
+  "source": "Original external monitor, get-reply-run, commercial reply gate, buildPipelineResult and visible answer adoption function",
+  "changes": [
+    "Replace the false classifier-to-language-to-planner chain with independent original-ask language selection and the actual orchestration-to-resolveNeeds path.",
+    "Keep the pre-model host language instruction distinct from the post-candidate language check. A later languageRoute cannot be an input to an earlier model request.",
+    "Original needs drive the Qwen challenge request and review policy. The terminal diagnostic summary reads that policy; this does not establish an external quota or future-round enforcement.",
+    "Presentation receives original user context and the actual candidate through its original caller. The ingress-to-normalizer port carries context only, never a candidate-generation claim.",
+    "Normalization, readability checks and adoption are suboperations of the same original function. Their result, language check and source gaps join in the terminal summary.",
+    "Only the guarded failure summary or guarded accepted candidate flows into reply dispatch and the original sender. Dispatch counters are observations, not sender inputs."
+  ],
+  "compatibility": "Descriptive topology and original additive processEvidence change. Legacy receipts remain readable. Existing indexes must retain their attempt identities and cannot imply that a new port was consumed without an original field witness.",
+  "retained": "All 11 required nodes, all 5 filters, the readability-review-to-normalizer feedback obligation, original workflow owners, canonical relation/state vocabularies and broker unknown blocking.",
+  "authority": "No new workflow, state store, scheduling, model call, paid run, external send, execution permission or risk threshold.",
+  "verification": "Actual source ordering, focused process-input and topology tests, exact retained native field replay. Post-candidate planning-contract consumption by a model, subsequent readability feedback, source trust, semantic quality and natural adoption remain separately unproven."
+}

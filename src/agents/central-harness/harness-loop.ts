@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ArtifactRecordingReceipt } from "../artifact-result-recording.js";
+import { isSafeFinanceReadFailure } from "../finance-alpaca-safety-transport.js";
 import { verifyCentralEvidenceUse, centralEvidenceUseEdges } from "./evidence-use.js";
 import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import { diagnoseCentralRuleHandoff, compactRuleHandoff } from "./rule-handoff.js";
@@ -1339,6 +1340,38 @@ function projectFinanceBudgetFacts(
     }
     return result;
   };
+  const pickReconciliation = (value: unknown, keys: readonly string[]) => {
+    const prefix = "scheduler.runtime.reconciliation.";
+    const selected = pick(value, [...keys, "lastSource"], prefix);
+    if (
+      !isPlainRecord(value) ||
+      !isPlainRecord(value.lastFailure) ||
+      !isSafeFinanceReadFailure({ code: value.lastFailure.code })
+    ) {
+      return selected;
+    }
+    const failure = value.lastFailure;
+    const diagnostic = pick(
+      failure,
+      ["code", "cleanupStatus", "stage", "elapsedMs"],
+      `${prefix}lastFailure.`,
+    );
+    if (
+      isPlainRecord(failure.request) &&
+      isSafeFinanceReadFailure({ code: failure.request.code })
+    ) {
+      diagnostic.request = pick(
+        failure.request,
+        ["endpoint", "phase", "code", "elapsedMs", "cleanupStatus"],
+        `${prefix}lastFailure.request.`,
+      );
+    }
+    if (jsonBytes(diagnostic) <= 768) {
+      selected.lastFailure = diagnostic;
+      omitted.delete(`${prefix}lastFailure`);
+    }
+    return selected;
+  };
   const result = pick(
     source,
     ["schemaVersion", "status", "observedAt", "nextTask", "reason", "scoredOutcomeCount"],
@@ -1396,21 +1429,17 @@ function projectFinanceBudgetFacts(
       isPlainRecord(source.scheduler.runtime.reconciliation)
     ) {
       const runtime = (result.scheduler as { runtime: Record<string, unknown> }).runtime;
-      runtime.reconciliation = pick(
-        source.scheduler.runtime.reconciliation,
-        [
-          "status",
-          "observedAt",
-          "lastAttemptAt",
-          "lastReadbackAt",
-          "lastSucceededAt",
-          "lastReadinessStatus",
-          "lastErrorCode",
-          "needsInspection",
-          "reason",
-        ],
-        "scheduler.runtime.reconciliation.",
-      );
+      runtime.reconciliation = pickReconciliation(source.scheduler.runtime.reconciliation, [
+        "status",
+        "observedAt",
+        "lastAttemptAt",
+        "lastReadbackAt",
+        "lastSucceededAt",
+        "lastReadinessStatus",
+        "lastErrorCode",
+        "needsInspection",
+        "reason",
+      ]);
       omitted.delete("scheduler.runtime.reconciliation");
     }
     for (const key of Object.keys(source.scheduler)) {
@@ -1595,11 +1624,13 @@ function projectFinanceBudgetFacts(
       // strategy doubt must not displace an unresolved broker recovery failure.
       result.scheduler = {
         runtime: {
-          reconciliation: pick(
-            details.runtime.reconciliation,
-            ["status", "observedAt", "lastErrorCode", "needsInspection", "reason"],
-            "scheduler.runtime.reconciliation.",
-          ),
+          reconciliation: pickReconciliation(details.runtime.reconciliation, [
+            "status",
+            "observedAt",
+            "lastErrorCode",
+            "needsInspection",
+            "reason",
+          ]),
         },
       };
       omitted.add("scheduler.runtime.details");
@@ -1630,11 +1661,13 @@ function projectFinanceBudgetFacts(
   ) {
     minimal.scheduler = {
       runtime: {
-        reconciliation: pick(
-          source.scheduler.runtime.reconciliation,
-          ["status", "observedAt", "lastErrorCode", "needsInspection", "reason"],
-          "scheduler.runtime.reconciliation.",
-        ),
+        reconciliation: pickReconciliation(source.scheduler.runtime.reconciliation, [
+          "status",
+          "observedAt",
+          "lastErrorCode",
+          "needsInspection",
+          "reason",
+        ]),
       },
     };
   }

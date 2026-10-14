@@ -1,0 +1,19 @@
+{
+  "version": 14,
+  "kind": "descriptive_process_feedback_source_alignment",
+  "scenarios": ["provider_council_evidence_waterflow"],
+  "changes": [
+    "Original main and followup replies reuse their actual existing queued runtime prompt to pass bound prior attribution-refusal diagnostics into the next original commercial audit and attribution verifier. No additional model round or source fetch is scheduled.",
+    "Prior and current run/candidate/source hashes are retained separately. Only fresh artifact verification controls attribution; a changed candidate leaves prior gaps unresolved rather than claiming the earlier evidence was fixed.",
+    "The existing original reply gate consumes the returned terminal decision and diagnostic summary after pipeline return. A pure return cannot substitute for this subsequent consumer.",
+    "Opt-in original transport result, assessment attribution output and actual artifact role input hashes support offline custody checks without copying response bodies or changing default role receipts."
+  ],
+  "retained": "All7 nodes,6 forward edges,1 feedback edge,4 filters and original council/artifact/verifier/pipeline/reply owners. Canonical ontology version, relations and states unchanged.",
+  "budgets": "Existing process-only runtime event queue; provider diagnostics at most4 safe codes with exact omissions and2048-byte total cap. Lost, malformed or scope-conflicting diagnostics are not accepted feedback.",
+  "authority": "No automation, mandatory council run, paid call, provider config change, source approval, broker permission, execution gate or risk threshold change.",
+  "limits": [
+    "Current attribution is not fact-source credibility, semantic adoption or model learning.",
+    "Runtime event queue is not durable across restart or overflow; natural load and model adoption remain independent acceptance obligations.",
+    "Optional hash custody proves actual local inputs, not real provider availability or external delivery."
+  ]
+}

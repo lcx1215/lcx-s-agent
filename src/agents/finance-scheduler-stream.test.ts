@@ -183,7 +183,12 @@ describe("resident Paper stream wiring", () => {
     "wakes broker readback and records %s separately from stream health",
     async (status) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-stream-wiring-"));
-      vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        if (String(chunk).includes("stream broker reconciliation=")) {
+          setImmediate(() => process.emit("SIGTERM"));
+        }
+        return true;
+      });
       vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       mocks.close.mockResolvedValue(undefined);
       let streamOptions: FinanceAlpacaOrderStreamOptions | undefined;
@@ -195,7 +200,6 @@ describe("resident Paper stream wiring", () => {
         streamOptions?.onWake("connected");
       });
       mocks.history.mockImplementation(async () => {
-        process.emit("SIGTERM");
         return { accountId: "synthetic-account", accountReconciliation: { status } };
       });
       expect(
@@ -258,3 +262,81 @@ describe("resident Paper stream wiring", () => {
     expect(mocks.cycle).not.toHaveBeenCalled();
   });
 });
+
+it.each(["ready", "failed", "cancelled"])(
+  "publishes original idle reconciliation %s without a stream wake",
+  async (status) => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-idle-handoff-"));
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      if (String(chunk).includes("idle broker reconciliation=")) {
+        setImmediate(() => process.emit("SIGTERM"));
+      }
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      if (String(chunk).includes("idle broker reconciliation failed:")) {
+        setImmediate(() => process.emit("SIGTERM"));
+      }
+      return true;
+    });
+    mocks.close.mockResolvedValue(undefined);
+    mocks.stream.mockReturnValue({ start: mocks.start, close: mocks.close });
+    mocks.start.mockResolvedValue(undefined);
+    mocks.history.mockImplementation(async () => {
+      if (status === "failed") {
+        throw new FinanceAccountReadError(
+          "broker_reconciliation",
+          100,
+          new FinanceUncachedReadError(
+            "https://paper-api.alpaca.markets/v2/account",
+            "request",
+            90,
+            Object.assign(new Error("PRIVATE"), { code: "ECONNRESET" }),
+          ),
+        );
+      }
+      if (status === "cancelled") {
+        process.emit("SIGTERM");
+      }
+      return { accountId: "synthetic-account", accountReconciliation: { status: "reconciled" } };
+    });
+    expect(
+      await runFinanceScheduler([
+        "--loop",
+        "--dir",
+        root,
+        "--venue",
+        "alpaca",
+        "--sync-alpaca-history",
+        "--no-source-heartbeat",
+      ]),
+    ).toBe(143);
+    const observation = JSON.parse(
+      fs.readFileSync(path.join(root, "alpaca-order-stream-latest.json"), "utf8"),
+    );
+    expect(observation.reconciliation.lastSource).toBe("idle");
+    if (status === "ready") {
+      expect(observation.reconciliation).toMatchObject({
+        lastReadinessStatus: "reconciled",
+        lastErrorCode: null,
+        lastFailure: null,
+        lastSucceededAt: expect.any(String),
+      });
+    } else {
+      expect(observation.reconciliation).toMatchObject({
+        lastReadinessStatus: "unavailable",
+        lastSucceededAt: null,
+      });
+      if (status === "failed") {
+        expect(observation.reconciliation.lastFailure).toMatchObject({
+          stage: "broker_reconciliation",
+          code: "ECONNRESET",
+          request: { endpoint: "account" },
+        });
+      }
+    }
+    expect(JSON.stringify(observation)).not.toContain("PRIVATE");
+    expect(mocks.history).toHaveBeenCalledOnce();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  },
+);

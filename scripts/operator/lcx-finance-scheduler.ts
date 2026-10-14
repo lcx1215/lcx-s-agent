@@ -1247,6 +1247,11 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
   };
 }
 
+type AccountReconciliationObservation =
+  | { source: "idle" | "stream"; phase: "started"; observedAt: string }
+  | { source: "idle" | "stream"; phase: "readback"; observedAt: string; readiness: string }
+  | { source: "idle" | "stream"; phase: "failed"; observedAt: string; error: unknown };
+
 type CycleContext = {
   root: FinanceStateDir;
   options: SchedulerOptions;
@@ -1262,6 +1267,7 @@ type CycleContext = {
     unknownCount: number;
   };
   reconciliationWake?: ReturnType<typeof createFinanceSchedulerReconciliationWake>;
+  observeAccountReconciliation?: (observation: AccountReconciliationObservation) => void;
   sourceHeartbeatInFlight?: boolean;
   lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
   progressPhase?: "idle" | "cycle";
@@ -2732,23 +2738,46 @@ export async function reconcileResidentAlpacaAccount(
   source: "idle" | "stream",
 ) {
   context.lastIdleReconciliationAtMs = Date.now();
-  if (context.intradayController) {
-    const refreshed = await context.intradayController.inspectReconciliation(context.signal);
-    process.stdout.write(
-      `[${new Date().toISOString()}] ${source} broker reconciliation=${refreshed.readiness.status} account=${context.intradayController.accountId}\n`,
-    );
-    await maintainAfterSuccessfulReconciliation(context, refreshed.readiness.status);
-    return refreshed.readiness.status;
-  } else {
-    const refreshed = await syncConfiguredAlpacaPaperHistory({
-      directory: context.root.directory,
-      signal: context.signal,
+  context.observeAccountReconciliation?.({
+    source,
+    phase: "started",
+    observedAt: new Date().toISOString(),
+  });
+  try {
+    let readiness: string;
+    let accountId: string;
+    if (context.intradayController) {
+      const refreshed = await context.intradayController.inspectReconciliation(context.signal);
+      readiness = refreshed.readiness.status;
+      accountId = context.intradayController.accountId;
+    } else {
+      const refreshed = await syncConfiguredAlpacaPaperHistory({
+        directory: context.root.directory,
+        signal: context.signal,
+      });
+      readiness = refreshed.accountReconciliation.status;
+      accountId = refreshed.accountId;
+    }
+    context.signal.throwIfAborted();
+    context.observeAccountReconciliation?.({
+      source,
+      phase: "readback",
+      observedAt: new Date().toISOString(),
+      readiness,
     });
     process.stdout.write(
-      `[${new Date().toISOString()}] ${source} broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
+      `[${new Date().toISOString()}] ${source} broker reconciliation=${readiness} account=${accountId}\n`,
     );
-    await maintainAfterSuccessfulReconciliation(context, refreshed.accountReconciliation.status);
-    return refreshed.accountReconciliation.status;
+    await maintainAfterSuccessfulReconciliation(context, readiness);
+    return readiness;
+  } catch (error) {
+    context.observeAccountReconciliation?.({
+      source,
+      phase: "failed",
+      observedAt: new Date().toISOString(),
+      error,
+    });
+    throw error;
   }
 }
 
@@ -3330,6 +3359,7 @@ export async function runFinanceScheduler(
     ) {
       let streamStatus: AlpacaPaperOrderStreamStatus | undefined;
       const reconciliation = {
+        lastSource: null as "idle" | "stream" | null,
         lastAttemptAt: null as string | null,
         lastReadbackAt: null as string | null,
         lastSucceededAt: null as string | null,
@@ -3362,6 +3392,35 @@ export async function runFinanceScheduler(
           process.stderr.write("Alpaca stream observation persistence failed\n");
         }
       };
+      context.observeAccountReconciliation = (observation) => {
+        reconciliation.lastSource = observation.source;
+        if (observation.phase === "started") {
+          reconciliation.lastAttemptAt = observation.observedAt;
+          reconciliation.lastReadinessStatus = "pending";
+        } else if (observation.phase === "readback") {
+          reconciliation.lastReadbackAt = observation.observedAt;
+          reconciliation.lastReadinessStatus = observation.readiness;
+          if (observation.readiness === "ready" || observation.readiness === "reconciled") {
+            reconciliation.lastSucceededAt = observation.observedAt;
+          }
+          reconciliation.lastErrorCode = null;
+          reconciliation.lastFailure = null;
+        } else {
+          const error = observation.error;
+          reconciliation.lastReadinessStatus = "unavailable";
+          reconciliation.lastErrorCode =
+            error instanceof FinanceExecutionSafetyFactsError
+              ? error.category
+              : error instanceof FinanceAccountReadError
+                ? "account_read_failed"
+                : "reconciliation_failed";
+          reconciliation.lastFailure =
+            error instanceof FinanceAccountReadError
+              ? error.diagnostic
+              : financeReadFailureDiagnostic(error);
+        }
+        writeStreamStatus();
+      };
       context.reconciliationWake = reconciliationWake = createFinanceSchedulerReconciliationWake({
         signal: controller.signal,
         onStateChange: () => {
@@ -3377,17 +3436,7 @@ export async function runFinanceScheduler(
           }
         },
         reconcile: async () => {
-          reconciliation.lastAttemptAt = new Date().toISOString();
-          writeStreamStatus();
-          const readiness = await reconcileResidentAlpacaAccount(context, "stream");
-          reconciliation.lastReadbackAt = new Date().toISOString();
-          reconciliation.lastReadinessStatus = readiness;
-          if (readiness === "ready" || readiness === "reconciled") {
-            reconciliation.lastSucceededAt = reconciliation.lastReadbackAt;
-          }
-          reconciliation.lastErrorCode = null;
-          reconciliation.lastFailure = null;
-          writeStreamStatus();
+          await reconcileResidentAlpacaAccount(context, "stream");
         },
         onError: (error) => {
           reconciliation.lastErrorCode =

@@ -49,6 +49,27 @@ Skill. Do not turn this file into a transcript or a second registry.
   brain and neither requires the other. Capability coverage differs by entry, so
   state which entry an observation came from before generalizing it.
 
+## Finance optimization direction
+
+- Develop finance as an adaptive, evidence-driven decision loop: observe market
+  conditions, select and combine suitable mathematical, statistical and research
+  methods, obtain evidence for specific uncertainties, then act within authorized
+  gates and use outcomes to reassess. Do not make one fixed strategy or mandatory
+  full-module workflow the permanent approach. Historical data and backtests
+  support hypotheses and boundary checks; they do not establish future returns.
+- The current implementation is the starting baseline for the next optimization
+  work. Continue improving opportunity discovery, method selection and composition,
+  actual use of tool results, and outcome feedback. Existing gaps are work to
+  resolve, not permanent capability limits; record planned improvements separately
+  from capabilities that have been verified.
+- Judge progress by useful decisions and repeatable economic results after fees
+  and slippage, alongside drawdown, an investable benchmark and out-of-sample
+  evidence for the whole selection process. Architecture, tool counts and passing
+  tests alone do not prove trading improvement. Follow the economic evidence
+  contract in `ops/architecture/finance-automatic-lifecycle-owner-map.md`.
+  Optimization preserves existing source, account, venue, funding, risk and
+  execution-authority gates; it does not promise a return or expand permission.
+
 ## Architecture boundaries
 
 - Keep model decisions continuous in the existing tool loop. Use sufficient

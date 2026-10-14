@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "fromVersion": 9,
+  "toVersion": 10,
+  "scenarioIds": ["finance_automatic_paper_trading_waterflow"],
+  "reason": "Describe the existing runFinanceResearchRun module snapshot passed directly through qualityRequest to runQualityHarness.",
+  "changes": {
+    "requiredHandoff": "Add finance_research_modules -> review_panel as the original parameter handoff; retain finance_data_gateway and its source handoffs.",
+    "identity": "Scheduler, research checkpoint and Quality keep their native identities; absent parent provenance remains a gap.",
+    "acceptance": "A retained actual module snapshot and Quality refusal do not prove gateway execution, source trust, natural model adoption or full day/night lifecycle.",
+    "registry": "Keep all 28 scenes, node/filter/owner obligations and canonical relation/state vocabularies. This only corrects descriptive workflow topology."
+  },
+  "nonEffects": [
+    "no runtime dispatch or service restart",
+    "no new business state or tool loop",
+    "no paid rerun, broker call, channel send or automation",
+    "no change to risk or execution authority"
+  ]
+}

@@ -732,3 +732,83 @@ it("independently rereads the tuning ledger bytes with matching pins and visible
     );
   }
 });
+
+it.each(["failure", "pending", "recovered", "unsafe_failure"])(
+  "consumes original idle diagnostic $status in the lifecycle %s",
+  async (status) => {
+    const observedAt = "2026-10-15T00:00:00.000Z";
+    fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+    const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+    fs.mkdirSync(lock);
+    fs.writeFileSync(
+      path.join(lock, "progress.json"),
+      JSON.stringify({
+        pid: process.pid,
+        observedAt,
+        phase: "idle",
+        timeoutMs: 900000,
+        placementEnabled: true,
+        venue: "alpaca",
+        executionPolicyAuthorizationMode: "until_revoked",
+        executionPolicyExpiresAt: null,
+        intradayControllerPolicyAuthorizationMode: "until_revoked",
+        intradayControllerPolicyExpiresAt: null,
+        intraday: { enabled: true },
+      }),
+    );
+    const lastFailure = {
+      stage: "broker_reconciliation",
+      code: status === "unsafe_failure" ? "SECRET_INVALID" : "ECONNRESET",
+      elapsedMs: 100,
+      request: { endpoint: "activities", phase: "body", code: "ECONNRESET", elapsedMs: 100 },
+    };
+    fs.writeFileSync(
+      path.join(directory, "alpaca-order-stream-latest.json"),
+      JSON.stringify({
+        schemaVersion: "lcx_alpaca_order_stream_observation_v1",
+        pid: process.pid,
+        venue: "alpaca:paper",
+        observedAt,
+        reconciliation: {
+          lastSource: "idle",
+          lastAttemptAt: observedAt,
+          lastReadbackAt: status === "recovered" ? observedAt : null,
+          lastSucceededAt: status === "recovered" ? observedAt : null,
+          lastReadinessStatus:
+            status === "recovered" ? "ready" : status === "pending" ? "pending" : "unavailable",
+          lastErrorCode:
+            status === "recovered" || status === "pending" ? null : "account_read_failed",
+          lastFailure: status === "recovered" || status === "pending" ? null : lastFailure,
+        },
+      }),
+    );
+    const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+    if (status === "unsafe_failure") {
+      expect(feedback).toMatchObject({
+        scheduler: {
+          runtime: { reconciliation: { status: "unavailable", needsInspection: true } },
+        },
+      });
+      expect(JSON.stringify(feedback)).not.toContain("SECRET_INVALID");
+    } else {
+      expect(feedback).toMatchObject({
+        scheduler: {
+          runtime: {
+            reconciliation: {
+              status: "present",
+              lastSource: "idle",
+              needsInspection: status !== "recovered",
+            },
+          },
+        },
+      });
+      if (status === "failure") {
+        expect(feedback).toMatchObject({
+          scheduler: {
+            runtime: { reconciliation: { lastErrorCode: "account_read_failed", lastFailure } },
+          },
+        });
+      }
+    }
+  },
+);
