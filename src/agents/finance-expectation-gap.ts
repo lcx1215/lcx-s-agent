@@ -50,6 +50,10 @@ export const FinanceBrokerExitFeedbackSchema = z
             receiptId: z.string().min(1),
             entryOrderId: z.string().min(1),
             exitOrderId: z.string().min(1),
+            restorationClaimRef: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/u)
+              .optional(),
             entryPrice: z.number().finite().positive(),
             entryQuantity: z.number().finite().positive(),
             exitQuantity: z.number().finite().positive(),

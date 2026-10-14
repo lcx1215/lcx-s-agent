@@ -117,8 +117,18 @@ export function isSafeFinanceReadFailure(value: unknown): value is FinanceReadFa
   );
 }
 export function financeReadFailureDiagnostic(error: unknown): FinanceReadFailureDiagnostic {
-  return {
-    code: safeTransportFailureCode(error),
-    ...(error instanceof FinanceHttpBodyAbortError ? { cleanupStatus: error.cleanupStatus } : {}),
-  };
+  const pending: unknown[] = [error];
+  let cleanupStatus: "confirmed" | "unconfirmed" | undefined;
+  for (let n = 0; pending.length && n < 8; n++) {
+    const item = pending.shift();
+    if (item instanceof FinanceHttpBodyAbortError) {
+      if (cleanupStatus !== "unconfirmed") {
+        cleanupStatus = item.cleanupStatus;
+      }
+    }
+    if (item && typeof item === "object" && "cause" in item) {
+      pending.push(item.cause);
+    }
+  }
+  return { code: safeTransportFailureCode(error), ...(cleanupStatus ? { cleanupStatus } : {}) };
 }

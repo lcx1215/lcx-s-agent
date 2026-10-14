@@ -727,6 +727,7 @@ export async function readFinanceBrokerExitFeedback(
       receiptId: receipt.receiptId,
       entryOrderId: exit.parentOrderId,
       exitOrderId: exit.childOrderId,
+      ...(exit.restorationClaimRef ? { restorationClaimRef: exit.restorationClaimRef } : {}),
       entryPrice: receipt.fill.fillPrice,
       entryQuantity: receipt.fill.filledQuantity,
       exitQuantity: exit.filledQuantity,

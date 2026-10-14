@@ -1,22 +1,29 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clientOrderIdentity } from "./finance-alpaca-execution-adapter.js";
+import { readFinanceBrokerExitFeedback } from "./finance-broker-profit-feedback.js";
+import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   type FinanceExecutionReceipt,
 } from "./finance-execution-adapter.js";
+import { appendFinanceIntradayDecision } from "./finance-intraday-control-ledger.js";
 import {
   FinanceOwnedProtectionExitEvidenceError,
   readFinanceOwnedProtectionExitFacts,
 } from "./finance-owned-protection-exits.js";
 import {
+  appendFinanceExecutionReceipt,
   appendFinanceBrokerHistory,
   readFinancePositionRecords,
 } from "./finance-position-ledger.js";
 
 const directories: string[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(
     directories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
@@ -390,4 +397,247 @@ it("still validates account and cutoff on an empty ownership request", async () 
       asOf: "invalid",
     }),
   ).rejects.toThrow("invalid owned exit cutoff");
+});
+
+async function restoredStopFixture(
+  mode:
+    | "linked"
+    | "wrong_child"
+    | "unknown"
+    | "foreign"
+    | "future"
+    | "wrong_qty"
+    | "confirmed_partial"
+    | "hash_conflict" = "linked",
+) {
+  const f = await fixture();
+  const old = otoFacts({ childFilledQuantity: "0", activityQuantities: [] });
+  old.child.status = "canceled";
+  Object.assign(old.child, {
+    stop_price: "90",
+    time_in_force: "gtc",
+    canceled_at: "2026-10-02T14:02:00Z",
+  });
+  const intent = {
+    intentId: "restore-exit",
+    runAuthorizationId: "restore-run",
+    instrument: "UTHR",
+    side: "sell" as const,
+    orderType: "market" as const,
+    quantity: 2,
+    referencePrice: 100,
+    referencePriceAt: "2026-10-02T14:01:00Z",
+    rationale: "fixture",
+  };
+  const binding = {
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+    adapterId: "alpaca-venue",
+    intent,
+    positionQuantity: 2,
+    protectiveOrders: [
+      {
+        id: mode === "wrong_child" ? "unrelated" : "stop-child",
+        instrument: "UTHR",
+        quantity: 2,
+        stopPrice: 90,
+      },
+    ],
+  };
+  const id = createHash("sha256")
+    .update(
+      JSON.stringify([
+        binding.accountId,
+        binding.venue,
+        intent.runAuthorizationId,
+        intent.intentId,
+      ]),
+    )
+    .digest("hex");
+  const base = {
+    id,
+    run: "restore-run",
+    instrument: "UTHR",
+    notional: 200,
+    snapshotId: "restore-snapshot",
+    at: "2026-10-02T14:02:00Z",
+    status: "unknown",
+    binding,
+  };
+  const retired = {
+    ...base,
+    at: mode === "future" ? "2026-10-02T16:00:00Z" : "2026-10-02T14:03:00Z",
+    status: "operator_retired",
+    operatorRetirement: {
+      authorizedBy: "user",
+      authorizationRef: "fixture-authorized",
+      reason: "fixture",
+      brokerObservationRef: "e".repeat(64),
+      retiredAt: "2026-10-02T14:03:00Z",
+      originalStatus: "unknown",
+    },
+  };
+  const fill = {
+    filledQuantity: 1,
+    fillPrice: 100,
+    filledAt: "2026-10-02T14:02:30Z",
+    venueRef: "alpaca:paper:partial-sale",
+    terminalOrderIdentity: { orderId: "partial-sale", terminal: true as const },
+  };
+  const receipt = buildFinanceExecutionReceipt({
+    intent,
+    adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+    fill,
+    recordedAt: "2026-10-02T14:02:31Z",
+    accountId: f.accountId,
+    identityVersion: "account-v1",
+  });
+  const confirmed = {
+    ...base,
+    at: "2026-10-02T14:02:31Z",
+    status: "confirmed",
+    adapterKind: "venue",
+    fill,
+    receipt: mode === "hash_conflict" ? { ...receipt, receiptId: "forged" } : receipt,
+    receiptIdentityVersion: "account-v1",
+  };
+  const key = createHash("sha256")
+    .update(JSON.stringify(["alpaca:paper", mode === "foreign" ? "other-account" : f.accountId]))
+    .digest("hex");
+  await fs.writeFile(
+    path.join(f.directory, `execution-safety-${key}.jsonl`),
+    [
+      base,
+      ...(mode === "unknown"
+        ? []
+        : mode === "confirmed_partial" || mode === "hash_conflict"
+          ? [confirmed]
+          : [retired]),
+    ]
+      .map((x) => JSON.stringify(x) + "\n")
+      .join(""),
+  );
+  const restored = {
+    id: "restored-stop",
+    client_order_id: `${clientOrderIdentity("paper", intent)}-protect`,
+    symbol: "UTHR",
+    side: "sell",
+    type: "stop",
+    time_in_force: "gtc",
+    order_class: "simple",
+    qty:
+      mode === "wrong_qty"
+        ? "3"
+        : mode === "confirmed_partial" || mode === "hash_conflict"
+          ? "1"
+          : "2",
+    stop_price: "90",
+    filled_qty: "1",
+    status: "partially_filled",
+    submitted_at: "2026-10-02T14:03:00Z",
+    updated_at: "2026-10-02T14:04:00Z",
+  };
+  const activity = {
+    id: "restored-fill",
+    order_id: "restored-stop",
+    symbol: "UTHR",
+    side: "sell",
+    activity_type: "FILL",
+    type: "partial_fill",
+    qty: "1",
+    price: "89",
+    transaction_time: "2026-10-02T14:04:00Z",
+  };
+  await appendHistory(f.directory, "orders:2026-10-02T14:05:00Z", [
+    old.parent,
+    old.child,
+    restored,
+  ]);
+  await appendHistory(f.directory, "activities:2026-10-02T14:05:00Z", [activity]);
+  return f;
+}
+
+it.each([
+  "linked",
+  "wrong_child",
+  "unknown",
+  "foreign",
+  "future",
+  "wrong_qty",
+  "confirmed_partial",
+  "hash_conflict",
+] as const)("attributes restored stop using original ownership only: %s", async (mode) => {
+  const f = await restoredStopFixture(mode);
+  const read = () =>
+    readFinanceOwnedProtectionExitFacts({
+      ...f,
+      venue: "alpaca:paper",
+      receipts: [entryReceipt()],
+      asOf: "2026-10-02T15:00:00Z",
+    });
+  if (mode === "wrong_qty") {
+    await expect(read()).rejects.toMatchObject({ code: "oto_child_identity_mismatch" });
+  } else {
+    const facts = await read();
+    expect(facts).toHaveLength(mode === "linked" || mode === "confirmed_partial" ? 1 : 0);
+    if (mode === "linked" || mode === "confirmed_partial") {
+      expect(facts[0]).toMatchObject({
+        entryReceiptId: "entry-receipt",
+        childOrderId: "restored-stop",
+        filledQuantity: 1,
+        restorationClaimRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
+    }
+  }
+});
+
+it("passes restored-stop fills through the existing entry rule and gross-PnL feedback consumer", async () => {
+  const f = await restoredStopFixture();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-02T13:59:00Z"));
+  const ruleId = "opening_range_breakout_long_next_bar_v1",
+    activationRef = "b".repeat(64);
+  await appendFinanceIntradayDecision(f.directory, {
+    signalId: "restore-entry-signal",
+    instrument: "UTHR",
+    sessionDate: "2026-10-02",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: "2026-10-02T13:59:00Z",
+    datasetHeadRef: "c".repeat(64),
+    strategyRule: ruleId,
+    strategyBinding: {
+      declarationRef: "a".repeat(64),
+      activationRef,
+      declaredInstruments: ["UTHR"],
+      parameters: { openingRangeBars: 6, rewardRisk: 2, intervalSeconds: 300, feed: "iex" },
+      scope: "strategy_universe",
+    },
+  });
+  vi.setSystemTime(new Date("2026-10-02T15:00:00Z"));
+  await appendFinanceExecutionReceipt(
+    f.directory,
+    entryReceipt({
+      intentId: "intent:restore-entry-signal",
+      decisionRef: { source: "intraday_signal", id: "restore-entry-signal" },
+    }),
+  );
+  const result = await readFinanceBrokerExitFeedback(f.directory, {
+    accountId: f.accountId,
+    instrument: "UTHR",
+    ruleId,
+    activationRef,
+    asOf: "2026-10-02T15:00:00Z",
+  });
+  expect(result?.entries[0]).toMatchObject({
+    exitOrderId: "restored-stop",
+    receiptId: "entry-receipt",
+    exitQuantity: 1,
+    grossPnl: -11,
+    fees: "not_attributed",
+    netPnl: null,
+    restorationClaimRef: expect.any(String),
+  });
+  vi.useRealTimers();
 });

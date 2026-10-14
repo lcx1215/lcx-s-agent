@@ -1,5 +1,10 @@
+import { clientOrderIdentity } from "./finance-alpaca-execution-adapter.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
-import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import {
+  buildFinanceExecutionReceipt,
+  type FinanceExecutionReceipt,
+} from "./finance-execution-adapter.js";
+import { readFinanceExecutionSafetyClaims } from "./finance-execution-safety.js";
 import {
   reduceFinanceBrokerHistoryRecords,
   type BrokerHistoryRecord,
@@ -33,6 +38,8 @@ export type FinanceOwnedProtectionExitFact = Readonly<{
   parentOrderHistoryRef: string;
   childOrderHistoryRefs: readonly string[];
   fills: readonly FinanceOwnedProtectionExitFill[];
+  /** Verified original execution journal record linking a restored stop to this entry. */
+  restorationClaimRef?: string;
 }>;
 
 export class FinanceOwnedProtectionExitEvidenceError extends Error {
@@ -65,6 +72,8 @@ type ParentCandidate = Readonly<{
   parent: BrokerFact;
   child: Record<string, unknown>;
   childOrderId: string;
+  protectionQuantity?: number;
+  restorationClaimRef?: string;
 }>;
 
 const QUANTITY_EPSILON = 0.000000001;
@@ -304,6 +313,151 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
     byChild.set(childOrderId, candidate);
   }
 
+  // Restored standalone stops are not OTO legs. Their ownership comes from the
+  // original account journal + exact canceled child, never from a matching symbol.
+  if ([...orders.values()].some(({ fact }) => text(fact.client_order_id)?.endsWith("-protect"))) {
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: params.directory,
+      accountId: params.accountId,
+      venue: params.venue,
+    });
+    for (const original of byChild.values()) {
+      const canceled = orders.get(original.childOrderId)?.fact ?? original.child;
+      if (canceled.status !== "canceled" || finiteNumber(canceled.filled_qty) !== 0) {
+        continue;
+      }
+      for (const claim of claims) {
+        const binding = claim.binding;
+        if (
+          !binding ||
+          binding.accountId !== params.accountId ||
+          binding.venue !== params.venue ||
+          binding.adapterId !== "alpaca-venue" ||
+          binding.intent.side !== "sell" ||
+          binding.intent.instrument !== original.receipt.instrument ||
+          (cutoff !== undefined && Date.parse(claim.at) > cutoff) ||
+          (claim.status !== "confirmed" && claim.status !== "operator_retired") ||
+          binding.protectiveOrders?.length !== 1 ||
+          binding.protectiveOrders[0].id !== original.childOrderId ||
+          !numberMatches(
+            binding.positionQuantity ?? 0,
+            original.protectionQuantity ?? original.receipt.fill.filledQuantity,
+          ) ||
+          !numberMatches(binding.protectiveOrders[0].quantity, binding.positionQuantity ?? 0)
+        ) {
+          continue;
+        }
+        if (
+          claim.status === "confirmed" &&
+          (claim.fill?.terminalOrderIdentity?.terminal !== true ||
+            claim.adapterKind !== "venue" ||
+            !claim.receipt ||
+            claim.receipt.accountId !== params.accountId)
+        ) {
+          continue;
+        }
+        if (
+          claim.id !==
+          caseflowFingerprint([
+            binding.accountId,
+            binding.venue,
+            binding.intent.runAuthorizationId,
+            binding.intent.intentId,
+          ])
+        ) {
+          continue;
+        }
+        if (claim.status === "confirmed") {
+          const expected = buildFinanceExecutionReceipt({
+            intent: binding.intent,
+            adapter: { id: binding.adapterId, venue: binding.venue, kind: "venue" },
+            fill: claim.fill!,
+            recordedAt: claim.receipt!.recordedAt,
+            accountId: binding.accountId,
+            identityVersion: claim.receiptIdentityVersion ?? "legacy",
+          });
+          if (caseflowFingerprint(expected) !== caseflowFingerprint(claim.receipt)) {
+            continue;
+          }
+        }
+        const quantity =
+          (binding.positionQuantity ?? 0) -
+          (claim.status === "confirmed" ? claim.fill!.filledQuantity : 0);
+        if (
+          !Number.isFinite(quantity) ||
+          quantity <= 0 ||
+          quantity > original.receipt.fill.filledQuantity
+        ) {
+          continue;
+        }
+        if (
+          canceled.side !== "sell" ||
+          canceled.type !== "stop" ||
+          canceled.time_in_force !== "gtc" ||
+          normalizedInstrument(canceled.symbol) !== original.receipt.instrument ||
+          finiteNumber(canceled.qty) !== binding.positionQuantity ||
+          finiteNumber(canceled.stop_price) !== binding.protectiveOrders[0].stopPrice
+        ) {
+          throw new FinanceOwnedProtectionExitEvidenceError(
+            "oto_child_identity_mismatch",
+            original.receipt.receiptId,
+            original.childOrderId,
+          );
+        }
+        const expectedClientId = `${clientOrderIdentity("paper", binding.intent)}-protect`;
+        const matches = [...orders.values()].filter(
+          ({ fact }) => fact.client_order_id === expectedClientId,
+        );
+        if (matches.length > 1) {
+          throw new FinanceOwnedProtectionExitEvidenceError(
+            "oto_child_link_ambiguous",
+            original.receipt.receiptId,
+          );
+        }
+        const restored = matches[0];
+        if (!restored) {
+          continue;
+        }
+        const order = restored.fact,
+          protection = binding.protectiveOrders[0];
+        if (
+          order.symbol !== original.receipt.instrument ||
+          order.side !== "sell" ||
+          order.type !== "stop" ||
+          order.time_in_force !== "gtc" ||
+          !numberMatches(finiteNumber(order.qty) ?? 0, quantity) ||
+          finiteNumber(order.stop_price) !== protection.stopPrice ||
+          (order.limit_price !== null && order.limit_price !== undefined) ||
+          (instant(order.submitted_at) ?? -Infinity) <
+            (instant(binding.intent.referencePriceAt) ?? Infinity) ||
+          (order.parent_order_id !== undefined && order.parent_order_id !== original.parentOrderId)
+        ) {
+          throw new FinanceOwnedProtectionExitEvidenceError(
+            "oto_child_identity_mismatch",
+            original.receipt.receiptId,
+            brokerOrderId(order),
+          );
+        }
+        const childOrderId = brokerOrderId(order)!;
+        const prior = byChild.get(childOrderId);
+        if (prior && prior.receipt.receiptId !== original.receipt.receiptId) {
+          throw new FinanceOwnedProtectionExitEvidenceError(
+            "oto_child_claimed_by_multiple_entries",
+            original.receipt.receiptId,
+            childOrderId,
+          );
+        }
+        byChild.set(childOrderId, {
+          ...original,
+          child: order,
+          childOrderId,
+          protectionQuantity: quantity,
+          restorationClaimRef: caseflowFingerprint(claim),
+        });
+      }
+    }
+  }
+
   const independentSellOrderIds = new Set(
     params.receipts.flatMap((receipt) => {
       const orderId = receipt.fill.terminalOrderIdentity?.orderId;
@@ -344,7 +498,8 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
         source.side !== "sell" ||
         (text(source.type) ?? text(source.order_type)) !== "stop" ||
         normalizedInstrument(source.symbol ?? parent.fact.symbol) !== instrument ||
-        (quantity !== undefined && !numberMatches(quantity, receipt.fill.filledQuantity))
+        (quantity !== undefined &&
+          !numberMatches(quantity, candidate.protectionQuantity ?? receipt.fill.filledQuantity))
       ) {
         throw new FinanceOwnedProtectionExitEvidenceError(
           "oto_child_identity_mismatch",
@@ -412,7 +567,8 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
     if (
       childFilledQuantities.some((quantity) => quantity === undefined) ||
       childFilledQuantities.some((quantity) => !numberMatches(quantity!, filledQuantity)) ||
-      filledQuantity > receipt.fill.filledQuantity + QUANTITY_EPSILON
+      filledQuantity >
+        (candidate.protectionQuantity ?? receipt.fill.filledQuantity) + QUANTITY_EPSILON
     ) {
       throw new FinanceOwnedProtectionExitEvidenceError(
         "oto_child_fill_quantity_mismatch",
@@ -437,6 +593,9 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
         parentOrderHistoryRef: parent.historyRef,
         childOrderHistoryRefs,
         fills: Object.freeze(childActivities),
+        ...(candidate.restorationClaimRef
+          ? { restorationClaimRef: candidate.restorationClaimRef }
+          : {}),
       }),
     );
   }

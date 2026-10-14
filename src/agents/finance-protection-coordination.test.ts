@@ -560,3 +560,47 @@ it.each([
     expect(restore).toHaveBeenCalledTimes(failedStage === "restore_protection" ? 1 : 0);
   },
 );
+
+it("retains the adapter attested request state and transport cause without rearming an uncertain sell", async () => {
+  const { AlpacaOrderUncertainError } = await import("./finance-alpaca-execution-adapter.js");
+  const { executeFinanceProtectedReduction } = await import("./finance-protection-coordination.js");
+  let canceled = false;
+  const restore = vi.fn();
+  const cause = Object.assign(new Error("private URL and headers"), { code: "ECONNRESET" });
+  await expect(
+    executeFinanceProtectedReduction({
+      instrument: "SPY",
+      positionQuantity: 2,
+      sellQuantity: 1,
+      protection: { id: "stop", quantity: 2, stopPrice: 90 },
+      signal: AbortSignal.timeout(5000),
+      readStop: async () => ({
+        id: "stop",
+        instrument: "SPY",
+        quantity: 2,
+        filledQuantity: 0,
+        stopPrice: 90,
+        orderType: "stop",
+        status: canceled ? "canceled" : "new",
+      }),
+      cancelStop: async () => {
+        canceled = true;
+      },
+      readPosition: async () => 2,
+      execute: async () => {
+        throw new AlpacaOrderUncertainError("original-cid", undefined, cause);
+      },
+      describeOrderRequestState: (error) =>
+        error instanceof AlpacaOrderUncertainError ? "invoked" : undefined,
+      restoreProtection: restore,
+    }),
+  ).rejects.toMatchObject({
+    diagnostic: {
+      stage: "execute_sell",
+      orderRequestState: "invoked",
+      readFailure: { code: "ECONNRESET" },
+      protectionRestored: false,
+    },
+  });
+  expect(restore).not.toHaveBeenCalled();
+});

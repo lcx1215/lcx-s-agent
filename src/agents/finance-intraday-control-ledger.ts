@@ -114,6 +114,9 @@ const FinanceIntradayExecutionSafetyFailureRecord = z
             sellExecutionEntered: z.boolean(),
             filledQuantity: z.number().finite().nonnegative().optional(),
             protectionRestored: z.boolean(),
+            readFailure: ReadFailureSchema.optional(),
+            cancelled: z.boolean().optional(),
+            orderRequestState: z.enum(["not_started", "invoked", "unknown"]).optional(),
           })
           .strict()
           .optional(),

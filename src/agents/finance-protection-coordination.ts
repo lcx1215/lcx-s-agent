@@ -1,3 +1,8 @@
+import {
+  financeReadFailureDiagnostic,
+  type FinanceReadFailureDiagnostic,
+} from "./finance-alpaca-safety-transport.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
 /** Working sell stops reserve inventory; they are neither new entry orders nor free inventory. */
 export type FinanceProtectiveOrder = Readonly<{
   id: string;
@@ -175,6 +180,10 @@ export type FinanceProtectedReductionDiagnostic = Readonly<{
   sellExecutionEntered: boolean;
   filledQuantity?: number;
   protectionRestored: boolean;
+  readFailure?: FinanceReadFailureDiagnostic;
+  cancelled?: boolean;
+  /** Host request invocation, never broker acceptance or fill confirmation. */
+  orderRequestState?: "not_started" | "invoked" | "unknown";
 }>;
 
 /** Bounded host observations only; raw errors remain transient causes. */
@@ -187,10 +196,26 @@ export class FinanceProtectedReductionError extends Error {
       typeof diagnostic.cancellationConfirmed !== "boolean" ||
       typeof diagnostic.sellExecutionEntered !== "boolean" ||
       typeof diagnostic.protectionRestored !== "boolean" ||
+      (diagnostic.orderRequestState !== undefined &&
+        !["not_started", "invoked", "unknown"].includes(diagnostic.orderRequestState)) ||
       (diagnostic.filledQuantity !== undefined &&
         (!Number.isFinite(diagnostic.filledQuantity) || diagnostic.filledQuantity < 0))
     ) {
       throw new Error("invalid protected reduction diagnostic");
+    }
+    const pending: unknown[] = [cause];
+    let cancelled = false;
+    for (let n = 0; pending.length && n < 8; n++) {
+      const item = pending.shift();
+      if (
+        item instanceof FinanceHttpBodyAbortError ||
+        (item instanceof Error && ["AbortError", "TimeoutError"].includes(item.name))
+      ) {
+        cancelled = true;
+      }
+      if (item && typeof item === "object" && "cause" in item) {
+        pending.push(item.cause);
+      }
     }
     this.name = "FinanceProtectedReductionError";
     this.diagnostic = Object.freeze({
@@ -201,6 +226,9 @@ export class FinanceProtectedReductionError extends Error {
         ? {}
         : { filledQuantity: diagnostic.filledQuantity }),
       protectionRestored: diagnostic.protectionRestored,
+      ...(cause !== undefined ? { readFailure: financeReadFailureDiagnostic(cause) } : {}),
+      ...(cancelled ? { cancelled: true } : {}),
+      ...(diagnostic.orderRequestState ? { orderRequestState: diagnostic.orderRequestState } : {}),
     });
   }
 }
@@ -229,6 +257,9 @@ export async function executeFinanceProtectedReduction<
   readPosition: () => Promise<number>;
   execute: () => Promise<T>;
   isDefinitelyRejected?: (error: unknown) => boolean;
+  describeOrderRequestState?: (
+    error: unknown,
+  ) => FinanceProtectedReductionDiagnostic["orderRequestState"];
   restoreProtection: (
     quantity: number,
     stopPrice: number,
@@ -251,6 +282,7 @@ export async function executeFinanceProtectedReduction<
     sellExecutionEntered = false,
     protectionRestored = false;
   let filledQuantity: number | undefined;
+  let orderRequestState: FinanceProtectedReductionDiagnostic["orderRequestState"] = "not_started";
   const failure = (message: string, cause?: unknown) =>
     new FinanceProtectedReductionError(message, cause, {
       stage,
@@ -258,6 +290,7 @@ export async function executeFinanceProtectedReduction<
       sellExecutionEntered,
       filledQuantity,
       protectionRestored,
+      orderRequestState,
     });
   const step = async <R>(
     next: FinanceProtectedReductionDiagnostic["stage"],
@@ -339,8 +372,10 @@ export async function executeFinanceProtectedReduction<
     stage = "execute_sell";
     signal.throwIfAborted();
     sellExecutionEntered = true;
+    orderRequestState = "unknown";
     result = await options.execute();
   } catch (error) {
+    orderRequestState = options.describeOrderRequestState?.(error) ?? "unknown";
     if (options.isDefinitelyRejected?.(error)) {
       const rejectedPosition = await step("verify_rejected_position", async () => {
         signal.throwIfAborted();

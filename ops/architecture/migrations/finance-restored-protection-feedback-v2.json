@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "finance_automatic_paper_trading_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Attribute restored protective stop fills through the original account journal and original entry instead of inferring ownership from symbol.",
+  "sourceFacts": [
+    "original canceled OTO child identifies one entry",
+    "account-scoped confirmed/operator_retired claim binds the original child and exact restored client identity",
+    "native order and FILL facts retain source hashes and cutoff",
+    "existing rule/activation consumer computes gross PnL and preserves unknown fees"
+  ],
+  "changes": {
+    "canonicalOntologyUnchanged": true,
+    "newBusinessStateStore": false,
+    "receiptCompatibility": "additive optional restorationClaimRef/readFailure/cancelled; old receipts accepted",
+    "owners": [
+      "src/agents/finance-owned-protection-exits.ts",
+      "src/agents/finance-broker-profit-feedback.ts",
+      "src/agents/finance-protection-coordination.ts"
+    ]
+  },
+  "verification": [
+    "restored-stop ownership boundary cases",
+    "original rule/PnL consumer",
+    "sanitized failure journal/outcome cases"
+  ],
+  "nonEffects": [
+    "no order replay",
+    "no risk/freshness changes",
+    "no paid model run",
+    "no new automation"
+  ],
+  "rollback": "revert optional consumer handling; retain native receipts and restored protection; never delete broker/history state"
+}

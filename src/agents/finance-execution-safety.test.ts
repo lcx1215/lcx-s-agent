@@ -1633,3 +1633,72 @@ it("persists protected reduction observations without retiring uncertainty or co
   expect(retried.status).toBe("refused");
   expect(execute).toHaveBeenCalledTimes(1);
 });
+
+it.each(["transport", "cancelled"])(
+  "retains safe protected failure cause through journal and original outcome: %s",
+  async (kind) => {
+    const { FinanceProtectedReductionError } = await import("./finance-protection-coordination.js");
+    const { FinanceHttpBodyAbortError } = await import("./finance-http-body.js");
+    const { appendFinanceIntradayOutcome } = await import("./finance-intraday-control-ledger.js");
+    const f = await fixture();
+    const root =
+      kind === "transport"
+        ? Object.assign(new Error("private key and URL"), { code: "ECONNRESET" })
+        : new FinanceHttpBodyAbortError("confirmed");
+    const diagnostic = {
+      stage: "execute_sell" as const,
+      cancellationConfirmed: true,
+      sellExecutionEntered: true,
+      protectionRestored: false,
+    };
+    const failing = {
+      ...f.adapter,
+      execute: vi.fn(async () => {
+        throw new FinanceProtectedReductionError(
+          "private headers",
+          new Error("private wrapper", { cause: root }),
+          diagnostic,
+        );
+      }),
+    };
+    const error = await placeFinanceOrder({
+      ...f.request,
+      adapters: [failing],
+      safetyContext: createFinanceExecutionSafetyContext(f.input),
+    }).catch((error: unknown) => error);
+    expect(error).toMatchObject({
+      attempt: {
+        disposition: "outcome_unresolved",
+        protectedReduction: {
+          readFailure:
+            kind === "transport"
+              ? { code: "ECONNRESET" }
+              : { code: "transport_cause_unavailable", cleanupStatus: "confirmed" },
+          ...(kind === "cancelled" ? { cancelled: true } : {}),
+        },
+      },
+    });
+    if (!(error instanceof Error) || !("attempt" in error)) {
+      throw new Error("typed failure missing");
+    }
+    const outcome = await appendFinanceIntradayOutcome(f.input.stateDir, {
+      signalId: "failure-diagnostic-fixture",
+      status: "uncertain",
+      reasons: ["execution_outcome_unresolved"],
+      executionSafetyFailure: {
+        stage: "execution",
+        category: "unexpected",
+        operation: "execute_order",
+        attempt:
+          error.attempt as import("./finance-execution-safety.js").FinanceExecutionSafetyAttempt,
+      },
+    });
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: f.input.stateDir,
+      accountId: f.input.accountId,
+      venue: f.input.venue,
+    });
+    expect(claims.at(-1)?.status).toBe("unknown");
+    expect(JSON.stringify({ claims, outcome })).not.toContain("private");
+  },
+);

@@ -217,7 +217,10 @@ function bounded<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-function clientOrderIdentity(mode: "paper" | "live", intent: FinanceExecutionIntent): string {
+export function clientOrderIdentity(
+  mode: "paper" | "live",
+  intent: FinanceExecutionIntent,
+): string {
   return `lcx-${createHash("sha256")
     .update(JSON.stringify([mode, intent.runAuthorizationId, intent.intentId]))
     .digest("hex")
@@ -684,6 +687,15 @@ export function createAlpacaExecutionAdapter(
             return Number(position.qty);
           },
           isDefinitelyRejected: (error) => error instanceof AlpacaOrderRejectedError,
+          describeOrderRequestState: (error) =>
+            error instanceof AlpacaOrderUncertainError
+              ? "invoked"
+              : error instanceof AlpacaOrderRejectedError && error.executionStage === "pre_dispatch"
+                ? "not_started"
+                : error instanceof AlpacaOrderRejectedError &&
+                    error.executionStage === "venue_response"
+                  ? "invoked"
+                  : undefined,
           execute: () => {
             if (
               Date.parse(facts.expiresAt) <= Date.now() ||
