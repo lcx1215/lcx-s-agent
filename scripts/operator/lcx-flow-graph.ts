@@ -2047,6 +2047,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "test/local-brain-training-plan.test.ts",
       "test/minimax-brain-teacher-batch.test.ts",
       "test/minimax-brain-training-guard.test.ts",
+      "test/minimax-brain-training-guard.cleanup.test.ts",
       "test/minimax-quota-brain-saturator-preview.test.ts",
     ],
   },
