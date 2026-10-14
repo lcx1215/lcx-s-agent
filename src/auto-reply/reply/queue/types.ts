@@ -20,6 +20,8 @@ export type QueueDedupeMode = "message-id" | "prompt" | "none";
 
 export type FollowupRun = {
   prompt: string;
+  /** Original inbound ask, retained only for an explicitly selected commercial outlet. */
+  commercialAuditAsk?: string;
   /** Provider message ID, when available (for deduplication). */
   messageId?: string;
   summaryLine?: string;

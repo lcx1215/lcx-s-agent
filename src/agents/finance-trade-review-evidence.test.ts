@@ -35,6 +35,7 @@ import {
 } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError, type LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 import * as barLedgerTools from "./tools/finance-bar-ledger-tool.js";
+import { createFinanceMarketCollectionRefreshTool } from "./tools/finance-market-collection-refresh-tool.js";
 const dirs: string[] = [];
 async function artifactScope() {
   const scope = await fixture();
@@ -663,6 +664,181 @@ const requests = [
     relationshipRationale: "Caller hypothesis about a recorded relationship",
   },
 ];
+it("feeds original public collection content into the next bounded review call", async () => {
+  const scope = await fixture();
+  const body = JSON.stringify({
+    ID: "news-1",
+    title: "AAA announces factory fire",
+    url: "https://example.test/aaa/fire",
+    date: "2026-09-30T13:58:00.000Z",
+  });
+  const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => body }));
+  const tool = createFinanceMarketCollectionRefreshTool({
+    workspaceDir: scope.directory,
+    fetchImpl,
+  });
+  const payloads: unknown[] = [];
+  const model = scripted([]);
+  let modelCalls = 0;
+  const dependentModel: LogicalAgentModelAdapter = {
+    ...model.model,
+    invoke: async (call) => {
+      payloads.push(call.payload);
+      if (modelCalls++ === 0) {
+        return {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [
+            { candidateId: "signal", action: "market_collection", keyword: "AAA" },
+          ],
+          hypothesis: "Check whether a factory event challenges the entry.",
+        };
+      }
+      const input = call.payload as { toolEvidence: { summary: string }[] };
+      const news = JSON.parse(input.toolEvidence[0].summary).result as { title: string };
+      return {
+        ...decision,
+        decisions: [
+          {
+            candidateId: "signal",
+            decision: "veto",
+            rationale: `The returned headline ${news.title} challenges entry; the event remains unverified.`,
+          },
+        ],
+      };
+    },
+  };
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: () => dependentModel,
+      evidenceScope: { ...scope, marketCollectionTool: tool },
+    },
+  )(packet, AbortSignal.timeout(5000));
+  expect(result).toMatchObject({
+    status: "completed",
+    modelCalls: 2,
+    toolEvidence: [
+      {
+        action: "market_collection",
+        status: "completed",
+        accountId: "paper-a",
+        asOf: packet.asOf,
+        boundary: "public_news_research_only_not_verified_event_or_execution_quote",
+      },
+    ],
+  });
+  expect(JSON.stringify(payloads[1])).toContain("AAA announces factory fire");
+  expect(JSON.stringify(payloads[1])).toContain("2026-09-30T13:58:00.000Z");
+  expect(payloads[0]).toMatchObject({ evidenceMarketCollectionAvailable: true });
+  expect(result.decisions?.[0].rationale).toContain("unverified");
+  const artifact = result.toolEvidence![0].sourceRef;
+  const receipt = JSON.parse(await fs.readFile(path.join(scope.directory, artifact), "utf8"));
+  expect(receipt.request.instrument).toBe("AAA");
+  expect(receipt.request.asOf).toBe(packet.asOf);
+  expect(receipt.selectedSourceIds).toEqual(["gdelt_public_news_titles"]);
+});
+
+it("rejects unregistered public collection access before invoking a source", async () => {
+  const scope = await fixture();
+  await expect(
+    createFinanceTradeReviewEvidenceExecutor(scope)(
+      [{ candidateId: "signal", action: "market_collection" }],
+      packet,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("outside host tool scope");
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      candidateId: "signal",
+      action: "market_collection",
+      sourceIds: ["paid-provider"],
+    }).success,
+  ).toBe(false);
+});
+
+it("retains missing public news as unavailable rather than successful adoption", async () => {
+  const scope = await fixture();
+  const tool = createFinanceMarketCollectionRefreshTool({
+    workspaceDir: scope.directory,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "" }),
+  });
+  const results = await createFinanceTradeReviewEvidenceExecutor({
+    ...scope,
+    marketCollectionTool: tool,
+  })([{ candidateId: "signal", action: "market_collection" }], packet, AbortSignal.timeout(5000));
+  expect(results[0].status).toBe("unavailable");
+  expect(results[0].summary).toContain("public_news_missing_or_outside_cutoff");
+});
+
+it("stops the public collection batch on host cancellation without returning late evidence", async () => {
+  const scope = await fixture();
+  const controller = new AbortController();
+  const reason = new DOMException("review deadline", "AbortError");
+  let calls = 0;
+  const tool = createFinanceMarketCollectionRefreshTool({
+    workspaceDir: scope.directory,
+    fetchImpl: async () => {
+      calls++;
+      controller.abort(reason);
+      throw reason;
+    },
+  });
+  await expect(
+    createFinanceTradeReviewEvidenceExecutor({ ...scope, marketCollectionTool: tool })(
+      [
+        { candidateId: "signal", action: "market_collection", keyword: "AAA" },
+        { candidateId: "signal", action: "market_collection", keyword: "factory" },
+      ],
+      packet,
+      controller.signal,
+    ),
+  ).rejects.toBe(reason);
+  expect(calls).toBe(1);
+  await expect(fs.stat(path.join(scope.directory, "memory"))).rejects.toThrow();
+});
+
+it.each(["wrong_instrument", "future_timestamp"])(
+  "rejects public collection %s at the consumer",
+  async (failure) => {
+    const scope = await fixture();
+    const original = createFinanceMarketCollectionRefreshTool({
+      workspaceDir: scope.directory,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            ID: "n",
+            title: "AAA factory fire",
+            url: "https://example.test/fire",
+            date: "2026-09-30T13:58:00.000Z",
+          }),
+      }),
+    });
+    const tool = {
+      ...original,
+      execute: async (...args: Parameters<typeof original.execute>) => {
+        const result = await original.execute(...args);
+        const details = result.details as {
+          request: { instrument: string };
+          records: { sourceTimestamp: string }[];
+        };
+        if (failure === "wrong_instrument") {
+          details.request.instrument = "BBB";
+        } else {
+          details.records[0].sourceTimestamp = "2026-09-30T14:01:00.000Z";
+        }
+        return result;
+      },
+    };
+    const results = await createFinanceTradeReviewEvidenceExecutor({
+      ...scope,
+      marketCollectionTool: tool,
+    })([{ candidateId: "signal", action: "market_collection" }], packet, AbortSignal.timeout(5000));
+    expect(results[0].status).toBe("unavailable");
+    expect(results[0].summary).not.toContain("AAA factory fire");
+  },
+);
 it.each(["Caller hypothesis about a recorded relationship", "关系".repeat(120)])(
   "keeps real pair diagnostics on call2 and in the original DB/night projection with bounded rationale %s",
   async (relationshipRationale) => {

@@ -104,6 +104,8 @@ export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
   allowHostBrowserControl?: boolean;
   agentSessionKey?: string;
+  /** Host invocation identity only; never sourced from tool arguments. */
+  agentRunId?: string;
   agentChannel?: GatewayMessageChannel;
   agentAccountId?: string;
   /** Delivery target (e.g. telegram:group:123:topic:456) for topic/thread routing. */
@@ -260,6 +262,8 @@ export function createOpenClawTools(options?: {
       workspaceDir,
       config: options?.config,
       slotModels: resolveFinanceWorkflowSlotModels(options?.config),
+      agentRunId: options?.agentRunId,
+      agentSessionKey: options?.agentSessionKey,
     }),
     createFinancePositionLedgerReadTool({ workspaceDir }),
     createFinanceBarLedgerTool({ workspaceDir }),

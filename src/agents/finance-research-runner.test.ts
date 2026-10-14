@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import {
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
@@ -20,6 +22,7 @@ import {
 import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
 import {
   buildDefaultFinanceResearchTargets,
+  inspectFinanceResearchQualityCallerWitness,
   readFinanceResearchEquityUniverseSnapshot,
   runFinanceResearchQualityReview,
   runFinanceResearchRun,
@@ -800,41 +803,164 @@ describe("finance research runner", () => {
   });
 
   it("connects batch evidence to the committee, quality harness, and quarterly checkpoints", async () => {
-    const result = await runFinanceResearchRun({
-      input: {
-        ask: "分析未来半年美股和比特币的市场情绪，并考虑美国中期选举。",
-        asOf: AS_OF,
-        horizonMonths: 6,
-        targets: [
-          {
-            id: "btc-fixture",
-            instrument: "BTCUSDT",
-            assetClass: "crypto",
-            realtime: { requireOfficialReference: false },
-            collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
-          },
-        ],
+    const originalQualityInputs: QualityHarnessModelRequest[] = [];
+    const sourceInputs: Array<{
+      request: unknown;
+      observation: FinanceDataGatewayObservationInput;
+    }> = [];
+    const captureQuality = async (request: unknown) => {
+      originalQualityInputs.push(JSON.parse(JSON.stringify(request)) as QualityHarnessModelRequest);
+      return modelInvoker(request);
+    };
+    const adapters = BATCH_OPTIONS.realtimeAdapters.map((adapter) => ({
+      ...adapter,
+      collect: async (...args: Parameters<FinanceRealtimeSourceAdapter["collect"]>) => {
+        const observation = await adapter.collect(...args);
+        // Fixed local transport metadata, normalized by the original gateway.
+        for (const field of observation.fields) {
+          field.unit = "USD_per_unit";
+          field.upstreamSourceUrlOrArtifact = `fixture://${adapter.id}/original-upstream`;
+        }
+        sourceInputs.push({
+          request: structuredClone(args[0]),
+          observation: structuredClone(observation),
+        });
+        return observation;
       },
-      liveFetch: true,
-      qualityEnabled: true,
-      modelInvoker,
-      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
-      modelId: "fixture-model",
-      batchOptions: BATCH_OPTIONS,
-    });
+    }));
+    const network = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("private_gateway_proof_network_forbidden"));
+    try {
+      const result = await runFinanceResearchRun({
+        input: {
+          ask: "分析未来半年美股和比特币的市场情绪，并考虑美国中期选举。",
+          asOf: AS_OF,
+          horizonMonths: 6,
+          targets: [
+            {
+              id: "btc-fixture",
+              instrument: "BTCUSDT",
+              assetClass: "crypto",
+              realtime: { requireOfficialReference: false },
+              collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
+            },
+          ],
+        },
+        liveFetch: true,
+        qualityEnabled: true,
+        modelInvoker,
+        qualityModelRouting: mockQualityPromptRouting(captureQuality),
+        modelId: "fixture-model",
+        batchOptions: { ...BATCH_OPTIONS, realtimeAdapters: adapters },
+      });
 
-    expect(result.status).toBe("candidate");
-    expect(result.answerDecision).toBe("candidate_for_review");
-    expect(result.batch?.status).toBe("completed");
-    expect(result.committee?.coverage.equivalenceStatus).toBe("committee_candidate");
-    expect(result.committee?.model.modelCallCount).toBe(10);
-    expect(result.quality?.status).toBe("verified");
-    expect(result.quality?.quality.passed).toBe(true);
-    expect(result.quarterlyOutput.checkpoints).toHaveLength(2);
-    expect(result.quarterlyOutput.adopted).toBe(true);
-    expect(result.notTouched).toEqual(
-      expect.arrayContaining(["provider_config", "external_channel_sender", "trading_execution"]),
-    );
+      const realtimeJob = result.batch?.jobs.find((job) => job.kind === "realtime");
+      if (
+        !realtimeJob?.receipt ||
+        !("snapshot" in realtimeJob.receipt) ||
+        !realtimeJob.receipt.snapshot
+      ) {
+        throw new Error("original_registry_gateway_snapshot_missing");
+      }
+      const snapshot = realtimeJob.receipt.snapshot;
+      const modelEvidenceId = `finance-model:${encodeURIComponent(snapshot.instrument)}`;
+      const batchEvidence = result.batch?.committeeEvidence.find(
+        (entry) => entry.id === modelEvidenceId,
+      );
+      const qualityInput = originalQualityInputs.find((request) =>
+        request.evidence?.some((entry) => entry.id === modelEvidenceId),
+      );
+      const qualityEvidence = qualityInput?.evidence?.find((entry) => entry.id === modelEvidenceId);
+      const digest = (value: unknown) =>
+        createHash("sha256").update(JSON.stringify(value)).digest("hex");
+      const proofDir = process.env.LCX_FINANCE_GATEWAY_QUALITY_PROOF_DIR;
+      if (proofDir) {
+        await fs.mkdir(proofDir, { recursive: true });
+        await fs.writeFile(
+          path.join(proofDir, "native-gateway-quality.json"),
+          JSON.stringify(
+            {
+              boundary:
+                "original_registry_batch_quality_with_local_source_and_scripted_model_not_natural_semantics",
+              result,
+              sourceInputs,
+              originalQualityInputs,
+              externalFetchCalls: network.mock.calls.length,
+              hashes: {
+                snapshot: digest(snapshot),
+                actualQualityEvidenceText: qualityEvidence
+                  ? digest(qualityEvidence.text)
+                  : undefined,
+              },
+              sourceScope: {
+                instrument: snapshot.instrument,
+                asOf: snapshot.asOf,
+                financialAccount: "not_observed",
+              },
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
+      expect(sourceInputs).toHaveLength(2);
+      expect(network).not.toHaveBeenCalled();
+      expect(snapshot.instrument).toBe("BTCUSDT");
+      expect(snapshot.asOf).toBe(AS_OF);
+      expect(snapshot.qualityStatus).toBe("ready");
+      const primary = sourceInputs.find(
+        (entry) => entry.observation.providerRole === "primary_market_data",
+      )!.observation;
+      expect(snapshot.normalizedFields[0]).toMatchObject({
+        ...primary.fields[0],
+        providerName: primary.providerName,
+        providerRole: primary.providerRole,
+      });
+      expect(batchEvidence).toBeDefined();
+      expect(qualityEvidence?.text).toBe(batchEvidence?.text);
+      if (!qualityEvidence) {
+        throw new Error("actual_gateway_evidence_not_in_quality_input");
+      }
+      // Compare the actual source projection, including provenance, with the original snapshot.
+      const observedFields = /quote fields (\[[^\n]+?\]); field coverage=/.exec(
+        qualityEvidence.text,
+      )?.[1];
+      if (!observedFields) {
+        throw new Error("original_gateway_projection_missing_from_quality");
+      }
+      const consumedFields = JSON.parse(observedFields) as unknown;
+      expect(consumedFields).toEqual(snapshot.normalizedFields.slice(0, 3));
+      expect(caseflowFingerprint(consumedFields)).toBe(
+        caseflowFingerprint(JSON.parse(JSON.stringify(snapshot.normalizedFields.slice(0, 3)))),
+      );
+      expect(originalQualityInputs).toHaveLength(11);
+      for (const request of originalQualityInputs) {
+        expect(request.evidence.find((entry) => entry.id === modelEvidenceId)?.text).toBe(
+          qualityEvidence.text,
+        );
+      }
+      expect(qualityEvidence.text).toContain(
+        `full fields remain in original job ${realtimeJob.jobId} receipt.snapshot.normalizedFields`,
+      );
+      expect(qualityEvidence.text).toContain("field coverage=1/1; omitted fields=0");
+      expect(qualityInput?.sharedContext.noExecutionAuthority).toBe(true);
+
+      expect(result.status).toBe("candidate");
+      expect(result.answerDecision).toBe("candidate_for_review");
+      expect(result.batch?.status).toBe("completed");
+      expect(result.committee?.coverage.equivalenceStatus).toBe("committee_candidate");
+      expect(result.committee?.model.modelCallCount).toBe(10);
+      expect(result.quality?.status).toBe("verified");
+      expect(result.quality?.quality.passed).toBe(true);
+      expect(result.quarterlyOutput.checkpoints).toHaveLength(2);
+      expect(result.quarterlyOutput.adopted).toBe(true);
+      expect(result.notTouched).toEqual(
+        expect.arrayContaining(["provider_config", "external_channel_sender", "trading_execution"]),
+      );
+    } finally {
+      network.mockRestore();
+    }
   });
 
   it("audits a contradictory Finance item after item 48 and blocks adoption", async () => {
@@ -988,6 +1114,7 @@ describe("finance research runner", () => {
       "evidence_coverage_attestation_missing",
     );
     expect(result.quarterlyOutput.adopted).toBe(false);
+    expect(result.compilationUse).toBeUndefined();
   });
 
   it.each([
@@ -1154,6 +1281,10 @@ describe("finance research runner", () => {
       plan: receipt.plan,
       qualityModelRouting: mockQualityPromptRouting(captureReplay),
     });
+    expect(receipt.quality?.callerWitnessReadback).toMatchObject({
+      status: "not_observed",
+      gaps: ["quality_caller_checkpoint_identity_not_observed"],
+    });
     expect(replayRequests.length).toBeGreaterThan(0);
     expect(replayRequests[0]).toMatchObject({
       task: productionRequests[0].task,
@@ -1288,7 +1419,43 @@ describe("finance research runner", () => {
     };
 
     const accepted = await runAllocation("supports");
+    if (!accepted.plan.portfolioContext) {
+      throw new Error("original portfolio context missing");
+    }
+    expect(
+      inspectFinanceResearchQualityCallerWitness({
+        ...accepted,
+        plan: {
+          ...accepted.plan,
+          portfolioContext: {
+            ...accepted.plan.portfolioContext,
+            accountId: "foreign-paper-account",
+          },
+        },
+      }),
+    ).toMatchObject({ status: "conflict", gaps: ["quality_caller_task_scope_conflict"] });
     expect(accepted.status).toBe("candidate");
+    expect(accepted.compilationUse).toEqual({
+      boundary: "original_portfolio_compiler_call_not_execution_authority",
+      input: {
+        asOf: AS_OF,
+        accountId: "paper-account",
+        venue: "alpaca",
+        researchReceiptId: `quality:${accepted.quality?.runId}`,
+        proposalSha256: caseflowFingerprint(
+          accepted.quality?.finalArtifact?.supportingAnalysis?.portfolioAllocationProposal,
+        ),
+        supportedEvidenceIdsSha256: caseflowFingerprint([
+          "allocation-fixture:supporting",
+          "allocation-fixture:context",
+        ]),
+        contextSha256: caseflowFingerprint(accepted.plan.portfolioContext),
+      },
+      outcome: {
+        kind: "plan",
+        sha256: caseflowFingerprint({ kind: "plan", plan: accepted.portfolioPlan }),
+      },
+    });
     expect(accepted.portfolioPlan).toMatchObject({
       accountId: "paper-account",
       venue: "alpaca",
@@ -1318,6 +1485,7 @@ describe("finance research runner", () => {
       "allocation proposal cites unsupported evidence: allocation-fixture:context",
     );
     expect(rejected.portfolioPlan).toBeUndefined();
+    expect(rejected.compilationUse).toBeUndefined();
   });
 
   it("accepts a grounded no-allocation research outcome without producing a portfolio plan", async () => {
@@ -1395,6 +1563,22 @@ describe("finance research runner", () => {
     expect(result.portfolioAbstention).toEqual({
       reason: "The supplied evidence does not establish a supported positive exposure.",
       evidenceIds: [expect.any(String)],
+    });
+    expect(result.compilationUse).toMatchObject({
+      input: {
+        asOf: AS_OF,
+        accountId: "paper-account",
+        venue: "alpaca",
+        researchReceiptId: `quality:${result.quality?.runId}`,
+        proposalSha256: caseflowFingerprint(
+          result.quality?.finalArtifact?.supportingAnalysis?.portfolioAllocationProposal,
+        ),
+        contextSha256: caseflowFingerprint(result.plan.portfolioContext),
+      },
+      outcome: {
+        kind: "no_allocation",
+        sha256: caseflowFingerprint({ kind: "no_allocation", ...result.portfolioAbstention }),
+      },
     });
   });
 
@@ -1995,8 +2179,18 @@ describe("finance research runner", () => {
         executionFingerprint: "fixture-v1",
       };
       let calls = 0;
+      const actualQualityInputs: QualityHarnessModelRequest[] = [];
       const countedModel: typeof modelInvoker = async (request) => {
         calls++;
+        if (
+          typeof request === "object" &&
+          request !== null &&
+          "sharedContext" in request &&
+          typeof (request as QualityHarnessModelRequest).sharedContext?.strategyMethodKit ===
+            "object"
+        ) {
+          actualQualityInputs.push(request as QualityHarnessModelRequest);
+        }
         return modelInvoker(request);
       };
       const options = {
@@ -2028,6 +2222,162 @@ describe("finance research runner", () => {
       expect(resumed.committee).toEqual(first.committee);
       expect(resumed.batch?.committeeEvidence).toEqual(first.batch?.committeeEvidence);
       expect(resumed.quality).toEqual(first.quality);
+      expect(first.quality?.callerWitness).toMatchObject({
+        checkpointRunId: checkpoint.runId,
+        qualityRunId: first.quality?.runId,
+        selectedEvidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        moduleInputSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
+      const actualInput = actualQualityInputs[0];
+      if (!actualInput) {
+        throw new Error("actual original quality model input missing");
+      }
+      const actualModules = actualInput.sharedContext?.financeModuleExecution;
+      if (!actualModules || typeof actualModules !== "object") {
+        throw new Error("actual original module input missing");
+      }
+      const moduleFields = actualModules as Record<string, unknown>;
+      expect(first.quality?.callerWitness?.selectedEvidenceSha256).toBe(
+        caseflowFingerprint(actualInput.evidence),
+      );
+      expect(first.quality?.callerWitness?.moduleInputSha256).toBe(
+        caseflowFingerprint({
+          compositionNodeIds: moduleFields.compositionNodeIds,
+          nodes: moduleFields.nodes,
+          outputEvidenceIds: moduleFields.outputEvidenceIds,
+        }),
+      );
+      // Original checkpoint reuse keeps the old caller witness, not a fresh claim.
+      expect(resumed.quality?.callerWitness).toEqual(first.quality?.callerWitness);
+      const retained = JSON.parse(JSON.stringify(resumed)) as typeof resumed;
+      expect(inspectFinanceResearchQualityCallerWitness(retained)).toMatchObject({
+        status: "verified",
+        gaps: [],
+        semanticAdoption: "not_proven",
+      });
+      if (
+        !retained.quality ||
+        !retained.moduleExecution ||
+        !retained.batch ||
+        !retained.modelCheckpoint
+      ) {
+        throw new Error("original caller witness inputs missing");
+      }
+      const witness = retained.quality.callerWitness;
+      if (!witness) {
+        throw new Error("Original caller witness missing");
+      }
+      const observedInputs = {
+        checkpointRunId: retained.modelCheckpoint.runId,
+        qualityRunId: retained.quality.runId,
+        taskScopeSha256: witness.taskScopeSha256,
+        selectedEvidenceSha256: witness.selectedEvidenceSha256,
+        moduleInputSha256: witness.moduleInputSha256,
+      };
+      expect(first.quality?.callerWitnessReadback?.observedInputs).toEqual(observedInputs);
+      expect(resumed.quality?.callerWitnessReadback?.observedInputs).toEqual(observedInputs);
+      const legacy = inspectFinanceResearchQualityCallerWitness({
+        ...retained,
+        quality: { ...retained.quality, callerWitness: undefined },
+      });
+      expect(legacy).toMatchObject({
+        status: "not_observed",
+        gaps: ["quality_caller_witness_not_observed"],
+      });
+      expect(legacy.observedInputs).toBeUndefined();
+      expect(
+        inspectFinanceResearchQualityCallerWitness({ ...retained, batch: undefined })
+          .observedInputs,
+      ).toBeUndefined();
+      expect(
+        inspectFinanceResearchQualityCallerWitness({
+          ...retained,
+          modelCheckpoint: { ...retained.modelCheckpoint, runId: "different-current-attempt" },
+        }),
+      ).toMatchObject({
+        status: "conflict",
+        gaps: ["quality_caller_checkpoint_run_conflict"],
+        observedInputs: { checkpointRunId: "different-current-attempt" },
+      });
+      expect(
+        inspectFinanceResearchQualityCallerWitness({
+          ...retained,
+          quality: { ...retained.quality, runId: "different-quality-run" },
+        }),
+      ).toMatchObject({
+        status: "conflict",
+        gaps: ["quality_caller_quality_run_conflict"],
+        observedInputs: { qualityRunId: "different-quality-run" },
+      });
+      const changedSourceReadback = inspectFinanceResearchQualityCallerWitness({
+        ...retained,
+        batch: {
+          ...retained.batch,
+          committeeEvidence: retained.batch.committeeEvidence.map((item, index) =>
+            index === 0 ? { ...item, text: item.text + " changed source bytes" } : item,
+          ),
+        },
+      });
+      expect(changedSourceReadback).toMatchObject({
+        status: "conflict",
+        gaps: ["quality_caller_selected_evidence_conflict"],
+      });
+      expect(changedSourceReadback.observedInputs?.selectedEvidenceSha256).toMatch(
+        /^[a-f0-9]{64}$/u,
+      );
+      expect(changedSourceReadback.observedInputs?.selectedEvidenceSha256).not.toBe(
+        witness.selectedEvidenceSha256,
+      );
+      const changedModuleReadback = inspectFinanceResearchQualityCallerWitness({
+        ...retained,
+        moduleExecution: {
+          ...retained.moduleExecution,
+          outputEvidenceIds: ["changed-module-output"],
+        },
+      });
+      expect(changedModuleReadback).toMatchObject({
+        status: "conflict",
+        gaps: ["quality_caller_module_input_conflict"],
+      });
+      expect(changedModuleReadback.observedInputs?.moduleInputSha256).toBe(
+        caseflowFingerprint({
+          compositionNodeIds: retained.moduleExecution.compositionNodeIds,
+          nodes: retained.moduleExecution.nodes,
+          outputEvidenceIds: ["changed-module-output"],
+        }),
+      );
+      expect(changedModuleReadback.observedInputs?.moduleInputSha256).not.toBe(
+        witness.moduleInputSha256,
+      );
+      expect(
+        inspectFinanceResearchQualityCallerWitness({
+          ...retained,
+          moduleExecution: {
+            ...retained.moduleExecution,
+            moduleToolsDispatched: !retained.moduleExecution.moduleToolsDispatched,
+            requiredEvidenceReady: !retained.moduleExecution.requiredEvidenceReady,
+          },
+        }).status,
+      ).toBe("verified");
+      if (process.env.LCX_QUALITY_CALLER_PROOF_DIR) {
+        await fs.mkdir(process.env.LCX_QUALITY_CALLER_PROOF_DIR, { recursive: true });
+        await fs.writeFile(
+          path.join(process.env.LCX_QUALITY_CALLER_PROOF_DIR, "native-first-and-reused.json"),
+          JSON.stringify(
+            {
+              first,
+              resumed,
+              actualQualityInputs,
+              readback: inspectFinanceResearchQualityCallerWitness(retained),
+              changedSourceReadback,
+              changedModuleReadback,
+              legacyReadback: legacy,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
       expect(resumed.modelCheckpoint).toMatchObject({
         newModelCalls: 0,
         reservedModelCalls: firstCalls,
@@ -2757,6 +3107,7 @@ describe("research module composition reaches actual model request boundaries", 
     "required_missing",
     "receipt_missing",
     "upstream_quality_failed",
+    "learning_feedback",
   ] as const)("reports module execution and evidence admission separately: %s", async (outcome) => {
     let captured: { producerInputs?: unknown; financeStateDir?: string } = {};
     const producerAwareInvoker = async (request: unknown) => {
@@ -2788,6 +3139,21 @@ describe("research module composition reaches actual model request boundaries", 
           allowedActionAuthority: "research_only",
         },
       };
+      if (outcome === "learning_feedback") {
+        const producerInputs = artifact.supportingAnalysis.financeFrameworkProducerInputs as Record<
+          string,
+          unknown
+        >;
+        producerInputs.finance_learning_memory = {
+          sourceArtifacts: [evidenceId],
+          sourceArticlePath: "memory/research-sources/original.md",
+          priorTaskReceiptSource: {
+            path: "memory/finance-learning-apply-usage-receipts/original.json",
+            sha256: "a".repeat(64),
+            taskId: "original-task",
+          },
+        };
+      }
       return output;
     };
     const result = await runFinanceResearchRun({
@@ -2864,6 +3230,14 @@ describe("research module composition reaches actual model request boundaries", 
       financeStateDir: "/explicit/finance-state-fixture",
       producerInputs: { causal_map: { allowedActionAuthority: "research_only" } },
     });
+    if (outcome === "learning_feedback") {
+      expect(captured.producerInputs).toMatchObject({
+        finance_learning_memory: {
+          sourceArticlePath: "memory/research-sources/original.md",
+          priorTaskReceiptSource: { sha256: "a".repeat(64), taskId: "original-task" },
+        },
+      });
+    }
     if (outcome === "upstream_quality_failed") {
       expect(result.committee?.model.purpose).toBe("full_review");
     } else {
@@ -2879,7 +3253,8 @@ describe("research module composition reaches actual model request boundaries", 
         expect.arrayContaining(["adversarial_challenge", "formatting", "final_precheck"]),
       );
     }
-    const accepted = outcome === "all" || outcome === "optional_missing";
+    const accepted =
+      outcome === "all" || outcome === "optional_missing" || outcome === "learning_feedback";
     expect(result.status).toBe(accepted ? "candidate" : "needs_review");
     const moduleGatePassed = accepted || outcome === "upstream_quality_failed";
     expect(result.gates).toContainEqual(
@@ -2908,6 +3283,14 @@ describe("research module composition reaches actual model request boundaries", 
           node.missingEvidence.includes("unavailable_fixture_input"),
         ),
       ).toBe(true);
+      expect(result.missingEvidence).not.toEqual(
+        expect.arrayContaining([expect.stringContaining("unavailable_fixture_input")]),
+      );
+    }
+    if (outcome === "required_missing") {
+      expect(result.missingEvidence).toEqual(
+        expect.arrayContaining([expect.stringContaining("unavailable_fixture_input")]),
+      );
     }
   });
 });

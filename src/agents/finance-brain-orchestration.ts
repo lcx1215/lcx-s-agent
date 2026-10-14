@@ -39,6 +39,10 @@ export type FinanceBrainOrchestrationPlan = {
   moduleContracts: Array<Pick<FinanceBrainModuleDefinition, "id" | "role" | "requiredTools">>;
   composition: FinanceModuleComposition;
   selectionTrace: {
+    compositionModuleInput?: Readonly<{
+      moduleIds: readonly FinanceBrainModuleId[];
+      requiredModuleIds: readonly FinanceBrainModuleId[];
+    }>;
     financeTask: boolean;
     selectionSource: "rules" | "caller_proposal";
     ruleSuggestedModules: FinanceBrainModuleId[];
@@ -438,9 +442,13 @@ export function planFinanceBrainOrchestration(
     ...(financeTask ? ["finance_learning_memory" as const] : []),
   ]);
   const seeded = unique<FinanceBrainModuleId>([...analyticalModules, ...requiredModules]);
+  const compositionModuleInput = Object.freeze({
+    moduleIds: Object.freeze([...analyticalModules]),
+    requiredModuleIds: Object.freeze([...requiredModules]),
+  });
   const composition = buildFinanceModuleComposition(
-    analyticalModules,
-    requiredModules,
+    compositionModuleInput.moduleIds,
+    compositionModuleInput.requiredModuleIds,
     moduleSelection?.composition,
   );
 
@@ -493,6 +501,7 @@ export function planFinanceBrainOrchestration(
     }),
     composition,
     selectionTrace: {
+      compositionModuleInput,
       financeTask,
       selectionSource: moduleSelection ? "caller_proposal" : "rules",
       ruleSuggestedModules: unique([...matched, ...requiredModules]),

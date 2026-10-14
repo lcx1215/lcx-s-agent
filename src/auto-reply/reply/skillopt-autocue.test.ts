@@ -41,6 +41,15 @@ describe("resolveSkillOptAutoCue", () => {
     });
 
     expect(cue?.matchedSkillIds).toEqual(["finance_data_provenance_preflight"]);
+    expect(cue?.readback).toMatchObject([
+      {
+        sourceKind: "legacy_sop_context",
+        bodyIncluded: true,
+        behaviorAccepted: false,
+        receiptSha256: null,
+        gaps: [],
+      },
+    ]);
     expect(cue?.bestSkillPaths).toEqual([bestSkillPath]);
     expect(cue?.promptInjection).toContain("source timestamp");
     expect(cue?.promptInjection).toContain("Do not expose SkillOpt labels");

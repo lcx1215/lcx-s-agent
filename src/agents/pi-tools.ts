@@ -467,6 +467,7 @@ export function createOpenClawCodingTools(options?: {
       sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
       allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
       agentSessionKey: options?.sessionKey,
+      agentRunId: options?.runId,
       agentChannel: resolveGatewayMessageChannel(options?.messageProvider),
       agentAccountId: options?.agentAccountId,
       agentTo: options?.messageTo,
@@ -561,6 +562,7 @@ export function createOpenClawCodingTools(options?: {
             config,
             agentId: agentId ?? "main",
             workspaceDir: options?.workspaceDir ?? process.cwd(),
+            invocationRunId: options?.runId,
           }),
         )
       : withHooks;

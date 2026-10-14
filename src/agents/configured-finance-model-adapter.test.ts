@@ -96,6 +96,11 @@ describe("configured model payment cooldown", () => {
     await expect(first.invoke(request, new AbortController().signal)).rejects.toMatchObject({
       code: "provider_payment_required",
     });
+    expect(first.inspectCall?.()).toMatchObject({
+      requestDispatched: true,
+      paymentRefusalSource: "provider_http",
+      httpStatus: 402,
+    });
     const central = createConfiguredFinanceModelAdapter(config, {
       modelRef: "fixture/alternative",
       trajectorySource: "central_brain",
@@ -104,6 +109,12 @@ describe("configured model payment cooldown", () => {
     await expect(central.invoke(request, new AbortController().signal)).rejects.toMatchObject({
       code: "provider_payment_required",
     });
+    expect(central.inspectCall?.()).toMatchObject({
+      requestDispatched: false,
+      paymentRefusalSource: "local_cooldown",
+    });
+    expect(central.inspectCall?.()?.httpStatus).toBeUndefined();
+    expect(central.inspectCall?.()?.cooldownUntil).toBe(first.inspectCall?.()?.cooldownUntil);
     expect(central.unavailableReason?.()).toBe("provider_payment_required");
     expect(central.observe?.(request)).toBeUndefined();
     expect(http).toHaveBeenCalledTimes(1);
@@ -700,4 +711,30 @@ it("distinguishes payment-required transport failure without retaining the provi
     code: "provider_payment_required",
     message: "model adapter provider_payment_required",
   });
+});
+
+it("cancels a body after HTTP 200 without accepting late model output", async () => {
+  const cancelled = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ cancel: cancelled }))),
+  );
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "body-cancel-"));
+  vi.stubEnv("LCX_MODEL_TRAJECTORY_FILE", path.join(directory, "trajectory.jsonl"));
+  const isolated = structuredClone(cfg);
+  isolated.models!.providers!.fixture.apiKey = "body-cancel-only-fixture";
+  const adapter = createConfiguredFinanceModelAdapter(isolated);
+  const controller = new AbortController();
+  const pending = adapter.invoke(request, controller.signal);
+  await vi.waitFor(() => expect(adapter.inspectCall?.()?.stage).toBe("response_received"));
+  controller.abort(new Error("cycle deadline"));
+  await expect(pending).rejects.toMatchObject({ code: "process_error" });
+  expect(cancelled).toHaveBeenCalledOnce();
+  expect(adapter.inspectCall?.()).toMatchObject({
+    stage: "cancelled",
+    cleanupStatus: "confirmed",
+    httpStatus: 200,
+  });
+  expect(adapter.observe?.(request)).toBeUndefined();
+  fs.rmSync(directory, { recursive: true, force: true });
 });

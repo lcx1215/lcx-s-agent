@@ -9,6 +9,7 @@ import { financeUsEquityLocalTimeInstant } from "./finance-cycle-schedule.js";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  FinanceIntradayReplayInputError,
   financeIntradayPreCloseExitBarMinute,
   financeIntradayExecutionUniverse,
   resolveFinanceIntradayPaperExecutionEligibility,
@@ -91,6 +92,44 @@ const config = {
 } as const;
 
 describe("finance intraday paper replay", () => {
+  it.each([4, 5])("refuses a missing signal-entry/holding interval at index %s", (missingIndex) => {
+    const bars = session([100, 101, 100, 102, 103, 104, 105]).filter(
+      (_, index) => index !== missingIndex,
+    );
+    expect(() => runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: "head", config })).toThrow(
+      FinanceIntradayReplayInputError,
+    );
+  });
+
+  it("refuses an overlapping interval and a bar with a mismatched duration", () => {
+    const bars = session([100, 101, 100, 102, 103, 104]);
+    expect(() =>
+      runFinanceIntradayPaperReplay({ bars: [...bars, bars[3]], ledgerHeadRef: "head", config }),
+    ).toThrow(/bar_sequence_gap_or_overlap/);
+    const malformed = bars.map((bar, index) =>
+      index === 3 ? { ...bar, endAt: bars[4].endAt } : bar,
+    );
+    expect(() =>
+      runFinanceIntradayPaperReplay({ bars: malformed, ledgerHeadRef: "head", config }),
+    ).toThrow(/bar_duration_mismatch/);
+  });
+
+  it("retains calendar-rejected days alongside usable days instead of concealing source gaps", () => {
+    const bars = completeRegularSession();
+    const incomplete = session([100, 101, 100, 102, 103, 104]);
+    const result = runFinanceIntradayPaperReplay({
+      bars: [...bars, ...incomplete],
+      ledgerHeadRef: "head",
+      config,
+      strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      marketSessions: [marketCalendarSession("2026-09-18"), marketCalendarSession("2026-01-05")],
+    });
+    expect(result.strategy.sessions).toBe(1);
+    expect(result.excludedSessions).toEqual([
+      { sessionDate: "2026-01-05", reason: "incomplete_calendar_session", selectedBars: 6 },
+    ]);
+  });
+
   it("expands only an explicitly opted-in Paper rule to the fresh selected snapshot", () => {
     const selected = ["QQQ", "MSFT"];
     expect(

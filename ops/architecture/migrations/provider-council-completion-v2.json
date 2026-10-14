@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "scenarioIds": ["provider_council_evidence_waterflow", "commercial_answer_pipeline_waterflow"],
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "A completed council claim must consume original message-bound runtime role evidence, not attribution words in candidate text.",
+  "changes": {
+    "preservedNodesAndEdges": true,
+    "producerOwner": "src/agents/provider-learning-council.ts",
+    "consumerOwner": "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    "sharedVisibleGate": "src/agents/visible-answer-adoption-gate.ts",
+    "receiptCompatibility": "Optional providerEvidence input and concise providerCouncil attribution result; no ontology relation/state changes."
+  },
+  "nonEffects": [
+    "no provider/model configuration changes",
+    "no trading permission changes",
+    "no new automation",
+    "no model/source truth or natural semantic adoption claim"
+  ],
+  "verification": [
+    "src/agents/provider-council-handoff.test.ts",
+    "src/agents/provider-learning-council.transport.test.ts",
+    "src/agents/visible-answer-adoption-gate.test.ts",
+    "test/lcx-commercial-answer-pipeline.test.ts"
+  ],
+  "remainingGap": "The original auto-reply owner has no verified call binding to this shared gate; these local checks do not establish full commercial scene or natural reply coverage."
+}

@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { inspectEvidenceFile } from "../../src/agents/tools/module-learning-pipeline-plan-tool.ts";
 import {
   createModuleLearningPipelineReviewTool,
   listModuleLearningReceiptPaths,
@@ -11,6 +13,15 @@ type CliOptions = {
   dateKey?: string;
   guardLogPath?: string;
   evalSummaryPath?: string;
+  source?: string;
+  targetModule?: string;
+  hostRunId?: string;
+  expectedReceiptSha256?: string;
+  expectedSourceSha256?: string;
+  contentReviewReceiptPath?: string;
+  contentReviewReceiptSha256?: string;
+  reviewAccountId?: string;
+  reviewRunId?: string;
   writeAbsorbedPlanReceipts: boolean;
   absorptionDecision: "keep" | "downrank" | "discard";
   json: boolean;
@@ -65,9 +76,10 @@ const REQUIRED_EVIDENCE_FIELDS = new Set([
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts [--workspace DIR] [--date YYYY-MM-DD] [--guard-log PATH] [--eval-summary PATH] [--json]",
+      "Usage: node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts [--workspace DIR] [--date YYYY-MM-DD] [--guard-log PATH] [--eval-summary PATH] [--source SOURCE --target-module MODULE --host-run-id ID] [--receipt-sha256 HASH] [--source-sha256 HASH] [--json]",
       "",
       "Reads module-learning review receipts and hardened eval evidence, then decides whether module-learning may be called eval_absorbed.",
+      "Optional --content-review-receipt FILE --content-review-sha256 HASH --review-account-id ID --review-run-id ID reads a pinned content diagnosis through the original review owner. It does not rerun models or grant absorption authority.",
       "Audits all dated batches by default. The legacy write flag cannot synthesize training or adjacent-task evidence.",
     ].join("\n"),
   );
@@ -98,6 +110,47 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--guard-log") {
       options.guardLogPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (
+      [
+        "--source",
+        "--target-module",
+        "--host-run-id",
+        "--receipt-sha256",
+        "--source-sha256",
+      ].includes(arg)
+    ) {
+      const value = readValue(args, index);
+      if (arg === "--source") {
+        options.source = value;
+      } else if (arg === "--target-module") {
+        options.targetModule = value;
+      } else if (arg === "--host-run-id") {
+        options.hostRunId = value;
+      } else if (arg === "--receipt-sha256") {
+        options.expectedReceiptSha256 = value;
+      } else {
+        options.expectedSourceSha256 = value;
+      }
+      index += 1;
+    } else if (
+      [
+        "--content-review-receipt",
+        "--content-review-sha256",
+        "--review-account-id",
+        "--review-run-id",
+      ].includes(arg)
+    ) {
+      const value = readValue(args, index);
+      if (arg === "--content-review-receipt") {
+        options.contentReviewReceiptPath = value;
+      } else if (arg === "--content-review-sha256") {
+        options.contentReviewReceiptSha256 = value;
+      } else if (arg === "--review-account-id") {
+        options.reviewAccountId = value;
+      } else {
+        options.reviewRunId = value;
+      }
       index += 1;
     } else if (arg === "--eval-summary") {
       options.evalSummaryPath = path.resolve(readValue(args, index));
@@ -274,7 +327,12 @@ async function latestEvalTimeoutFromGuardLog(
   return snapshots.toSorted((left, right) => (right.at ?? "").localeCompare(left.at ?? ""))[0];
 }
 
-async function readReview(params: { workspaceDir: string; dateKey: string }) {
+async function readReview(params: {
+  workspaceDir: string;
+  dateKey: string;
+  contentReviewReceipt?: { path: string; sha256: string };
+  reviewScope?: { accountId: string; runId: string };
+}) {
   const reviewRelativePath = path
     .join(REVIEW_DIR, `${params.dateKey}.json`)
     .split(path.sep)
@@ -282,11 +340,21 @@ async function readReview(params: { workspaceDir: string; dateKey: string }) {
   // Read current receipts through the same owner; a saved review can predate intake.
   const result = await createModuleLearningPipelineReviewTool({
     workspaceDir: params.workspaceDir,
+    scope: params.reviewScope,
   }).execute("module-learning-absorption-gate-review", {
     dateKey: params.dateKey,
     writeReview: false,
+    ...(params.contentReviewReceipt ? { contentReviewReceipt: params.contentReviewReceipt } : {}),
   });
-  return { review: result.details as JsonRecord, reviewRelativePath };
+  return {
+    review: {
+      ...(result.details as JsonRecord),
+      ...(params.contentReviewReceipt
+        ? { requestedContentReviewReceipt: params.contentReviewReceipt }
+        : {}),
+    },
+    reviewRelativePath,
+  };
 }
 
 async function countPlanReceiptFiles(params: {
@@ -341,6 +409,46 @@ function buildGate(params: {
   const rows = Array.isArray(params.review?.rows)
     ? params.review.rows.filter((entry): entry is JsonRecord => Boolean(recordValue(entry)))
     : [];
+  const contentReviewReadback = recordValue(params.review?.contentReviewReadback);
+  const contentReviewByReceipt = rows.flatMap((row) => {
+    const content = recordValue(row.contentReview);
+    if (!content) {
+      return [];
+    }
+    return [
+      {
+        receiptPath: stringValue(row.receiptPath) ?? "unknown",
+        receiptSha256: stringValue(row.receiptSha256) ?? null,
+        sourceUrlOrPath: stringValue(row.sourceUrlOrPath) ?? null,
+        targetModule: stringValue(row.targetModule) ?? "unknown",
+        attemptScope: recordValue(row.contentReviewAttemptScope) ?? null,
+        upstreamScope: stringValue(row.upstreamScope) ?? "not_observed",
+        status: stringValue(content.status) ?? "failed",
+        gaps: stringArrayValue(content.gaps),
+        findings: stringArrayValue(content.findings),
+        answer: stringValue(content.answer) ?? null,
+        boundary: "content_diagnosis_only_not_application_acceptance",
+      },
+    ];
+  });
+  for (const content of contentReviewByReceipt) {
+    const findings = content.findings.join("; ");
+    const findingPreview = findings.slice(0, 4096);
+    const remainingFindings =
+      findings.length > findingPreview.length
+        ? " [Preview truncated; read this receipt's contentReviewByReceipt.findings for all findings.]"
+        : "";
+    nextActions.push(
+      content.status === "failed"
+        ? `Restore the content review handoff: ${content.receiptPath}: ${content.gaps.join(",")}. Keep the existing absorption hold.`
+        : `Review ${content.receiptPath}: ${content.answer ?? content.gaps.join(",")}.${findingPreview ? ` Findings: ${findingPreview}.${remainingFindings}` : ""} Content remains provisional; preserve permission and application acceptance holds.`,
+    );
+  }
+  if (contentReviewReadback && contentReviewByReceipt.length === 0) {
+    nextActions.push(
+      `Restore the content review handoff: ${stringArrayValue(contentReviewReadback.gaps).join(",")}. Keep the existing absorption hold.`,
+    );
+  }
   const claimableRows = rows.filter((row) => !isTerminalNonAbsorbedDecision(row));
   const terminalNonAbsorbedRows = rows.filter((row) => isTerminalNonAbsorbedDecision(row));
   const weakRows = claimableRows.filter(
@@ -481,6 +589,11 @@ function buildGate(params: {
       : null,
     requiredCaseIds: REQUIRED_CASE_IDS,
     missingEvidenceByReceipt: missingEvidenceByReceipt.slice(0, 20),
+    ...(contentReviewReadback ? { contentReviewReadback } : {}),
+    ...(recordValue(params.review?.requestedContentReviewReceipt)
+      ? { requestedContentReviewReceipt: params.review?.requestedContentReviewReceipt }
+      : {}),
+    ...(contentReviewByReceipt.length > 0 ? { contentReviewByReceipt } : {}),
     proofGapSummary: recordValue(params.review?.proofGapSummary) ?? {},
     nextProofQueue: Array.isArray(params.review?.nextProofQueue)
       ? params.review.nextProofQueue
@@ -508,25 +621,137 @@ function buildGate(params: {
   };
 }
 
+async function consumedReviewEvidence(options: CliOptions, review: JsonRecord | undefined) {
+  const selected = Boolean(
+    options.source ||
+    options.targetModule ||
+    options.expectedReceiptSha256 ||
+    options.expectedSourceSha256,
+  );
+  const rows = Array.isArray(review?.rows)
+    ? review.rows.filter((row): row is JsonRecord => Boolean(recordValue(row)))
+    : [];
+  const selectedRows = rows.filter(
+    (row) => row.sourceUrlOrPath === options.source && row.targetModule === options.targetModule,
+  );
+  const gaps: string[] = [];
+  if (selected && (!options.source || !options.targetModule)) {
+    gaps.push("selected_source_module_scope_incomplete");
+  }
+  if (selected && selectedRows.length === 0) {
+    gaps.push("selected_source_module_receipt_missing");
+  }
+  const receipts = await Promise.all(
+    selectedRows.map(async (row) => {
+      const artifactFields = [
+        "sourceRegistryRecordPath",
+        "retrievalReceiptPath",
+        "applicationValidationReceiptPath",
+        "trainingOrEvalAbsorptionEvidencePath",
+      ];
+      const artifacts = await Promise.all(
+        artifactFields.map(async (field) => {
+          const relativePath = stringValue(row[field]);
+          const artifact = await inspectEvidenceFile(options.workspaceDir, relativePath ?? null);
+          if (relativePath && !artifact) {
+            gaps.push(`selected_evidence_unreadable:${relativePath}`);
+          }
+          return { field, path: relativePath ?? null, sha256: artifact?.sha256 ?? null };
+        }),
+      );
+      if (options.expectedReceiptSha256 && row.receiptSha256 !== options.expectedReceiptSha256) {
+        gaps.push("selected_receipt_hash_conflict");
+      }
+      if (options.expectedSourceSha256 && artifacts[0]?.sha256 !== options.expectedSourceSha256) {
+        gaps.push("selected_source_hash_conflict");
+      }
+      return {
+        receiptPath: row.receiptPath,
+        receiptSha256: row.receiptSha256,
+        sourceUrlOrPath: row.sourceUrlOrPath,
+        targetModule: row.targetModule,
+        status: row.status,
+        declaredStatus: row.declaredStatus,
+        evaluationVerified: row.evaluationVerified,
+        keepDownrankDiscardDecision: row.keepDownrankDiscardDecision,
+        missingEvidence: row.missingEvidence,
+        ...(recordValue(row.contentReview)
+          ? {
+              contentReview: row.contentReview,
+              contentReviewAttemptScope: row.contentReviewAttemptScope,
+              upstreamScope: row.upstreamScope,
+            }
+          : {}),
+        artifacts,
+      };
+    }),
+  );
+  return {
+    readMode: "fresh_original_review",
+    reviewResultSha256: review
+      ? createHash("sha256").update(JSON.stringify(review)).digest("hex")
+      : null,
+    hostScope: {
+      workspaceId: createHash("sha256").update(path.resolve(options.workspaceDir)).digest("hex"),
+      runId: options.hostRunId ?? null,
+    },
+    selection: selected
+      ? { sourceUrlOrPath: options.source ?? null, targetModule: options.targetModule ?? null }
+      : null,
+    receiptSource: recordValue(review?.receiptSource) ?? null,
+    selectedReceipts: receipts,
+    ...(recordValue(review?.contentReviewReadback)
+      ? { contentReviewReadback: review?.contentReviewReadback }
+      : {}),
+    ...(recordValue(review?.requestedContentReviewReceipt)
+      ? { requestedContentReviewReceipt: review?.requestedContentReviewReceipt }
+      : {}),
+    gaps: [...new Set(gaps)],
+    boundary:
+      "Original evidence readback only; selection does not narrow global source coverage, grant training or trading authority",
+  };
+}
+
 function renderText(result: ReturnType<typeof buildGate>): string {
   const latestEval = result.latestEval;
   const latestEvalText = latestEval
     ? `latest_eval=${latestEval.name ?? "unknown"} ${latestEval.passed}/${latestEval.total} promotionReady=${latestEval.promotionReady} parseRecovered=${latestEval.parseRecoveredCaseIds.length}`
     : "latest_eval=missing";
-  return (
-    [
-      `Module learning absorption gate | decision=${result.gateDecision}`,
-      `boundary=${result.boundary}`,
-      `date=${result.dateKey}`,
-      `review_path=${result.reviewPath}`,
-      `absorption_ready=${result.absorptionReady}`,
-      `review_rows=${result.counts.reviewRows}`,
-      `weak_receipts=${result.counts.weakReceiptCount}`,
-      `eval_absorbed=${result.counts.evalAbsorbed}`,
-      latestEvalText,
-      `blockers=${result.blockers.join(",") || "none"}`,
-    ].join("\n") + "\n"
-  );
+  const lines = [
+    `Module learning absorption gate | decision=${result.gateDecision}`,
+    `boundary=${result.boundary}`,
+    `date=${result.dateKey}`,
+    `review_path=${result.reviewPath}`,
+    `absorption_ready=${result.absorptionReady}`,
+    `review_rows=${result.counts.reviewRows}`,
+    `weak_receipts=${result.counts.weakReceiptCount}`,
+    `eval_absorbed=${result.counts.evalAbsorbed}`,
+    latestEvalText,
+    `blockers=${result.blockers.join(",") || "none"}`,
+  ];
+  if (result.contentReviewReadback) {
+    lines.push(`content_review=${stringValue(result.contentReviewReadback.status) ?? "failed"}`);
+    const requestedReceipt = recordValue(result.requestedContentReviewReceipt);
+    if (requestedReceipt) {
+      lines.push(
+        `content_review_requested_receipt=${stringValue(requestedReceipt.path) ?? "missing"}`,
+      );
+    }
+    for (const gap of stringArrayValue(result.contentReviewReadback.gaps)) {
+      lines.push(`content_review_gap=${gap}`);
+    }
+    const answer = stringValue(result.contentReviewReadback.answer);
+    if (answer) {
+      lines.push(`content_review_answer=${answer}`);
+    }
+    for (const finding of stringArrayValue(result.contentReviewReadback.findings).slice(0, 8)) {
+      lines.push(`content_review_finding=${finding}`);
+    }
+  }
+  for (const nextAction of result.nextActions) {
+    lines.push(`next_action=${nextAction}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 const options = parseArgs(process.argv.slice(2));
@@ -534,6 +759,17 @@ const dateKey = normalizeDateKey(options.dateKey);
 const { review, reviewRelativePath } = await readReview({
   workspaceDir: options.workspaceDir,
   dateKey,
+  contentReviewReceipt:
+    options.contentReviewReceiptPath || options.contentReviewReceiptSha256
+      ? {
+          path: options.contentReviewReceiptPath ?? "",
+          sha256: options.contentReviewReceiptSha256 ?? "",
+        }
+      : undefined,
+  reviewScope:
+    options.reviewAccountId && options.reviewRunId
+      ? { accountId: options.reviewAccountId, runId: options.reviewRunId }
+      : undefined,
 });
 const planReceipts = await countPlanReceiptFiles({
   workspaceDir: options.workspaceDir,
@@ -557,8 +793,13 @@ const result = buildGate({
   latestEvalTimeout,
   evalEvidenceSource,
 });
+const consumedReview = await consumedReviewEvidence(options, review);
 const finalResult = {
   ...result,
+  consumedReview,
+  absorptionReady: result.absorptionReady && consumedReview.gaps.length === 0,
+  gateDecision: consumedReview.gaps.length ? "hold_at_application_ready" : result.gateDecision,
+  blockers: [...new Set([...result.blockers, ...consumedReview.gaps])],
   preWriteGateDecision: null,
   postWriteReviewRefreshed: false,
   planReceiptSourceUnreadable: planReceipts.unreadable,

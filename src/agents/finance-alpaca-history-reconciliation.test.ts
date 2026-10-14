@@ -9,6 +9,7 @@ import {
   appendFinanceBrokerHistory,
   appendFinanceExecutionReceipt,
 } from "./finance-position-ledger.js";
+import { createFinancePositionLedgerReadTool } from "./tools/finance-position-ledger-read-tool.js";
 
 const directories: string[] = [];
 
@@ -352,4 +353,118 @@ describe("Alpaca broker history reconciliation", () => {
     expect(result.positions).toEqual([]);
     expect(result.warnings.join(" ")).toContain("not allocated to a USD order fill");
   });
+});
+
+describe("cash merger reaches original account book and result consumer", () => {
+  it.each(["complete", "missing_leg", "ambiguous_time", "later_buy"] as const)(
+    "handles %s without making a sell or pretending unknown timing",
+    async (mode) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cash-merger-book-"));
+      directories.push(directory);
+      const accountId = "original-paper-account";
+      const buy = {
+        id: "original-buy",
+        order_id: "original-buy-order",
+        activity_type: "FILL",
+        type: "fill",
+        side: "buy",
+        symbol: "WBD",
+        qty: "10",
+        price: "10",
+        transaction_time:
+          mode === "ambiguous_time" ? "2025-01-05T10:00:00Z" : "2025-01-02T10:00:00Z",
+      };
+      const fee = {
+        id: "entry-fee",
+        order_id: buy.order_id,
+        activity_type: "FEE",
+        status: "executed",
+        currency: "USD",
+        net_amount: "-1",
+        transaction_time: buy.transaction_time,
+      };
+      const merger = {
+        activity_type: "MA",
+        activity_sub_type: "CMA",
+        group_id: "merger-group",
+        corporate_action_id: "merger-action",
+        symbol: "WBD",
+        currency: "USD",
+        status: "executed",
+        date: "2025-01-05",
+        created_at: "2025-01-05T12:00:00Z",
+      };
+      const cash = { ...merger, id: "cash-leg", net_amount: "110" };
+      const shares = { ...merger, id: "share-leg", net_amount: "0", qty: "-10", price: "999" };
+      const later = {
+        ...buy,
+        id: "later-buy",
+        order_id: "later-order",
+        qty: "2",
+        price: "20",
+        transaction_time: "2025-01-06T10:00:00Z",
+      };
+      const activities = [
+        buy,
+        fee,
+        cash,
+        ...(mode === "missing_leg" ? [] : [shares]),
+        ...(mode === "later_buy" ? [later] : []),
+      ];
+      for (const [query, payload] of [
+        [
+          "orders:window",
+          [
+            { id: buy.order_id, status: "filled", filled_qty: "10" },
+            ...(mode === "later_buy"
+              ? [{ id: later.order_id, status: "filled", filled_qty: "2" }]
+              : []),
+          ],
+        ],
+        ["activities:window", activities],
+        ["sync_receipt:window", [{ status: "raw_history_synced" }]],
+      ] as const) {
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId,
+          venue: "alpaca:paper",
+          query,
+          cursor: "",
+          payload: [...payload],
+        });
+      }
+      const result = await reconcileFinanceBrokerHistory(directory, accountId);
+      expect(result.brokerFillCount).toBe(mode === "later_buy" ? 2 : 1);
+      expect(result.matchedReceiptCount).toBe(0);
+      if (mode === "missing_leg" || mode === "ambiguous_time") {
+        expect(result.positionBaselineUsable).toBe(false);
+        expect(result.invalidCorporateActionCount).toBeGreaterThan(0);
+        expect(result.corporateSettlements).toBeUndefined();
+      } else {
+        expect(result.positionBaselineUsable).toBe(true);
+        expect(result.positions[0]).toMatchObject({
+          instrument: "WBD",
+          quantity: mode === "later_buy" ? 2 : 0,
+          averageCost: mode === "later_buy" ? 20 : 0,
+          realizedPnl: 0,
+        });
+        expect(result.corporateSettlements?.[0]).toMatchObject({
+          cash: 110,
+          costBasis: 101,
+          settlementPnl: 9,
+          boundary: "corporate_settlement_not_order_fill_or_strategy_pnl",
+        });
+        const toolResult = await createFinancePositionLedgerReadTool().execute(
+          "actual-original-book-read",
+          { directory, brokerAccountId: accountId },
+        );
+        const diagnostic = (
+          toolResult.details as { brokerTradeEconomics: { diagnostic: Record<string, unknown> } }
+        ).brokerTradeEconomics.diagnostic;
+        expect(diagnostic.realizedTradePnlAfterFees).toBe(0);
+        expect(diagnostic.corporateSettlementOutcomes).toMatchObject({ observedSettlementPnl: 9 });
+        expect(diagnostic.executionThresholdPromotionEligible).toBe(false);
+      }
+    },
+  );
 });

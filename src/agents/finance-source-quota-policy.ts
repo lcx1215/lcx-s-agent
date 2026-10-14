@@ -61,6 +61,15 @@ export const FINANCE_SOURCE_QUOTA_POLICIES: readonly FinanceQuotaPolicy[] = [
   ),
 
   policy(
+    "deribit",
+    ["www.deribit.com"],
+    [{ limit: 30, durationMs: minute }],
+    1_001,
+    "conservative_unknown",
+    "https://docs.deribit.com/api-reference/market-data/public-get_book_summary_by_currency",
+  ),
+
+  policy(
     "massive",
     ["api.massive.com"],
     [{ limit: 5, durationMs: minute }],

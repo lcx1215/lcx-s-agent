@@ -33,6 +33,12 @@ import {
   type FinanceRealtimeSourceAdapter,
 } from "../../src/agents/finance-realtime-source-registry.ts";
 import {
+  financeScheduledResearchHandoffSchema,
+  type FinanceResearchControllerHandoff,
+  assertFinanceResearchRuleUse,
+  type FinanceResearchControllerRuleUse,
+} from "../../src/agents/finance-research-portfolio-plan.js";
+import {
   buildDefaultFinanceResearchTargets,
   financeResearchPortfolioContextSchema,
   runFinanceResearchRun,
@@ -114,6 +120,8 @@ type Options = {
   portfolioContextPath?: string;
   portfolioPlanOut?: string;
   controllerEvidencePath?: string;
+  controllerHandoffPath?: string;
+  controllerHandoffSha256?: string;
   controllerResearchScope: boolean;
   json: boolean;
   schedulerSummary?: boolean;
@@ -161,6 +169,8 @@ function usage(): string {
     "  --portfolio-context FILE           controller-owned active-strategy/account envelope",
     "  --portfolio-plan-out FILE          atomically write a verified portfolio plan",
     "  --controller-evidence FILE         timestamped controller-owned local evidence packet",
+    "  --controller-handoff FILE          original scheduler input provenance receipt",
+    "  --controller-handoff-sha256 SHA     exact scheduler-written provenance bytes",
     "  --controller-research-scope        target only the unique typed night scope in controller evidence (research_only)",
     "  --persist-theses                   store only fully gated, source-linked research thesis candidates",
     "  --finance-state-dir DIR            exact existing finance state root (required with --persist-theses)",
@@ -317,6 +327,12 @@ export function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--controller-research-scope") {
       options.controllerResearchScope = true;
+    } else if (arg === "--controller-handoff") {
+      options.controllerHandoffPath = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--controller-handoff-sha256") {
+      options.controllerHandoffSha256 = readValue(args, index, arg);
+      index += 1;
     } else if (arg === "--persist-theses") {
       options.persistTheses = true;
     } else if (arg === "--finance-state-dir") {
@@ -343,6 +359,19 @@ export function parseArgs(args: readonly string[]): Options {
   }
   if (options.portfolioPlanOut && !options.portfolioContextPath) {
     throw new Error("--portfolio-plan-out requires --portfolio-context");
+  }
+  if (options.controllerHandoffPath || options.controllerHandoffSha256) {
+    if (
+      !options.controllerHandoffPath ||
+      !options.controllerHandoffSha256 ||
+      !/^[a-f0-9]{64}$/u.test(options.controllerHandoffSha256) ||
+      !options.controllerEvidencePath ||
+      !options.portfolioContextPath
+    ) {
+      throw new Error(
+        "--controller-handoff requires --controller-handoff-sha256, --controller-evidence and --portfolio-context",
+      );
+    }
   }
   if (
     options.portfolioContextPath &&
@@ -579,6 +608,9 @@ export function buildControllerNightResearchTargets(params: {
     undefined,
     undefined,
     params.instruments,
+    // Equity night review consumes the controller's closed-session evidence;
+    // it does not need live execution quotes. Crypto keeps its 24-hour refresh.
+    [],
   );
 }
 
@@ -664,6 +696,8 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
     },
     status: receipt.status,
     answerDecision: receipt.answerDecision,
+    ...(receipt.controllerHandoff ? { controllerHandoff: receipt.controllerHandoff } : {}),
+    ...(receipt.controllerRuleUse ? { controllerRuleUse: receipt.controllerRuleUse } : {}),
     ...(receipt.portfolioAbstention ? { portfolioAbstention: receipt.portfolioAbstention } : {}),
     plan: {
       asOf: receipt.plan.asOf,
@@ -958,21 +992,116 @@ async function financeResearchAdaptersWithFreshHealth(params: {
   };
 }
 
-async function writeVerifiedPortfolioPlan(filePath: string, plan: unknown): Promise<string> {
+export type FinancePortfolioPlanWrite = Readonly<{
+  path: string;
+  sha256: string;
+  asOf: string;
+  accountId: string;
+  venue: "paper" | "alpaca";
+}>;
+
+async function writeVerifiedPortfolioPlan(
+  filePath: string,
+  plan: unknown,
+): Promise<FinancePortfolioPlanWrite> {
   const { financePortfolioPlanSchema } =
     await import("../../src/agents/finance-portfolio-composition.ts");
   const parsed = financePortfolioPlanSchema.parse(plan);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writePrivateReceipt(temporary, `${JSON.stringify(parsed, null, 2)}\n`);
+  const serialized = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writePrivateReceipt(temporary, serialized);
   await fs.rename(temporary, filePath);
-  return filePath;
+  return {
+    path: filePath,
+    sha256: createHash("sha256").update(serialized).digest("hex"),
+    asOf: parsed.asOf,
+    accountId: parsed.accountId,
+    venue: parsed.venue,
+  };
+}
+
+/** Read once, bind original bytes, then reuse the parsed controller inputs. */
+export async function readControllerResearchInput(
+  options: Pick<
+    Options,
+    | "controllerEvidencePath"
+    | "portfolioContextPath"
+    | "controllerHandoffPath"
+    | "controllerHandoffSha256"
+  >,
+  asOf: string,
+): Promise<{
+  controllerEvidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>;
+  portfolioContext?: FinanceResearchRunInput["portfolioContext"];
+  controllerHandoff?: FinanceResearchControllerHandoff;
+}> {
+  const [evidenceBytes, contextBytes, handoffBytes] = await Promise.all([
+    options.controllerEvidencePath ? fs.readFile(options.controllerEvidencePath) : undefined,
+    options.portfolioContextPath ? fs.readFile(options.portfolioContextPath) : undefined,
+    options.controllerHandoffPath ? fs.readFile(options.controllerHandoffPath) : undefined,
+  ]);
+  const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  let controllerHandoff: FinanceResearchControllerHandoff | undefined;
+  if (options.controllerHandoffPath || options.controllerHandoffSha256) {
+    if (!handoffBytes || sha256(handoffBytes) !== options.controllerHandoffSha256) {
+      throw new Error("controller handoff producer hash mismatch");
+    }
+    const handoff = financeScheduledResearchHandoffSchema.parse(
+      JSON.parse(handoffBytes.toString("utf8")),
+    );
+    for (const [name, filename, bytes] of [
+      ["controllerEvidence", options.controllerEvidencePath, evidenceBytes],
+      ["portfolioContext", options.portfolioContextPath, contextBytes],
+    ] as const) {
+      const pin = handoff.inputs[name];
+      if (
+        !filename ||
+        path.resolve(pin.path) !== path.resolve(filename) ||
+        !bytes ||
+        pin.bytes !== bytes.length ||
+        pin.sha256 !== sha256(bytes)
+      ) {
+        throw new Error(`controller handoff ${name} path or bytes mismatch`);
+      }
+    }
+    if (Date.parse(handoff.sourceScope.asOf) !== Date.parse(asOf)) {
+      throw new Error("controller handoff asOf mismatch");
+    }
+    controllerHandoff = {
+      ...handoff,
+      producer: {
+        path: options.controllerHandoffPath!,
+        sha256: sha256(handoffBytes),
+        bytes: handoffBytes.length,
+      },
+    };
+  }
+  const controllerEvidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]> =
+    evidenceBytes ? JSON.parse(evidenceBytes.toString("utf8")) : [];
+  const portfolioContext = contextBytes
+    ? financeResearchPortfolioContextSchema.parse(JSON.parse(contextBytes.toString("utf8")))
+    : undefined;
+  if (
+    controllerHandoff &&
+    (!portfolioContext ||
+      controllerHandoff.sourceScope.accountId !== portfolioContext.accountId ||
+      controllerHandoff.sourceScope.venue !== portfolioContext.venue)
+  ) {
+    throw new Error("controller handoff account or venue mismatch");
+  }
+  return {
+    controllerEvidence,
+    portfolioContext,
+    ...(controllerHandoff ? { controllerHandoff } : {}),
+  };
 }
 
 export async function run(options: Options): Promise<{
   receipt: FinanceResearchRunReceipt;
   written?: unknown;
   portfolioPlanWritten?: string;
+  portfolioPlanWrite?: FinancePortfolioPlanWrite;
   thesisLearning?: FinanceResearchThesisLearningResult;
 }> {
   const ask = assertResearchAsk(options.ask);
@@ -1004,10 +1133,11 @@ export async function run(options: Options): Promise<{
       throw new Error("--finance-state-dir must name an existing finance state directory");
     }
   }
-  const suppliedControllerEvidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]> =
-    options.controllerEvidencePath
-      ? JSON.parse(await fs.readFile(options.controllerEvidencePath, "utf8"))
-      : [];
+  const {
+    controllerEvidence: suppliedControllerEvidence,
+    portfolioContext,
+    controllerHandoff,
+  } = await readControllerResearchInput(options, asOf);
   const controllerResearchScope = options.controllerResearchScope
     ? parseControllerResearchScope(suppliedControllerEvidence, asOf)
     : undefined;
@@ -1022,11 +1152,7 @@ export async function run(options: Options): Promise<{
       );
     }
   }
-  const portfolioContext = options.portfolioContextPath
-    ? financeResearchPortfolioContextSchema.parse(
-        JSON.parse(await fs.readFile(options.portfolioContextPath, "utf8")),
-      )
-    : undefined;
+
   const strategyScope =
     options.portfolioContextPath && portfolioContext
       ? await readFinanceActiveStrategyResearchScope({
@@ -1042,6 +1168,30 @@ export async function run(options: Options): Promise<{
           requiredInstruments: strategyScope.instruments,
         })
       : portfolioContext;
+  const ruleEvidence = strategyScope?.evidence.find(
+    (item) => item.id === "finance-controller:active-strategies",
+  );
+  const controllerRuleUse =
+    strategyScope && portfolioContext && ruleEvidence
+      ? assertFinanceResearchRuleUse(
+          {
+            source: strategyScope.source,
+            accountScope: {
+              accountId: portfolioContext.accountId,
+              venue: portfolioContext.venue,
+              asOf,
+            },
+            evidence: {
+              id: ruleEvidence.id,
+              sha256: createHash("sha256").update(ruleEvidence.text, "utf8").digest("hex"),
+            },
+            ...(controllerHandoff ? { parentRunId: controllerHandoff.sourceScope.runId } : {}),
+          },
+          strategyScope.evidence,
+          portfolioContext,
+          asOf,
+        )
+      : undefined;
   let equityUniverseSnapshot: FinanceResearchRunInput["equityUniverseSnapshot"];
   if (options.financeStateDir) {
     try {
@@ -1063,6 +1213,8 @@ export async function run(options: Options): Promise<{
     decisionMode: options.decisionMode,
     ...(options.executeModules ? { executeModules: true } : {}),
     controllerEvidence: [...(strategyScope?.evidence ?? []), ...suppliedControllerEvidence],
+    ...(controllerHandoff ? { controllerHandoff } : {}),
+    ...(controllerRuleUse ? { controllerRuleUse } : {}),
     ...(strategyScope
       ? {
           targets: buildDefaultFinanceResearchTargets(
@@ -1216,14 +1368,16 @@ export async function run(options: Options): Promise<{
       });
     }
   }
-  const portfolioPlanWritten =
+  const portfolioPlanWrite =
     options.portfolioPlanOut && receipt.portfolioPlan
       ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
       : undefined;
   return {
     receipt,
     ...(written === undefined ? {} : { written }),
-    ...(portfolioPlanWritten === undefined ? {} : { portfolioPlanWritten }),
+    ...(portfolioPlanWrite === undefined
+      ? {}
+      : { portfolioPlanWritten: portfolioPlanWrite.path, portfolioPlanWrite }),
     ...(thesisLearning === undefined ? {} : { thesisLearning }),
   };
 }
@@ -1237,7 +1391,10 @@ export function compactFinanceResearchSummary(
     plan: { asOf: string };
     written?: unknown;
     portfolioPlanWritten?: string;
+    portfolioPlanWrite?: FinancePortfolioPlanWrite;
     portfolioAbstention?: FinanceResearchRunReceipt["portfolioAbstention"];
+    controllerHandoff?: FinanceResearchControllerHandoff;
+    controllerRuleUse?: FinanceResearchControllerRuleUse;
   },
 ) {
   return {
@@ -1249,7 +1406,10 @@ export function compactFinanceResearchSummary(
     gates: summary.gates.map((gate) => ({ id: gate.id, passed: gate.passed })),
     written: summary.written,
     portfolioPlanWritten: summary.portfolioPlanWritten,
+    portfolioPlanWrite: summary.portfolioPlanWrite,
     ...(summary.portfolioAbstention ? { portfolioAbstention: summary.portfolioAbstention } : {}),
+    ...(summary.controllerHandoff ? { controllerHandoff: summary.controllerHandoff } : {}),
+    ...(summary.controllerRuleUse ? { controllerRuleUse: summary.controllerRuleUse } : {}),
   };
 }
 
@@ -1279,7 +1439,10 @@ async function main(): Promise<number> {
     ...(result.written === undefined ? {} : { written: result.written }),
     ...(result.portfolioPlanWritten === undefined
       ? {}
-      : { portfolioPlanWritten: result.portfolioPlanWritten }),
+      : {
+          portfolioPlanWritten: result.portfolioPlanWritten,
+          portfolioPlanWrite: result.portfolioPlanWrite,
+        }),
     ...(result.thesisLearning === undefined ? {} : { thesisLearning: result.thesisLearning }),
   };
   if (options.json) {

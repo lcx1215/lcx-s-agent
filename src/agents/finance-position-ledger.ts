@@ -903,7 +903,9 @@ const BrokerHistoryHeaderSchema = BrokerHistoryRecordSchema.extend({
   body: BrokerHistoryBodySchema.extend({ payload: z.unknown() }),
 });
 const BROKER_HISTORY_HASH_PROOF_LIMIT = 50_000;
-const BROKER_HISTORY_HEADER_PROOF_BYTES = 8 * 1024 * 1024;
+// The current 50k-row proof bound needs about 14 MiB of normalized headers.
+// Keep a finite 16 MiB envelope; payloads remain uncached and every byte rehashed.
+const BROKER_HISTORY_HEADER_PROOF_BYTES = 16 * 1024 * 1024;
 const BROKER_HISTORY_HEADER_PROOF_MAX_BYTES = 2048;
 type BrokerHistoryProofHeader = Readonly<{
   sequence: number;
@@ -930,10 +932,18 @@ function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
   }
   let previousRef: string | null = null;
   let sequence = 0;
+  // CAST returns the database encoding. Keep SQLite's own decoding for legacy UTF-16 stores.
+  const utf8 = db.prepare("PRAGMA encoding").get()?.encoding === "UTF-8";
   for (const row of db
-    .prepare("SELECT ref,body FROM finance_broker_history ORDER BY sequence")
+    .prepare(
+      `SELECT ref,typeof(body) AS body_type,${utf8 ? "CAST(body AS BLOB)" : "body"} AS body FROM finance_broker_history ORDER BY sequence`,
+    )
     .iterate()) {
-    if (typeof row.body !== "string" || typeof row.ref !== "string") {
+    if (
+      row.body_type !== "text" ||
+      !(row.body instanceof Uint8Array || typeof row.body === "string") ||
+      typeof row.ref !== "string"
+    ) {
       throw new Error("invalid broker history row");
     }
     const storedRef = row.ref;
@@ -941,10 +951,19 @@ function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
     let proof = brokerHistoryHashProofs.get(encodedHash);
     let raw: unknown;
     let record: z.infer<typeof BrokerHistoryRecordSchema> | undefined;
-    const encoded = row.body;
+    const encodedBytes = row.body;
     const readRecord = () => {
       if (!record) {
-        raw = JSON.parse(encoded);
+        // Preserve SQLite text decoding semantics, including Unicode and BOM behavior.
+        raw = JSON.parse(
+          typeof encodedBytes === "string"
+            ? encodedBytes
+            : Buffer.from(
+                encodedBytes.buffer,
+                encodedBytes.byteOffset,
+                encodedBytes.byteLength,
+              ).toString("utf8"),
+        );
         record = (
           proof?.payloadUnchanged
             ? BrokerHistoryHeaderSchema.parse(raw)
@@ -1010,7 +1029,37 @@ function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRe
 }
 
 /** Additive table in the existing database; never appends to the position chain. */
-export async function appendFinanceBrokerHistory(directory: string, body: BrokerHistoryBody) {
+const brokerHistoryAppendTurns = new Map<string, Promise<void>>();
+export async function appendFinanceBrokerHistory(
+  directory: string,
+  body: BrokerHistoryBody,
+  options: { signal?: AbortSignal } = {},
+) {
+  options.signal?.throwIfAborted();
+  const key = databasePath(directory);
+  const previous = brokerHistoryAppendTurns.get(key);
+  let release = () => {};
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  brokerHistoryAppendTurns.set(key, turn);
+  try {
+    await previous;
+    return await appendBrokerHistoryOnTurn(directory, body, options);
+  } finally {
+    release();
+    if (brokerHistoryAppendTurns.get(key) === turn) {
+      brokerHistoryAppendTurns.delete(key);
+    }
+  }
+}
+
+async function appendBrokerHistoryOnTurn(
+  directory: string,
+  body: BrokerHistoryBody,
+  options: { signal?: AbortSignal },
+) {
+  options.signal?.throwIfAborted();
   const validated = BrokerHistoryBodySchema.parse(body);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const { DatabaseSync } = requireNodeSqlite();
@@ -1031,6 +1080,10 @@ export async function appendFinanceBrokerHistory(directory: string, body: Broker
       // Finding a duplicate never ends validation: corrupt tails and other accounts
       // must still fail before returning the first matching observation.
       for (const row of readVerifiedBrokerHistoryRows(db)) {
+        if (row.header.sequence % 64 === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        options.signal?.throwIfAborted();
         last = { sequence: row.header.sequence, ref: row.ref };
         if (
           !existing &&
@@ -1082,7 +1135,9 @@ export async function reduceFinanceBrokerHistoryRecords<T>(
   venue: string,
   initial: T,
   reduce: (value: T, record: BrokerHistoryRecord) => T,
+  options: { streams?: readonly string[]; signal?: AbortSignal } = {},
 ) {
+  options.signal?.throwIfAborted();
   if (!accountId.trim() || !venue.trim()) {
     throw new Error("broker history requires account and venue");
   }
@@ -1094,10 +1149,21 @@ export async function reduceFinanceBrokerHistoryRecords<T>(
     let value = initial;
     let headRef: string | null = null;
     let recordCount = 0;
-    for (const record of readBrokerHistoryRows(db)) {
-      if (record.body.accountId === accountId && record.body.venue === venue) {
-        value = reduce(value, record);
-        headRef = record.ref;
+    const streams = options.streams ? new Set(options.streams) : undefined;
+    for (const row of readVerifiedBrokerHistoryRows(db)) {
+      // Keep socket acknowledgements, heartbeat pongs and host deadlines runnable.
+      // Every current row still receives the original byte/hash/chain validation.
+      if (row.header.sequence % 64 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      options.signal?.throwIfAborted();
+      if (row.header.accountId === accountId && row.header.venue === venue) {
+        // Validate the entire current chain; avoid decoding previously verified
+        // payloads that this consumer will immediately discard.
+        if (!streams || streams.has(row.header.query.split(":", 1)[0])) {
+          value = reduce(value, row.readRecord());
+        }
+        headRef = row.ref;
         recordCount += 1;
       }
     }
@@ -1148,6 +1214,9 @@ export async function readFinanceBrokerHistoryActivities(
     const activities = new Map<string, { fingerprint: string; row: Record<string, unknown> }>();
     let headRef: string | null = null;
     for (const record of readBrokerHistoryRows(db)) {
+      if (record.sequence % 64 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
       if (record.body.accountId !== accountId || record.body.venue !== venue) {
         continue;
       }

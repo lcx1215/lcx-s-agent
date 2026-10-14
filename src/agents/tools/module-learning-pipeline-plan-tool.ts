@@ -632,6 +632,28 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
   },
 };
 
+export function getModuleLearningSafetyBoundaries(
+  targetModule: "skill_pattern_distillation" | "agent_workflow_memory",
+): readonly string[] {
+  return [...MODULE_SCHEMAS[targetModule].safetyBoundaries];
+}
+
+export function requiresModuleLearningContentAcceptance(targetModule: string | undefined): boolean {
+  return targetModule === "skill_pattern_distillation" || targetModule === "agent_workflow_memory";
+}
+
+export function moduleLearningContentAcceptance(applicationValidationReceiptPath: string | null) {
+  return {
+    status: "not_observed" as const,
+    reason:
+      "File identity checks do not assess whether the candidate or application content is correct.",
+    nextOwner: "module_learning_pipeline_apply_validation",
+    applicationValidationReceiptPath,
+    boundary:
+      "The existing application/evaluation owner must assess actual content; declarations, quotes and hashes alone cannot establish acceptance.",
+  };
+}
+
 function optionalList(value: string[] | undefined): string[] {
   return value ?? [];
 }
@@ -961,11 +983,15 @@ export function createModuleLearningPipelinePlanTool(options?: {
         retrievalReceiptVerified: Boolean(evidenceFiles[1]),
         applicationReceiptVerified: Boolean(evidenceFiles[2]),
         evaluationVerified,
+        evaluationIntegrityVerified: evaluationVerified,
+        applicationContentAcceptance: moduleLearningContentAcceptance(
+          applicationValidationReceiptPath,
+        ),
         artifactHashes: evidenceFiles.map((file) => file?.sha256 ?? null),
         boundary:
-          "Local source-bound evaluation integrity only; not model training, trading promotion or runtime success.",
+          "Local source-bound evaluation file integrity only; content acceptance, model training, trading promotion and runtime success are not established.",
       };
-      const evidenceStatus = resolveEvidenceStatus({
+      const integrityStatus = resolveEvidenceStatus({
         sourceUrlOrPath,
         actualReadingScope,
         sourceRegistryRecordPath: evidenceFiles[0] ? sourceRegistryRecordPath : null,
@@ -980,6 +1006,11 @@ export function createModuleLearningPipelinePlanTool(options?: {
         keepDownrankDiscardDecision,
         weakEvidenceGateSatisfied,
       });
+      const contentAcceptanceRequired = requiresModuleLearningContentAcceptance(targetModule);
+      const evidenceStatus =
+        contentAcceptanceRequired && integrityStatus === "eval_absorbed"
+          ? "application_ready"
+          : integrityStatus;
       const missingEvidence = [
         sourceUrlOrPath ? null : "source_url_or_local_source_path",
         actualReadingScope ? null : "actual_reading_scope",
@@ -1004,6 +1035,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         trainingOrEvalAbsorptionEvidencePath && !evaluationVerified
           ? "unverified_source_bound_application_eval"
           : null,
+        contentAcceptanceRequired ? "application_content_acceptance_not_observed" : null,
       ].filter((item): item is string => Boolean(item));
 
       const financePipelineArgs =
@@ -1094,7 +1126,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         existingToolBridge: schema.existingToolBridge,
         financePipelineArgs,
         claimBoundary:
-          "A module is not learned from storage alone. Claim stored_only, retrieval_ready, application_ready, or eval_absorbed only when the matching evidence exists.",
+          "A module is not learned from storage alone. Matching file hashes do not establish content acceptance. Skill/workflow absorption also requires observed content acceptance; legacy statuses for other targets do not certify content correctness.",
         receiptPath,
         receiptWritten: receiptPath !== null,
         liveTouched: false,

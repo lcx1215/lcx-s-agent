@@ -45,8 +45,6 @@ const MODULE_LEARNING_SOURCE_REGISTRY =
 type ExistingPlanReceipt = {
   receiptPath: string;
   status?: unknown;
-  missingEvidence?: unknown;
-  claimBoundary?: unknown;
 };
 
 function usage(): never {
@@ -273,8 +271,6 @@ async function buildExistingPlanReceiptIndex(params: {
       index.set(key, {
         receiptPath: relativeToWorkspace(params.workspaceDir, file.path),
         status: receipt.status,
-        missingEvidence: receipt.missingEvidence,
-        claimBoundary: receipt.claimBoundary,
       });
     }
   }
@@ -400,12 +396,16 @@ export async function buildLearningSedimentationBridge(
       retrievalReceiptPath: candidate.retrievalReceiptPath ?? null,
       applicationValidationReceiptPath: candidate.applicationValidationReceiptPath,
       matchedSignals: candidate.matchedSignals,
-      status: existingReceipt?.status ?? details.status,
-      missingEvidence: existingReceipt?.missingEvidence ?? details.missingEvidence,
+      // Reuse the durable receipt identity, but never its stale readiness claim.
+      status: details.status,
+      missingEvidence: details.missingEvidence,
+      priorReceiptStatus: existingReceipt?.status ?? null,
+      receiptNeedsReview: Boolean(existingReceipt && existingReceipt.status !== details.status),
+      currentEvidenceVerification: details.evidenceVerification,
       receiptPath: existingReceipt?.receiptPath ?? details.receiptPath,
       receiptWritten: details.receiptWritten,
       receiptAlreadyExists: Boolean(existingReceipt),
-      claimBoundary: existingReceipt?.claimBoundary ?? details.claimBoundary,
+      claimBoundary: details.claimBoundary,
     });
   }
   const existingPlanReceiptCount = candidates.filter(

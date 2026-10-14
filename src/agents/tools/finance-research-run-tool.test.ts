@@ -2,6 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { probeOriginalCaseflow } from "../../../test/fixtures/lcx-waterflow-caseflow-probe.js";
+import {
+  registerAgentRunContext,
+  clearAgentRunContext,
+  resetAgentRunContextForTest,
+} from "../../infra/agent-events.js";
+import { buildFinanceHistoricalResearchFeedback } from "../finance-research-evidence.js";
 import { runFinanceResearchRun } from "../finance-research-runner.js";
 import { createFinanceResearchRunTool } from "./finance-research-run-tool.js";
 
@@ -36,10 +43,166 @@ async function workspace() {
 }
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  resetAgentRunContextForTest();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
 describe("platform-independent finance workflow tool", () => {
+  it("returns original bounded Quality feedback and supports a diagnostic-dependent stop", async () => {
+    const root = await workspace();
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("Network forbidden in private Quality feedback sample");
+    });
+    let native: Awaited<ReturnType<typeof probeOriginalCaseflow>> | undefined;
+    const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () => {
+      if (native) {
+        throw new Error("Another research call is not justified by a Quality closure gap");
+      }
+      native = await probeOriginalCaseflow({
+        directory: root,
+        caseId: "tool-quality-gap",
+        fault: "quality_failure",
+      });
+      return native.receipt;
+    });
+    const hostRunId = "private-registered-finance-run";
+    const hostSessionKey = "agent:private:finance-custody";
+    registerAgentRunContext(hostRunId, { sessionKey: hostSessionKey });
+    const tool = createFinanceResearchRunTool({
+      workspaceDir: root,
+      config: {},
+      executeResearch,
+      agentRunId: hostRunId,
+      agentSessionKey: hostSessionKey,
+    });
+    const args = {
+      ask: "Review supplied BTC evidence and retain uncertainty.",
+      asOf: "2026-07-01T12:00:00.000Z",
+      // Untrusted model extras must never become the host's custody identity.
+      agentRunId: "forged-model-run",
+      agentSessionKey: "agent:foreign:session",
+      toolInvocation: { status: "observed", caller: { runId: "forged-model-run" } },
+    };
+    const first = await tool.execute("review-gap-first", args);
+    if (!native) {
+      throw new Error("original private Quality owner was not called");
+    }
+    const details = first.details as {
+      receiptPath: string;
+      receiptSha256: string;
+      reviewFeedback: ReturnType<typeof buildFinanceHistoricalResearchFeedback>;
+      artifact?: unknown;
+      toolInvocation: {
+        status: string;
+        caller: { runId: string; sessionKey: string; toolCallId: string };
+        native: { batchCorrelationId?: string; qualityRunId?: string };
+        payloadSha256: string;
+      };
+    };
+    const bytes = await fs.readFile(details.receiptPath);
+    const receiptSha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(receiptSha256).toBe(details.receiptSha256);
+    const written = JSON.parse(bytes.toString("utf8"));
+    const { toolInvocation, ...writtenPayload } = written;
+    expect(writtenPayload).toEqual(native.receipt);
+    expect(toolInvocation).toEqual(details.toolInvocation);
+    expect(toolInvocation).toMatchObject({
+      status: "observed",
+      caller: { runId: hostRunId, sessionKey: hostSessionKey, toolCallId: "review-gap-first" },
+      native: {
+        batchCorrelationId: native.receipt.batch?.correlationId,
+        qualityRunId: native.receipt.quality?.runId,
+      },
+    });
+    expect(toolInvocation.native.batchCorrelationId).not.toBe(hostRunId);
+    expect(toolInvocation.native.qualityRunId).not.toBe(hostRunId);
+    expect(toolInvocation.payloadSha256).toBe(
+      createHash("sha256")
+        .update(JSON.stringify(writtenPayload, null, 2) + "\n")
+        .digest("hex"),
+    );
+    expect(details.artifact).toBeUndefined();
+    const feedback = details.reviewFeedback;
+    const retained = process.env.LCX_FINANCE_TOOL_FEEDBACK_PROOF_DIR;
+    if (retained) {
+      await fs.mkdir(retained, { recursive: true });
+      await fs.writeFile(path.join(retained, "quality-source-receipt.json"), bytes);
+      await fs.writeFile(
+        path.join(retained, "native-tool-feedback-before-next.json"),
+        JSON.stringify({ firstResult: first, qualityRequests: native.qualityRequests }, null, 2) +
+          "\n",
+      );
+    }
+    expect(feedback).toMatchObject({
+      status: "present",
+      sourceRef: details.receiptPath,
+      sourceSha256: receiptSha256,
+      failedGates: expect.arrayContaining([expect.objectContaining({ id: "quality" })]),
+    });
+    expect(Buffer.byteLength(JSON.stringify(feedback))).toBeLessThanOrEqual(2048);
+    const gaps = feedback.qualityFeedback as string[];
+    const concrete = gaps.find((gap) => gap.includes("closure_missing_or_invalid"));
+    expect(concrete).toBeDefined();
+    const refs = feedback.qualityFeedbackRefs as { pointer: string; truncated: boolean }[];
+    const stored = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+    for (const [index, ref] of refs.entries()) {
+      const original = ref.pointer
+        .split("/")
+        .slice(1)
+        .reduce<unknown>((value, key) => (value as Record<string, unknown>)[key], stored);
+      expect(typeof original).toBe("string");
+      if (!ref.truncated) {
+        expect(gaps[index]).toBe(original);
+      }
+    }
+    const originalFeedback = native.receipt.quality?.attempts.at(-1)?.feedback ?? [];
+    expect(gaps.length + Number(feedback.omittedQualityFeedback)).toBe(originalFeedback.length);
+    expect(Number(feedback.omittedQualityFeedback)).toBeGreaterThan(0);
+    const text = first.content.find((block) => block.type === "text");
+    if (!text || text.type !== "text") {
+      throw new Error("actual tool-return JSON text missing");
+    }
+    const returned = JSON.parse(text.text) as typeof details;
+    expect(returned.reviewFeedback).toEqual(feedback);
+    expect(text.text.indexOf('"reviewFeedback"')).toBeLessThan(
+      text.text.indexOf('"moduleCatalog"'),
+    );
+    // Explicit offline consumer: a closure problem does not justify another research module call.
+    const nextDecision = {
+      action: concrete ? "stop" : "diagnostic_unobserved",
+      reason: concrete,
+      requiredRepair: "Repair the original Quality finding closure evidence before adoption.",
+      sourceSha256: returned.reviewFeedback.sourceSha256,
+    };
+    expect(nextDecision.action).toBe("stop");
+    expect(nextDecision.reason).toContain("closure_missing_or_invalid");
+    expect(nextDecision.sourceSha256).toBe(receiptSha256);
+    expect(executeResearch).toHaveBeenCalledTimes(1);
+    expect(network).not.toHaveBeenCalled();
+    if (retained) {
+      await fs.mkdir(retained, { recursive: true });
+      await fs.writeFile(path.join(retained, "quality-source-receipt.json"), bytes);
+      await fs.writeFile(
+        path.join(retained, "native-tool-feedback.json"),
+        JSON.stringify(
+          {
+            boundary: "offline_original_quality_io_and_scripted_stop_not_natural_model_adoption",
+            args,
+            firstResult: first,
+            sourceSha256: receiptSha256,
+            qualityRequests: native.qualityRequests,
+            nextDecision,
+            researchCalls: executeResearch.mock.calls.length,
+            networkCalls: network.mock.calls.length,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    }
+  });
+
   it("uses the canonical workflow in planning mode and saves a local receipt", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
       runFinanceResearchRun({ input }),
@@ -51,11 +214,58 @@ describe("platform-independent finance workflow tool", () => {
       status: string;
       receiptPath: string;
       externalChannelApplied: boolean;
+      toolInvocation: { status: string; reason: string };
     };
     expect(details.status).toBe("planned");
     expect(details.externalChannelApplied).toBe(false);
     expect(JSON.parse(await fs.readFile(details.receiptPath, "utf8")).status).toBe("planned");
+    expect(details.toolInvocation).toMatchObject({
+      status: "not_observed",
+      reason: "host_identity_missing_or_invalid",
+    });
+    expect(
+      JSON.parse(await fs.readFile(details.receiptPath, "utf8")).toolInvocation,
+    ).toBeUndefined();
   });
+
+  it.each(["changes", "disappears"] as const)(
+    "does not persist host custody when the host context %s during the original await",
+    async (change) => {
+      const root = await workspace();
+      const hostRunId = `private-await-${change}`;
+      const hostSessionKey = "agent:private:await-custody";
+      registerAgentRunContext(hostRunId, { sessionKey: hostSessionKey });
+      const executeResearch = vi.fn<typeof runFinanceResearchRun>(async (options) => {
+        await Promise.resolve();
+        if (change === "changes") {
+          registerAgentRunContext(hostRunId, { sessionKey: "agent:foreign:changed" });
+        } else {
+          clearAgentRunContext(hostRunId);
+        }
+        return runFinanceResearchRun(options);
+      });
+      const tool = createFinanceResearchRunTool({
+        workspaceDir: root,
+        config: {},
+        executeResearch,
+        agentRunId: hostRunId,
+        agentSessionKey: hostSessionKey,
+      });
+      const result = await tool.execute(`context-${change}`, input);
+      const details = result.details as {
+        receiptPath: string;
+        toolInvocation: { status: string; reason: string };
+      };
+      expect(executeResearch).toHaveBeenCalledOnce();
+      expect(details.toolInvocation).toMatchObject({
+        status: "not_observed",
+        reason: change === "changes" ? "host_context_session_changed" : "host_context_disappeared",
+      });
+      const receipt = JSON.parse(await fs.readFile(details.receiptPath, "utf8"));
+      expect(receipt.status).toBe("planned");
+      expect(receipt.toolInvocation).toBeUndefined();
+    },
+  );
 
   it("forwards explicit live budgets and the host configuration without choosing a platform model", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
@@ -288,3 +498,4 @@ it("returns real source-failure feedback and targets for another decision withou
   expect(details.sourceRecovery.executionAuthority).toBe("none");
   expect(details.moduleToolsDispatched).toBe(false);
 });
+import { createHash } from "node:crypto";

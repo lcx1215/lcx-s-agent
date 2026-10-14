@@ -2,7 +2,9 @@ import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.j
 import { brokerSymbol } from "./finance-broker-reconciliation.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { FinanceBrokerExitFeedbackSchema } from "./finance-expectation-gap.js";
 import { readFinanceIntradayDecisions } from "./finance-intraday-control-ledger.js";
+import { readFinanceOwnedProtectionExitFacts } from "./finance-owned-protection-exits.js";
 import {
   readFinanceBrokerHistoryActivities,
   reduceFinanceBrokerHistoryRecords,
@@ -650,4 +652,133 @@ export async function readFinanceBrokerInstrumentFeedback(options: {
   } catch {
     return unavailable("broker_history_or_economics_unavailable");
   }
+}
+
+/** Existing owned-stop owner -> original entry/activation -> measured feedback; no receipt writes. */
+export async function readFinanceBrokerExitFeedback(
+  directory: string,
+  params: {
+    accountId: string;
+    instrument: string;
+    ruleId: string;
+    activationRef: string;
+    asOf: string;
+  },
+) {
+  const cutoff = Date.parse(params.asOf);
+  if (!Number.isFinite(cutoff)) {
+    throw new Error("invalid exit feedback cutoff");
+  }
+  const [ledger, decisions] = await Promise.all([
+    readFinancePositionLedger(directory, { asOf: params.asOf }),
+    readFinanceIntradayDecisions(directory, { asOf: params.asOf }),
+  ]);
+  const eligibleSignals = new Set(
+    decisions
+      .filter(
+        (d) =>
+          d.input.action === "buy" &&
+          d.input.strategyRule === params.ruleId &&
+          d.input.strategyBinding?.activationRef === params.activationRef,
+      )
+      .map((d) => d.input.signalId),
+  );
+  const receipts = ledger.receipts.filter(
+    (r) =>
+      r.accountId === params.accountId &&
+      r.venue === "alpaca:paper" &&
+      r.decisionRef?.source === "intraday_signal" &&
+      eligibleSignals.has(r.decisionRef.id) &&
+      Date.parse(r.recordedAt) <= cutoff &&
+      Date.parse(r.fill.filledAt) <= cutoff,
+  );
+  const exits = await readFinanceOwnedProtectionExitFacts({
+    directory,
+    accountId: params.accountId,
+    venue: "alpaca:paper",
+    receipts,
+    asOf: params.asOf,
+  });
+  const entries = [];
+  for (const exit of exits) {
+    const receipt = receipts.find((r) => r.receiptId === exit.entryReceiptId);
+    if (!receipt || receipt.decisionRef?.source !== "intraday_signal") {
+      continue;
+    }
+    const matches = decisions.filter(
+      (d) =>
+        d.input.signalId === receipt.decisionRef!.id &&
+        receipt.intentId === `intent:${d.input.signalId}` &&
+        d.input.action === "buy" &&
+        d.input.instrument === receipt.instrument &&
+        d.input.strategyRule === params.ruleId &&
+        d.input.strategyBinding?.activationRef === params.activationRef &&
+        Date.parse(d.recordedAt) <= Date.parse(receipt.fill.filledAt),
+    );
+    if (matches.length !== 1) {
+      continue;
+    }
+    const decision = matches[0],
+      cash = exit.fills.reduce((sum, f) => sum + f.quantity * f.price, 0);
+    const basis = {
+      instrument: exit.instrument,
+      signalId: decision.input.signalId,
+      decisionRef: decision.ref,
+      receiptId: receipt.receiptId,
+      entryOrderId: exit.parentOrderId,
+      exitOrderId: exit.childOrderId,
+      entryPrice: receipt.fill.fillPrice,
+      entryQuantity: receipt.fill.filledQuantity,
+      exitQuantity: exit.filledQuantity,
+      exitAveragePrice: cash / exit.filledQuantity,
+      grossPnl: cash - exit.filledQuantity * receipt.fill.fillPrice,
+      lastFillAt: exit.fills
+        .map((f) => f.occurredAt)
+        .toSorted()
+        .at(-1)!,
+      partialFillCount: exit.fills.length,
+      exitActivityRefs: exit.fills.slice(0, 8).map((f) => f.sourceFactRef),
+      omittedActivityRefCount: Math.max(0, exit.fills.length - 8),
+      sourceHistoryRefs: [
+        ...new Set([
+          exit.parentOrderHistoryRef,
+          ...exit.childOrderHistoryRefs,
+          ...exit.fills.map((f) => f.historyRef),
+        ]),
+      ].slice(0, 10),
+      fees: "not_attributed" as const,
+      netPnl: null,
+    };
+    entries.push({
+      ...basis,
+      feedbackId: caseflowFingerprint({
+        accountId: params.accountId,
+        ruleId: params.ruleId,
+        activationRef: params.activationRef,
+        entryReceiptId: exit.entryReceiptId,
+        decisionRef: decision.ref,
+        entryOrderId: exit.parentOrderId,
+        exitOrderId: exit.childOrderId,
+        entryPrice: receipt.fill.fillPrice,
+        fillFactRefs: exit.fills.map((fill) => fill.sourceFactRef),
+      }),
+      historyRef: exit.parentOrderHistoryRef,
+    });
+  }
+  const selected = entries
+    .toSorted(
+      (a, b) =>
+        Number(b.instrument === params.instrument) - Number(a.instrument === params.instrument) ||
+        b.lastFillAt.localeCompare(a.lastFillAt),
+    )
+    .slice(0, 2);
+  if (!selected.length) {
+    return undefined;
+  }
+  return FinanceBrokerExitFeedbackSchema.parse({
+    ...params,
+    historyRef: selected[0].historyRef,
+    entries: selected.map(({ historyRef: _historyRef, ...entry }) => entry),
+    boundary: "broker_parent_leg_entry_binding_not_new_execution_receipt_or_strategy_alpha",
+  });
 }

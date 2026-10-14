@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "fromVersion": 6,
+  "toVersion": 7,
+  "scenarioIds": [
+    "universe_index_total_coverage_waterflow",
+    "local_automation_digest_waterflow",
+    "senior_trader_failure_focus_waterflow"
+  ],
+  "reason": "Match original function arguments, host writer consumers and healthy training chronology; expose absent digest consumer instead of assigning a false owner.",
+  "changes": {
+    "universe": "Changed Git files feed impact; tracked/visible union and artifact areas feed validated coverage. Impact and coverage join separately in main.",
+    "localOperator": "Host-installed source owner is read only. Sibling invocations feed the actual latest writer; governance produces failure trace. Raw trace is not read by the host writer. Required digest consumer remains unimplemented.",
+    "training": "Original healthy branch trains, runs hardened eval, decides session promotion, then cools down; stage owners are actual original scripts.",
+    "registry": "All 28 scenes retained; add descriptive operator_training_supervisor and operator_agent_exam nodes for actual host writer inputs. Existing relation/state vocabulary unchanged; no dispatch authority."
+  },
+  "nonEffects": [
+    "no host script execution",
+    "no automation or forced provider/model calls",
+    "no training or promotion",
+    "no broker permission or risk changes",
+    "no restart or deployment"
+  ]
+}

@@ -268,6 +268,32 @@ type Metric = Readonly<{
   maxDrawdown: number;
 }>;
 
+export class FinanceIntradayReplayInputError extends Error {
+  readonly owner = "src/agents/finance-intraday-ledger.ts";
+
+  constructor(
+    readonly gap: Readonly<{
+      reason:
+        | "bar_duration_mismatch"
+        | "bar_sequence_gap_or_overlap"
+        | "source_bars_missing"
+        | "no_usable_sessions";
+      instrument: string;
+      sessionDate: string;
+      expectedAt?: string;
+      actualAt?: string;
+    }>,
+    message?: string,
+    readonly source?: Readonly<{ ledgerHeadRef: string | null; datasetRef: string }>,
+  ) {
+    super(
+      message ??
+        `intraday replay ${gap.reason}: ${gap.instrument} ${gap.sessionDate}, expected ${gap.expectedAt}, received ${gap.actualAt}`,
+    );
+    this.name = "FinanceIntradayReplayInputError";
+  }
+}
+
 export type FinanceIntradayPaperReceipt = Readonly<{
   schemaVersion: typeof FINANCE_INTRADAY_PAPER_SCHEMA;
   status: "paper_contract_only";
@@ -287,6 +313,11 @@ export type FinanceIntradayPaperReceipt = Readonly<{
     noOrderPlacement: true;
   }>;
   limitations: readonly string[];
+  excludedSessions?: readonly Readonly<{
+    sessionDate: string;
+    reason: "incomplete_calendar_session" | "insufficient_opening_history";
+    selectedBars: number;
+  }>[];
   receiptRef: string;
 }>;
 
@@ -379,12 +410,20 @@ export function runFinanceIntradayPaperReplay(params: {
   marketSessions?: readonly FinanceAlpacaMarketSession[];
 }): FinanceIntradayPaperReceipt {
   const config = Config.parse(params.config);
+  const source = () => ({
+    ledgerHeadRef: params.ledgerHeadRef,
+    datasetRef: caseflowFingerprint({ ledgerHeadRef: params.ledgerHeadRef, bars: params.bars }),
+  });
   const strategyRule = params.strategyRule ?? FINANCE_INTRADAY_OPENING_RANGE_RULE;
   const preCloseExitEnabled =
     strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 ||
     strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
   if (params.bars.length === 0) {
-    throw new Error("intraday replay requires bars");
+    throw new FinanceIntradayReplayInputError(
+      { reason: "source_bars_missing", instrument: "unknown", sessionDate: "none" },
+      "intraday replay requires bars",
+      source(),
+    );
   }
   const instruments = new Set(params.bars.map((bar) => bar.instrument));
   const intervals = new Set(params.bars.map((bar) => bar.intervalSeconds));
@@ -449,6 +488,11 @@ export function runFinanceIntradayPaperReplay(params: {
   const trades: FinanceIntradayPaperTrade[] = [];
   const strategyReturns: number[] = [];
   const baselineReturns: number[] = [];
+  const excludedSessions: Array<{
+    sessionDate: string;
+    reason: "incomplete_calendar_session" | "insufficient_opening_history";
+    selectedBars: number;
+  }> = [];
 
   for (const [sessionDate, rows] of [...bySession].toSorted(([left], [right]) =>
     left.localeCompare(right),
@@ -465,10 +509,51 @@ export function runFinanceIntradayPaperReplay(params: {
           marketSession.closeMinute,
         )
       ) {
+        excludedSessions.push({
+          sessionDate,
+          reason: "incomplete_calendar_session",
+          selectedBars: bars.length,
+        });
         continue;
       }
     }
+    // An absent bar is not the next interval. It also hides possible stop/target touches.
+    for (const [index, bar] of bars.entries()) {
+      const expectedEnd = new Date(Date.parse(bar.startAt) + intervalSeconds * 1_000).toISOString();
+      if (Date.parse(bar.endAt) !== Date.parse(expectedEnd)) {
+        throw new FinanceIntradayReplayInputError(
+          {
+            reason: "bar_duration_mismatch",
+            instrument: bar.instrument,
+            sessionDate,
+            expectedAt: expectedEnd,
+            actualAt: bar.endAt,
+          },
+          undefined,
+          source(),
+        );
+      }
+      const previous = bars[index - 1];
+      if (previous && Date.parse(bar.startAt) !== Date.parse(previous.endAt)) {
+        throw new FinanceIntradayReplayInputError(
+          {
+            reason: "bar_sequence_gap_or_overlap",
+            instrument: bar.instrument,
+            sessionDate,
+            expectedAt: previous.endAt,
+            actualAt: bar.startAt,
+          },
+          undefined,
+          source(),
+        );
+      }
+    }
     if (bars.length <= config.openingRangeBars + 1) {
+      excludedSessions.push({
+        sessionDate,
+        reason: "insufficient_opening_history",
+        selectedBars: bars.length,
+      });
       continue;
     }
     const opening = bars.slice(0, config.openingRangeBars);
@@ -554,7 +639,15 @@ export function runFinanceIntradayPaperReplay(params: {
     );
   }
   if (strategyReturns.length === 0) {
-    throw new Error("intraday replay has no complete sessions with the required market calendar");
+    throw new FinanceIntradayReplayInputError(
+      {
+        reason: "no_usable_sessions",
+        instrument: [...instruments][0],
+        sessionDate: [...bySession.keys()].join(",") || "none",
+      },
+      "intraday replay has no complete sessions with the required market calendar",
+      source(),
+    );
   }
   const marketCalendarRef = preCloseExitEnabled
     ? caseflowFingerprint(
@@ -601,6 +694,7 @@ export function runFinanceIntradayPaperReplay(params: {
           ]
         : []),
     ]),
+    excludedSessions: Object.freeze(excludedSessions.map((session) => Object.freeze(session))),
   };
   return Object.freeze({ ...body, receiptRef: caseflowFingerprint(body) });
 }

@@ -5,6 +5,7 @@ import {
   readAlpacaPaperSafetyFacts,
   type AlpacaSafetyProviderOptions,
 } from "./finance-alpaca-safety-provider.js";
+import { readBoundedFinanceResponseText } from "./finance-http-body.js";
 function fixture(crypto = false) {
   const at = new Date().toISOString();
   const instrument = crypto ? "BTC/USD" : "SPY";
@@ -989,7 +990,10 @@ it("preserves an ignored-reader quote timeout and parent cancellation without re
     expect(await timeout).toEqual({
       ok: false,
       reason: "alpaca_safety_cancelled_or_timed_out",
-      diagnostic: { stage: "quote_snapshot" },
+      diagnostic: {
+        stage: "quote_snapshot",
+        transport: { code: "transport_cause_unavailable", cleanupStatus: "unconfirmed" },
+      },
     });
     const before = f.read.mock.calls.length;
     caller.abort(new Error("PRIVATE_BODY"));
@@ -1134,6 +1138,17 @@ it.each([
         expect(
           typeof result.diagnostic === "string" ? result.diagnostic : result.diagnostic?.stage,
         ).toBe(stage);
+        if (kind === "future") {
+          const timing =
+            typeof result.diagnostic === "string"
+              ? (result as { quoteTiming?: unknown }).quoteTiming
+              : result.diagnostic?.quoteTiming;
+          expect(timing).toEqual({
+            quoteAtMs: Date.now() + 1000,
+            checkedAtMs: Date.now(),
+            aheadMs: 1000,
+          });
+        }
         expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|secret.invalid|token|FAKE/);
       }
     } finally {
@@ -1141,3 +1156,96 @@ it.each([
     }
   },
 );
+
+it("retains a safe socket cause from failed position facts", async () => {
+  const f = fixture();
+  const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (url, init) => {
+    if (url.endsWith("/v2/positions")) {
+      throw new TypeError("PRIVATE_URL_TOKEN", {
+        cause: Object.assign(new Error("PRIVATE_BODY"), { code: "ECONNRESET" }),
+      });
+    }
+    return original(url, init);
+  });
+  const result = await readAlpacaPaperSafetyFacts({ ...f.options, diagnostics: true });
+  expect(result).toMatchObject({
+    ok: false,
+    reason: "alpaca_safety_snapshot_read_unavailable",
+    diagnostic: "position_snapshot",
+    transport: { code: "ECONNRESET" },
+  });
+  expect(JSON.stringify(result)).not.toMatch(/PRIVATE/);
+  expect(f.read.mock.calls.filter(([url]) => url.endsWith("/v2/positions"))).toHaveLength(1);
+});
+it.each(["facts", "quote"] as const)(
+  "waits for real body cancellation acknowledgement in %s",
+  async (kind) => {
+    const f = fixture();
+    const caller = new AbortController();
+    let entered!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cancel = vi.fn();
+    const responses: Response[] = [];
+    f.read.mockImplementation(async (_url, init) => {
+      const response = new Response(new ReadableStream<Uint8Array>({ cancel }));
+      responses.push(response);
+      const pending = readBoundedFinanceResponseText(response, { signal: init.signal });
+      entered();
+      return { status: 200, body: await pending };
+    });
+    const reader = kind === "facts" ? readAlpacaPaperSafetyFacts : readAlpacaPaperSafetyQuote;
+    const pending = reader({ ...f.options, diagnostics: true }, caller.signal);
+    await reached;
+    const requestsAtCancellation = f.read.mock.calls.length;
+    caller.abort(new Error("PRIVATE_BODY"));
+    const result = await pending;
+    expect(result).toMatchObject({ ok: false, reason: "alpaca_safety_cancelled_or_timed_out" });
+    if (result.ok) {
+      throw new Error("cancelled read accepted");
+    }
+    const transport =
+      typeof result.diagnostic === "string"
+        ? "transport" in result
+          ? result.transport
+          : undefined
+        : result.diagnostic?.transport;
+    expect(transport).toMatchObject({ cleanupStatus: "confirmed" });
+    expect(cancel).toHaveBeenCalledTimes(requestsAtCancellation);
+    expect(responses.every((response) => !response.body?.locked)).toBe(true);
+    expect(f.read).toHaveBeenCalledTimes(requestsAtCancellation);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE/);
+  },
+);
+
+it("keeps cleanup unconfirmed if one parallel account body cannot cancel", async () => {
+  const f = fixture();
+  const caller = new AbortController();
+  let entered!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  f.read.mockImplementation(async (url, init) => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () =>
+          url.endsWith("/v2/positions") ? new Promise<void>(() => {}) : Promise.resolve(),
+      }),
+    );
+    const body = readBoundedFinanceResponseText(response, { signal: init.signal });
+    entered();
+    return { status: 200, body: await body };
+  });
+  const pending = readAlpacaPaperSafetyFacts({ ...f.options, diagnostics: true }, caller.signal);
+  await reached;
+  const requestsAtCancellation = f.read.mock.calls.length;
+  caller.abort();
+  expect(await pending).toMatchObject({
+    ok: false,
+    reason: "alpaca_safety_cancelled_or_timed_out",
+    transport: { cleanupStatus: "unconfirmed" },
+  });
+  expect(f.read).toHaveBeenCalledTimes(requestsAtCancellation);
+});

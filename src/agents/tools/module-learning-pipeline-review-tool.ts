@@ -1,6 +1,17 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
+import {
+  moduleLearningContentReviewRequestSchema,
+  reviewModuleLearningApplication,
+  readModuleLearningApplicationReviewInput,
+  readModuleLearningApplicationReviewRequest,
+  readModuleLearningApplicationReviewReceipt,
+  inspectModuleLearningApplicationReview,
+  type ModuleLearningReviewScope,
+  type ModuleLearningReviewQualityOptions,
+} from "../module-learning-application-review.js";
 import { buildModuleLearningSourceCoverage } from "../module-learning-source-register.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
@@ -8,6 +19,9 @@ import { jsonResult, readNumberParam, readStringParam, ToolInputError } from "./
 import {
   MODULE_LEARNING_EVIDENCE_STATUSES,
   MODULE_LEARNING_TARGETS,
+  getModuleLearningSafetyBoundaries,
+  moduleLearningContentAcceptance,
+  requiresModuleLearningContentAcceptance,
   inspectEvidenceFile,
   verifyApplicationEvaluation,
 } from "./module-learning-pipeline-plan-tool.js";
@@ -22,11 +36,26 @@ export const MODULE_LEARNING_PIPELINE_REVIEW_DIR = path.join(
   "module-learning-pipeline-reviews",
 );
 
+const reviewReference = Type.Object({
+  path: Type.String(),
+  sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+});
 const ModuleLearningPipelineReviewSchema = Type.Object({
   dateKey: Type.Optional(Type.String()),
   targetModule: Type.Optional(Type.String()),
   maxFiles: Type.Optional(Type.Number()),
   writeReview: Type.Optional(Type.Boolean()),
+  contentReview: Type.Optional(
+    Type.Object({
+      planReceipt: reviewReference,
+      source: reviewReference,
+      license: reviewReference,
+      candidate: reviewReference,
+      application: reviewReference,
+    }),
+  ),
+  contentReviewReceipt: Type.Optional(reviewReference),
+  contentReviewRequestPath: Type.Optional(Type.String()),
 });
 
 type ModuleLearningPlanReceipt = {
@@ -59,6 +88,7 @@ type ReceiptReadResult =
       ok: true;
       path: string;
       receipt: ModuleLearningPlanReceipt;
+      sha256?: string;
     }
   | {
       ok: false;
@@ -118,22 +148,37 @@ function filterTerminalMissingProof(params: {
     "application_validation_receipt",
     "training_or_eval_absorption_evidence",
     "fresh_adjacent_application_task",
+    "application_content_acceptance_not_observed",
   ]);
   return params.missingProof.filter((proof) => !terminalDecisionOptionalProof.has(proof));
 }
 
 function buildProofCompleteness(params: {
   receipt: ModuleLearningPlanReceipt;
+  missingEvidence?: readonly string[];
   boundaryViolation: boolean;
   structuredDataReviewTargetViolation: boolean;
 }) {
   const safetyBoundaries = stringArrayValue(params.receipt.safetyBoundaries);
+  const targetModule = params.receipt.targetModule;
+  // These modules share their producer's Skill/workflow boundary contract;
+  // financial research keeps its existing research_only requirement.
+  const requiredSafetyBoundaries =
+    targetModule === "skill_pattern_distillation" || targetModule === "agent_workflow_memory"
+      ? getModuleLearningSafetyBoundaries(targetModule)
+      : ["research_only"];
   return {
-    source_registry_record: hasString(params.receipt.sourceRegistryRecordPath),
+    source_registry_record:
+      hasString(params.receipt.sourceRegistryRecordPath) &&
+      !params.missingEvidence?.includes("source_registry_record"),
     actual_reading_scope: hasString(params.receipt.actualReadingScope),
     module_specific_capability_rule: hasString(params.receipt.moduleSpecificCapabilityRule),
-    capability_card_or_retrieval_receipt: hasString(params.receipt.retrievalReceiptPath),
-    application_validation_receipt: hasString(params.receipt.applicationValidationReceiptPath),
+    capability_card_or_retrieval_receipt:
+      hasString(params.receipt.retrievalReceiptPath) &&
+      !params.missingEvidence?.includes("capability_card_or_retrieval_receipt"),
+    application_validation_receipt:
+      hasString(params.receipt.applicationValidationReceiptPath) &&
+      !params.missingEvidence?.includes("application_validation_receipt"),
     training_or_eval_absorption_evidence: hasString(
       params.receipt.trainingOrEvalAbsorptionEvidencePath,
     ),
@@ -141,7 +186,9 @@ function buildProofCompleteness(params: {
     keep_downrank_or_discard_decision: hasKeepDownrankDiscardDecision(
       params.receipt.keepDownrankDiscardDecision,
     ),
-    safety_boundary: safetyBoundaries.length > 0 && safetyBoundaries.includes("research_only"),
+    safety_boundary: requiredSafetyBoundaries.every((boundary) =>
+      safetyBoundaries.includes(boundary),
+    ),
     structured_review_target: !params.structuredDataReviewTargetViolation,
     boundary_clean: !params.boundaryViolation,
   };
@@ -185,6 +232,7 @@ function nextProofOwner(missingProof: string[]): string {
         "capability_card_or_retrieval_receipt",
         "application_validation_receipt",
         "fresh_adjacent_application_task",
+        "application_content_acceptance_not_observed",
       ].includes(field),
     )
   ) {
@@ -250,6 +298,10 @@ function newerReceipt(
   left: Extract<ReceiptReadResult, { ok: true }>,
   right: Extract<ReceiptReadResult, { ok: true }>,
 ): Extract<ReceiptReadResult, { ok: true }> {
+  const timestamped = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z__/u;
+  if (timestamped.test(path.basename(left.path)) && timestamped.test(path.basename(right.path))) {
+    return left.path.localeCompare(right.path) >= 0 ? left : right;
+  }
   const leftRank = statusRank(left.receipt.status);
   const rightRank = statusRank(right.receipt.status);
   if (leftRank !== rightRank) {
@@ -260,7 +312,8 @@ function newerReceipt(
 
 async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> {
   try {
-    const parsed = JSON.parse(await fs.readFile(receiptPath, "utf8")) as ModuleLearningPlanReceipt;
+    const bytes = await fs.readFile(receiptPath);
+    const parsed = JSON.parse(bytes.toString("utf8")) as ModuleLearningPlanReceipt;
     if (
       parsed.boundary !== "local_module_learning_pipeline_plan" &&
       parsed.boundary !== "dev_module_learning_pipeline_plan"
@@ -278,7 +331,12 @@ async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> 
         reason: "missing_target_module",
       };
     }
-    return { ok: true, path: receiptPath, receipt: parsed };
+    return {
+      ok: true,
+      path: receiptPath,
+      receipt: parsed,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
   } catch {
     return {
       ok: false,
@@ -361,6 +419,7 @@ function activeReceiptKey(receipt: ModuleLearningPlanReceipt): string {
 export function buildModuleLearningPipelineReview(params: {
   verifiedEvaluationPaths?: ReadonlySet<string>;
   verifiedApplicationPaths?: ReadonlySet<string>;
+  evidenceReadGaps?: ReadonlyMap<string, readonly string[]>;
   workspaceDir: string;
   dateKey: string;
   targetModule?: string;
@@ -374,25 +433,90 @@ export function buildModuleLearningPipelineReview(params: {
   const invalidReceipts = params.receiptResults.filter(
     (result): result is Extract<ReceiptReadResult, { ok: false }> => !result.ok,
   );
-  const latestByKey = new Map<string, Extract<ReceiptReadResult, { ok: true }>>();
+  const relative = (result: Extract<ReceiptReadResult, { ok: true }>) =>
+    normalizeRelativePath(path.relative(params.workspaceDir, result.path));
+  const byPath = new Map(validReceipts.map((result) => [relative(result), result]));
+  const predecessors = new Map<string, string>();
+  const supersessionIssues = new Map<string, string[]>();
+  const issue = (receiptPath: string, reason: string) => {
+    const previous = supersessionIssues.get(receiptPath) ?? [];
+    if (!previous.includes(reason)) {
+      supersessionIssues.set(receiptPath, [...previous, reason]);
+    }
+  };
   for (const result of validReceipts) {
-    const key = activeReceiptKey(result.receipt);
-    const previous = latestByKey.get(key);
-    if (!previous) {
-      latestByKey.set(key, result);
+    const receiptPath = relative(result);
+    const predecessorPath = result.receipt.supersedesReceiptPath;
+    if (!predecessorPath) {
+      continue;
+    }
+    const predecessor = byPath.get(predecessorPath);
+    if (!predecessor) {
+      issue(receiptPath, `supersession_predecessor_unavailable:${predecessorPath}`);
+    } else if (
+      !result.receipt.sourceUrlOrPath ||
+      predecessor.receipt.sourceUrlOrPath !== result.receipt.sourceUrlOrPath ||
+      predecessor.receipt.targetModule !== result.receipt.targetModule
+    ) {
+      issue(receiptPath, `supersession_scope_conflict:${predecessorPath}`);
     } else {
-      latestByKey.set(key, newerReceipt(result, previous));
+      predecessors.set(receiptPath, predecessorPath);
+    }
+  }
+  for (const receiptPath of predecessors.keys()) {
+    const visited = new Set<string>();
+    let current: string | undefined = receiptPath;
+    while (current) {
+      if (visited.has(current)) {
+        for (const member of visited) {
+          issue(member, `supersession_cycle:${current}`);
+        }
+        break;
+      }
+      visited.add(current);
+      current = predecessors.get(current);
+    }
+  }
+  const successors = new Map<string, string[]>();
+  for (const [receiptPath, predecessor] of predecessors) {
+    if (!supersessionIssues.has(receiptPath)) {
+      successors.set(predecessor, [...(successors.get(predecessor) ?? []), receiptPath]);
+    }
+  }
+  for (const [predecessor, children] of successors) {
+    if (children.length > 1) {
+      for (const child of children) {
+        issue(child, `supersession_ambiguous_successors:${predecessor}`);
+      }
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [receiptPath, predecessor] of predecessors) {
+      if (supersessionIssues.has(predecessor) && !supersessionIssues.has(receiptPath)) {
+        issue(receiptPath, `supersession_predecessor_invalid:${predecessor}`);
+        changed = true;
+      }
     }
   }
   const supersededByPath = new Map<string, string>();
-  for (const result of validReceipts) {
-    const superseded = result.receipt.supersedesReceiptPath;
-    if (superseded && typeof superseded === "string") {
-      supersededByPath.set(
-        superseded,
-        normalizeRelativePath(path.relative(params.workspaceDir, result.path)),
-      );
+  for (const [receiptPath, predecessor] of predecessors) {
+    if (!supersessionIssues.has(receiptPath)) {
+      supersededByPath.set(predecessor, receiptPath);
     }
+  }
+  // An explicit valid version chain takes priority over evidence status. A downgraded
+  // successor must remain visible to its consumers instead of disappearing with its predecessor.
+  const latestByKey = new Map<string, Extract<ReceiptReadResult, { ok: true }>>();
+  for (const result of validReceipts) {
+    const receiptPath = relative(result);
+    if (supersededByPath.has(receiptPath) || supersessionIssues.has(receiptPath)) {
+      continue;
+    }
+    const key = activeReceiptKey(result.receipt);
+    const previous = latestByKey.get(key);
+    latestByKey.set(key, previous ? newerReceipt(result, previous) : result);
   }
   const allRows = validReceipts.map((result) => {
     const receipt = result.receipt;
@@ -400,18 +524,28 @@ export function buildModuleLearningPipelineReview(params: {
     const latestForKey = latestByKey.get(activeReceiptKey(receipt))?.path;
     const supersededByReceiptPath =
       supersededByPath.get(receiptPath) ??
-      (latestForKey && latestForKey !== result.path
+      (!supersessionIssues.has(receiptPath) && latestForKey && latestForKey !== result.path
         ? normalizeRelativePath(path.relative(params.workspaceDir, latestForKey))
         : null);
     const superseded = supersededByReceiptPath !== null;
     const declaredStatus = statusKey(receipt.status);
     const evaluationVerified = params.verifiedEvaluationPaths?.has(result.path) === true;
-    const status =
-      declaredStatus === "eval_absorbed" && !evaluationVerified
+    const integrityStatus = supersessionIssues.has(receiptPath)
+      ? "missing_evidence"
+      : declaredStatus === "eval_absorbed" && !evaluationVerified
         ? params.verifiedApplicationPaths?.has(result.path)
           ? "application_ready"
           : "missing_evidence"
-        : declaredStatus;
+        : declaredStatus === "application_ready" &&
+            params.verifiedApplicationPaths &&
+            !params.verifiedApplicationPaths.has(result.path)
+          ? "missing_evidence"
+          : declaredStatus;
+    const contentAcceptanceRequired = requiresModuleLearningContentAcceptance(receipt.targetModule);
+    const status =
+      contentAcceptanceRequired && integrityStatus === "eval_absorbed"
+        ? "application_ready"
+        : integrityStatus;
     const financePipelineArgs = recordValue(receipt.financePipelineArgs);
     const structuredDataReviewTargetViolation =
       receipt.targetModule === "data_provenance_quality" &&
@@ -427,12 +561,22 @@ export function buildModuleLearningPipelineReview(params: {
       receipt.protectedMemoryTouched === true;
     const missingEvidence = [
       ...stringArrayValue(receipt.missingEvidence),
-      ...(declaredStatus === "eval_absorbed" && !evaluationVerified
+      ...(params.evidenceReadGaps?.get(result.path) ?? []),
+      ...(supersessionIssues.get(receiptPath) ?? []),
+      ...((declaredStatus === "eval_absorbed" ||
+        (declaredStatus === "application_ready" &&
+          Boolean(receipt.trainingOrEvalAbsorptionEvidencePath))) &&
+      !evaluationVerified
         ? ["unverified_source_bound_application_eval"]
+        : []),
+      ...(contentAcceptanceRequired &&
+      !isTerminalNonAbsorbedDecision(receipt.keepDownrankDiscardDecision)
+        ? ["application_content_acceptance_not_observed"]
         : []),
     ];
     const proofCompleteness = buildProofCompleteness({
       receipt,
+      missingEvidence,
       boundaryViolation,
       structuredDataReviewTargetViolation,
     });
@@ -452,12 +596,17 @@ export function buildModuleLearningPipelineReview(params: {
       missingProof.length > 0;
     return {
       receiptPath,
+      receiptSha256: result.sha256,
       targetModule: receipt.targetModule,
       moduleFamily: receipt.moduleFamily ?? null,
       status,
       claimStatus: claimStatus(status),
       declaredStatus,
       evaluationVerified,
+      evaluationIntegrityVerified: evaluationVerified,
+      applicationContentAcceptance: moduleLearningContentAcceptance(
+        receipt.applicationValidationReceiptPath ?? null,
+      ),
       sourceUrlOrPath: receipt.sourceUrlOrPath ?? null,
       learningIntent: receipt.learningIntent ?? null,
       actualReadingScope: receipt.actualReadingScope ?? null,
@@ -470,6 +619,7 @@ export function buildModuleLearningPipelineReview(params: {
       terminalNonAbsorbedDecision,
       moduleSpecificCapabilityRule: receipt.moduleSpecificCapabilityRule ?? null,
       supersedesReceiptPath: receipt.supersedesReceiptPath ?? null,
+      supersessionIssues: supersessionIssues.get(receiptPath) ?? [],
       superseded,
       supersededByReceiptPath,
       missingEvidence,
@@ -524,15 +674,17 @@ export function buildModuleLearningPipelineReview(params: {
       nextProofOwner: row.nextProofOwner,
       action: row.structuredDataReviewTargetViolation
         ? "Route data_provenance_quality receipts through official_data_source, market_data_snapshot_source, or vendor_data_source with data_provenance_quality_review_input before claiming absorption."
-        : row.terminalNonAbsorbedDecision
-          ? "Keep this receipt out of absorption claims; the operator downrank/discard decision is terminal for this weak learning item."
-          : row.status === "missing_evidence" || row.status === "stored_only"
-            ? "Add source registry, actual reading scope, and retrieval receipt before claiming this module learned the source."
-            : row.status === "retrieval_ready"
-              ? "Run module-specific application validation on a fresh adjacent task before claiming application-ready learning."
-              : row.status === "application_ready"
-                ? "Add verified source-bound local application evaluation plus a keep/downrank/discard decision before claiming eval_absorbed; model training is assessed separately."
-                : "Fix receipt status or boundary fields before using this as module-learning evidence.",
+        : row.exactMissingProof.includes("application_content_acceptance_not_observed")
+          ? "Assess the source-bound candidate and actual application through the existing application validation owner; matching file hashes alone do not establish content acceptance."
+          : row.terminalNonAbsorbedDecision
+            ? "Keep this receipt out of absorption claims; the operator downrank/discard decision is terminal for this weak learning item."
+            : row.status === "missing_evidence" || row.status === "stored_only"
+              ? "Add source registry, actual reading scope, and retrieval receipt before claiming this module learned the source."
+              : row.status === "retrieval_ready"
+                ? "Run module-specific application validation on a fresh adjacent task before claiming application-ready learning."
+                : row.status === "application_ready"
+                  ? "Add verified source-bound local application evaluation plus a keep/downrank/discard decision before claiming eval_absorbed; model training is assessed separately."
+                  : "Fix receipt status or boundary fields before using this as module-learning evidence.",
     }));
   const proofGapSummary = rows.reduce<Record<string, number>>((summary, row) => {
     for (const proof of row.exactMissingProof) {
@@ -554,7 +706,9 @@ export function buildModuleLearningPipelineReview(params: {
         : row.nextProofOwner === "source_registry_and_reading_scope"
           ? "Add or repair the source registry record and actual reading scope before retrieval/application claims."
           : row.nextProofOwner === "module_learning_pipeline_apply_validation"
-            ? "Add module capability/retrieval/apply validation evidence and a fresh adjacent task."
+            ? row.exactMissingProof.includes("application_content_acceptance_not_observed")
+              ? "Use the existing application validation owner to assess actual candidate/application content; preserve this hold until acceptance is observed."
+              : "Add module capability/retrieval/apply validation evidence and a fresh adjacent task."
             : row.nextProofOwner === "local_brain_eval_or_training_absorption"
               ? "Attach source-bound local application evaluation with verified check artifacts. The legacy proof-owner name does not establish model training."
               : row.nextProofOwner === "operator_keep_downrank_discard_decision"
@@ -589,7 +743,10 @@ export function buildModuleLearningPipelineReview(params: {
     },
     evidenceScope: {
       assessed: "source_bound_local_application_evaluation",
-      evalAbsorbedMeaning: "verified local application evaluation; not a model weight update",
+      evaluationIntegrity: "source_bound_file_contract_only",
+      applicationContentAcceptance: "not_observed",
+      evalAbsorbedMeaning:
+        "Legacy local evaluation file-contract status; content acceptance is a separate axis, and no model weight update is established.",
       modelTraining: "not_assessed",
       tradingPromotion: "not_assessed",
       activeStrategyAuthority: "not_assessed",
@@ -652,6 +809,9 @@ async function writeReview(params: {
 
 export function createModuleLearningPipelineReviewTool(options?: {
   workspaceDir?: string;
+  scope?: ModuleLearningReviewScope;
+  qualityOptions?: ModuleLearningReviewQualityOptions;
+  contentReviewTimeoutMs?: number;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
@@ -676,8 +836,12 @@ export function createModuleLearningPipelineReviewTool(options?: {
       });
       const verifiedEvaluationPaths = new Set<string>();
       const verifiedApplicationPaths = new Set<string>();
+      const evidenceReadGaps = new Map<string, string[]>();
       for (const result of receiptResults) {
-        if (!result.ok || result.receipt.status !== "eval_absorbed") {
+        if (
+          !result.ok ||
+          !["eval_absorbed", "application_ready"].includes(result.receipt.status ?? "")
+        ) {
           continue;
         }
         const receipt = result.receipt;
@@ -689,6 +853,20 @@ export function createModuleLearningPipelineReviewTool(options?: {
         ];
         const evidence = await Promise.all(
           paths.map((value) => inspectEvidenceFile(workspaceDir, value ?? null)),
+        );
+        evidenceReadGaps.set(
+          result.path,
+          paths.slice(0, 3).flatMap((value, index) => {
+            if (evidence[index]) {
+              return [];
+            }
+            const field = [
+              "source_registry_record",
+              "capability_card_or_retrieval_receipt",
+              "application_validation_receipt",
+            ][index];
+            return value ? [field, `unreadable_evidence_file:${value}`] : [field];
+          }),
         );
         if (evidence.slice(0, 3).every(Boolean)) {
           verifiedApplicationPaths.add(result.path);
@@ -709,21 +887,129 @@ export function createModuleLearningPipelineReviewTool(options?: {
       const review = buildModuleLearningPipelineReview({
         verifiedEvaluationPaths,
         verifiedApplicationPaths,
+        evidenceReadGaps,
         workspaceDir,
         dateKey,
         targetModule,
         receiptResults,
         receiptSource: issues[0] ?? null,
       });
+      // Optional content diagnosis stays local to its exact plan; original acceptance gates keep authority.
+      let contentReview: unknown;
+      let contentInspection: ReturnType<typeof inspectModuleLearningApplicationReview> | undefined;
+      let contentPlan: { path: string; sha256: string } | undefined;
+      if (
+        params.contentReview !== undefined ||
+        params.contentReviewReceipt !== undefined ||
+        params.contentReviewRequestPath !== undefined
+      ) {
+        const timeoutMs = Math.min(
+          120_000,
+          Math.max(1, options?.contentReviewTimeoutMs ?? 120_000),
+        );
+        const deadlineAt = performance.now() + timeoutMs;
+        const remainingSignal = () => {
+          const remaining = Math.floor(deadlineAt - performance.now());
+          if (remaining <= 0) {
+            throw new Error("module_content_review_deadline");
+          }
+          const signal = AbortSignal.timeout(remaining);
+          return options?.qualityOptions?.signal
+            ? AbortSignal.any([signal, options.qualityOptions.signal])
+            : signal;
+        };
+        try {
+          if (
+            [
+              params.contentReview,
+              params.contentReviewReceipt,
+              params.contentReviewRequestPath,
+            ].filter((value) => value !== undefined).length !== 1
+          ) {
+            throw new Error("module_content_review_ambiguous_request");
+          }
+          if (!options?.scope) {
+            throw new Error("module_content_review_host_scope_missing");
+          }
+          let contentRequest = params.contentReview;
+          if (params.contentReviewRequestPath !== undefined) {
+            if (typeof params.contentReviewRequestPath !== "string") {
+              throw new Error("module_content_review_request_path_invalid");
+            }
+            contentRequest = await readModuleLearningApplicationReviewRequest({
+              workspaceDir,
+              path: params.contentReviewRequestPath,
+              signal: remainingSignal(),
+            });
+          }
+          if (contentRequest !== undefined) {
+            const request = moduleLearningContentReviewRequestSchema.parse(contentRequest);
+            contentPlan = request.planReceipt;
+            const reviewed = await reviewModuleLearningApplication({
+              workspaceDir,
+              request,
+              scope: options.scope,
+              qualityOptions: { ...options.qualityOptions, signal: remainingSignal() },
+              timeoutMs: Math.max(1, Math.floor(deadlineAt - performance.now())),
+            });
+            contentReview = reviewed;
+            if (reviewed.status === "failed") {
+              contentInspection = { status: "failed", gaps: reviewed.gaps, findings: [] };
+            } else {
+              const input = await readModuleLearningApplicationReviewInput({
+                workspaceDir,
+                request,
+                scope: options.scope,
+                signal: remainingSignal(),
+              });
+              contentInspection = inspectModuleLearningApplicationReview(input, contentReview);
+            }
+          } else {
+            const loaded = await readModuleLearningApplicationReviewReceipt({
+              workspaceDir,
+              receipt: params.contentReviewReceipt as { path: string; sha256: string },
+              scope: options.scope,
+              signal: remainingSignal(),
+            });
+            contentReview = loaded.review;
+            contentPlan = loaded.input.request.planReceipt;
+            contentInspection = loaded.inspection;
+          }
+        } catch (error) {
+          contentInspection = {
+            status: "failed",
+            gaps: [error instanceof Error ? error.message : "module_content_review_failed"],
+            findings: [],
+          };
+        }
+      }
+      const resultReview = {
+        ...review,
+        ...(contentReview !== undefined ? { contentReview } : {}),
+        ...(contentInspection ? { contentReviewReadback: contentInspection } : {}),
+        rows: review.rows.map((row) =>
+          contentPlan &&
+          path.resolve(workspaceDir, row.receiptPath) ===
+            path.resolve(workspaceDir, contentPlan.path) &&
+          row.receiptSha256 === contentPlan.sha256
+            ? {
+                ...row,
+                contentReview: contentInspection,
+                contentReviewAttemptScope: options?.scope,
+                upstreamScope: "not_observed",
+              }
+            : row,
+        ),
+      };
       const reviewPath = writeReviewFlag
         ? await writeReview({
             workspaceDir,
             dateKey,
-            review,
+            review: resultReview,
           })
         : undefined;
       return jsonResult({
-        ...review,
+        ...resultReview,
         ok: true,
         boundary: "module_learning_pipeline_review_only",
         updated: writeReviewFlag,

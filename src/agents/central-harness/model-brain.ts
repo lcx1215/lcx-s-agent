@@ -10,6 +10,7 @@ import {
   type CentralPerception,
   type CentralProposedAction,
   type CentralToolSpec,
+  type CentralEvidenceUse,
 } from "./types.js";
 
 export type CentralBrainOutcome =
@@ -30,6 +31,7 @@ export type CentralBrainOutcome =
   | { kind: "blocked_no_provider"; reason: string };
 
 export type CentralBrain = Readonly<{
+  inspectCall?: () => { provider: string; modelId: string; modelCall?: CentralBrainCallEvidence };
   propose: (perception: CentralPerception, signal: AbortSignal) => Promise<CentralBrainOutcome>;
 }>;
 
@@ -57,6 +59,7 @@ const CENTRAL_FINANCE_PROMPT_CONTEXT = [
   "Finance operating mission: grow PAPER net wealth after costs within current authority while protecting capital. Research is instrumental to supported buy, hold, trim, exit or cash decisions through existing owners; actual economic outcomes dominate module, test and trade activity. Missed profitable opportunities, winner retention and losing exits require supported evidence; unknown is neither loss nor success. Help the existing autonomous PAPER controller find and retain an evidence-supported advantage. SPY is an instrument, not the system's permanent universe. Use the current venue, active strategy and fresh universe declarations; do not assume every asset or strategy has an execution path. Profit is an objective, never an established fact or a reason to force activity.",
   "Work as one system: perceive changed market/account/position facts; identify the decision and its horizon; retrieve the smallest relevant evidence; select complementary registered analytical modules; compare support with the strongest counterevidence; hand back a source-bound judgment or an exact unresolved gap. The portfolio controller translates admissible judgments into targets, the execution gate authorizes capital, and broker receipts update the book for the next cycle. Central research planning alone neither runs those modules nor submits an order.",
   "Use finance_position_ledger_read for the recorded LCX execution book and account-scoped receipt/order/fill/fee pages, finance_bar_ledger with action=read for recorded price history, and the supplied thesis, research, strategy, calibration and source-health readers for their respective facts. Its top-level positions aggregate recorded receipts and are not the current broker holdings; use the account-bound positionManagement observation for holdings and protection, respecting its observedAt, freshness and omittedHoldings/omittedAccounts. An explicit brokerAccountId also returns a stored native brokerSnapshot alongside the historical economic diagnostic; respect its snapshotRef, observedAt, freshness and named omissions. This is not a live refresh and cannot be combined with asOf. Copy the observed account ID and venue; follow returned cursors with the same filters and source head. A missing book, partial page, raw order observation or unresolved order is not a flat or reconciled account. Do not infer a fill from a submitted order or clear an unknown order from a 404.",
+  "governanceDigest.flowHandoff separates original receipt handoffs from structural green checks: notObserved is unknown, gaps require the named original owner/evidence, and normalBlock is a valid refusal that must not be bypassed. Offline fixture handoffs do not prove natural model adoption or source truth. Use the exact original result artifact when a missing handoff changes a decision; do not force a paid rerun, restart or trade to turn coverage green.",
   "Use the ontology and governance/control-room snapshots to discover ownership, dependencies and gaps, not as substitute market evidence. For Paper, start with supplied facts and simple quantitative reasoning. Only for an unexplained decision-changing doubt, retrieve narrowly relevant prior data, judgments and actual operations through registered ledger/artifact readers; compare source, cutoff and scope rather than copying an old conclusion. Escalate to deeper registered modules only if that doubt remains, with a concrete question and expected decision impact. After each result, reassess and stop when evidence suffices or the original budget ends; do not call every level by habit. All modules completing is not a trading-review prerequisite. Real market events can still matter; simulated fills do not establish live liquidity or profitability. Numerical engines calculate; research modules test hypotheses; the harness coordinates bounded actions; adapters provide only their registered capabilities. Give each selected module a concrete question and expected decision impact. Do not invoke the whole arsenal for one ticker or name an unregistered tool/MCP to pretend it ran.",
   "Prioritize owned-position invalidation and protection, then compare new opportunities with holding cash or existing positions. Separate research advantage from execution cost: assess the proposed mechanism, source age, catalyst, horizon, downside, liquidity, fees/slippage and correlated portfolio exposure using supplied data. Missing measurements stay unknown. Record reasoning, contrary evidence and follow-up conditions in the existing contracts rather than inventing a second decision store.",
   "Spend model thought where it can change a decision. Reuse validated evidence and calculations; re-read only affected pages after a material event, changed position, new receipt, expiring thesis or explicit evidence gap. An unchanged cycle calls for no new broad research. If bounded context clips data, recover the specific missing field/page; do not erase limits or dump the database. Explicit host-authorized autonomous Paper orders require no per-order question, but this research-only harness cannot grant that authority or expand it to Live.",
@@ -158,7 +161,9 @@ export function buildCentralBrainPrompt(
       ? [`backlog: ${JSON.stringify(perception.backlog.slice(0, 10))}`]
       : ["backlog: none"]),
     "",
-    'Respond with exactly: {"actions":[{"ownerId":"<owner id>","args":{},"reasoning":"<short why>"}],"note":"<one-line plan>"}',
+    "A backlog ruleHandoff diagnoses observed delivery gaps and points to the existing owner. Use it to resolve a concrete missing field; impact_reported and reference_verified do not prove semantic adoption or authorize execution.",
+    "When prior evidence supports a decision, include evidenceUse with artifactId, sourceSha256, exact field, effect (retain/change/unresolved), and a short reason naming the relevant rule fact and its decision impact. Optional scope must match selectionScope. For omitted content, use unresolved and name the gap or choose an exact child pointer from selectionHints. A reference is not proof of correct judgment. This records visible reasons, never private reasoning.",
+    'Respond with exactly: {"actions":[{"ownerId":"<owner id>","args":{},"reasoning":"<short why>"}],"note":"<one-line plan>","evidenceUse":[]}',
     "If no action is warranted, respond with actions: [] and a note explaining why.",
   ].join("\n");
 }
@@ -195,8 +200,61 @@ export function validateCentralActionPlan(raw: unknown): CentralActionPlan {
         : {}),
     });
   }
+  const evidenceUse: CentralEvidenceUse[] = [];
+  if (record.evidenceUse !== undefined) {
+    if (!Array.isArray(record.evidenceUse) || record.evidenceUse.length > 6) {
+      throw new Error("invalid evidenceUse");
+    }
+    for (const raw of record.evidenceUse) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error("invalid evidenceUse entry");
+      }
+      const entry = raw as Record<string, unknown>;
+      if (
+        typeof entry.artifactId !== "string" ||
+        !/^artifact-[a-f0-9]{64}$/u.test(entry.artifactId) ||
+        typeof entry.sourceSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(entry.sourceSha256) ||
+        typeof entry.field !== "string" ||
+        !/^\/(?:[^~]|~[01])*$/u.test(entry.field) ||
+        entry.field.length > 512 ||
+        !["retain", "change", "unresolved"].includes(String(entry.effect)) ||
+        typeof entry.reason !== "string" ||
+        !entry.reason.trim() ||
+        entry.reason.length > 400
+      ) {
+        throw new Error("invalid evidenceUse reference");
+      }
+      const scope: Record<string, string> = {};
+      if (entry.scope !== undefined) {
+        if (!entry.scope || typeof entry.scope !== "object" || Array.isArray(entry.scope)) {
+          throw new Error("invalid evidenceUse scope");
+        }
+        for (const [key, value] of Object.entries(entry.scope)) {
+          if (
+            !["accountId", "venue", "instrument", "ruleId"].includes(key) ||
+            typeof value !== "string" ||
+            !value ||
+            value.length > 128
+          ) {
+            throw new Error("invalid evidenceUse scope");
+          }
+          scope[key] = value;
+        }
+      }
+      evidenceUse.push({
+        artifactId: entry.artifactId,
+        sourceSha256: entry.sourceSha256,
+        field: entry.field,
+        effect: entry.effect as CentralEvidenceUse["effect"],
+        reason: entry.reason,
+        ...(Object.keys(scope).length ? { scope } : {}),
+      });
+    }
+  }
   return {
     actions,
+    ...(record.evidenceUse !== undefined ? { evidenceUse } : {}),
     note: typeof record.note === "string" ? record.note.slice(0, 400) : "no note",
   };
 }
@@ -262,6 +320,19 @@ export function createCentralBrain(
   }
   const callable = provider !== "" && modelId !== "" && adapter !== undefined;
   return {
+    inspectCall: () => ({
+      provider,
+      modelId,
+      ...(adapter?.inspectCall?.()
+        ? {
+            modelCall: {
+              adapterInvoked: true as const,
+              providerCallObserved: false,
+              transport: adapter.inspectCall(),
+            },
+          }
+        : {}),
+    }),
     propose: async (perception, signal) => {
       if (!callable) {
         return {
@@ -308,6 +379,7 @@ export function createCentralBrain(
           : undefined;
       const modelCall: CentralBrainCallEvidence = {
         adapterInvoked: true,
+        ...(activeAdapter.inspectCall?.() ? { transport: activeAdapter.inspectCall() } : {}),
         providerCallObserved: observed !== undefined,
         ...(observed
           ? {

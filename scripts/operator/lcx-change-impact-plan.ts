@@ -1,7 +1,16 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { readFileWithinRoot } from "../../src/infra/fs-safe.js";
+import type { LcxRunSnapshot } from "../../src/shared/lcx-run-receipt.js";
+import {
+  CONSOLIDATION_CLUSTERS,
+  CONSOLIDATED_ENTRYPOINT_FAMILIES,
+  SHARED_ENTRYPOINT_OWNERS,
+} from "./lcx-flow-graph.js";
 
 type PathRule = {
   id: string;
@@ -82,7 +91,10 @@ const PATH_RULES: PathRule[] = [
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch(?:-runner)?|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate|decision-policy)\.ts$/u,
+      /^src\/agents\/finance-module-producer-input(?:\.test)?\.ts$/u,
+      /^src\/agents\/finance-deribit-collection(?:\.test)?\.ts$/u,
+      /^src\/agents\/tools\/finance-market-collection-refresh-tool(?:\.test)?\.ts$/u,
+      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch(?:-runner)?|run-checkpoints|model-checkpoints|outcome-ledger|outcome-backfill|additional-source-adapters|module-composition|module-execution|research-portfolio-plan|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate|reply-evidence|decision-policy)\.ts$/u,
       /^src\/agents\/tools\/finance-data-connector-inspect-tool\.ts$/u,
       // The read side of the stored research runs. Without it here, the only lane that would
       // claim it is the generic tool-registration rule, which never runs its behaviour test.
@@ -99,7 +111,10 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["finance-caseflow-regression", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/tools/finance-research-runs-read-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts src/agents/quant-math-advanced.test.ts src/agents/quant-math-inference.test.ts src/agents/quant-math-foundations.test.ts src/agents/openclaw-tools.quant-lab-registration.test.ts test/finance-decision-pipeline.test.ts test/operator/lcx-finance-connector-probe.test.ts test/lcx-commercial-answer-pipeline-grounding.test.ts test/lcx-quant-lab-scenarios.test.ts test/lcx-quant-lab-paper-portfolios.test.ts",
+      "pnpm vitest run src/agents/finance-module-producer-input.test.ts",
+      "pnpm vitest run src/agents/finance-deribit-collection.test.ts src/agents/tools/finance-market-collection-refresh-tool.test.ts",
+      "pnpm vitest run src/agents/finance-additional-source-adapters.test.ts src/agents/finance-module-execution.test.ts src/agents/finance-outcome-backfill.test.ts src/agents/finance-research-portfolio-plan.test.ts",
+      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/tools/finance-research-runs-read-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-reply-evidence.test.ts src/agents/finance-answer-composer.test.ts src/agents/quant-math-advanced.test.ts src/agents/quant-math-inference.test.ts src/agents/quant-math-foundations.test.ts src/agents/openclaw-tools.quant-lab-registration.test.ts test/finance-decision-pipeline.test.ts test/operator/lcx-finance-connector-probe.test.ts test/lcx-commercial-answer-pipeline-grounding.test.ts test/lcx-quant-lab-scenarios.test.ts test/lcx-quant-lab-paper-portfolios.test.ts",
       "pnpm vitest run src/agents/finance-caseflow.test.ts src/agents/finance-research-runner.test.ts src/agents/finance-research-batch-runner.test.ts src/agents/finance-outcome-ledger.test.ts src/agents/finance-caseflow-followups.test.ts src/agents/finance-history-coverage.test.ts src/agents/finance-forecast-calibration.test.ts src/agents/finance-research-assessment.test.ts",
       "pnpm vitest run src/agents/finance-brain-orchestration.test.ts src/agents/tools/finance-research-run-tool.test.ts src/agents/finance-model-checkpoints.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
@@ -197,6 +212,7 @@ const PATH_RULES: PathRule[] = [
     id: "finance_unattended_cycle",
     lane: "finance_research_capability",
     patterns: [
+      /^src\/agents\/finance-(?:alpaca-(?:activity-contract|history-reconciliation|safety-transport)|broker-profit-feedback|intraday-ledger|owned-protection-exits|trade-economics|tuning-lifecycle)(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-daily-(?:cycle|strategy)\.ts$/u,
       /^src\/agents\/finance-(?:value-assessment|operating-evidence|portfolio-composition|portfolio-cycle)(?:\.test)?\.ts$/u,
       /^test\/operator\/lcx-finance-daily-strategy\.test\.ts$/u,
@@ -207,7 +223,7 @@ const PATH_RULES: PathRule[] = [
       /^docs\/tools\/finance-scheduler\.md$/u,
       /^src\/agents\/finance-paper-run\.ts$/u,
       /^src\/agents\/finance-intent-compiler(?:\.test)?\.ts$/u,
-      /^src\/agents\/finance-intraday-(?:execution|control-ledger)(?:\.test)?\.ts$/u,
+      /^src\/agents\/finance-intraday-(?:execution|control-ledger|paper)(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-trade-(?:decision-review|review-evidence|result-recall)(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-expectation-gap(?:\.test)?\.ts$/u,
       /^src\/agents\/finance-night-review-context(?:\.test)?\.ts$/u,
@@ -220,10 +236,13 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-finance-daily-cycle\.ts$/u,
       /^scripts\/operator\/lcx-finance-scheduler\.ts$/u,
       /^scripts\/operator\/lcx-finance-universe-select\.ts$/u,
+      /^scripts\/operator\/lcx-finance-(?:intraday-paper|trade-economics-eval)\.ts$/u,
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
+      "pnpm vitest run src/agents/finance-alpaca-history-reconciliation.test.ts src/agents/finance-alpaca-safety-transport.test.ts src/agents/finance-broker-profit-feedback.test.ts src/agents/finance-intraday-ledger.test.ts src/agents/finance-owned-protection-exits.test.ts src/agents/finance-tuning-lifecycle.test.ts",
       "pnpm vitest run src/agents/finance-intraday-execution.test.ts src/agents/finance-alpaca-cycle-controller.test.ts",
+      "pnpm vitest run src/agents/finance-intraday-paper.test.ts src/agents/finance-trade-economics.test.ts test/operator/lcx-finance-trade-economics-eval.test.ts",
       "pnpm vitest run src/agents/finance-intent-compiler.test.ts src/agents/finance-alpaca-run.test.ts",
       "pnpm vitest run src/agents/finance-trade-decision-review.test.ts src/agents/finance-trade-review-evidence.test.ts src/agents/finance-trade-result-recall.test.ts",
       "pnpm vitest run src/agents/finance-value-assessment.test.ts src/agents/finance-portfolio-cycle.test.ts test/operator/lcx-finance-daily-strategy.test.ts src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
@@ -249,7 +268,7 @@ const PATH_RULES: PathRule[] = [
     id: "finance_state_plane",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-source-quota\.ts$/u,
+      /^src\/agents\/finance-source-quota(?:-policy)?\.ts$/u,
       /^src\/agents\/finance-credential-env\.ts$/u,
       /^scripts\/operator\/lcx-finance-source-limit-probe\.ts$/u,
       /^scripts\/operator\/lcx-finance-research-score\.ts$/u,
@@ -294,12 +313,14 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/model-request-trajectory(?:\.test)?\.ts$/u,
       /^src\/agents\/configured-finance-model-adapter\.ts$/u,
       /^src\/agents\/central-harness\/model-brain\.ts$/u,
+      /^src\/agents\/finance-http-body(?:\.test)?\.ts$/u,
       /^src\/agents\/pi-embedded-runner\/run\/attempt\.ts$/u,
       /^scripts\/operator\/lcx-model-trajectory\.ts$/u,
     ],
     requiredChecks: ["model-request-trajectory-tests"],
     commands: [
       "pnpm vitest run src/agents/model-request-trajectory.test.ts src/agents/configured-finance-model-adapter.test.ts src/agents/pi-embedded-runner/run/attempt.test.ts src/agents/pi-embedded-runner/run/attempt.egress.test.ts test/lcx-central-agent.test.ts",
+      "pnpm vitest run src/agents/finance-http-body.test.ts src/agents/central-harness/model-body-deadline.test.ts",
     ],
     safetyNotes: [
       "The trajectory records request metadata only; prompt/message bodies, credentials, endpoints, and raw provider errors are never persisted.",
@@ -397,6 +418,10 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-ontology\.ts$/u,
       /^scripts\/operator\/lcx-projection-reader-audit\.ts$/u,
       /^src\/shared\/lcx-ontology\.ts$/u,
+      /^src\/shared\/lcx-workflow-process-contracts\.ts$/u,
+      /^test\/lcx-flow-handoff(?:-[a-z-]+)?\.test\.ts$/u,
+      /^test\/fixtures\/lcx-waterflow-[a-z-]+\.ts$/u,
+      /^test\/fixtures\/lcx-universe-deadline-probe\.ts$/u,
       /^src\/shared\/lcx-run-receipt(?:\.test)?\.ts$/u,
       /^scripts\/generate-lcx-agent-progress-wave\.mjs$/u,
       /^package\.json$/u,
@@ -415,6 +440,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["head-tail-consistency", "architecture-supervision-tests"],
     commands: [
+      "pnpm vitest run test/lcx-universe-index-deadline.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
       "node --import tsx scripts/operator/local-brain-training-plan.ts --json",
       "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts test/lcx-governance-autopilot.test.ts test/lcx-external-agent-upgrade-radar.test.ts test/lcx-live-fadeout-audit.test.ts test/lcx-skillopt-lite.test.ts test/lcx-provider-council-acceleration.test.ts test/lcx-ts-python-boundary.test.ts test/lcx-universe-index.test.ts",
@@ -549,6 +575,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-learning-sedimentation-map\.ts$/u,
       /^scripts\/operator\/lcx-module-learning-absorption-gate\.ts$/u,
       /^scripts\/operator\/lcx-self-repair-hands\.ts$/u,
+      /^src\/agents\/(?:self-repair-source-review|self-repair-candidate-review|self-repair-owner-map-feedback|module-learning-application-review)\.ts$/u,
       /^scripts\/operator\/lcx-system-memory-sedimentation-gate\.ts$/u,
       /^src\/agents\/tools\/module-learning-pipeline-/u,
       /^test\/module-learning-pipeline-/u,
@@ -558,11 +585,15 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-module-learning-absorption-gate\.test\.ts$/u,
       /^test\/lcx-self-repair-hands\.test\.ts$/u,
       /^test\/lcx-system-memory-sedimentation-gate\.test\.ts$/u,
+      /^test\/lcx-flow-handoff-(?:learning|memory)\.test\.ts$/u,
+      /^test\/fixtures\/lcx-waterflow-(?:learning-probe|memory-correction-probe)\.ts$/u,
+      /^src\/agents\/tools\/finance-learning-capability-(?:inspect|apply)-tool\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "module-learning-tests"],
     commands: [
+      "pnpm vitest run test/lcx-flow-handoff-module-content-review-nineteenth.test.ts test/lcx-flow-handoff-absorption-content-twentieth.test.ts test/lcx-flow-handoff-self-repair-review.test.ts test/lcx-flow-handoff-self-repair-feedback.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
-      "pnpm vitest run test/lcx-learning-sedimentation-bridge.test.ts test/lcx-learning-sedimentation-audit.test.ts test/lcx-learning-sedimentation-map.test.ts test/lcx-module-learning-absorption-gate.test.ts test/lcx-self-repair-hands.test.ts test/lcx-system-memory-sedimentation-gate.test.ts src/agents/tools/module-learning-pipeline-plan-tool.test.ts src/agents/tools/module-learning-pipeline-review-tool.test.ts test/module-learning-pipeline-plan-cli.test.ts test/module-learning-pipeline-review-cli.test.ts",
+      "pnpm vitest run test/lcx-learning-sedimentation-bridge.test.ts test/lcx-learning-sedimentation-audit.test.ts test/lcx-learning-sedimentation-map.test.ts test/lcx-module-learning-absorption-gate.test.ts test/lcx-self-repair-hands.test.ts src/agents/self-repair-source-review.test.ts test/lcx-system-memory-sedimentation-gate.test.ts src/agents/tools/module-learning-pipeline-plan-tool.test.ts src/agents/tools/module-learning-pipeline-review-tool.test.ts test/module-learning-pipeline-plan-cli.test.ts test/module-learning-pipeline-review-cli.test.ts",
     ],
     headTailRequired: true,
   },
@@ -576,7 +607,8 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/tool-catalog\.ts$/u,
       // Decides which tools an LLM may actually call (profiles + the sub-agent deny
       // list + spawn depth). Widening it is a capability change, not a copy edit.
-      /^src\/agents\/pi-tools\.policy\.ts$/u,
+      /^src\/agents\/pi-tools(?:\.policy)?\.ts$/u,
+      /^src\/agents\/artifact-result-recording\.ts$/u,
       /^src\/config\/agent-limits\.ts$/u,
       /^src\/agents\/finance-brain-orchestration\.ts$/u,
       /^src\/agents\/finance-data-gateway\.ts$/u,
@@ -591,6 +623,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["head-tail-consistency", "system-prompt-tests"],
     commands: [
+      "pnpm vitest run src/agents/pi-tools.policy.test.ts src/agents/artifact-result-recording.test.ts src/agents/central-harness/artifact-feedback-eval.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
       "pnpm vitest run src/agents/system-prompt.test.ts",
     ],
@@ -606,20 +639,30 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-visible-answer-quality-fuzzer\.ts$/u,
       /^scripts\/operator\/agent-system-loop-smoke\.ts$/u,
       /^extensions\/external\//u,
+      /^src\/agents\/finance-reply-evidence\.ts$/u,
+      /^src\/agents\/(?:commercial-answer-reply-gate|provider-learning-council)\.ts$/u,
+      /^src\/auto-reply\/reply\/agent-runner-execution\.ts$/u,
+      /^src\/auto-reply\/reply\/queue\/types\.ts$/u,
       /^src\/auto-reply\/reply\/dispatch-from-config\.ts$/u,
       /^src\/auto-reply\/reply\/get-reply-run\.ts$/u,
+      /^src\/auto-reply\/types\.ts$/u,
+      /^src\/auto-reply\/reply\/(?:agent-runner(?:\.misc\.runreplyagent\.test)?|followup-runner(?:\.test)?)\.ts$/u,
       /^src\/auto-reply\/reply\/commands-protocol-families\.ts$/u,
       /^src\/auto-reply\/reply\/skill-autocue\.ts$/u,
       /^src\/auto-reply\/reply\/skillopt-autocue\.ts$/u,
       /^src\/auto-reply\/reply\/skillopt-autocue\.test\.ts$/u,
       /^src\/agents\/answer-audit-policy\.ts$/u,
       /^src\/agents\/visible-answer-adoption-gate\.ts$/u,
+      /^src\/agents\/provider-council-(?:evidence|handoff\.test)\.ts$/u,
+      /^test\/lcx-flow-handoff-(?:external|language)\.test\.ts$/u,
+      /^test\/fixtures\/lcx-waterflow-(?:external|language)-probe\.ts$/u,
       /^src\/auto-reply\/reply\/commands-protocol-info\.ts$/u,
       /^extensions\/external\/src\/(?:channel|monitor|protocol|send)\.ts$/u,
       /^src\/commands\/capabilities\/l5-system-eval\.ts$/u,
     ],
     requiredChecks: ["external-regression-tests", "core-external-channel-boundary-check"],
     commands: [
+      "pnpm vitest run test/lcx-flow-handoff-finance-reply.test.ts src/agents/provider-learning-council.transport.test.ts src/auto-reply/reply/agent-runner.misc.runreplyagent.test.ts src/auto-reply/reply/followup-runner.test.ts",
       "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/auto-reply/reply/skillopt-autocue.test.ts",
       "pnpm exec vitest run extensions/external/src/accounts.test.ts extensions/external/src/monitor.test.ts extensions/external/src/protocol.test.ts extensions/external/src/security.test.ts extensions/external/src/send.test.ts",
       "node --import tsx scripts/operator/lcx-external-channel-status.ts --json",
@@ -731,6 +774,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-external-channel-compat-status\.test\.ts$/u,
       /^src\/daemon\/inspect\.ts$/u,
       /^src\/agents\/model-(?:auth|egress)/u,
+      /^src\/agents\/provider-learning-council\.ts$/u,
       // The embedded run path asserts the declared model egress route before the first request, so it
       // participates in the same provider boundary as model auth.
       /^src\/agents\/pi-embedded-runner\/run\/attempt\.ts$/u,
@@ -1125,16 +1169,67 @@ function usage(): never {
       "Fast path-based impact plan for micro changes. --changed accepts one PATH per flag;",
       "--files accepts one or more PATH values until the next flag. When explicit files",
       "are omitted, reads git status/diff and recommends the impact-appropriate verification set.",
+      "Optional read-only cleanup review: --cleanup-review FILE --review-parent-run-id ID",
+      "--review-snapshot-id ID [--review-root-dir DIR]. Host Git identity is read locally;",
+      "the source manifest cannot supply expected scope. Review never authorizes cleanup.",
+      "Optional selected behavior comparison: --changed PATH --inspect-prior-work",
+      "--mechanism-review FILE [--review-root-dir DIR]. This reads actual source and pinned",
+      "before/after reports; a merge_candidate is a proposal, never execution authority.",
     ].join("\n"),
   );
 }
 
 function parseArgs(args: string[]) {
-  const options: { json: boolean; changed: string[] } = { json: false, changed: [] };
+  const options: {
+    json: boolean;
+    changed: string[];
+    cleanupReview?: string;
+    reviewParentRunId?: string;
+    reviewSnapshotId?: string;
+    reviewRootDir?: string;
+    inspectPriorWork?: boolean;
+    mechanismReview?: string;
+  } = { json: false, changed: [] };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--inspect-prior-work") {
+      options.inspectPriorWork = true;
+    } else if (arg === "--mechanism-review") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--") || options.mechanismReview) {
+        throw new Error("invalid --mechanism-review");
+      }
+      options.mechanismReview = value;
+      index += 1;
+    } else if (
+      [
+        "--cleanup-review",
+        "--review-parent-run-id",
+        "--review-snapshot-id",
+        "--review-root-dir",
+      ].includes(arg)
+    ) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error(`missing value for ${arg}`);
+      }
+      const key =
+        arg === "--cleanup-review"
+          ? "cleanupReview"
+          : arg === "--review-parent-run-id"
+            ? "reviewParentRunId"
+            : arg === "--review-root-dir"
+              ? "reviewRootDir"
+              : "reviewSnapshotId";
+      if (options[key] !== undefined) {
+        throw new Error(`duplicate ${arg}`);
+      }
+      options[key] = value;
+      index += 1;
+    } else if (arg.startsWith("--review-") || arg.startsWith("--cleanup-")) {
+      throw new Error(`unknown review flag ${arg}`);
     } else if (arg === "--changed") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) {
@@ -1161,31 +1256,573 @@ function parseArgs(args: string[]) {
   return options;
 }
 
-async function gitChangedFiles(): Promise<string[]> {
-  const gitRoot = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: repoRoot,
-  }).catch(() => undefined);
-  if (!gitRoot || path.resolve(gitRoot.stdout.trim()) !== repoRoot) {
-    return [];
-  }
+type ChangedFilesReadback = {
+  source: "git" | "explicit_paths";
+  status: "observed" | "unavailable";
+  reason?: string;
+};
 
-  const [diff, status] = await Promise.all([
-    execFileAsync("git", ["diff", "--name-only", "HEAD"], { cwd: repoRoot }),
-    execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: repoRoot }),
-  ]);
-  const changed = new Set(
-    diff.stdout
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean),
+type PriorWorkRead = {
+  path: string;
+  owners: string[];
+  old?: { revision: string; path: string; sha256: string; bytes: number };
+  current: { path: string; status: "read" | "deleted"; sha256?: string; bytes?: number };
+  diff: {
+    revision: string;
+    path: string;
+    sha256: string;
+    bytes: number;
+    hunks: { oldStart: number; oldCount: number; newStart: number; newCount: number }[];
+    publicSymbols: { change: "added" | "removed"; name: string }[];
+  };
+  disposition:
+    | "preserve_existing_path"
+    | "unresolved_new_comparison"
+    | "deletion_pending_cleanup_review";
+};
+type PriorWorkResult = {
+  status: "observed" | "partial" | "not_observed" | "unknown";
+  scope?: {
+    changedFilesCount: number;
+    eligibleCount: number;
+    selectedCount: number;
+    focusLimit: number;
+  };
+  omissions?: { source: "changedFiles"; indices: number[]; budgetIndices: number[] };
+  baselineCommit?: string;
+  reads: PriorWorkRead[];
+  gaps: string[];
+  blocksPlan: boolean;
+  semanticEquivalence: "not_proven";
+  cleanup?: "local_read_or_descendant_cleanup_unconfirmed";
+};
+
+/** Read original implementation bytes; expose provenance, never source literals, to governance. */
+async function readPriorWork(
+  files: string[],
+  readback: ChangedFilesReadback,
+  impacts: Impact[],
+  deadlineAt: number,
+  inspectExplicitPaths = false,
+): Promise<PriorWorkResult> {
+  const result: PriorWorkResult = {
+    status: "not_observed",
+    reads: [],
+    gaps: [],
+    blocksPlan: false,
+    semanticEquivalence: "not_proven",
+  };
+  if (readback.source === "explicit_paths" && !inspectExplicitPaths) {
+    result.gaps.push("explicit_paths_inventory_only");
+    return result;
+  }
+  if (readback.status !== "observed") {
+    return {
+      ...result,
+      status: "unknown",
+      blocksPlan: true,
+      gaps: [readback.reason ?? "git_unavailable"],
+    };
+  }
+  const eligible = files.filter(
+    (file) =>
+      /^(?:src|scripts|extensions)\//u.test(file) &&
+      /\.(?:[cm]?[jt]sx?|py|sh)$/u.test(file) &&
+      !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file) &&
+      !/(?:^|\/)(?:test|tests|fixtures)\//u.test(file),
   );
-  for (const line of status.stdout.split(/\r?\n/u)) {
-    const file = line.slice(3).trim();
-    if (file) {
-      changed.add(file);
+  const implementations = eligible.slice(0, 16);
+  result.scope = {
+    changedFilesCount: files.length,
+    eligibleCount: eligible.length,
+    selectedCount: implementations.length,
+    focusLimit: 16,
+  };
+  result.omissions = {
+    source: "changedFiles",
+    indices: eligible.slice(16).map((file) => files.indexOf(file)),
+    budgetIndices: [],
+  };
+  if (result.omissions.indices.length) {
+    result.gaps.push("prior_work_focus_partial:read_omitted_changedFiles_indices");
+  }
+  if (!implementations.length) {
+    return { ...result, status: "observed" };
+  }
+  const controller = new AbortController();
+  const remaining = () => {
+    if (Date.now() >= deadlineAt) {
+      controller.abort();
+    }
+    controller.signal.throwIfAborted();
+    return deadlineAt - Date.now();
+  };
+  const timer = setTimeout(() => controller.abort(), Math.max(1, deadlineAt - Date.now()));
+  const bounded = async <T>(operation: Promise<T>): Promise<T> => {
+    remaining();
+    let listener: (() => void) | undefined;
+    try {
+      const value = await Promise.race([
+        operation,
+        new Promise<never>((_resolve, reject) => {
+          listener = () => reject(new Error("prior_work_deadline"));
+          controller.signal.addEventListener("abort", listener, { once: true });
+          if (controller.signal.aborted) {
+            listener();
+          }
+        }),
+      ]);
+      remaining();
+      return value;
+    } finally {
+      if (listener) {
+        controller.signal.removeEventListener("abort", listener);
+      }
+    }
+  };
+  const git = async (args: string[], maxBuffer = 128 * 1024) => {
+    remaining();
+    const response = await execFileAsync("git", args, {
+      cwd: repoRoot,
+      encoding: "buffer",
+      timeout: Math.min(10_000, remaining()),
+      signal: controller.signal,
+      killSignal: "SIGKILL",
+      maxBuffer,
+    });
+    remaining();
+    return response.stdout;
+  };
+  const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const readCurrent = (file: string) => {
+    remaining();
+    return bounded(
+      readFileWithinRoot({
+        rootDir: repoRoot,
+        relativePath: file,
+        rejectHardlinks: true,
+        maxBytes: 128 * 1024,
+      }),
+    );
+  };
+  let activePath = "";
+  try {
+    const revision = (await git(["rev-parse", "HEAD"], 256)).toString("utf8").trim();
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(revision)) {
+      throw new Error("prior_work_revision_unconfirmed");
+    }
+    result.baselineCommit = revision;
+    for (const file of implementations) {
+      activePath = file;
+      try {
+        if (
+          path.isAbsolute(file) ||
+          file.split("/").some((part) => !part || part === "." || part === "..")
+        ) {
+          throw new Error("prior_work_path_invalid");
+        }
+        const tree = await git(["ls-tree", "-z", revision, "--", file], 16 * 1024);
+        if (tree.length && !/^100(?:644|755) blob [a-f0-9]+\t/u.test(tree.toString("utf8"))) {
+          throw new Error("prior_work_head_not_regular_file");
+        }
+        const old = tree.length ? await git(["show", `${revision}:${file}`]) : undefined;
+        const diffBytes = await git(
+          ["diff", "--no-ext-diff", "--no-textconv", "--unified=3", revision, "--", file],
+          16 * 1024,
+        );
+        const diffText = diffBytes.toString("utf8");
+        const hunks = [...diffText.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gmu)].map(
+          (m) => ({
+            oldStart: Number(m[1]),
+            oldCount: Number(m[2] ?? 1),
+            newStart: Number(m[3]),
+            newCount: Number(m[4] ?? 1),
+          }),
+        );
+        const publicSymbols = [
+          ...diffText.matchAll(
+            /^([+-])export\s+(?:async\s+)?(?:function|class|interface|type|const|let|enum)\s+([A-Za-z_$][\w$]*)/gmu,
+          ),
+        ].map((m) => ({
+          change: m[1] === "+" ? ("added" as const) : ("removed" as const),
+          name: m[2],
+        }));
+        if (
+          hunks.length > 32 ||
+          publicSymbols.length > 32 ||
+          publicSymbols.some((symbol) => symbol.name.length > 128)
+        ) {
+          throw new Error("prior_work_result_budget_exceeded");
+        }
+        let current: PriorWorkRead["current"];
+        try {
+          const opened = await readCurrent(file);
+          if (opened.realPath !== path.resolve(repoRoot, file)) {
+            throw new Error("prior_work_path_alias");
+          }
+          current = {
+            path: file,
+            status: "read",
+            sha256: hash(opened.buffer),
+            bytes: opened.buffer.length,
+          };
+        } catch (error) {
+          const code =
+            error && typeof error === "object" && "code" in error ? error.code : undefined;
+          if (
+            code !== "not-found" ||
+            !old ||
+            !(await git(["diff", "--name-status", revision, "--", file], 1024))
+              .toString("utf8")
+              .startsWith(`D\t${file}`)
+          ) {
+            throw error;
+          }
+          current = { path: file, status: "deleted" };
+        }
+        const disposition =
+          current.status === "deleted"
+            ? "deletion_pending_cleanup_review"
+            : old
+              ? "preserve_existing_path"
+              : "unresolved_new_comparison";
+        result.reads.push({
+          path: file,
+          owners: impacts
+            .filter((impact) => impact.matchedFiles.includes(file))
+            .map((impact) => impact.id),
+          ...(old ? { old: { revision, path: file, sha256: hash(old), bytes: old.length } } : {}),
+          current,
+          diff: {
+            revision,
+            path: file,
+            sha256: hash(diffBytes),
+            bytes: diffBytes.length,
+            hunks,
+            publicSymbols,
+          },
+          disposition,
+        });
+        if (!old) {
+          result.gaps.push(`prior_HEAD_source_absent:${file}`);
+        }
+        if (current.status === "deleted") {
+          result.gaps.push(`original_cleanup_review_required:${file}`);
+        }
+        if (Buffer.byteLength(JSON.stringify(result)) > 12 * 1024) {
+          result.reads.pop();
+          throw new Error("prior_work_result_budget_exceeded");
+        }
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        const budget =
+          code === "too-large" ||
+          code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+          (error instanceof Error && error.message === "prior_work_result_budget_exceeded");
+        if (!budget || controller.signal.aborted || Date.now() >= deadlineAt) {
+          throw error;
+        }
+        result.omissions.budgetIndices.push(files.indexOf(file));
+        result.gaps.push(`prior_work_byte_budget_partial:${file}`);
+      }
+    }
+    for (const read of result.reads) {
+      activePath = read.path;
+      if (
+        hash(
+          await git(
+            ["diff", "--no-ext-diff", "--no-textconv", "--unified=3", revision, "--", read.path],
+            16 * 1024,
+          ),
+        ) !== read.diff.sha256
+      ) {
+        throw new Error("prior_work_diff_changed");
+      }
+      if (read.current.status === "deleted") {
+        try {
+          await readCurrent(read.path);
+          throw new Error("prior_work_source_changed");
+        } catch (error) {
+          if (
+            !(error && typeof error === "object" && "code" in error && error.code === "not-found")
+          ) {
+            throw error;
+          }
+        }
+      } else if (hash((await readCurrent(read.path)).buffer) !== read.current.sha256) {
+        throw new Error("prior_work_source_changed");
+      }
+    }
+    if ((await git(["rev-parse", "HEAD"], 256)).toString("utf8").trim() !== revision) {
+      throw new Error("prior_work_revision_changed");
+    }
+    remaining();
+    result.status =
+      result.omissions.indices.length || result.omissions.budgetIndices.length
+        ? "partial"
+        : "observed";
+  } catch (error) {
+    result.status = "unknown";
+    result.blocksPlan = true;
+    result.gaps.push(
+      controller.signal.aborted || Date.now() >= deadlineAt
+        ? `prior_work_deadline:${activePath}`
+        : error instanceof Error && error.message.startsWith("prior_work_")
+          ? `${error.message}:${activePath}`
+          : `prior_work_source_read_unconfirmed:${activePath}`,
+    );
+    result.cleanup = "local_read_or_descendant_cleanup_unconfirmed";
+  } finally {
+    clearTimeout(timer);
+  }
+  return result;
+}
+
+type ConsolidationRoute = {
+  source: { path: string; sha256: string };
+  familyIds: string[];
+  ownerPaths: string[];
+  ownerSources: { path: string; sha256: string; bytes: number }[];
+  sharedApproval?: string;
+  disposition: "preserve_existing_owner" | "owner_unresolved";
+  gaps: string[];
+  semanticEquivalence: "not_proven";
+};
+
+/** Apply existing exact ownership declarations to source actually read by this invocation. */
+async function readConsolidation(priorWork: PriorWorkResult, deadlineAt: number) {
+  const declarationNames = [
+    "CONSOLIDATION_CLUSTERS",
+    "CONSOLIDATED_ENTRYPOINT_FAMILIES",
+    "SHARED_ENTRYPOINT_OWNERS",
+  ];
+  const result = {
+    status: priorWork.status,
+    routes: [] as ConsolidationRoute[],
+    conflicts: [] as { path: string; reason: string }[],
+    blocksPlan: false,
+    omittedPriorReadIndices: [] as number[],
+    cleanup: undefined as "local_owner_read_cleanup_unconfirmed" | undefined,
+    normSource: {
+      path: "scripts/operator/lcx-flow-graph.ts",
+      exports: declarationNames,
+      declarationSha256: createHash("sha256")
+        .update(
+          JSON.stringify([
+            CONSOLIDATION_CLUSTERS,
+            CONSOLIDATED_ENTRYPOINT_FAMILIES,
+            SHARED_ENTRYPOINT_OWNERS,
+          ]),
+        )
+        .digest("hex"),
+      fullFileRead: "not_observed" as const,
+    },
+    semanticEquivalence: "not_proven" as const,
+  };
+  const readOwner = async (file: string) => {
+    if (Date.now() >= deadlineAt) {
+      throw new Error("consolidation_deadline");
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const opened = await Promise.race([
+        readFileWithinRoot({
+          rootDir: repoRoot,
+          relativePath: file,
+          rejectHardlinks: true,
+          maxBytes: 128 * 1024,
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("consolidation_deadline")),
+            deadlineAt - Date.now(),
+          );
+        }),
+      ]);
+      if (Date.now() >= deadlineAt || opened.realPath !== path.resolve(repoRoot, file)) {
+        throw new Error("consolidation_owner_read_unconfirmed");
+      }
+      return {
+        path: file,
+        sha256: createHash("sha256").update(opened.buffer).digest("hex"),
+        bytes: opened.buffer.length,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  if (priorWork.status === "unknown" || priorWork.status === "not_observed") {
+    return result;
+  }
+  const ownerReads = new Map<string, Awaited<ReturnType<typeof readOwner>>>();
+  const failedOwnerReads = new Map<string, string>();
+  for (const read of priorWork.reads) {
+    if (read.current.status !== "read" || !read.current.sha256) {
+      continue;
+    }
+    const families = CONSOLIDATED_ENTRYPOINT_FAMILIES.filter((family) =>
+      family.allowedPaths.includes(read.path),
+    );
+    const route: ConsolidationRoute = {
+      source: { path: read.path, sha256: read.current.sha256 },
+      familyIds: families.map((family) => family.id),
+      ownerPaths: [...new Set(families.map((family) => family.ownerPath))],
+      ownerSources: [],
+      disposition: families.length ? "preserve_existing_owner" : "owner_unresolved",
+      gaps: [],
+      semanticEquivalence: "not_proven",
+    };
+    if (!families.length) {
+      const watched = CONSOLIDATED_ENTRYPOINT_FAMILIES.filter((family) =>
+        family.watchedPathTerms.some((term) =>
+          read.path.toLowerCase().includes(term.toLowerCase()),
+        ),
+      );
+      route.gaps.push(
+        watched.length
+          ? `entrypoint_registration_required:${watched.map((family) => family.id).join(",")}`
+          : "canonical_owner_not_declared",
+      );
+    }
+    for (const family of families) {
+      if (
+        !family.allowedPaths.includes(family.ownerPath) ||
+        !CONSOLIDATION_CLUSTERS.some((cluster) => cluster.id === family.ownerCluster)
+      ) {
+        result.conflicts.push({ path: read.path, reason: `declared_owner_conflict:${family.id}` });
+      }
+    }
+    if (families.length > 1) {
+      const shared = SHARED_ENTRYPOINT_OWNERS.find(
+        (rule) =>
+          rule.path === read.path &&
+          [...rule.familyIds].toSorted().join("|") === [...route.familyIds].toSorted().join("|"),
+      );
+      if (shared) {
+        route.sharedApproval = shared.reason;
+      } else {
+        result.conflicts.push({ path: read.path, reason: "cross_family_share_not_approved" });
+      }
+    }
+    for (const file of route.ownerPaths) {
+      try {
+        const previousFailure = failedOwnerReads.get(file);
+        if (previousFailure) {
+          route.gaps.push(previousFailure);
+          route.disposition = "owner_unresolved";
+          continue;
+        }
+        const source = ownerReads.get(file) ?? (await readOwner(file));
+        ownerReads.set(file, source);
+        route.ownerSources.push(source);
+        if (file === read.path && source.sha256 !== read.current.sha256) {
+          result.conflicts.push({ path: file, reason: "actual_source_changed_after_prior_read" });
+          route.disposition = "owner_unresolved";
+        }
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        const gap =
+          code === "too-large"
+            ? `owner_body_budget_partial:${file}`
+            : `owner_source_read_unconfirmed:${file}`;
+        failedOwnerReads.set(file, gap);
+        route.gaps.push(gap);
+        route.disposition = "owner_unresolved";
+        if (Date.now() >= deadlineAt) {
+          result.cleanup = "local_owner_read_cleanup_unconfirmed";
+        }
+      }
+    }
+    result.routes.push(route);
+    if (Buffer.byteLength(JSON.stringify(result)) > 12 * 1024) {
+      result.routes.pop();
+      result.omittedPriorReadIndices = priorWork.reads
+        .slice(priorWork.reads.indexOf(read))
+        .map((entry) => priorWork.reads.indexOf(entry));
+      result.status = "partial";
+      break;
     }
   }
-  return [...changed].toSorted();
+  for (const source of ownerReads.values()) {
+    let gap: string | undefined;
+    try {
+      if ((await readOwner(source.path)).sha256 !== source.sha256) {
+        gap = `owner_source_changed:${source.path}`;
+        result.conflicts.push({ path: source.path, reason: "actual_owner_source_changed" });
+      }
+    } catch {
+      gap = `owner_source_repin_unconfirmed:${source.path}`;
+      if (Date.now() >= deadlineAt) {
+        result.cleanup = "local_owner_read_cleanup_unconfirmed";
+      }
+    }
+    if (gap) {
+      result.status = "unknown";
+      for (const route of result.routes.filter((row) => row.ownerPaths.includes(source.path))) {
+        route.gaps.push(gap);
+        route.disposition = "owner_unresolved";
+      }
+    }
+  }
+  result.blocksPlan = result.conflicts.length > 0;
+  if (result.blocksPlan) {
+    result.status = "unknown";
+  } else if (result.status === "observed" && result.routes.some((route) => route.gaps.length)) {
+    result.status = "partial";
+  }
+  return result;
+}
+
+async function gitChangedFiles(deadlineAt = Date.now() + 20_000): Promise<{
+  files: string[];
+  readback: ChangedFilesReadback;
+}> {
+  const commandOptions = {
+    cwd: repoRoot,
+    timeout: Math.max(1, Math.min(10_000, deadlineAt - Date.now())),
+    signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
+    killSignal: "SIGKILL" as const,
+    maxBuffer: 1024 * 1024,
+  };
+  try {
+    const gitRoot = await execFileAsync("git", ["rev-parse", "--show-toplevel"], commandOptions);
+    const gitRootPath = gitRoot.stdout.trim();
+    if (!gitRootPath || !path.isAbsolute(gitRootPath) || path.resolve(gitRootPath) !== repoRoot) {
+      return {
+        files: [],
+        readback: {
+          source: "git",
+          status: "unavailable",
+          reason: "git_worktree_identity_mismatch",
+        },
+      };
+    }
+    const [diff, status] = await Promise.all([
+      execFileAsync("git", ["diff", "--name-only", "HEAD"], commandOptions),
+      execFileAsync("git", ["status", "--short", "--untracked-files=all"], commandOptions),
+    ]);
+    const changed = new Set(
+      diff.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+    for (const line of status.stdout.split(/\r?\n/u)) {
+      const file = line.slice(3).trim();
+      if (file) {
+        changed.add(file);
+      }
+    }
+    if (Date.now() >= deadlineAt) {
+      throw new Error("git_collection_deadline");
+    }
+    return { files: [...changed].toSorted(), readback: { source: "git", status: "observed" } };
+  } catch {
+    return {
+      files: [],
+      readback: { source: "git", status: "unavailable", reason: "git_changed_paths_unavailable" },
+    };
+  }
 }
 
 function normalizeChangedFiles(files: readonly string[]): string[] {
@@ -1242,32 +1879,748 @@ function uniqueSafetyNotes(impacts: readonly Impact[]): string[] {
   return [...new Set(impacts.flatMap((impact) => impact.safetyNotes))];
 }
 
+export type CleanupReviewHost = {
+  rootDir: string;
+  repoRoot: string;
+  parentRunId: string;
+  snapshot: Pick<LcxRunSnapshot, "snapshotId" | "sourceCommit" | "sourceBranch" | "authorityOwner">;
+};
+type CleanupSourceRef = { path: string; sha256: string };
+type CleanupReviewInput = {
+  schemaVersion: 1 | 2;
+  governance: CleanupSourceRef;
+  sources: {
+    universeIndex: CleanupSourceRef;
+    mindModel: CleanupSourceRef;
+    flowGraph: CleanupSourceRef;
+    contextRecovery?: CleanupSourceRef;
+  };
+  candidates: string[];
+};
+type CleanupRead = CleanupSourceRef & { pointer: string; value: unknown };
+type CleanupDisposition = {
+  candidateRef: CleanupSourceRef & { pointer: string };
+  candidate: unknown;
+  owner: string[];
+  disposition: "preserve" | "unknown";
+  reason: string;
+  missingChecks: string[];
+};
+export type CleanupReviewResult = {
+  status: "reviewed" | "blocked";
+  reason: string;
+  scope: { parentRunId: string; snapshotId: string; repoRoot: string };
+  sourceReads: CleanupRead[];
+  dispositions: CleanupDisposition[];
+  coverage: "selected_candidates_only";
+  cleanupAuthorized: false;
+  semanticTruth: "not_proven";
+};
+
+function cleanupRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("cleanup_review_object_invalid");
+  }
+  return value as Record<string, unknown>;
+}
+function cleanupKeys(value: unknown, keys: string[]) {
+  const record = cleanupRecord(value);
+  if (
+    Object.keys(record).length !== keys.length ||
+    keys.some((key) => !Object.hasOwn(record, key))
+  ) {
+    throw new Error("cleanup_review_schema_invalid");
+  }
+  return record;
+}
+function cleanupRef(value: unknown): CleanupSourceRef {
+  const ref = cleanupKeys(value, ["path", "sha256"]);
+  if (
+    typeof ref.path !== "string" ||
+    !ref.path ||
+    typeof ref.sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(ref.sha256)
+  ) {
+    throw new Error("cleanup_review_reference_invalid");
+  }
+  return { path: ref.path, sha256: ref.sha256 };
+}
+
+type MechanismComparison = {
+  status: "reviewed" | "unknown";
+  disposition: "preserve" | "merge_candidate" | "unknown";
+  reason: string;
+  decisionStatus: "selected_comparison_reviewed" | "unresolved_mechanism_comparison";
+  targetPath?: string;
+  ownerPath?: string;
+  checks: { id: string; before: number | boolean; after: number | boolean; changed: boolean }[];
+  sourceReads: { path: string; sha256: string; pointer?: string }[];
+  coverage: "selected_behavior_reports_only";
+  semanticEquivalence: "not_proven";
+  sourceMutationAuthorized: false;
+};
+
+/** Compare pinned source and selected behavior reports; this never authorizes a source migration. */
+export async function reviewMechanismComparison(
+  inputValue: unknown,
+  host: { rootDir: string; repoRoot: string; deadlineAt?: number },
+  routes: ConsolidationRoute[],
+): Promise<MechanismComparison> {
+  const result: MechanismComparison = {
+    status: "unknown",
+    disposition: "unknown",
+    reason: "mechanism_review_not_completed",
+    decisionStatus: "unresolved_mechanism_comparison",
+    checks: [],
+    sourceReads: [],
+    coverage: "selected_behavior_reports_only",
+    semanticEquivalence: "not_proven",
+    sourceMutationAuthorized: false,
+  };
+  const deadlineAt = host.deadlineAt ?? Date.now() + 20_000;
+  try {
+    const input = cleanupKeys(inputValue, [
+      "schemaVersion",
+      "repoRoot",
+      "targetPath",
+      "ownerPath",
+      "disposition",
+      "beforeSource",
+      "afterSource",
+      "beforeSourceHash",
+      "afterSourceHash",
+      "beforeInputHash",
+      "afterInputHash",
+      "checks",
+    ]);
+    if (
+      input.schemaVersion !== "lcx_mechanism_comparison_v1" ||
+      input.repoRoot !== host.repoRoot ||
+      typeof input.targetPath !== "string" ||
+      typeof input.ownerPath !== "string" ||
+      !["preserve", "merge_candidate"].includes(String(input.disposition))
+    ) {
+      throw new Error("mechanism_review_scope_invalid");
+    }
+    const route = routes.find((row) => row.source.path === input.targetPath);
+    if (!route) {
+      throw new Error("mechanism_review_source_not_inspected");
+    }
+    if (
+      route.disposition !== "preserve_existing_owner" ||
+      route.gaps.length ||
+      !route.ownerSources.some((source) => source.path === input.ownerPath)
+    ) {
+      throw new Error("mechanism_review_original_owner_unconfirmed");
+    }
+    result.targetPath = input.targetPath;
+    result.ownerPath = input.ownerPath;
+    const read = async (value: unknown, sourceCode = false) => {
+      const ref = sourceCode
+        ? cleanupRef(value)
+        : (() => {
+            const field = cleanupKeys(value, ["path", "sha256", "pointer"]);
+            const base = cleanupRef({ path: field.path, sha256: field.sha256 });
+            if (
+              typeof field.pointer !== "string" ||
+              !field.pointer.startsWith("/") ||
+              field.pointer.length > 512
+            ) {
+              throw new Error("mechanism_review_field_invalid");
+            }
+            return { ...base, pointer: field.pointer };
+          })();
+      const absolute = path.resolve(host.rootDir, ref.path);
+      const rootDir =
+        sourceCode &&
+        [input.targetPath, input.ownerPath].some(
+          (file) => absolute === path.resolve(host.repoRoot, String(file)),
+        )
+          ? host.repoRoot
+          : host.rootDir;
+      if (Date.now() >= deadlineAt) {
+        throw new Error("mechanism_review_deadline_cleanup_unconfirmed");
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let opened: Awaited<ReturnType<typeof readFileWithinRoot>>;
+      let expectedRealPath: string | undefined;
+      try {
+        opened = await Promise.race([
+          (async () => {
+            expectedRealPath = path.resolve(
+              await fs.realpath(rootDir),
+              path.relative(rootDir, absolute),
+            );
+            return readFileWithinRoot({
+              rootDir,
+              relativePath: path.relative(rootDir, absolute),
+              rejectHardlinks: true,
+              maxBytes: 128 * 1024,
+            });
+          })(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("mechanism_review_deadline_cleanup_unconfirmed")),
+              Math.max(1, deadlineAt - Date.now()),
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (
+        createHash("sha256").update(opened.buffer).digest("hex") !== ref.sha256 ||
+        opened.realPath !== expectedRealPath
+      ) {
+        throw new Error("mechanism_review_source_hash_conflict");
+      }
+      result.sourceReads.push({ ...ref, path: absolute });
+      if (sourceCode) {
+        return { ref, absolute };
+      }
+      let data: unknown;
+      try {
+        data = JSON.parse(opened.buffer.toString("utf8"));
+      } catch {
+        throw new Error("mechanism_review_report_invalid");
+      }
+      for (const part of ("pointer" in ref ? String(ref.pointer) : "").slice(1).split("/")) {
+        const key = part.replaceAll("~1", "/").replaceAll("~0", "~");
+        if (!data || typeof data !== "object" || !Object.hasOwn(data, key)) {
+          throw new Error("mechanism_review_report_field_missing");
+        }
+        data = (data as Record<string, unknown>)[key];
+      }
+      return data;
+    };
+    const beforeRef = cleanupRef(input.beforeSource);
+    const afterRef = cleanupRef(input.afterSource);
+    if (
+      !/\.(?:ts|js|mjs|cjs)$/u.test(beforeRef.path) ||
+      path.resolve(host.rootDir, afterRef.path) !== path.resolve(host.repoRoot, input.targetPath) ||
+      afterRef.sha256 !== route.source.sha256
+    ) {
+      throw new Error("mechanism_review_current_source_conflict");
+    }
+    await read(input.beforeSource, true);
+    await read(input.afterSource, true);
+    const owner = route.ownerSources.find((source) => source.path === input.ownerPath);
+    if (!owner) {
+      throw new Error("mechanism_review_original_owner_unconfirmed");
+    }
+    await read({ path: path.resolve(host.repoRoot, owner.path), sha256: owner.sha256 }, true);
+    if (
+      (await read(input.beforeSourceHash)) !== beforeRef.sha256 ||
+      (await read(input.afterSourceHash)) !== afterRef.sha256
+    ) {
+      throw new Error("mechanism_review_report_source_conflict");
+    }
+    const beforeInput = await read(input.beforeInputHash);
+    const afterInput = await read(input.afterInputHash);
+    if (
+      typeof beforeInput !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(beforeInput) ||
+      beforeInput !== afterInput
+    ) {
+      throw new Error("mechanism_review_behavior_input_conflict");
+    }
+    if (!Array.isArray(input.checks) || input.checks.length < 1 || input.checks.length > 8) {
+      throw new Error("mechanism_review_behavior_checks_missing");
+    }
+    const ids = new Set<string>();
+    for (const value of input.checks) {
+      const check = cleanupKeys(value, [
+        "id",
+        "before",
+        "after",
+        "expectedBefore",
+        "expectedAfter",
+      ]);
+      if (
+        typeof check.id !== "string" ||
+        !/^[a-z][a-z0-9_]{0,63}$/u.test(check.id) ||
+        ids.has(check.id)
+      ) {
+        throw new Error("mechanism_review_behavior_id_invalid");
+      }
+      ids.add(check.id);
+      const before = await read(check.before);
+      const after = await read(check.after);
+      const scalar = (v: unknown): v is number | boolean =>
+        typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+      if (
+        !scalar(before) ||
+        !scalar(after) ||
+        before !== check.expectedBefore ||
+        after !== check.expectedAfter
+      ) {
+        throw new Error("mechanism_review_behavior_expectation_failed");
+      }
+      result.checks.push({ id: check.id, before, after, changed: before !== after });
+    }
+    // Repin all actual inputs after the comparison, including unchanged owner identity.
+    const actualReads = [...result.sourceReads];
+    result.sourceReads = [];
+    for (const ref of actualReads) {
+      await read(
+        "pointer" in ref
+          ? { path: ref.path, sha256: ref.sha256, pointer: ref.pointer }
+          : { path: ref.path, sha256: ref.sha256 },
+        !("pointer" in ref),
+      );
+    }
+    result.status = "reviewed";
+    result.decisionStatus = "selected_comparison_reviewed";
+    result.disposition = input.disposition as "preserve" | "merge_candidate";
+    result.reason =
+      "Pinned original ownership and selected before/after behavioral expectations checked; report provenance and whole semantic equivalence remain separate.";
+  } catch (error) {
+    result.status = "unknown";
+    result.disposition = "unknown";
+    const reason = error instanceof Error ? error.message : "";
+    result.reason = reason.startsWith("mechanism_review_")
+      ? reason
+      : "mechanism_review_input_or_source_unconfirmed";
+  }
+  return result;
+}
+function parseCleanupReviewInput(value: unknown): CleanupReviewInput {
+  const input = cleanupKeys(value, ["schemaVersion", "governance", "sources", "candidates"]);
+  const sources = cleanupKeys(input.sources, [
+    "universeIndex",
+    "mindModel",
+    "flowGraph",
+    ...(input.schemaVersion === 2 ? ["contextRecovery"] : []),
+  ]);
+  if (
+    (input.schemaVersion !== 1 && input.schemaVersion !== 2) ||
+    !Array.isArray(input.candidates) ||
+    input.candidates.length > 256 ||
+    input.candidates.some(
+      (pointer) =>
+        typeof pointer !== "string" ||
+        !/^\/value\/garbageCandidates\/(untrackedRepoFiles|unmatchedChangedFiles|staleRuntimeFiles|largeRuntimeFiles|staleSnapshots)\/(0|[1-9]\d*)$/u.test(
+          pointer,
+        ),
+    ) ||
+    new Set(input.candidates).size !== input.candidates.length
+  ) {
+    throw new Error("cleanup_review_candidates_invalid");
+  }
+  return {
+    schemaVersion: input.schemaVersion,
+    governance: cleanupRef(input.governance),
+    sources: {
+      universeIndex: cleanupRef(sources.universeIndex),
+      mindModel: cleanupRef(sources.mindModel),
+      flowGraph: cleanupRef(sources.flowGraph),
+      ...(input.schemaVersion === 2
+        ? { contextRecovery: cleanupRef(sources.contextRecovery) }
+        : {}),
+    },
+    candidates: input.candidates as string[],
+  };
+}
+
+/** Read original archives; the caller supplies expected scope independently of these sources. */
+export async function reviewUniverseCleanup(
+  inputValue: unknown,
+  host: CleanupReviewHost,
+): Promise<CleanupReviewResult> {
+  const result: CleanupReviewResult = {
+    status: "blocked",
+    reason: "cleanup_review_not_completed",
+    scope: {
+      parentRunId: host.parentRunId,
+      snapshotId: host.snapshot?.snapshotId,
+      repoRoot: host.repoRoot,
+    },
+    sourceReads: [],
+    dispositions: [],
+    coverage: "selected_candidates_only",
+    cleanupAuthorized: false,
+    semanticTruth: "not_proven",
+  };
+  try {
+    if (
+      !host.parentRunId ||
+      !host.snapshot?.snapshotId ||
+      !host.snapshot.sourceCommit ||
+      !host.snapshot.sourceBranch ||
+      !host.snapshot.authorityOwner ||
+      !path.isAbsolute(host.rootDir) ||
+      !path.isAbsolute(host.repoRoot)
+    ) {
+      throw new Error("cleanup_review_host_scope_missing");
+    }
+    const input = parseCleanupReviewInput(inputValue);
+    const read = async (ref: CleanupSourceRef) => {
+      const opened = await readFileWithinRoot({
+        rootDir: host.rootDir,
+        relativePath: path.relative(host.rootDir, path.resolve(host.rootDir, ref.path)),
+        maxBytes: 16 * 1024 * 1024,
+      });
+      if (createHash("sha256").update(opened.buffer).digest("hex") !== ref.sha256) {
+        throw new Error("cleanup_review_hash_conflict");
+      }
+      return JSON.parse(opened.buffer.toString("utf8")) as unknown;
+    };
+    const field = (
+      body: unknown,
+      ref: CleanupSourceRef,
+      pointer: string,
+      retain = true,
+    ): unknown => {
+      let value = body;
+      for (const key of pointer.slice(1).split("/")) {
+        if (!value || typeof value !== "object" || !Object.hasOwn(value, key)) {
+          throw new Error(`cleanup_review_field_missing:${pointer}`);
+        }
+        value = (value as Record<string, unknown>)[key];
+      }
+      if (retain) {
+        result.sourceReads.push({ ...ref, pointer, value });
+      }
+      return value;
+    };
+    const governance = await read(input.governance);
+    const predecision = cleanupRecord(governance).schemaVersion === "lcx_agent_artifact_v1";
+    const prefix = predecision ? "/value" : "";
+    if (
+      predecision &&
+      (field(governance, input.governance, "/owner") !== "lcx-governance-autopilot" ||
+        field(governance, input.governance, "/runId") !== host.parentRunId ||
+        field(governance, input.governance, "/value/schemaVersion") !==
+          "lcx_central_governance_input_v1" ||
+        field(governance, input.governance, "/value/boundary") !==
+          "same_cycle_completed_owners_only" ||
+        field(governance, input.governance, "/value/phase") !== "before_central_decision")
+    ) {
+      throw new Error("cleanup_review_predecision_scope_conflict");
+    }
+    const parent = predecision
+      ? undefined
+      : cleanupRecord(field(governance, input.governance, "/runReceipt"));
+    const snapshot = cleanupRecord(field(governance, input.governance, `${prefix}/snapshot`));
+    const matchesSnapshot = (value: unknown) => {
+      const actual = cleanupRecord(value);
+      return (
+        Object.entries(host.snapshot).every(([key, expected]) => actual[key] === expected) &&
+        actual.observedAt === snapshot.observedAt
+      );
+    };
+    if (
+      field(governance, input.governance, predecision ? "/value/parentRunId" : "/runId") !==
+        host.parentRunId ||
+      !matchesSnapshot(snapshot) ||
+      (parent &&
+        (parent.contractVersion !== "lcx_run_receipt_v3" ||
+          parent.runId !== host.parentRunId ||
+          parent.owner !== "lcx-governance-autopilot" ||
+          parent.checkedAt !== snapshot.observedAt ||
+          !matchesSnapshot(parent.snapshot)))
+    ) {
+      throw new Error("cleanup_review_governance_scope_conflict");
+    }
+    const rows = predecision
+      ? Object.values(cleanupRecord(field(governance, input.governance, "/value/byOwner", false)))
+      : field(governance, input.governance, "/ownerCommands", false);
+    if (!Array.isArray(rows)) {
+      throw new Error("cleanup_review_owner_receipts_missing");
+    }
+    const bodies: Record<string, unknown> = {};
+    const sourceIds: Array<keyof CleanupReviewInput["sources"]> = [
+      "universeIndex",
+      "mindModel",
+      "flowGraph",
+      ...(input.schemaVersion === 2 ? ["contextRecovery" as const] : []),
+    ];
+    for (const id of sourceIds) {
+      const matches = rows.filter((row) => cleanupRecord(row).id === id);
+      if (matches.length !== 1) {
+        throw new Error(`cleanup_review_owner_receipt_missing:${id}`);
+      }
+      const row = cleanupRecord(matches[0]);
+      const rowPointer = predecision
+        ? `/value/byOwner/${id}`
+        : `/ownerCommands/${rows.indexOf(matches[0])}`;
+      const receipt = cleanupRecord(
+        field(governance, input.governance, `${rowPointer}/runReceipt`),
+      );
+      if (
+        receipt.contractVersion !== "lcx_run_receipt_v3" ||
+        receipt.owner !== id ||
+        receipt.checkedAt !== snapshot.observedAt ||
+        receipt.parentRunId !== host.parentRunId ||
+        !matchesSnapshot(receipt.snapshot) ||
+        typeof receipt.runId !== "string" ||
+        !receipt.runId
+      ) {
+        throw new Error(`cleanup_review_owner_scope_conflict:${id}`);
+      }
+      const ref = input.sources[id];
+      if (!ref) {
+        throw new Error(`cleanup_review_source_ref_missing:${id}`);
+      }
+      const recording = cleanupRecord(
+        field(
+          governance,
+          input.governance,
+          predecision ? `${rowPointer}/compact/artifactEvidence` : `/owners/${id}/artifactEvidence`,
+        ),
+      );
+      if (
+        !["registered", "unchanged"].includes(String(recording.status)) ||
+        recording.sha256 !== ref.sha256 ||
+        recording.relativePath !== `state/artifacts/${ref.sha256}.json` ||
+        path.resolve(host.rootDir, String(recording.relativePath)) !==
+          path.resolve(host.rootDir, ref.path)
+      ) {
+        throw new Error(`cleanup_review_artifact_binding_conflict:${id}`);
+      }
+      const artifact = await read(ref);
+      if (
+        field(artifact, ref, "/schemaVersion") !== "lcx_agent_artifact_v1" ||
+        field(artifact, ref, "/owner") !== id ||
+        field(artifact, ref, "/runId") !== receipt.runId
+      ) {
+        throw new Error(`cleanup_review_artifact_scope_conflict:${id}`);
+      }
+      const observedAt = field(artifact, ref, "/observedAt");
+      const checkedAt = field(artifact, ref, "/value/checkedAt");
+      if (
+        typeof checkedAt !== "string" ||
+        !Number.isFinite(Date.parse(checkedAt)) ||
+        observedAt !== new Date(checkedAt).toISOString()
+      ) {
+        throw new Error(`cleanup_review_source_time_conflict:${id}`);
+      }
+      if (
+        (!predecision && row.parsed !== true) ||
+        row.ok !== true ||
+        receipt.status !== "passed" ||
+        field(artifact, ref, "/value/ok") !== true
+      ) {
+        throw new Error(`cleanup_review_upstream_quality_failed:${id}`);
+      }
+      bodies[id] = cleanupRecord(artifact);
+      if (id === "contextRecovery") {
+        if (
+          field(artifact, ref, "/value/boundary") !== "local_context_recovery_exam_only" ||
+          field(artifact, ref, "/value/compressedContextRecovered") !== true
+        ) {
+          throw new Error("cleanup_review_recovery_not_complete");
+        }
+        const checks = field(artifact, ref, "/value/checks", false);
+        if (!Array.isArray(checks) || checks.length === 0) {
+          throw new Error("cleanup_review_recovery_checks_missing");
+        }
+        for (const [index] of checks.entries()) {
+          const check = cleanupRecord(checks[index]);
+          if (
+            typeof check.id !== "string" ||
+            !check.id.trim() ||
+            field(artifact, ref, `/value/checks/${index}/ok`) !== true
+          ) {
+            throw new Error(`cleanup_review_recovery_check_failed:${index}`);
+          }
+        }
+      }
+    }
+    if (
+      field(bodies.universeIndex, input.sources.universeIndex, "/value/repoRoot") !== host.repoRoot
+    ) {
+      throw new Error("cleanup_review_repo_scope_conflict");
+    }
+    for (const [id, pointers] of [
+      ["mindModel", ["/value/lanes", "/value/invariants"]],
+      ["flowGraph", ["/value/checks"]],
+    ] as const) {
+      for (const pointer of pointers) {
+        const checks = field(bodies[id], input.sources[id], pointer, false);
+        if (!Array.isArray(checks) || checks.length === 0) {
+          throw new Error(`cleanup_review_upstream_checks_failed:${id}:${pointer}`);
+        }
+        for (const [index] of checks.entries()) {
+          field(bodies[id], input.sources[id], `${pointer}/${index}/id`);
+          if (field(bodies[id], input.sources[id], `${pointer}/${index}/ok`) !== true) {
+            throw new Error(`cleanup_review_upstream_checks_failed:${id}:${pointer}/${index}/ok`);
+          }
+        }
+      }
+    }
+    const candidates = input.candidates.map((pointer) => ({
+      pointer,
+      candidate: field(bodies.universeIndex, input.sources.universeIndex, pointer),
+    }));
+    for (const { pointer, candidate } of candidates) {
+      const file = typeof candidate === "string" ? candidate : cleanupRecord(candidate).path;
+      const relativeFile =
+        typeof file === "string" && path.isAbsolute(file)
+          ? path.relative(host.repoRoot, file)
+          : file;
+      const ownedPath =
+        typeof relativeFile === "string" &&
+        relativeFile &&
+        !path.isAbsolute(relativeFile) &&
+        !relativeFile.split(/[\\/]/u).includes("..");
+      const impacts = ownedPath ? impactFor([relativeFile]) : [];
+      result.dispositions.push({
+        candidateRef: { ...input.sources.universeIndex, pointer },
+        candidate,
+        owner: [...new Set(impacts.map((impact) => impact.lane))],
+        disposition: impacts.length > 0 ? "preserve" : "unknown",
+        reason:
+          impacts.length > 0
+            ? "Existing owner lane requires preserving this candidate pending executed reference and retention checks; architecture checks prove structure only."
+            : "No exact owned repository path; inventory age, size or snapshot staleness cannot establish cleanup eligibility.",
+        missingChecks: [
+          ...new Set([
+            ...impacts.flatMap((impact) => impact.requiredChecks),
+            "executed_cleanup_reference_review",
+            "retention_and_active_writer_review",
+          ]),
+        ],
+      });
+    }
+    result.status = "reviewed";
+    result.reason =
+      "Exact archived sources consumed; conservative selected-candidate dispositions only.";
+  } catch (error) {
+    result.dispositions = [];
+    result.reason = error instanceof Error ? error.message : "cleanup_review_read_failed";
+  }
+  return result;
+}
+
 async function main() {
+  const deadlineAt = Date.now() + 20_000;
   const options = parseArgs(process.argv.slice(2));
-  const changedFiles =
+  let cleanupReview: CleanupReviewResult | undefined;
+  if (options.cleanupReview) {
+    const rootDir = path.resolve(options.reviewRootDir ?? repoRoot);
+    const host: CleanupReviewHost = {
+      rootDir,
+      repoRoot,
+      parentRunId: options.reviewParentRunId ?? "",
+      snapshot: {
+        snapshotId: options.reviewSnapshotId ?? "",
+        sourceCommit: "",
+        sourceBranch: "",
+        authorityOwner: "lcx-governance-autopilot",
+      },
+    };
+    try {
+      const [commit, branch] = await Promise.all([
+        execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repoRoot }),
+        execFileAsync("git", ["branch", "--show-current"], { cwd: repoRoot }),
+      ]);
+      host.snapshot.sourceCommit = commit.stdout.trim();
+      host.snapshot.sourceBranch = branch.stdout.trim();
+      const opened = await readFileWithinRoot({
+        rootDir,
+        relativePath: path.relative(rootDir, path.resolve(rootDir, options.cleanupReview)),
+        maxBytes: 256 * 1024,
+      });
+      cleanupReview = await reviewUniverseCleanup(JSON.parse(opened.buffer.toString("utf8")), host);
+    } catch (error) {
+      cleanupReview = await reviewUniverseCleanup(undefined, host);
+      cleanupReview.reason =
+        error instanceof Error ? error.message : "cleanup_review_input_read_failed";
+    }
+  } else if (
+    options.reviewParentRunId ||
+    options.reviewSnapshotId ||
+    (options.reviewRootDir && !options.mechanismReview)
+  ) {
+    throw new Error("review scope requires --cleanup-review");
+  }
+  const collection =
     options.changed.length > 0
-      ? normalizeChangedFiles(options.changed)
-      : normalizeChangedFiles(await gitChangedFiles());
+      ? {
+          files: options.changed,
+          readback: { source: "explicit_paths" as const, status: "observed" as const },
+        }
+      : await gitChangedFiles(deadlineAt);
+  const changedFiles = normalizeChangedFiles(collection.files);
+  const changedFilesReadback = collection.readback;
+  const pathsObserved = changedFilesReadback.status === "observed";
   const impacts = impactFor(changedFiles);
   const deferredCommands = uniqueDeferredCommands(impacts);
   const safetyNotes = uniqueSafetyNotes(impacts);
   const unmatchedFiles = changedFiles.filter(
     (file) => !impacts.some((impact) => impact.matchedFiles.includes(file)),
   );
+  const priorWork = await readPriorWork(
+    changedFiles,
+    changedFilesReadback,
+    impacts,
+    deadlineAt,
+    options.inspectPriorWork,
+  );
+  const consolidation = await readConsolidation(priorWork, deadlineAt);
+  let mechanismReview: MechanismComparison | undefined;
+  if (options.mechanismReview) {
+    let input: unknown;
+    const rootDir = path.resolve(options.reviewRootDir ?? repoRoot);
+    try {
+      const opened = await readFileWithinRoot({
+        rootDir,
+        relativePath: path.relative(rootDir, path.resolve(rootDir, options.mechanismReview)),
+        rejectHardlinks: true,
+        maxBytes: 16 * 1024,
+      });
+      input = JSON.parse(opened.buffer.toString("utf8"));
+    } catch {
+      input = undefined;
+    }
+    mechanismReview = await reviewMechanismComparison(
+      input,
+      { rootDir, repoRoot, deadlineAt },
+      consolidation.routes,
+    );
+    if (mechanismReview.status === "unknown") {
+      for (const route of consolidation.routes.filter(
+        (row) => row.source.path === mechanismReview?.targetPath,
+      )) {
+        route.disposition = "owner_unresolved";
+        route.gaps.push(mechanismReview.reason);
+      }
+    }
+  }
   const strayGate = {
-    ok: unmatchedFiles.length === 0,
+    ok:
+      pathsObserved &&
+      unmatchedFiles.length === 0 &&
+      !priorWork.blocksPlan &&
+      !consolidation.blocksPlan &&
+      (!mechanismReview || mechanismReview.status === "reviewed"),
+    ...(mechanismReview ? { mechanismReview } : {}),
+    priorWork,
+    consolidation,
     rule: "every changed file must match at least one owner lane",
     unmatchedChangedFiles: unmatchedFiles,
     nextAction:
-      unmatchedFiles.length === 0
-        ? "none"
-        : "add an owner rule, move the file under an owned path, ignore generated output, or delete the artifact",
+      mechanismReview?.status === "unknown"
+        ? mechanismReview.reason
+        : !pathsObserved
+          ? "restore Git worktree evidence or provide explicit changed paths; unknown is not clean"
+          : consolidation.blocksPlan
+            ? `resolve declared ownership conflict: ${consolidation.conflicts.map((conflict) => conflict.reason).join(",")}`
+            : priorWork.blocksPlan
+              ? `restore original implementation comparison: ${priorWork.gaps.join(",")}`
+              : unmatchedFiles.length === 0
+                ? priorWork.status === "partial"
+                  ? "mapping observed; narrow-read priorWork omissions before claiming full comparison"
+                  : "none"
+                : "add an owner rule, move the file under an owned path, ignore generated output, or delete the artifact",
   };
   const result = {
-    ok: strayGate.ok,
+    ok: strayGate.ok && cleanupReview?.status !== "blocked",
     boundary: "local_change_impact_plan_only",
     checkedAt: new Date().toISOString(),
     changedFiles,
+    changedFilesReadback,
     affectedLanes: [...new Set(impacts.map((impact) => impact.lane))],
     impacts,
     unmatchedFiles,
@@ -1278,16 +2631,22 @@ async function main() {
         : ["git status --short --branch", "git diff --check"],
     deferredCommands,
     safetyNotes,
+    ...(mechanismReview ? { mechanismReview } : {}),
+    ...(cleanupReview ? { cleanupReview } : {}),
     escalation: {
       runFullDoctor:
         impacts.some((impact) => impact.risk === "elevated" || impact.headTailRequired) ||
         changedFiles.length > 6 ||
         !strayGate.ok,
-      reason: !strayGate.ok
-        ? "unmatched changed files are not allowed; every changed file needs one owner lane"
-        : impacts.length === 0
-          ? "no mapped impact; inspect manually if files are not trivial"
-          : "mapped micro-change lanes produced focused checks",
+      reason: !pathsObserved
+        ? "Git changed-path evidence is unavailable; no clean-worktree conclusion is possible"
+        : !strayGate.ok
+          ? priorWork.blocksPlan
+            ? "original implementation comparison is incomplete; unknown is not clean"
+            : "unmatched changed files are not allowed; every changed file needs one owner lane"
+          : impacts.length === 0
+            ? "no mapped impact; inspect manually if files are not trivial"
+            : "mapped micro-change lanes produced focused checks",
     },
     liveTouched: false,
     providerConfigTouched: false,
@@ -1299,6 +2658,9 @@ async function main() {
       ? `${JSON.stringify(result, null, 2)}\n`
       : [
           `lcx change impact plan files=${changedFiles.length} lanes=${result.affectedLanes.join(",") || "none"}`,
+          ...(!pathsObserved
+            ? [`- blocked: ${changedFilesReadback.reason}; ${strayGate.nextAction}`]
+            : []),
           ...result.recommendedFastCommands.map((command) => `- ${command}`),
           ...deferredCommands.map((command) => `- deferred: ${command}`),
           ...safetyNotes.map((note) => `- note: ${note}`),
@@ -1306,4 +2668,6 @@ async function main() {
   );
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

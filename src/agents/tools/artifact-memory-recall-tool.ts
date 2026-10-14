@@ -13,6 +13,69 @@ import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 
 const TEXT_PAGE_MAX_BYTES = 2048;
 
+/** Exact child pointers, never an inferred summary of the stored evidence. */
+export function buildArtifactSelectionHints(field: string, value: unknown) {
+  const hints: { field: string; bytes: number }[] = [];
+  const addChildren = (parent: string, object: unknown, limit = 8) => {
+    if (!object || typeof object !== "object") {
+      return;
+    }
+    for (const [key, child] of Object.entries(object)
+      .toSorted(
+        (a, b) => Buffer.byteLength(JSON.stringify(b[1])) - Buffer.byteLength(JSON.stringify(a[1])),
+      )
+      .slice(0, limit)) {
+      const pointer = `${parent}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+      const hint = { field: pointer, bytes: Buffer.byteLength(JSON.stringify(child)) };
+      if (Buffer.byteLength(JSON.stringify([...hints, hint])) > 1024) {
+        return;
+      }
+      hints.push(hint);
+    }
+  };
+  addChildren(field, value);
+  if (Array.isArray(value)) {
+    for (const [index, child] of value.slice(0, 4).entries()) {
+      addChildren(`${field}/${index}`, child, 2);
+    }
+  }
+  return hints;
+}
+
+function artifactSelectionScope(text: string, field: string) {
+  const scope: Record<string, string | readonly string[]> = {};
+  let current: unknown = JSON.parse(text);
+  const collect = () => {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return;
+    }
+    const record = current as Record<string, unknown>;
+    if (
+      Array.isArray(record.instruments) &&
+      record.instruments.length <= 16 &&
+      record.instruments.every((item) => typeof item === "string" && item.length <= 128)
+    ) {
+      scope.instruments = record.instruments;
+    }
+    for (const key of ["accountId", "venue", "instrument", "ruleId"]) {
+      if (typeof record[key] === "string" && record[key].length <= 128) {
+        scope[key] = record[key];
+      }
+    }
+  };
+  collect();
+  for (const token of field.slice(1).split("/")) {
+    if (!current || typeof current !== "object") {
+      break;
+    }
+    current = (current as Record<string, unknown>)[
+      token.replaceAll("~1", "/").replaceAll("~0", "~")
+    ];
+    collect();
+  }
+  return scope;
+}
+
 const ArtifactRecallSchema = Type.Object(
   {
     action: Type.Union([Type.Literal("search"), Type.Literal("read")]),
@@ -93,6 +156,21 @@ function selectJsonField(text: string | undefined, truncated: boolean, field: st
   return value;
 }
 
+/** A missing key is still missing; expose real sibling pointers so the next read need not guess. */
+function missingFieldHints(text: string, field: string) {
+  let value: unknown = JSON.parse(text);
+  let parent = "";
+  for (const token of field.slice(1).split("/")) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!value || typeof value !== "object" || !Object.hasOwn(value, key)) {
+      return buildArtifactSelectionHints(parent, value);
+    }
+    parent += `/${token}`;
+    value = (value as Record<string, unknown>)[key];
+  }
+  return [];
+}
+
 /** Host-selected existing DB and workspace; a model can only search or read registered IDs. */
 export function createArtifactMemoryRecallTool(options: {
   config?: OpenClawConfig;
@@ -103,7 +181,7 @@ export function createArtifactMemoryRecallTool(options: {
     label: "Artifact Memory Recall",
     name: "artifact_memory_recall",
     description:
-      "Search registered owner results and conclusions, or read an original by its registered ID with source-time and SHA verification. Local read only. field must be an exact RFC6901 JSON Pointer, such as /value/status; dot/bracket paths are invalid. sourceAvailable=true retains a verified original or usable fragment even when the requested field is unavailable. For non-JSON or incomplete text, read textOffset=0 then nextTextOffset with the same ID and asOf; use textLimit for narrower pages. Truncated text remains partial evidence. Binary results provide original references, not inferred media meaning.",
+      "Search registered owner results and conclusions, or read an original by its registered ID with source-time and SHA verification. action is required: use action=read with id and optional field for an exact read, or action=search for discovery. Local read only. field must be an exact RFC6901 JSON Pointer, such as /value/status; dot/bracket paths are invalid. sourceAvailable=true retains a verified original or usable fragment even when the requested field is unavailable. For non-JSON or incomplete text, read textOffset=0 then nextTextOffset with the same ID and asOf; use textLimit for narrower pages. Truncated text remains partial evidence. Binary results provide original references, not inferred media meaning.",
     parameters: ArtifactRecallSchema,
     execute: async (_toolCallId, input, signal) => {
       const args = (input ?? {}) as Record<string, unknown>;
@@ -133,7 +211,10 @@ export function createArtifactMemoryRecallTool(options: {
       }
       let store: ArtifactStore | undefined;
       try {
-        const action = readStringParam(args, "action", { required: true });
+        const action = typeof args.action === "string" ? args.action.trim() : args.action;
+        if (action === undefined || action === null || action === "") {
+          throw new ArtifactStoreError("artifact_action_required");
+        }
         if (action !== "search" && action !== "read") {
           throw new ArtifactStoreError("artifact_action_invalid");
         }
@@ -279,7 +360,11 @@ export function createArtifactMemoryRecallTool(options: {
           });
         }
         if (field !== undefined) {
-          const unavailableField = (gap: string, selectedText?: string) => {
+          const unavailableField = (
+            gap: string,
+            selectedText?: string,
+            selectionHints?: ReturnType<typeof buildArtifactSelectionHints>,
+          ) => {
             const fragment = preview(selectedText ?? result.text ?? "");
             return jsonResult({
               available: false,
@@ -289,6 +374,7 @@ export function createArtifactMemoryRecallTool(options: {
               gap,
               sourceAvailable: true,
               selectionComplete: false,
+              ...(selectionHints?.length ? { selectionHints } : {}),
               artifactId: result.artifact.id,
               format: result.artifact.format,
               ...source,
@@ -321,11 +407,21 @@ export function createArtifactMemoryRecallTool(options: {
             }
             // The verified original remains useful even when this field cannot
             // be extracted. Retain a bounded fragment without inventing a value.
-            return unavailableField(error.code);
+            return unavailableField(
+              error.code,
+              undefined,
+              error.code === "artifact_field_missing" && result.text !== undefined
+                ? missingFieldHints(result.text, field)
+                : undefined,
+            );
           }
           const encoded = JSON.stringify(selectedValue);
           if (Buffer.byteLength(encoded) > ARTIFACT_TEXT_PREVIEW_MAX_BYTES) {
-            return unavailableField("artifact_field_budget_exceeded", encoded);
+            return unavailableField(
+              "artifact_field_budget_exceeded",
+              encoded,
+              buildArtifactSelectionHints(field, selectedValue),
+            );
           }
           const selected = preview(encoded);
           const fieldResult = { ...result };
@@ -338,6 +434,8 @@ export function createArtifactMemoryRecallTool(options: {
             authority: "local_read",
             action,
             selectedValue,
+            selectionHints: buildArtifactSelectionHints(field, selectedValue),
+            selectionScope: artifactSelectionScope(result.text!, field),
             ...source,
             selectedPreview: selected.preview,
             selectedPreviewTruncated: selected.truncated,
@@ -361,6 +459,14 @@ export function createArtifactMemoryRecallTool(options: {
           available: false,
           authority: "local_read",
           gap: error instanceof ArtifactStoreError ? error.code : "artifact_recall_failed",
+          ...(error instanceof ArtifactStoreError && error.code === "artifact_action_required"
+            ? {
+                requiredArgs: ["action"],
+                allowedActions: ["read", "search"],
+                guidance:
+                  "For a specific registered id/field, explicitly supply action=read; for discovery use action=search. No read was performed.",
+              }
+            : {}),
         });
       } finally {
         try {

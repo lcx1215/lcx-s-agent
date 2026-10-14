@@ -565,6 +565,10 @@ export async function readFinanceStrategyRuleLedger(
   options: Readonly<{ asOf?: string }> = {},
 ): Promise<FinanceStrategyRuleLedgerRead> {
   const asOf = options.asOf;
+  const cutoff = asOf === undefined || asOf.length === 0 ? undefined : Date.parse(asOf);
+  if (cutoff !== undefined && !Number.isFinite(cutoff)) {
+    throw new Error("strategy rule ledger asOf must identify a valid timestamp");
+  }
   const databasePresent = await fs.stat(databasePath(directory)).then(
     () => true,
     () => false,
@@ -589,9 +593,9 @@ export async function readFinanceStrategyRuleLedger(
     }
     const stored = readStoredRecords(db);
     const records =
-      asOf === undefined || asOf.length === 0
+      cutoff === undefined
         ? stored
-        : stored.filter((record) => record.body.observedAt.localeCompare(asOf) <= 0);
+        : stored.filter((record) => Date.parse(record.body.observedAt) <= cutoff);
     const ledger = projectFinanceStrategyRules(records);
     return Object.freeze({
       ledger,

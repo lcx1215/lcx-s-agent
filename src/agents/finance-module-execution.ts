@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
 import {
@@ -30,6 +31,13 @@ export type FinanceModuleExecutionToolCall = Readonly<{
   toolName: string;
   status: "succeeded" | "blocked" | "failed" | "cancelled";
   inputEvidenceIds: readonly string[];
+  /** Actual dispatched arguments; hashes attest bytes, never semantic validity. */
+  inputReadback?: Readonly<{
+    argsSha256: string;
+    byteLength: number;
+    args?: Record<string, unknown>;
+    bodyOmitted: boolean;
+  }>;
   outputSummary?: string;
   error?: string;
 }>;
@@ -72,6 +80,21 @@ export type FinanceModuleExecutionReceipt = Readonly<{
   /** Set by the research runner from mandatory-node success and evidence inclusion. */
   requiredEvidenceReady?: boolean;
   moduleToolsDispatched: boolean;
+  /** Actual executor input before module evidence is appended to the batch. */
+  inputReadback?: Readonly<{
+    batchSha256: string;
+    askSha256: string;
+    asOf: string;
+    readyJobReceipts: readonly Readonly<{
+      jobIndex: number;
+      requestSha256: string;
+      receiptSha256: string;
+    }>[];
+    omittedReadyJobIndices: readonly number[];
+    projectionSha256: string;
+    learningQuerySha256: string;
+    boundary: "input_bytes_and_projection_not_source_truth_or_module_adoption";
+  }>;
   compositionNodeIds: readonly string[];
   outputEvidenceIds: readonly string[];
   nodes: readonly FinanceModuleExecutionNode[];
@@ -156,6 +179,10 @@ const FRAMEWORK_INSPECT_DOMAINS = new Set<string>([
 ] as const);
 
 type ToolDetails = Record<string, unknown>;
+
+function inputSha256(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
 
 function asRecord(value: unknown): ToolDetails {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as ToolDetails) : {};
@@ -579,6 +606,15 @@ async function callTool(
         },
       };
     }
+    const argumentBytes = JSON.stringify(args);
+    const inputReadback = {
+      argsSha256: createHash("sha256").update(argumentBytes).digest("hex"),
+      byteLength: Buffer.byteLength(argumentBytes, "utf8"),
+      ...(Buffer.byteLength(argumentBytes, "utf8") <= 768
+        ? { args: JSON.parse(argumentBytes) as Record<string, unknown> }
+        : {}),
+      bodyOmitted: Buffer.byteLength(argumentBytes, "utf8") > 768,
+    };
     const result = await tool.execute(`finance-module:${toolName}`, args, signal);
     const details = toolResultDetails(result);
     const ok = details.ok !== false;
@@ -587,6 +623,7 @@ async function callTool(
         toolName,
         status: ok ? "succeeded" : "blocked",
         inputEvidenceIds,
+        inputReadback,
         outputSummary: compact(details),
         ...(ok
           ? {}
@@ -654,6 +691,61 @@ function moduleQuery(moduleId: FinanceBrainModuleId, ask: string): string {
   return `Finance module ${moduleId}. Apply retained guidance to this bounded research question: ${ask}. Use only supplied fresh evidence and state missing inputs; research-only.`;
 }
 
+/** Reuse only the original caller's bounded diagnostic; it is never market evidence. */
+export function buildFinanceLearningModuleInput(
+  ask: string,
+  asOf: string,
+  evidence: readonly FinanceCommitteeEvidence[] = [],
+) {
+  const base = {
+    queryText: moduleQuery("finance_learning_memory", ask),
+    feedbackEvidenceIds: [] as string[],
+  };
+  for (const item of evidence) {
+    if (
+      item.source !== "directed-daily-review-diagnostic" ||
+      !item.id.startsWith("directed-review:") ||
+      item.id.length > 160 ||
+      !Number.isFinite(Date.parse(item.timestamp)) ||
+      Date.parse(item.timestamp) > Date.parse(asOf) ||
+      Buffer.byteLength(item.text, "utf8") > 4096
+    ) {
+      continue;
+    }
+    let diagnostic: ToolDetails;
+    try {
+      diagnostic = asRecord(JSON.parse(item.text));
+    } catch {
+      continue;
+    }
+    if (diagnostic.kind !== "historical_directed_review_diagnostic_not_market_fact") {
+      continue;
+    }
+    const findings = Array.isArray(diagnostic.findings)
+      ? diagnostic.findings.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const context = {
+      evidenceId: item.id,
+      sourceSha256: createHash("sha256").update(item.text).digest("hex"),
+      findings: findings.slice(0, 2),
+      omittedFindings: Math.max(0, findings.length - 2),
+      remainingFields: ["/findings", "/nativeTaskGaps", "/verificationDetails", "/gaps"],
+    };
+    while (Buffer.byteLength(JSON.stringify(context), "utf8") > 512 && context.findings.length) {
+      context.findings.pop();
+      context.omittedFindings += 1;
+    }
+    if (Buffer.byteLength(JSON.stringify(context), "utf8") > 512) {
+      continue;
+    }
+    return {
+      queryText: `${base.queryText}\nHistorical review questions, not adopted facts or permission: ${JSON.stringify(context)}`,
+      feedbackEvidenceIds: [item.id],
+    };
+  }
+  return base;
+}
+
 // Put the substantive result before repeated call metadata: downstream prompts
 // deliberately clip each evidence item. This is model analysis, not new source proof.
 function frameworkAnalysis(details: ToolDetails): ToolDetails | undefined {
@@ -683,14 +775,16 @@ function outputEvidence(
   node: FinanceModuleExecutionNode,
   details: ToolDetails,
   timestamp: string,
+  diagnostic = false,
 ): FinanceCommitteeEvidence {
-  const id = `finance-module:${node.nodeId}`;
+  const id = `finance-module:${node.nodeId}${diagnostic ? ":diagnostic" : ""}`;
   return {
     id,
     source: "finance-module-execution",
     timestamp,
     text: JSON.stringify({
       researchOnly: true,
+      ...(diagnostic ? { basis: "module_refusal_diagnostic_not_market_evidence" } : {}),
       analysis: frameworkAnalysis(details),
       toolOutput: details,
       nodeId: node.nodeId,
@@ -741,7 +835,13 @@ export async function executeFinanceModuleComposition(
     evidence: readonly FinanceCommitteeEvidence[];
   }>
 > {
+  const batchInputSha256 = inputSha256(params.batch);
   const batchSource = recordsForJobs(params.batch, params.asOf, params.ask);
+  const learningInput = buildFinanceLearningModuleInput(
+    params.ask,
+    params.asOf,
+    params.controllerEvidence,
+  );
   const controllerSource =
     params.plan.composition.nodes.some((node) => node.moduleId === "quant_math") &&
     !batchSource.hasEodHistory
@@ -760,6 +860,25 @@ export async function executeFinanceModuleComposition(
         hasEodHistory: controllerSource.hasControllerHistory,
       }
     : batchSource;
+  const readyJobIndices = params.batch.jobs.flatMap((job, index) =>
+    job.status === "ready" && job.receipt !== undefined ? [index] : [],
+  );
+  const inputReadback = Object.freeze({
+    batchSha256: batchInputSha256,
+    askSha256: createHash("sha256").update(params.ask).digest("hex"),
+    asOf: params.asOf,
+    readyJobReceipts: Object.freeze(
+      readyJobIndices.slice(0, 16).map((jobIndex) => ({
+        jobIndex,
+        requestSha256: inputSha256(params.batch.jobs[jobIndex].request),
+        receiptSha256: inputSha256(params.batch.jobs[jobIndex].receipt),
+      })),
+    ),
+    omittedReadyJobIndices: Object.freeze(readyJobIndices.slice(16)),
+    projectionSha256: inputSha256(source),
+    learningQuerySha256: createHash("sha256").update(learningInput.queryText).digest("hex"),
+    boundary: "input_bytes_and_projection_not_source_truth_or_module_adoption" as const,
+  });
   const quantTool = createQuantMathTool();
   const learningTool = createFinanceLearningCapabilityApplyTool({
     workspaceDir: params.workspaceDir,
@@ -796,6 +915,7 @@ export async function executeFinanceModuleComposition(
         ...(moduleId !== "quant_math" && Array.isArray(producerSources)
           ? producerSources.filter((id): id is string => typeof id === "string")
           : []),
+        ...(moduleId === "finance_learning_memory" ? learningInput.feedbackEvidenceIds : []),
       ]),
     ]);
     const missingEvidence: string[] = [];
@@ -879,13 +999,30 @@ export async function executeFinanceModuleComposition(
                 };
         }
       } else if (moduleId === "finance_learning_memory") {
+        const application = params.domainProducerInputs?.finance_learning_memory;
+        const hasTask =
+          application?.financialTask !== undefined ||
+          application?.priorTaskReceiptSource !== undefined;
         const result = await callTool(
           learningTool,
           toolName,
           {
-            queryText: moduleQuery(moduleId, params.ask),
+            queryText: learningInput.queryText,
             maxCandidates: 3,
             writeUsageReceipt: true,
+            // The original apply owner validates exact source/task/receipt pins.
+            // Forward only explicit task fields; do not invent or choose a task.
+            ...(hasTask
+              ? {
+                  sourceArticlePath: application?.sourceArticlePath,
+                  ...(application?.financialTask !== undefined
+                    ? { financialTask: application.financialTask }
+                    : {}),
+                  ...(application?.priorTaskReceiptSource !== undefined
+                    ? { priorTaskReceiptSource: application.priorTaskReceiptSource }
+                    : {}),
+                }
+              : {}),
           },
           inputEvidenceIds,
           params.signal,
@@ -999,6 +1136,9 @@ export async function executeFinanceModuleComposition(
     };
     if (status === "succeeded") {
       evidence.push(outputEvidence(provisional, details, params.asOf));
+    } else if (moduleId === "finance_learning_memory" && details.ok === false) {
+      // Failed retrieval is useful decision context, never a successful module output.
+      evidence.push(outputEvidence(provisional, details, params.asOf, true));
     }
     nodes.push(provisional);
     nodeStatusById.set(compositionNode.id, provisional.status);
@@ -1021,6 +1161,7 @@ export async function executeFinanceModuleComposition(
         feedback.hardNodeIds.length > 0 &&
         feedback.hardFailures.length === 0,
       moduleToolsDispatched: allNodesSucceeded && outputEvidenceIds.length === nodes.length,
+      inputReadback,
       compositionNodeIds: Object.freeze([...params.plan.composition.topologicalOrder]),
       outputEvidenceIds: Object.freeze(outputEvidenceIds),
       nodes: Object.freeze(nodes),

@@ -200,16 +200,37 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
   accountId: string;
   venue: "alpaca:paper";
   receipts: readonly FinanceExecutionReceipt[];
+  asOf?: string;
 }): Promise<readonly FinanceOwnedProtectionExitFact[]> {
   if (!params.accountId.trim() || params.venue !== "alpaca:paper") {
     throw new Error("owned protection exits require an exact Alpaca paper account and venue");
+  }
+  const cutoff = params.asOf === undefined ? undefined : Date.parse(params.asOf);
+  if (cutoff !== undefined && !Number.isFinite(cutoff)) {
+    throw new Error("invalid owned exit cutoff");
+  }
+  // Without an entry receipt no broker stop can be attributed. Account and
+  // cutoff validation still precede this; the controller owns account safety.
+  if (params.receipts.length === 0) {
+    return [];
   }
   const history = await reduceFinanceBrokerHistoryRecords(
     params.directory,
     params.accountId,
     params.venue,
     new Map<string, BrokerFact>(),
-    retainLatestBrokerFacts,
+    (facts, record) => {
+      if (cutoff !== undefined) {
+        const observed = record.body.query.match(
+          /:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)$/u,
+        )?.[1];
+        if (!observed || Date.parse(observed) > cutoff) {
+          return facts;
+        }
+      }
+      return retainLatestBrokerFacts(facts, record);
+    },
+    { streams: ["orders", "activities"] },
   );
   const observations = [...history.value.values()];
   const orders = new Map(
@@ -348,7 +369,8 @@ export async function readFinanceOwnedProtectionExitFacts(params: {
           normalizedInstrument(fact.symbol) !== instrument ||
           quantity === undefined ||
           price === undefined ||
-          occurredAt === undefined
+          occurredAt === undefined ||
+          (cutoff !== undefined && occurredAt > cutoff)
         ) {
           throw new FinanceOwnedProtectionExitEvidenceError(
             "oto_child_fill_evidence_invalid",

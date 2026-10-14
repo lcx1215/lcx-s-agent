@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
+import {
+  createFinanceCashMergerCollector,
+  isAlpacaTradeExecutionType,
+} from "./finance-alpaca-activity-contract.js";
 import {
   syncAlpacaPaperHistory,
   type AlpacaHistoryOptions,
@@ -59,6 +62,16 @@ function createBrokerActivityAccumulator(asOf?: string) {
   const identities = new Map<string, string>();
   const issues: string[] = [];
   const fees: { id: string; instrument?: string; quantity: number; cash: number }[] = [];
+  const cashMergers = createFinanceCashMergerCollector(asOf);
+  const corporateActions: {
+    type: "CMA";
+    groupId: string;
+    corporateActionId: string;
+    instrument: string;
+    activityIds: string[];
+    quantity: number;
+    cash: number;
+  }[] = [];
   let cash = 0;
   // Diagnostic decomposition of recognized cash flows; it grants no reconciliation authority.
   const cashComponents = { fillCash: 0, feeCash: 0, otherCash: 0 };
@@ -135,6 +148,8 @@ function createBrokerActivityAccumulator(asOf?: string) {
         cash += amount;
         cashComponents.feeCash += amount;
         fees.push({ id: row.id, instrument, quantity, cash: amount });
+      } else if (row.activity_type === "MA" && row.activity_sub_type === "CMA") {
+        cashMergers.observe(row, fingerprint);
       } else if (["JNLC", "CSD", "CSW", "DIV", "INT"].includes(String(row.activity_type))) {
         if (
           row.status !== "executed" ||
@@ -154,6 +169,22 @@ function createBrokerActivityAccumulator(asOf?: string) {
     }
   };
   const finish = (input: BrokerSnapshotFacts) => {
+    const mergers = cashMergers.finish();
+    issues.push(...mergers.issues);
+    for (const merger of mergers.events) {
+      add(merger.instrument, merger.quantity);
+      cash += merger.cash;
+      cashComponents.otherCash += merger.cash;
+      corporateActions.push({
+        type: "CMA",
+        groupId: merger.groupId,
+        corporateActionId: merger.corporateActionId,
+        instrument: merger.instrument,
+        activityIds: [...merger.activityIds],
+        quantity: merger.quantity,
+        cash: merger.cash,
+      });
+    }
     const actual = new Map<string, number>();
     for (const row of input.positions) {
       const symbol = brokerSymbol(row.symbol);
@@ -184,6 +215,7 @@ function createBrokerActivityAccumulator(asOf?: string) {
           : ("unresolved" as const),
       quantities: [...quantities].map(([instrument, quantity]) => ({ instrument, quantity })),
       fees,
+      ...(corporateActions.length > 0 ? { corporateActions } : {}),
       cashFromActivities: cash,
       cashComponents,
       brokerCash: input.cash,
@@ -320,6 +352,7 @@ export async function syncFinanceBrokerReconciliation(
       },
       signal,
     });
+    signal.throwIfAborted();
     if (result.status !== 200) {
       throw new Error("broker reconciliation GET unavailable");
     }
@@ -330,6 +363,7 @@ export async function syncFinanceBrokerReconciliation(
     throw new Error("broker reconciliation account mismatch");
   }
   const synced = await syncAlpacaPaperHistory({ ...options, signal });
+  signal.throwIfAborted();
   let feesComplete = true;
   for (const type of ["CFEE", "FEE"]) {
     let cursor = "";
@@ -354,6 +388,7 @@ export async function syncFinanceBrokerReconciliation(
       ) {
         throw new Error("invalid fee page");
       }
+      signal.throwIfAborted();
       await appendFinanceBrokerHistory(options.directory, {
         kind: "broker_history",
         accountId: options.accountId,
@@ -390,6 +425,7 @@ export async function syncFinanceBrokerReconciliation(
       }
       return accumulator;
     },
+    { streams: ["activities"], signal },
   );
   const positions = await get("/v2/positions");
   const orders = await get("/v2/orders?status=open&limit=500&nested=true");
@@ -469,6 +505,7 @@ export async function syncFinanceBrokerReconciliation(
     openOrders: orders,
     historyHeadRef: history.headRef,
   };
+  signal.throwIfAborted();
   await appendFinanceBrokerHistory(options.directory, {
     kind: "broker_history",
     accountId: options.accountId,

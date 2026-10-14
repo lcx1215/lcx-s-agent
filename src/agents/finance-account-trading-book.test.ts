@@ -173,3 +173,19 @@ it.each(["paper", "alpaca:live"])(
     ).rejects.toThrow("account trading book requires the exact Alpaca paper venue");
   },
 );
+
+it("stops an account book read cancelled after dispatch and releases its local readers", async () => {
+  const f = await fixture();
+  const controller = new AbortController();
+  const reason = new DOMException("account deadline", "AbortError");
+  const pending = readFinanceAccountTradingBook({
+    ...f,
+    venue: "alpaca:paper",
+    signal: controller.signal,
+  });
+  queueMicrotask(() => controller.abort(reason));
+  await expect(pending).rejects.toBe(reason);
+  const recovered = await readFinanceAccountTradingBook({ ...f, venue: "alpaca:paper" });
+  expect(recovered.accountId).toBe(f.accountId);
+  expect(recovered.brokerBaselineUsable).toBe(true);
+});

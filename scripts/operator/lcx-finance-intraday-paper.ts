@@ -9,6 +9,7 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_RULE,
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+  FinanceIntradayReplayInputError,
   runFinanceIntradayPaperReplay,
 } from "../../src/agents/finance-intraday-paper.js";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
@@ -142,8 +143,38 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const payload = await buildFinanceIntradayPaperPayload(args);
-  process.stdout.write(`${JSON.stringify(payload, null, args.includes("--json") ? 2 : 0)}\n`);
+  try {
+    const payload = await buildFinanceIntradayPaperPayload(args);
+    process.stdout.write(`${JSON.stringify(payload, null, args.includes("--json") ? 2 : 0)}\n`);
+  } catch (error) {
+    if (!(error instanceof FinanceIntradayReplayInputError)) {
+      throw error;
+    }
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          waterflow: "finance_intraday_paper_waterflow",
+          boundary: "local_research_and_paper_replay_only",
+          status: "blocked",
+          executionAuthority: "none",
+          owner: error.owner,
+          source: error.source,
+          requested: {
+            instrument: valueAfter(args, "--instrument"),
+            from: valueAfter(args, "--from"),
+            to: valueAfter(args, "--to"),
+          },
+          gaps: [error.gap],
+          requiredNextStep:
+            "Recover the missing/conflicting source bars in the original ledger before replaying; do not substitute a later bar.",
+          claims: { orderPlaced: false, alphaProven: false },
+        },
+        null,
+        args.includes("--json") ? 2 : 0,
+      )}\n`,
+    );
+    process.exitCode = 1;
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

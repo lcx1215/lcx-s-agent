@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
@@ -111,26 +112,72 @@ function openDatabase(directory: string): Database {
   return db;
 }
 
-function readRecords(db: Database): FinanceIntradayRecord[] {
-  const rows = db
-    .prepare("SELECT ref, body FROM finance_intraday_records ORDER BY sequence")
-    .all() as ReadonlyArray<{ ref?: unknown; body?: unknown }>;
+type IntradayReadScope = { instrument?: string; asOf?: string; feed?: string };
+type IntradayByteProof = Readonly<{
+  ref: string;
+  sequence: number;
+  previousRef: string | null;
+  instrument: string;
+  observedAt: string;
+  feed?: string;
+}>;
+// Bounded normalized headers only. Rehash current bytes on every scan and decode
+// selected bars afresh; neither payload mutation nor stale disk bytes reuse a proof.
+const intradayByteProofs = new Map<string, IntradayByteProof>();
+let intradayByteProofBytes = 0;
+
+function readRecords(db: Database, scope: IntradayReadScope = {}) {
+  const records: FinanceIntradayRecord[] = [];
   let previousRef: string | null = null;
-  return rows.map((row, index) => {
+  let recordCount = 0;
+  for (const row of db
+    .prepare("SELECT ref, body FROM finance_intraday_records ORDER BY sequence")
+    .iterate()) {
     if (typeof row.ref !== "string" || typeof row.body !== "string") {
       throw new Error("invalid intraday record");
     }
-    const raw: unknown = JSON.parse(row.body);
-    if (caseflowFingerprint(raw) !== row.ref) {
+    const encoded = row.body;
+    const encodedHash = createHash("sha256").update(encoded).digest("hex");
+    let proof = intradayByteProofs.get(encodedHash);
+    let record: z.infer<typeof StoredRecord> | undefined;
+    const decode = () => (record ??= StoredRecord.parse(JSON.parse(encoded)));
+    if (!proof) {
+      const raw: unknown = JSON.parse(row.body);
+      if (caseflowFingerprint(raw) !== row.ref) {
+        throw new Error("intraday record integrity mismatch");
+      }
+      record = StoredRecord.parse(raw);
+      proof = Object.freeze({
+        ref: row.ref,
+        sequence: record.sequence,
+        previousRef: record.previousRef,
+        instrument: record.body.instrument,
+        observedAt: record.body.observedAt,
+        feed: record.body.provenance.feed,
+      });
+      const size = Buffer.byteLength(JSON.stringify(proof));
+      // Retain the prefix at capacity to avoid churning an ordered full scan.
+      if (intradayByteProofs.size < 50_000 && intradayByteProofBytes + size <= 8 * 1024 * 1024) {
+        intradayByteProofs.set(encodedHash, proof);
+        intradayByteProofBytes += size;
+      }
+    }
+    if (proof.ref !== row.ref) {
       throw new Error("intraday record integrity mismatch");
     }
-    const record = StoredRecord.parse(raw);
-    if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
+    if (proof.sequence !== ++recordCount || proof.previousRef !== previousRef) {
       throw new Error("intraday record chain mismatch");
     }
     previousRef = row.ref;
-    return { ...record, ref: row.ref };
-  });
+    if (
+      (!scope.instrument || proof.instrument === scope.instrument) &&
+      (!scope.asOf || proof.observedAt <= scope.asOf) &&
+      (!scope.feed || proof.feed === scope.feed)
+    ) {
+      records.push({ ...decode(), ref: row.ref });
+    }
+  }
+  return { records, recordCount, headRef: previousRef };
 }
 
 function signature(bar: FinanceIntradayBar): string {
@@ -196,7 +243,7 @@ export async function appendFinanceIntradayBars(
   try {
     db.exec("BEGIN IMMEDIATE");
     try {
-      const records = readRecords(db);
+      const { records, recordCount, headRef } = readRecords(db);
       const byInterval = new Map<string, FinanceIntradayBar>();
       for (const record of records) {
         for (const bar of record.body.bars) {
@@ -221,8 +268,8 @@ export async function appendFinanceIntradayBars(
         return Object.freeze({
           appended: false,
           repeatsSkipped,
-          recordCount: records.length,
-          headRef: records.at(-1)?.ref ?? null,
+          recordCount,
+          headRef,
         });
       }
       const body = {
@@ -235,8 +282,8 @@ export async function appendFinanceIntradayBars(
       const record = StoredRecord.parse({
         schemaVersion: FINANCE_INTRADAY_RECORD_SCHEMA,
         recordKey: caseflowFingerprint(body),
-        sequence: records.length + 1,
-        previousRef: records.at(-1)?.ref ?? null,
+        sequence: recordCount + 1,
+        previousRef: headRef,
         recordedAt: new Date().toISOString(),
         body,
       });
@@ -248,7 +295,7 @@ export async function appendFinanceIntradayBars(
       return Object.freeze({
         appended: true,
         repeatsSkipped,
-        recordCount: records.length + 1,
+        recordCount: recordCount + 1,
         headRef: ref,
       });
     } catch (error) {
@@ -271,13 +318,7 @@ export async function readFinanceIntradayLedger(
   }
   const db = openDatabase(directory);
   try {
-    const records = readRecords(db);
-    const visible = records.filter(
-      (record) =>
-        (!options.instrument || record.body.instrument === options.instrument) &&
-        (!options.asOf || record.body.observedAt <= options.asOf) &&
-        (!options.feed || record.body.provenance.feed === options.feed),
-    );
+    const { records: visible, recordCount, headRef } = readRecords(db, options);
     const bars = visible
       .flatMap((record) => record.body.bars)
       .toSorted(
@@ -287,8 +328,8 @@ export async function readFinanceIntradayLedger(
       );
     return Object.freeze({
       bars: Object.freeze(bars),
-      recordCount: records.length,
-      headRef: records.at(-1)?.ref ?? null,
+      recordCount,
+      headRef,
     });
   } finally {
     db.close();

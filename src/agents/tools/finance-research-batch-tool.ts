@@ -24,6 +24,12 @@ import { jsonResult, readStringParam } from "./common.js";
 export const FINANCE_RESEARCH_BATCH_SCHEMA_VERSION = "lcx_finance_research_batch_v1" as const;
 
 const FinanceResearchBatchSchema = Type.Object({
+  directory: Type.Optional(
+    Type.String({
+      description:
+        "Finance state directory shared by active-rule selection, retained bar reads and the default samples file. Omit to use the original resolved finance directory.",
+    }),
+  ),
   instruments: Type.Optional(
     Type.String({
       description: `Comma-separated symbols. Defaults to the ${DEFAULT_POOL.length}-name pool.`,
@@ -67,6 +73,9 @@ export function createFinanceResearchBatchTool(): AnyAgentTool {
 
       const result = await runResearchBatch({
         instruments: capped,
+        ...(readStringParam(params, "directory")
+          ? { directory: readStringParam(params, "directory") as string }
+          : {}),
         ...(readStringParam(params, "recordPath")
           ? { recordPath: readStringParam(params, "recordPath") as string }
           : {}),

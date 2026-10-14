@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   financePortfolioPlanSchema,
   type FinancePortfolioPlan,
@@ -39,6 +42,143 @@ export const financeResearchPortfolioContextSchema = z
   });
 
 export type FinanceResearchPortfolioContext = z.infer<typeof financeResearchPortfolioContextSchema>;
+
+const controllerInputPinSchema = z
+  .object({
+    path: z.string().min(1),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    bytes: z.number().int().positive(),
+  })
+  .strict();
+
+/** Original scheduler input provenance; never an execution or source-quality approval. */
+export const financeScheduledResearchHandoffSchema = z
+  .object({
+    schemaVersion: z.literal("finance_scheduled_research_handoff_v1"),
+    sourceScope: z
+      .object({
+        runId: z.string().trim().min(1),
+        accountId: z.string().min(1),
+        venue: z.enum(["paper", "alpaca"]),
+        asOf: z.string().datetime({ offset: true }),
+      })
+      .strict(),
+    inputs: z
+      .object({
+        controllerEvidence: controllerInputPinSchema,
+        portfolioContext: controllerInputPinSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export type FinanceScheduledResearchHandoff = z.infer<typeof financeScheduledResearchHandoffSchema>;
+export const financeResearchControllerHandoffSchema = financeScheduledResearchHandoffSchema.extend({
+  producer: controllerInputPinSchema,
+});
+export type FinanceResearchControllerHandoff = z.infer<
+  typeof financeResearchControllerHandoffSchema
+>;
+
+export const financeActiveStrategyResearchSourceSchema = z
+  .object({
+    directory: z.string().min(1),
+    asOf: z.string().datetime({ offset: true }),
+    storedHeadRef: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    projectedHeadRef: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    storedRecordCount: z.number().int().nonnegative(),
+    projectedRecordCount: z.number().int().nonnegative(),
+    selectedRuleIds: z.array(z.string().min(1)),
+    selectedRulesSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
+export type FinanceActiveStrategyResearchSource = z.infer<
+  typeof financeActiveStrategyResearchSourceSchema
+>;
+export const financeResearchControllerRuleUseSchema = z
+  .object({
+    source: financeActiveStrategyResearchSourceSchema,
+    // This account selected global rules; it does not own the rule ledger.
+    accountScope: z
+      .object({
+        accountId: z.string().min(1),
+        venue: z.enum(["paper", "alpaca"]),
+        asOf: z.string(),
+      })
+      .strict(),
+    evidence: z
+      .object({
+        id: z.literal("finance-controller:active-strategies"),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      })
+      .strict(),
+    parentRunId: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type FinanceResearchControllerRuleUse = z.infer<
+  typeof financeResearchControllerRuleUseSchema
+>;
+
+/** Validate the actual rule packet consumed by this invocation, not its truth or profitability. */
+export function assertFinanceResearchRuleUse(
+  value: unknown,
+  evidence: readonly FinanceCommitteeEvidence[],
+  context: FinanceResearchPortfolioContext | undefined,
+  asOf: string,
+): FinanceResearchControllerRuleUse | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const use = financeResearchControllerRuleUseSchema.parse(value);
+  const matches = evidence.filter((item) => item.id === use.evidence.id);
+  if (
+    !context ||
+    use.accountScope.accountId !== context.accountId ||
+    use.accountScope.venue !== context.venue ||
+    Date.parse(use.accountScope.asOf) !== Date.parse(asOf) ||
+    Date.parse(use.source.asOf) !== Date.parse(asOf) ||
+    !use.source.projectedHeadRef ||
+    !use.source.storedHeadRef ||
+    use.source.projectedRecordCount === 0 ||
+    use.source.projectedRecordCount > use.source.storedRecordCount ||
+    new Set(use.source.selectedRuleIds).size !== use.source.selectedRuleIds.length ||
+    caseflowFingerprint(use.source.selectedRuleIds) !==
+      caseflowFingerprint(context.activeStrategyIds) ||
+    matches.length !== 1
+  ) {
+    throw new Error("controller rule use account, time or selection mismatch");
+  }
+  const item = matches[0];
+  if (
+    item.source !== "finance-strategy-rule-ledger" ||
+    Date.parse(item.timestamp) !== Date.parse(asOf) ||
+    createHash("sha256").update(item.text, "utf8").digest("hex") !== use.evidence.sha256
+  ) {
+    throw new Error("controller rule use evidence hash or source mismatch");
+  }
+  const payload: unknown = JSON.parse(item.text);
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("activeRules" in payload) ||
+    !Array.isArray(payload.activeRules) ||
+    caseflowFingerprint(payload.activeRules) !== use.source.selectedRulesSha256 ||
+    caseflowFingerprint(
+      payload.activeRules.map((rule: unknown) =>
+        rule && typeof rule === "object" && "ruleId" in rule ? rule.ruleId : null,
+      ),
+    ) !== caseflowFingerprint(use.source.selectedRuleIds)
+  ) {
+    throw new Error("controller rule use body or rule identity mismatch");
+  }
+  return use;
+}
 
 const allocationProposalSchema = z
   .object({

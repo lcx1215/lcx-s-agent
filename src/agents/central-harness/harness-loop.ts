@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ArtifactRecordingReceipt } from "../artifact-result-recording.js";
+import { verifyCentralEvidenceUse, centralEvidenceUseEdges } from "./evidence-use.js";
 import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
+import { diagnoseCentralRuleHandoff, compactRuleHandoff } from "./rule-handoff.js";
 import type {
   CentralBrainCallEvidence,
   CentralContextBudgetReport,
@@ -206,6 +208,7 @@ async function runCycle(
       brainCall = {
         provider: "",
         modelId: "",
+        ...options.brain.inspectCall?.(),
         outcome: "failed",
         reason: `brain call failed: ${String(error).slice(0, 300)}`,
       };
@@ -312,7 +315,7 @@ async function runCycle(
         options.execute !== undefined
           ? // Test/offline override: deterministic execute given the full spec.
             options.execute(step.ownerId, spec, step.args, signal)
-          : spec.execute(step.args, signal),
+          : spec.execute(step.args, signal, { runId }),
       );
       // `ran_ok` means the harness obtained a receipt. The owner's own verdict
       // rides alongside it, so "it ran and reported a red light" never reads as
@@ -380,6 +383,7 @@ async function runCycle(
         const decisionDigest = compactCentralStepOutcome(step.ownerId, digestSource);
         const outcomeBudget =
           step.ownerId === "finance_bar_ledger" ||
+          step.ownerId === "finance_tuning_proposal" ||
           (step.ownerId === "artifact_memory_recall" &&
             (typeof step.args.field === "string" ||
               typeof step.args.textOffset === "number" ||
@@ -438,7 +442,11 @@ async function runCycle(
             ? "restore_brain_provider_then_retry"
             : "continue";
 
-  const receipt: CentralRunReceipt = {
+  const evidenceUse =
+    proposal?.kind === "proposed" && !signal.aborted && proposal.plan.evidenceUse
+      ? verifyCentralEvidenceUse(proposal.plan.evidenceUse, bounded.perception)
+      : undefined;
+  const baseReceipt: CentralRunReceipt = {
     schemaVersion: "lcx_central_agent_v1",
     runId,
     observedAt: options.perception.observedAt,
@@ -449,6 +457,9 @@ async function runCycle(
     steps,
     boundaries: options.perception.boundaries,
     brainCall,
+    ...(evidenceUse
+      ? { evidenceUse, ontologyEdges: centralEvidenceUseEdges(runId, evidenceUse) }
+      : {}),
     nextAction,
     contextBudget: bounded.report,
     ...(bounded.perception.task?.focus === "general"
@@ -471,6 +482,11 @@ async function runCycle(
     protectedMemoryTouched: false,
   };
 
+  const ruleHandoff = diagnoseCentralRuleHandoff(baseReceipt, bounded.perception);
+  const receipt: CentralRunReceipt = {
+    ...baseReceipt,
+    ...(ruleHandoff ? { ruleHandoff } : {}),
+  };
   if (options.settle) {
     await options.settle(receipt);
   }
@@ -490,6 +506,9 @@ async function runCycle(
  * to re-derive it, and the field cannot become model-authored guidance.
  */
 export type CompactBacklogEntry = Readonly<{
+  ruleHandoff?: import("./rule-handoff.js").CentralRuleHandoff;
+  evidenceUse?: readonly import("./types.js").CentralVerifiedEvidenceUse[];
+  evidenceUseOmitted?: number;
   atMs: number;
   brainOutcome: "completed" | "failed" | "blocked" | "skipped";
   note?: string;
@@ -757,10 +776,20 @@ export function compactReceipts(
       ),
     );
     const kept = interesting.filter((step) => selected.has(step));
+    const evidenceUse: NonNullable<CentralRunReceipt["evidenceUse"]>[number][] = [];
+    for (const use of receipt.evidenceUse ?? []) {
+      if (jsonBytes([...evidenceUse, use]) <= 1024) {
+        evidenceUse.push(use);
+      }
+    }
+    const evidenceUseOmitted = (receipt.evidenceUse?.length ?? 0) - evidenceUse.length;
     return {
       atMs: Date.parse(receipt.observedAt) || 0,
       brainOutcome: receipt.brainCall.outcome,
       ...(receipt.brainCall.note ? { note: receipt.brainCall.note } : {}),
+      ...(evidenceUse.length ? { evidenceUse } : {}),
+      ...(evidenceUseOmitted ? { evidenceUseOmitted } : {}),
+      ...(receipt.ruleHandoff ? { ruleHandoff: compactRuleHandoff(receipt.ruleHandoff) } : {}),
       approved: receipt.steps
         .filter((step) => step.status === "approved" || step.status === "ran_ok")
         .map((step) => step.ownerId),
@@ -888,6 +917,9 @@ export function compactReceipts(
         );
       }),
   );
+  // A source-bound judgment is the handoff outcome. Retaining every read page
+  // while discarding that judgment breaks the next cycle's feedback loop.
+  const newestJudgment = mapped.findLast((entry) => (entry.evidenceUse?.length ?? 0) > 0);
   while (
     mapped.length > 1 &&
     (mapped.length > bounded || jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit)
@@ -895,6 +927,7 @@ export function compactReceipts(
     let removeIndex = mapped.findIndex(
       (entry) =>
         entry !== newestHostResult &&
+        entry !== newestJudgment &&
         !carriesFocusPage(entry) &&
         !carriesSelection(entry) &&
         !carriesCurrentAttempt(entry),
@@ -902,16 +935,25 @@ export function compactReceipts(
     if (removeIndex < 0) {
       removeIndex = mapped.findIndex(
         (entry) =>
-          entry !== newestHostResult && !carriesFocusPage(entry) && !carriesSelection(entry),
+          entry !== newestHostResult &&
+          entry !== newestJudgment &&
+          !carriesFocusPage(entry) &&
+          !carriesSelection(entry),
       );
     }
     if (removeIndex < 0) {
       removeIndex = mapped.findIndex(
-        (entry) => entry !== newestHostResult && !carriesFocusPage(entry),
+        (entry) =>
+          entry !== newestHostResult && entry !== newestJudgment && !carriesFocusPage(entry),
       );
     }
     if (removeIndex < 0) {
-      removeIndex = mapped.findIndex((entry) => entry !== newestHostResult);
+      removeIndex = mapped.findIndex(
+        (entry) => entry !== newestHostResult && entry !== newestJudgment,
+      );
+    }
+    if (removeIndex < 0) {
+      removeIndex = mapped.findIndex((entry) => entry !== newestJudgment);
     }
     if (removeIndex < 0) {
       break;
@@ -1005,6 +1047,40 @@ function compactCentralStepOutcome(
   source: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
   if (
+    ownerId === "finance_data_gateway_snapshot" &&
+    source.boundary === "finance_data_gateway_research_only"
+  ) {
+    // Keep the concrete quality gap ahead of verbose field metadata within the same budget.
+    const conflictingFields = Array.isArray(source.conflicts)
+      ? source.conflicts.flatMap((conflict) =>
+          isPlainRecord(conflict) && typeof conflict.fieldName === "string"
+            ? [conflict.fieldName]
+            : [],
+        )
+      : undefined;
+    const priorityKeys = [
+      "qualityStatus",
+      "instrument",
+      "asOf",
+      "nextTool",
+      "nextReviewTarget",
+      "retryOnlyAfter",
+      "conflictingFields",
+      "missingEvidence",
+      "requiredNextSteps",
+    ];
+    const withConflicts: Readonly<Record<string, unknown>> = {
+      ...source,
+      ...(conflictingFields ? { conflictingFields } : {}),
+    };
+    return Object.fromEntries([
+      ...priorityKeys
+        .filter((key) => Object.hasOwn(withConflicts, key))
+        .map((key) => [key, withConflicts[key]]),
+      ...Object.entries(withConflicts).filter(([key]) => !priorityKeys.includes(key)),
+    ]);
+  }
+  if (
     ownerId === "finance_bar_ledger" &&
     source.schemaVersion === "lcx_finance_bar_ledger_tool_v1"
   ) {
@@ -1039,7 +1115,7 @@ function compactCentralStepOutcome(
     // Recover the selected evidence, not a duplicate full source and index row.
     // Oversized values are omitted by the existing budget with a named gap;
     // the pointer and verified source identity allow a narrower next read.
-    return {
+    const selection = {
       available: source.available,
       authority: source.authority,
       action: source.action,
@@ -1050,9 +1126,24 @@ function compactCentralStepOutcome(
       sourceSha256: source.sourceSha256,
       sourceObservedAt: source.sourceObservedAt,
       ...(source.sourceCutoff ? { sourceCutoff: source.sourceCutoff } : {}),
+      ...(isPlainRecord(source.selectionScope) && Object.keys(source.selectionScope).length > 0
+        ? { selectionScope: source.selectionScope }
+        : {}),
       selectedValue: source.selectedValue,
       selectedPreview: source.selectedPreview,
       selectedPreviewTruncated: source.selectedPreviewTruncated,
+    };
+    if (jsonBytes(selection) <= CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES) {
+      return selection;
+    }
+    const { selectedValue, selectedPreview, selectedPreviewTruncated, ...identity } = selection;
+    return {
+      ...identity,
+      selectionGap: "selected_field_exceeds_step_budget",
+      selectionHints: source.selectionHints,
+      selectedValue,
+      selectedPreview,
+      selectedPreviewTruncated,
     };
   }
   if (ownerId === "finance_position_ledger_read" && isPlainRecord(source.history)) {
@@ -1248,7 +1339,11 @@ function projectFinanceBudgetFacts(
     }
     return result;
   };
-  const result = pick(source, ["schemaVersion", "status", "observedAt", "nextTask", "reason"], "");
+  const result = pick(
+    source,
+    ["schemaVersion", "status", "observedAt", "nextTask", "reason", "scoredOutcomeCount"],
+    "",
+  );
   const sections: readonly [string, readonly string[]][] = [
     [
       "intradayExecution",
@@ -1436,6 +1531,29 @@ function projectFinanceBudgetFacts(
     }
     result[section] = projected;
   }
+  if (isPlainRecord(source.tuning)) {
+    const tuning = pick(source.tuning, ["proposalCount", "promotionCount"], "tuning.");
+    if (isPlainRecord(source.tuning.sourceRead)) {
+      const read = source.tuning.sourceRead;
+      const projected = pick(
+        read,
+        ["status", "path", "sha256", "bytes", "includedSampleCount", "ignoredRowCount", "boundary"],
+        "tuning.sourceRead.",
+      );
+      if (
+        Array.isArray(read.usedFields) &&
+        read.usedFields.length === 2 &&
+        read.usedFields[0] === "conviction" &&
+        read.usedFields[1] === "outcome"
+      ) {
+        projected.usedFields = [...read.usedFields];
+        omitted.delete("tuning.sourceRead.usedFields");
+      }
+      tuning.sourceRead = projected;
+      omitted.delete("tuning.sourceRead");
+    }
+    result.tuning = tuning;
+  }
   for (const key of Object.keys(result)) {
     omitted.delete(key);
   }
@@ -1452,6 +1570,7 @@ function projectFinanceBudgetFacts(
   annotate();
   // Account details are optional; never coerce absent measurements into zero or passing verdicts.
   for (const section of [
+    "tuning",
     "economicFeedback",
     "positionManagement",
     "scheduler",

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "fromVersion": 9,
+  "toVersion": 10,
+  "scenarioIds": ["finance_automatic_paper_trading_waterflow"],
+  "reason": "Original night calibration returns an execution-promotion refusal, with no automatic rule-ledger declaration or activation caller.",
+  "changes": {
+    "observedTerminal": "Night directional outcomes produce a forecast-calibration proposal and the original blocked paperExecutionPromotion result.",
+    "falseHandoffRemoved": "Remove deterministic_promotion_gate-to-strategy_rule_ledger; net-trade execution promotion and its application transition are not implemented.",
+    "independentFeedback": "The original central lifecycle feedback reads tuning proposals independently, without making central planning the scheduler caller.",
+    "directionalSource": "Independent legacy research batch samples feed night forecast backfill; daily trade fills are not the sample producer. Zero new scores skip tuning.",
+    "conditionalNightReview": "Accepted night settlement with configured researchPlan permits original position/rule/broker evidence into night research; this is separate from directional calibration.",
+    "ledgerOwner": "Retain the canonical original rule ledger and explicit declaration/activation transitions as separate sources consumed by research and daily binding.",
+    "acceptance": "All 28 scene obligations remain; an observed refusal may prove correct blocking but cannot prove missing promotion functionality or natural learning.",
+    "registry": "Only descriptive edges and owner semantics change; canonical relation/state vocabularies and risk gates are retained."
+  },
+  "nonEffects": [
+    "no calibration or trading threshold change",
+    "no automatic rule activation",
+    "no real scheduler, provider or broker call",
+    "no restart, automation or deployment"
+  ]
+}

@@ -1,11 +1,68 @@
+import { createHash } from "node:crypto";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import {
+  verifyProviderCouncilEvidence,
+  type ProviderCouncilEvidenceInput,
+} from "./provider-council-evidence.js";
 
 export type VisibleAnswerAdoptionGateDecision = {
   status: "adopted" | "replaced";
   text: string;
   failedReasons: string[];
   originalText?: string;
+  /** Only an unfinished presentation token is carried to the next block. */
+  pendingText?: string;
+  providerCouncil?: ReturnType<typeof verifyProviderCouncilEvidence>;
+  presentationProcessEvidence?: {
+    boundary: "original_presentation_suboperation_hashes_not_semantic_quality";
+    normalizerOutputSha256: string;
+    readabilityInputSha256: string;
+  };
 };
+
+const PRESENTATION_STREAM_LABELS = [
+  "control_room",
+  "learning_command",
+  "technical_daily",
+  "fundamental_research",
+  "knowledge_maintenance",
+  "ops_audit",
+  "handoff",
+  "rationale",
+  "message id",
+  "receipt path",
+  "chat_id",
+  "message_id",
+  "model_judgments",
+  "agent_task",
+  "verification_status",
+  "final_answer",
+  "diverged_count",
+  "intent_family",
+  "suggested_action",
+  "dominant_family",
+  "answer_audit",
+  "bounded_answer_review",
+  "work_order",
+  "output_contract",
+  "required_modules",
+  "backend_tool",
+  "messageId",
+  "correlationId",
+  "deliveryMessageId",
+  "publish",
+  "confidence",
+  "foundation",
+  "dev-fixed",
+  "probe-fixed",
+  "live-visible-fixed",
+  "live-fixed",
+  "分发状态",
+  "控制摘要",
+  "本次识别",
+  "识别理由",
+  "原始问题",
+];
 
 const DIRECT_POSITION_ASK_PATTERN =
   /\b(?:should\s+(?:i|we)|do\s+(?:i|we)|can\s+(?:i|we)|recommend|buy|sell|add|reduce|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation|enter|exit|chase)\b|买|卖|加仓|加一点|减仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|赌|梭哈|满仓|杠杆|保证金|爆仓|要不要|该不该|应不应该|能不能|能不能买|能买吗|能买么|能上|上不上|冲不冲|追不追|要不要冲|要不要上|能拿|还能拿|有没有戏|可不可以|到底应该|直接告诉我/u;
@@ -593,7 +650,7 @@ function looksLikeSystemStatusAsk(userMessage: string): boolean {
   return SYSTEM_STATUS_ASK_PATTERN.test(userMessage);
 }
 
-function looksLikeUserSuppliedArithmeticPercentAsk(userMessage: string): boolean {
+export function looksLikeUserSuppliedArithmeticPercentAsk(userMessage: string): boolean {
   return (
     USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN.test(userMessage) ||
     ENGLISH_USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN.test(userMessage)
@@ -707,8 +764,17 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
   userMessage: string;
   answerText: string;
   financeDecisionMode?: FinanceDecisionMode;
+  providerEvidence?: ProviderCouncilEvidenceInput;
 }): string[] {
   const failures: string[] = [];
+  const council = verifyProviderCouncilEvidence(
+    params.userMessage,
+    params.answerText,
+    params.providerEvidence,
+  );
+  if (council.required && council.status !== "verified") {
+    failures.push("provider_council_completion_without_verified_receipt");
+  }
   const allowsConditionalTradeCandidate =
     params.financeDecisionMode === "conditional_trade_candidate";
   const explicitVisibleContract = looksLikeExplicitVisibleContractAsk(params.userMessage);
@@ -1250,15 +1316,130 @@ export function applyVisibleAnswerAdoptionGate(params: {
   userMessage: string;
   answerText: string;
   financeDecisionMode?: FinanceDecisionMode;
+  providerEvidence?: ProviderCouncilEvidenceInput;
+  /** Reply outlets consume only existing presentation rules; finance review remains opt-in. */
+  presentationOnly?: boolean;
+  /** Optional custody of existing presentation suboperation inputs, not semantic approval. */
+  captureProcessEvidence?: boolean;
+  streaming?: boolean;
 }): VisibleAnswerAdoptionGateDecision {
-  const text = stripVisibleInternalTail(params.answerText);
-  const failedReasons = findVisibleAnswerAdoptionGateFailures({
+  let candidate = params.answerText;
+  if (
+    params.presentationOnly &&
+    params.streaming &&
+    NO_INTERNAL_DETAIL_CONTRACT_ASK_PATTERN.test(params.userMessage)
+  ) {
+    // The original coalescer may insert a newline between two halves of an internal label.
+    for (const label of PRESENTATION_STREAM_LABELS.filter((value) => value.includes("_"))) {
+      candidate = candidate.replace(
+        new RegExp(`\\b${label.replaceAll("_", "_\\s*")}\\b`, "gu"),
+        label,
+      );
+    }
+    candidate = candidate.replace(/分发\s+状态/gu, "分发状态");
+  }
+  const text = stripVisibleInternalTail(candidate);
+  const readabilityInput = {
     userMessage: params.userMessage,
     answerText: text,
     financeDecisionMode: params.financeDecisionMode,
-  });
+    providerEvidence: params.providerEvidence,
+  };
+  const presentationProcessEvidence =
+    params.presentationOnly && params.captureProcessEvidence
+      ? {
+          boundary: "original_presentation_suboperation_hashes_not_semantic_quality" as const,
+          normalizerOutputSha256: createHash("sha256").update(text, "utf8").digest("hex"),
+          readabilityInputSha256: createHash("sha256")
+            .update(readabilityInput.answerText, "utf8")
+            .digest("hex"),
+        }
+      : undefined;
+  const failedReasons = findVisibleAnswerAdoptionGateFailures(readabilityInput);
+  if (params.presentationOnly) {
+    const presentationFailures = failedReasons.filter((reason) =>
+      [
+        "raw_work_order_json_visible_answer",
+        "legacy_test_artifact_visible_answer",
+        "english_internal_blocked_label_visible",
+        "internal_visible_detail_leak_against_user_contract",
+        "single_entry_single_exit_internal_label_leak",
+      ].includes(reason),
+    );
+    if (presentationFailures.length) {
+      return {
+        status: "replaced",
+        text: renderVisibleContractFailureReply(params.userMessage),
+        originalText: text,
+        failedReasons: presentationFailures,
+        ...(presentationProcessEvidence ? { presentationProcessEvidence } : {}),
+      };
+    }
+    let visible = text;
+    let pendingText = "";
+    if (params.streaming) {
+      // Hold only an unfinished existing internal label, never already sent clean prose.
+      const token = visible.match(/[A-Za-z_][A-Za-z0-9_-]*$/u)?.[0];
+      if (token && PRESENTATION_STREAM_LABELS.some((label) => label.startsWith(token))) {
+        pendingText = (token + params.answerText.slice(params.answerText.trimEnd().length)).slice(
+          0,
+          12 * 1024,
+        );
+        visible = visible.slice(0, -token.length);
+      } else {
+        for (const label of PRESENTATION_STREAM_LABELS.filter((value) =>
+          /[\p{Script=Han}]/u.test(value),
+        )) {
+          for (let length = label.length; length > 0; length--) {
+            if (visible.endsWith(label.slice(0, length))) {
+              pendingText = visible.slice(-length);
+              visible = visible.slice(0, -length);
+              break;
+            }
+          }
+          if (pendingText) {
+            break;
+          }
+        }
+      }
+      if (/^\s*(?:\{|```(?:j(?:s(?:o(?:n)?)?)?)?)/iu.test(visible) && !/[}]\s*$/u.test(visible)) {
+        // The existing raw-work-order rule inspects at most its first 2200 characters.
+        if (text.length <= 2200) {
+          pendingText = text;
+          visible = "";
+        }
+      }
+    }
+    return {
+      status: "adopted",
+      text: visible.trimEnd(),
+      failedReasons: [],
+      ...(pendingText ? { pendingText } : {}),
+      ...(presentationProcessEvidence ? { presentationProcessEvidence } : {}),
+    };
+  }
+
+  const providerCouncil = verifyProviderCouncilEvidence(
+    params.userMessage,
+    text,
+    params.providerEvidence,
+  );
+  if (failedReasons.includes("provider_council_completion_without_verified_receipt")) {
+    return {
+      status: "replaced",
+      text: "当前无法核实候选答案声称已完成的模型审阅。需要核对与本轮问题对应的实际角色产出，再确认这项完成声明；模型意见仍须按原始来源和证据缺口裁决。",
+      originalText: text,
+      failedReasons,
+      providerCouncil,
+    };
+  }
   if (failedReasons.length === 0) {
-    return { status: "adopted", text, failedReasons };
+    return {
+      status: "adopted",
+      text,
+      failedReasons,
+      ...(providerCouncil.required ? { providerCouncil } : {}),
+    };
   }
 
   if (shouldPrioritizePositionRiskReply(params.userMessage)) {

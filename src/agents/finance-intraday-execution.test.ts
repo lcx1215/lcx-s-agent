@@ -11,6 +11,7 @@ import {
   type runFinanceAlpacaOrder,
 } from "./finance-alpaca-run.js";
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
+import { FinanceAccountReadError } from "./finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceDailyAccountBook } from "./finance-daily-cycle.js";
 import {
@@ -25,6 +26,7 @@ import {
   readFinanceExecutionSafetyClaims,
   withFinanceExecutionSafety,
 } from "./finance-execution-safety.js";
+import { readBoundedFinanceResponseText } from "./finance-http-body.js";
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayOutcome,
@@ -444,7 +446,7 @@ describe("intraday decision execution bridge", () => {
       }
     },
   );
-  it.each(["initial", "refresh", "spoof", "account", "cancelled"] as const)(
+  it.each(["initial", "refresh", "spoof", "account", "account_transport", "cancelled"] as const)(
     "persists only trusted preparation quote evidence (%s)",
     async (mode) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "quote-diagnostic-execution-"));
@@ -516,6 +518,15 @@ describe("intraday decision execution bridge", () => {
           accountId: "paper-account",
           accountBookProvider: async () => {
             elapsed += 4_000;
+            if (mode === "account_transport") {
+              throw new FinanceAccountReadError(
+                "broker_reconciliation",
+                4000,
+                new Error("PRIVATE_BODY", {
+                  cause: Object.assign(new Error("secret.invalid"), { code: "ECONNRESET" }),
+                }),
+              );
+            }
             if (mode === "account") {
               throw typed;
             }
@@ -542,14 +553,24 @@ describe("intraday decision execution bridge", () => {
       expect(stored).toEqual(result.outcome);
       expect(stored?.executionFailure).toMatchObject({
         stage:
-          mode === "account"
+          mode === "account" || mode === "account_transport"
             ? "account_book"
             : mode === "refresh"
               ? "refresh_quote"
               : "initial_quote",
         category: mode === "cancelled" ? "cancelled" : "unexpected",
-        elapsedMs: mode === "account" ? 4_000 : mode === "refresh" ? 20_000 : 11_000,
-        stageElapsedMs: mode === "account" ? 4_000 : mode === "refresh" ? 9_000 : 7_000,
+        elapsedMs:
+          mode === "account" || mode === "account_transport"
+            ? 4_000
+            : mode === "refresh"
+              ? 20_000
+              : 11_000,
+        stageElapsedMs:
+          mode === "account" || mode === "account_transport"
+            ? 4_000
+            : mode === "refresh"
+              ? 9_000
+              : 7_000,
       });
       if (mode === "initial" || mode === "refresh") {
         expect(stored?.reasons).toEqual([
@@ -562,6 +583,13 @@ describe("intraday decision execution bridge", () => {
       } else {
         expect(stored?.reasons).toEqual(["intraday_execution_unexpected_error"]);
         expect(stored?.executionFailure?.quote).toBeUndefined();
+      }
+      if (mode === "account_transport") {
+        expect(stored?.executionFailure?.account).toEqual({
+          stage: "broker_reconciliation",
+          code: "ECONNRESET",
+          elapsedMs: 4000,
+        });
       }
       expect(JSON.stringify(stored)).not.toMatch(/PRIVATE_BODY|secret.invalid/);
       expect(stored?.executionSafetyFailure).toBeUndefined();
@@ -883,6 +911,9 @@ describe("intraday decision execution bridge", () => {
 
   it.each([
     "deadline_account",
+    "deadline_account_facts_confirmed",
+    "deadline_account_body_confirmed",
+    "deadline_account_body_unconfirmed",
     "caller_account",
     "deadline_quote",
     "caller_quote",
@@ -967,6 +998,40 @@ describe("intraday decision execution bridge", () => {
       await stalled; // Deliberately ignores cancellation, like a broken provider.
     };
     const accountBookProvider = vi.fn(async (signal: AbortSignal) => {
+      if (mode === "deadline_account_facts_confirmed") {
+        combinedSignal = signal;
+        const removeListener = vi.spyOn(signal, "removeEventListener");
+        listenerWasRemoved = () => removeListener.mock.calls.some(([event]) => event === "abort");
+        entered();
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+          reason: "alpaca_safety_cancelled_or_timed_out",
+          stage: "position_snapshot",
+          transport: { code: "transport_cause_unavailable", cleanupStatus: "confirmed" },
+        });
+      }
+      if (mode.startsWith("deadline_account_body_")) {
+        combinedSignal = signal;
+        const removeListener = vi.spyOn(signal, "removeEventListener");
+        listenerWasRemoved = () => removeListener.mock.calls.some(([event]) => event === "abort");
+        const response = new Response(
+          new ReadableStream<Uint8Array>({
+            cancel: () =>
+              mode === "deadline_account_body_confirmed"
+                ? Promise.resolve()
+                : new Promise<void>(() => {}),
+          }),
+        );
+        const body = readBoundedFinanceResponseText(response, { signal });
+        entered();
+        try {
+          await body;
+        } catch (error) {
+          throw new FinanceAccountReadError("broker_reconciliation", 120000, error);
+        }
+      }
       if (mode.includes("account") || mode === "late_rejection") {
         await stall(signal);
       }
@@ -1054,6 +1119,21 @@ describe("intraday decision execution bridge", () => {
     expect(timeoutSpy).toHaveBeenCalledWith(120_000);
     expect(result.status).toBe(mode === "dispatch_uncertain" ? "uncertain" : "refused");
     const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+    if (mode === "deadline_account_facts_confirmed") {
+      expect(stored?.executionFailure?.cleanupStatus).toBe("confirmed");
+      expect(runOrder).not.toHaveBeenCalled();
+    }
+    if (mode.startsWith("deadline_account_body_")) {
+      const cleanupStatus =
+        mode === "deadline_account_body_confirmed" ? "confirmed" : "unconfirmed";
+      expect(stored?.executionFailure?.cleanupStatus).toBe(cleanupStatus);
+      expect(stored?.executionFailure?.account).toMatchObject({
+        stage: "broker_reconciliation",
+        cleanupStatus,
+      });
+      expect(executionQuoteProvider).not.toHaveBeenCalled();
+      expect(runOrder).not.toHaveBeenCalled();
+    }
     if (mode === "dispatch_uncertain") {
       expect(stored?.executionFailure).toBeUndefined();
       expect(stored?.executionSafetyFailure?.attempt?.disposition).toBe("outcome_unresolved");
@@ -3673,3 +3753,206 @@ describe("intraday decision execution bridge", () => {
     expect(runOrder).not.toHaveBeenCalled();
   });
 });
+
+it.each(["retain", "change", "unavailable"] as const)(
+  "original execution consumes native stop outcome before the next entry: %s",
+  async (mode) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "native-exit-next-entry-"));
+    temporary.push(directory);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-09-18T13:40:00.000Z");
+    vi.setSystemTime(clock);
+    const binding = await activeRuleBinding(directory);
+    const input = {
+      instrument: "SPY",
+      sessionDate: "2026-09-18",
+      action: "buy" as const,
+      reason: "opening_range_breakout" as const,
+      referencePrice: 100,
+      referencePriceAt: "2026-09-18T13:40:00.000Z",
+      stopPrice: 99,
+      targetPrice: 102,
+      datasetHeadRef: "c".repeat(64),
+      strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+      strategyBinding: binding,
+    };
+    await appendFinanceIntradayDecision(directory, { ...input, signalId: "intraday-broker-entry" });
+    clock = Date.parse("2026-09-18T14:30:00.000Z");
+    vi.setSystemTime(clock);
+    await appendFinanceExecutionReceipt(directory, {
+      schemaVersion: "lcx_finance_execution_receipt_v1",
+      receiptId: "entry-receipt",
+      accountId: "paper-account",
+      intentId: "intent:intraday-broker-entry",
+      decisionRef: { source: "intraday_signal", id: "intraday-broker-entry" },
+      runAuthorizationId: "synthetic",
+      adapterId: "alpaca",
+      adapterKind: "venue",
+      venue: "alpaca:paper",
+      instrument: "SPY",
+      side: "buy",
+      orderType: "market",
+      quantity: 10,
+      referencePrice: 100,
+      referencePriceAt: "2026-09-18T14:00:00.000Z",
+      notional: 1000,
+      fill: {
+        filledQuantity: 10,
+        fillPrice: 100,
+        filledAt: "2026-09-18T14:00:00.000Z",
+        venueRef: "alpaca:paper:buy-order",
+        terminalOrderIdentity: { orderId: "buy-order", terminal: true },
+      },
+      executionAuthority: "declared_execution_adapter_required",
+      recordedAt: "2026-09-18T14:00:00.000Z",
+    });
+    const child = {
+      id: "stop-order",
+      symbol: "SPY",
+      side: "sell",
+      type: "stop",
+      qty: "10",
+      filled_qty: "10",
+    };
+    const parent = {
+      id: "buy-order",
+      symbol: "SPY",
+      side: "buy",
+      order_class: "oto",
+      filled_qty: "10",
+      filled_at: "2026-09-18T14:00:00.000Z",
+      legs: [child],
+    };
+    const activities = [
+      ["3", "95"],
+      ["7", "94"],
+    ].map(([qty, price], i) => ({
+      id: `stop-part-${i}`,
+      activity_type: "FILL",
+      type: "partial_fill",
+      order_id: "stop-order",
+      symbol: "SPY",
+      side: "sell",
+      qty,
+      price,
+      transaction_time: `2026-09-18T14:1${i}:00.000Z`,
+    }));
+    for (const [stream, payload] of [
+      ["orders", [parent]],
+      ["activities", activities],
+    ] as const) {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "paper-account",
+        venue: "alpaca:paper",
+        query: `${stream}:2026-09-01T00:00:00Z:2026-09-18T14:30:00.000Z`,
+        cursor: "",
+        payload: [...payload],
+      });
+    }
+    clock = Date.parse("2026-09-18T15:00:02.000Z");
+    vi.setSystemTime(clock);
+    const reviewer = vi.fn(async (packet: FinanceTradeDecisionReviewRequest) => {
+      if (packet.schemaVersion !== "lcx_finance_intraday_trade_decision_review_v1") {
+        throw new Error("intraday only");
+      }
+      const feedback = packet.brokerExitFeedback!;
+      expect(feedback.entries[0]).toMatchObject({
+        signalId: "intraday-broker-entry",
+        exitQuantity: 10,
+        grossPnl: -57,
+        partialFillCount: 2,
+      });
+      if (mode === "unavailable") {
+        return {
+          status: "failed" as const,
+          attempted: true,
+          provider: "fixture",
+          modelId: "fixture",
+          latencyMs: 0,
+          providerCallObserved: false,
+          adapterAttested: false,
+          failureCode: "provider_payment_required" as const,
+        };
+      }
+      return {
+        status: "completed" as const,
+        attempted: true,
+        provider: "fixture",
+        modelId: "fixture",
+        latencyMs: 0,
+        providerCallObserved: false,
+        adapterAttested: false,
+        decisions: [
+          {
+            candidateId: packet.candidates[0].candidateId,
+            decision: mode === "change" ? ("veto" as const) : ("approve" as const),
+            rationale: "Reassessed the earlier stop against the supplied new breakout structure.",
+            brokerExitResponse: [
+              {
+                feedbackId: feedback.entries[0].feedbackId,
+                observedExitQuantity: 10,
+                observedGrossPnl: -57,
+                consequence:
+                  mode === "change"
+                    ? ("need_more_evidence" as const)
+                    : ("retain_candidate" as const),
+                reason:
+                  mode === "change"
+                    ? "New continuation evidence is absent; request a closed-bar confirmation before re-entry."
+                    : "The new structure supports the candidate despite the earlier loss.",
+              },
+            ],
+          },
+        ],
+      };
+    });
+    const runOrder = vi.fn(async () => ({ ok: false as const, refusals: ["isolated final gate"] }));
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        ...input,
+        signalId: "intraday-broker-next",
+        referencePriceAt: "2026-09-18T15:00:01.000Z",
+      })
+    ).record;
+    await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: async () => ({
+          accountId: "paper-account",
+          venue: "alpaca:paper" as const,
+          observedAt: "2026-09-18T15:00:01.000Z",
+          expiresAt: "2026-09-18T15:01:01.000Z",
+          equity: 100000,
+          positions: [],
+        }),
+        executionQuoteProvider: async () => ({
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          sourceUrlOrArtifact: "fixture://quote",
+          bidPrice: 99.9,
+          askPrice: 100,
+          maxAgeMs: 30000,
+        }),
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5000, maxInstrumentNotional: 10000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: reviewer,
+      now: () => clock,
+      runOrder: runOrder as never,
+    });
+    expect(reviewer).toHaveBeenCalledOnce();
+    expect(runOrder).toHaveBeenCalledTimes(mode === "retain" ? 1 : 0);
+    const result = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+    if (mode === "unavailable") {
+      expect(result?.reasons).toContain("broker_exit_feedback_review_unavailable");
+    } else {
+      expect(result?.tradeDecisionReview?.decision?.brokerExitResponse?.[0]).toMatchObject({
+        observedGrossPnl: -57,
+        consequence: mode === "change" ? "need_more_evidence" : "retain_candidate",
+      });
+    }
+  },
+);

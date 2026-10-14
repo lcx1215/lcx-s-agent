@@ -159,6 +159,75 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
   const selfRepairStatus = typeof selfRepairHands.status === "string" ? selfRepairHands.status : "";
   const selfRepairLatestWritten = recordValue(selfRepairHands.latestWrittenReceipt);
   const selfRepairAutoWriteRules = selfRepairAutoWritePlainLabels(selfRepairWritePolicy);
+  const selfRepairSourceReview = recordValue(selfRepairHands.sourceReview);
+  const selfRepairLatestSourceReview = recordValue(selfRepairLatestWritten?.sourceReview);
+  const selfRepairCurrentFeedback = recordValue(selfRepairHands.diagnosticFeedback);
+  const selfRepairLatestFeedback = recordValue(selfRepairLatestWritten?.diagnosticFeedbackReadback);
+  const selfRepairFeedback = selfRepairCurrentFeedback ?? selfRepairLatestFeedback;
+  const selfRepairCommand = arrayValue(input.governance.ownerCommands)
+    .map(recordValue)
+    .find((command) => command?.id === "selfRepairHands");
+  const selfRepairRunReceipt = recordValue(selfRepairCommand?.runReceipt);
+  const selfRepairReadFailed =
+    selfRepairCommand?.parsed === false ||
+    (typeof selfRepairCommand?.exitCode === "number" && selfRepairCommand.exitCode !== 0) ||
+    selfRepairRunReceipt?.status === "failed";
+  const selfRepairCurrentBlocked =
+    selfRepairStatus === "blocked" ||
+    selfRepairSourceReview?.status === "blocked" ||
+    selfRepairCurrentFeedback?.status === "blocked";
+  const selfRepairLatestBlocked =
+    selfRepairLatestFeedback?.status === "blocked" ||
+    (selfRepairStatus !== "write_completed" &&
+      (selfRepairLatestWritten?.status === "blocked" ||
+        selfRepairLatestSourceReview?.status === "blocked"));
+  const selfRepairBlocked =
+    selfRepairReadFailed || selfRepairCurrentBlocked || selfRepairLatestBlocked;
+  let selfRepairReason: string;
+  if (selfRepairReadFailed) {
+    const exitCode = numberValue(selfRepairCommand?.exitCode) ?? "unknown";
+    selfRepairReason = `本轮自修回执读取失败，exitCode=${exitCode}；不能用此前写入记录代替本轮结果。`;
+  } else if (selfRepairFeedback?.status === "blocked") {
+    const blockers = stringArray(selfRepairFeedback.blockers);
+    const source = recordValue(selfRepairFeedback.map);
+    const sourcePath = typeof source?.path === "string" ? source.path : "未提供";
+    const subject = selfRepairCurrentFeedback ? "本次自修反馈" : "最近候选的当前反馈读取";
+    selfRepairReason = `${subject}被原反馈引用门槛阻断：${blockers.join("；") || "反馈读取详情未提供"}。来源：${sourcePath}。历史候选不证明当前来源有效，候选复用、替换和训练仍未确认。`;
+  } else if (selfRepairCurrentBlocked || selfRepairLatestBlocked) {
+    const review = selfRepairCurrentBlocked ? selfRepairSourceReview : selfRepairLatestSourceReview;
+    const blockers = stringArray(review?.blockers);
+    const source = recordValue(review?.source);
+    const sourcePath = typeof source?.path === "string" ? source.path : "未提供";
+    const subject = selfRepairCurrentBlocked ? "本次自修" : "最近一次自修写入";
+    selfRepairReason = `${subject}被原来源门槛阻断：${blockers.join("；") || "来源阻断详情未提供"}。来源：${sourcePath}。候选复用、替换和训练仍未确认。`;
+  } else if (selfRepairSourceReview?.requested === true && selfRepairStatus !== "write_completed") {
+    selfRepairReason = "本次自修仍待原来源校验；此前候选写入不能证明本次校验完成。";
+  } else if (
+    selfRepairStatus === "write_completed" ||
+    selfRepairLatestWritten?.status === "write_completed"
+  ) {
+    selfRepairReason = `LCX Agent 已经能自己写允许范围内的记忆纠错、训练候选和补丁候选文件；写入仍只是候选，不代表复用或训练验收。什么时候自动写：${selfRepairAutoWriteRules}。`;
+  } else {
+    selfRepairReason = `LCX Agent 已经有三只手可写能力演练；当前总控只做 dry-run，未写入新的候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`;
+  }
+  if (selfRepairFeedback?.status === "read") {
+    selfRepairReason += ` 已读取原反馈：${typeof selfRepairFeedback.diagnostic === "string" ? selfRepairFeedback.diagnostic : "诊断正文未提供"} 引用与身份一致不证明来源可信、修复成功或动作权限。`;
+  } else if (
+    selfRepairLatestWritten?.diagnosticFeedback !== undefined &&
+    !selfRepairCurrentFeedback &&
+    !selfRepairLatestFeedback
+  ) {
+    selfRepairReason += " 历史诊断反馈未经过本次读取核对，当前来源有效性未观察。";
+  }
+  const selfRepairContentReview = recordValue(selfRepairHands.contentReview);
+  if (selfRepairContentReview) {
+    const status =
+      typeof selfRepairContentReview.status === "string"
+        ? selfRepairContentReview.status
+        : "unavailable";
+    const gaps = stringArray(selfRepairContentReview.gaps);
+    selfRepairReason += ` 候选内容审阅：${status}；${gaps.join("；") || "语义采用仍未确认"}。`;
+  }
   const parseIssueCount =
     stringArray(latestCandidateEval.parseRecoveredCaseIds).length +
     stringArray(latestCandidateEval.parseErrorCaseIds).length;
@@ -266,23 +335,21 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     ownerAuthorization: "整理成训练材料不需要；晋级成外部通道可见能力需要通过验收。",
   });
 
-  addIf(items, selfRepairStatus.length > 0, {
+  addIf(items, selfRepairStatus.length > 0 || selfRepairReadFailed, {
     id: "self_repair_memory_and_training_candidate_hands",
     title: "记忆清洁手、题库修复手和补丁候选手",
-    status: "codex_can_act_when_safe",
+    status: selfRepairBlocked ? "blocked_now" : "codex_can_act_when_safe",
     ownerCanSee: true,
-    ownerCanDirectNow: true,
+    ownerCanDirectNow: !selfRepairBlocked,
     codexCanActWhenSafe: true,
     supervisor:
       "总控决定什么时候自动加 --write；自修手只写允许目录；Codex 负责审查候选能不能进入正式训练/评测/补丁路径。",
     evidenceNow:
       "self-repair latest/jsonl、记忆纠错/降权 note、训练/评测候选 packet、repo 补丁候选 packet、总控 owner 写入策略。",
-    reason:
-      selfRepairStatus === "write_completed" ||
-      selfRepairLatestWritten?.status === "write_completed"
-        ? `LCX Agent 已经能自己写允许范围内的记忆纠错、训练候选和补丁候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`
-        : `LCX Agent 已经有三只手可写能力演练；当前总控只做 dry-run，未写入新的候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`,
-    nextControl: "只有总控 owner 信号变化时才自动加 --write；同一个 signalKey 已写过就不重复写。",
+    reason: selfRepairReason,
+    nextControl: selfRepairBlocked
+      ? "先修复原回执指出的来源或读取缺口，再生成同一作用域的新候选回执；旧完成标签不能解除阻断。"
+      : "只有总控 owner 信号变化时才自动加 --write；同一个 signalKey 已写过就不重复写。",
     proceedWhen:
       "只写 workspace memory/self-repair、state、logs；候选通过轻量检查；训练计划确认没有重活后才能进入下一段链路。",
     stopWhen:

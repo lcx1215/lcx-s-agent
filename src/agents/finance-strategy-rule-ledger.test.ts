@@ -301,19 +301,62 @@ describe("finance-strategy-rule-ledger", () => {
     expect(onlyRule(earlier.ledger.rules).state).toBe("draft");
   });
 
-  it("includes the activation instant in the as-of window (at-or-before, not before)", async () => {
-    const directory = await storeDirectory();
-    await declareFinanceStrategyRule(directory, declaration());
-    await activateFinanceStrategyRule(directory, {
-      kind: "activated",
-      ruleId: "daily-momentum",
-      observedAt: "2026-09-17T06:00:00Z",
-    });
-    const atBoundary = await readFinanceStrategyRuleLedger(directory, {
-      asOf: "2026-09-17T06:00:00Z",
-    });
-    expect(onlyRule(atBoundary.ledger.rules).state).toBe("active");
-  });
+  it.each([
+    ["2026-09-17T06:00:00Z", "2026-09-17T06:00:00.000Z"],
+    ["2026-09-17T06:00:00.000Z", "2026-09-17T06:00:00Z"],
+  ])(
+    "includes the activation instant in the as-of window despite different legal representations: %s",
+    async (observedAt, asOf) => {
+      const directory = await storeDirectory();
+      await declareFinanceStrategyRule(directory, declaration());
+      const activation = await activateFinanceStrategyRule(directory, {
+        kind: "activated",
+        ruleId: "daily-momentum",
+        observedAt,
+      });
+      const future = await retireFinanceStrategyRule(directory, {
+        kind: "retired",
+        ruleId: "daily-momentum",
+        observedAt: "2026-09-17T06:00:00.001Z",
+      });
+      const atBoundary = await readFinanceStrategyRuleLedger(directory, { asOf });
+      expect(onlyRule(atBoundary.ledger.rules).state).toBe("active");
+      expect(atBoundary.headRef).toBe(future.record.ref);
+      expect(atBoundary.ledger.headRef).toBe(activation.record.ref);
+      expect(atBoundary.recordCount).toBe(3);
+      expect(atBoundary.ledger.recordCount).toBe(2);
+      expect(onlyRule(atBoundary.ledger.rules).transitions.at(-1)).toEqual(activation.record);
+      // A cutoff projection must not normalize or rewrite the original stored record bytes.
+      const unfiltered = await readFinanceStrategyRuleLedger(directory);
+      expect(onlyRule(unfiltered.ledger.rules).transitions[1]).toEqual(activation.record);
+      expect(activation.record.body.observedAt).toBe(observedAt);
+      expect(onlyRule(unfiltered.ledger.rules).state).toBe("retired");
+      expect(await readFinanceStrategyRuleLedger(directory, { asOf: "" })).toEqual(unfiltered);
+    },
+  );
+
+  it.each([false, true])(
+    "rejects invalid as-of instead of returning an empty successful projection with stored=%s",
+    async (stored) => {
+      const directory = await storeDirectory();
+      if (stored) {
+        await declareFinanceStrategyRule(directory, declaration());
+        await activateFinanceStrategyRule(directory, {
+          kind: "activated",
+          ruleId: "daily-momentum",
+          observedAt: "2026-09-17T06:00:00Z",
+        });
+      }
+      await expect(
+        readFinanceStrategyRuleLedger(directory, { asOf: "invalid-cutoff" }),
+      ).rejects.toThrow(/asOf|cutoff|timestamp|date/iu);
+      const unfiltered = await readFinanceStrategyRuleLedger(directory);
+      expect(unfiltered.ledger.rules.length).toBe(stored ? 1 : 0);
+      if (stored) {
+        expect(onlyRule(unfiltered.ledger.rules).state).toBe("active");
+      }
+    },
+  );
 
   it("confers no execution authority on any record", async () => {
     const directory = await storeDirectory();

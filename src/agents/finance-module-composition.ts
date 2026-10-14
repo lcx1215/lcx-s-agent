@@ -49,6 +49,11 @@ export type FinanceModuleComposition = Readonly<{
   maxDepth: number;
   maxReplans: number;
   control: FinanceModuleCompositionControl;
+  /** Actual module lists received by the original builder; absent in older receipts. */
+  inputReadback?: Readonly<{
+    moduleIds: readonly FinanceBrainModuleId[];
+    requiredModuleIds: readonly FinanceBrainModuleId[];
+  }>;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -254,10 +259,15 @@ export function buildFinanceModuleComposition(
   requiredModuleIds: readonly FinanceBrainModuleId[],
   proposal: FinanceModuleComposition | FinanceModuleCompositionInput | undefined,
 ): FinanceModuleComposition {
+  const inputReadback = Object.freeze({
+    moduleIds: Object.freeze([...moduleIds]),
+    requiredModuleIds: Object.freeze([...requiredModuleIds]),
+  });
   const allIds = [...new Set([...moduleIds, ...requiredModuleIds])];
   if (allIds.length === 0) {
     return Object.freeze({
       schemaVersion: FINANCE_MODULE_COMPOSITION_SCHEMA_VERSION,
+      inputReadback,
       nodes: Object.freeze([]),
       topologicalOrder: Object.freeze([]),
       roots: Object.freeze([]),
@@ -310,6 +320,7 @@ export function buildFinanceModuleComposition(
     .map((node) => node.id);
   return Object.freeze({
     ...parsed,
+    inputReadback,
     control: Object.freeze({
       hardModuleIds: Object.freeze(hardModuleIds),
       softModuleIds: Object.freeze(softModuleIds),

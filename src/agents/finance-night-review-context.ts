@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -5,6 +6,7 @@ import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
 import { brokerSymbol } from "./finance-broker-reconciliation.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeEtClock, latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import {
   readFinanceIntradayDecisions,
@@ -17,6 +19,7 @@ import {
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
+import type { FinanceActiveStrategyResearchSource } from "./finance-research-portfolio-plan.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
 
@@ -559,8 +562,135 @@ export function summarizeFinanceNightIntradayEvidence(
   }
 }
 
+const IntradaySummaryCount = z.number().int().nonnegative();
+const IntradaySummaryDistribution = z
+  .object({
+    values: z.array(z.object({ value: z.string(), count: IntradaySummaryCount }).passthrough()),
+    omittedCategoryCount: IntradaySummaryCount,
+  })
+  .passthrough();
+const IntradaySummary = z
+  .object({
+    schemaVersion: z.literal("lcx_finance_night_intraday_evidence_v1"),
+    sessionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+    asOf: z.string().datetime({ offset: true }),
+    coverage: z
+      .object({
+        totalDecisionCount: IntradaySummaryCount,
+        includedDecisionCount: IntradaySummaryCount,
+        omittedDecisionCount: IntradaySummaryCount,
+        samplePolicy: z.literal("latest_append_sequence_up_to_100"),
+        recordedReviewEvidence: z.record(z.string(), IntradaySummaryCount),
+      })
+      .passthrough(),
+    distributions: z
+      .object({
+        byInstrument: IntradaySummaryDistribution,
+        byAction: IntradaySummaryDistribution,
+        byDecisionReason: IntradaySummaryDistribution,
+        byOutcomeStatus: IntradaySummaryDistribution,
+        byOutcomeReason: IntradaySummaryDistribution,
+        bySafetyFailure: IntradaySummaryDistribution,
+        byReviewStatus: IntradaySummaryDistribution,
+      })
+      .passthrough(),
+    decisions: z
+      .array(
+        z
+          .object({
+            recordedAt: z.string().datetime({ offset: true }),
+            signalId: z.string().min(1),
+            instrument: z.string().min(1),
+            action: z.string().min(1),
+            reason: z.string(),
+            referencePrice: z.number().finite(),
+            referencePriceAt: z.string().datetime({ offset: true }),
+            outcome: z
+              .object({
+                status: z.enum(["placed", "refused", "uncertain"]),
+                reasons: z.array(z.string()),
+              })
+              .passthrough()
+              .nullable(),
+          })
+          .passthrough(),
+      )
+      .max(100),
+  })
+  .strict();
+
+/** Reproject an already bounded source, preserving its original whole-session counts and rows. */
+export function narrowFinanceNightIntradayEvidence(
+  text: string,
+  maxTextBytes: number,
+  source: Readonly<{ evidenceId: string; sourcePointer: string }>,
+): string {
+  if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes <= 0) {
+    throw new Error("night intraday evidence budget must be a positive integer");
+  }
+  const summary = IntradaySummary.parse(JSON.parse(text));
+  if (source.evidenceId !== `finance-night:intraday:${summary.sessionDate}`) {
+    throw new Error("night intraday evidence source identity is inconsistent");
+  }
+  const { totalDecisionCount, includedDecisionCount, omittedDecisionCount } = summary.coverage;
+  if (
+    includedDecisionCount !== summary.decisions.length ||
+    totalDecisionCount !== includedDecisionCount + omittedDecisionCount
+  ) {
+    throw new Error("night intraday evidence coverage is inconsistent");
+  }
+  for (const key of [
+    "byInstrument",
+    "byAction",
+    "byDecisionReason",
+    "byOutcomeStatus",
+    "byReviewStatus",
+  ] as const) {
+    const distribution = summary.distributions[key];
+    const count = distribution.values.reduce((sum, row) => sum + row.count, 0);
+    if (
+      count > totalDecisionCount ||
+      (distribution.omittedCategoryCount === 0 && count !== totalDecisionCount)
+    ) {
+      throw new Error("night intraday evidence distribution is inconsistent");
+    }
+  }
+  let included = includedDecisionCount;
+  while (true) {
+    const projected = JSON.stringify({
+      ...summary,
+      coverage: {
+        ...summary.coverage,
+        includedDecisionCount: included,
+        omittedDecisionCount: totalDecisionCount - included,
+      },
+      decisions: included === 0 ? [] : summary.decisions.slice(-included),
+      projection: {
+        kind: "bounded_existing_summary_rows",
+        originalEvidenceId: source.evidenceId,
+        originalTextSha256: createHash("sha256").update(text).digest("hex"),
+        sourcePointer: source.sourcePointer,
+        originalIncludedDecisionCount: includedDecisionCount,
+        additionallyOmittedDecisionCount: includedDecisionCount - included,
+        fullSourceReadClaimed: false,
+      },
+    });
+    if (Buffer.byteLength(projected, "utf8") <= maxTextBytes) {
+      return projected;
+    }
+    if (included === 0) {
+      throw new Error("night intraday evidence summary exceeds its assigned byte budget");
+    }
+    included = Math.floor(included / 2);
+  }
+}
+
 export type FinanceNightSettlementSummary = Readonly<{
-  scoredFiled: Readonly<{ appended: number; skipped: number }>;
+  scoredFiled: Readonly<{
+    appended: number;
+    skipped: number;
+    sourceWrite?: Readonly<{ path: string; sha256: string; bytes: number }>;
+  }>;
   reflection: unknown;
   pending: readonly unknown[];
   declined: readonly unknown[];
@@ -603,7 +733,7 @@ function compactReceipt(
 }
 
 /** Read the same controller book used by execution; never infer activation from an ID. */
-export async function buildFinanceActiveStrategyResearchEvidence(params: {
+async function readFinanceActiveStrategyResearchEvidenceAndSource(params: {
   directory: string;
   asOf: string;
   /** When supplied, every requested id must name a rule active at `asOf`. */
@@ -612,7 +742,10 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
   historyFormat?: "model_summary" | "daily_calculation";
   /** Internal subset used when hydrating an already supplied controller evidence packet. */
   instrumentIds?: readonly string[];
-}): Promise<readonly FinanceCommitteeEvidence[]> {
+}): Promise<{
+  evidence: readonly FinanceCommitteeEvidence[];
+  source: FinanceActiveStrategyResearchSource;
+}> {
   const snapshot = await readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf });
   const allActiveRules = snapshot.ledger.rules.filter((rule) => rule.state === "active");
   const requestedIds = params.strategyIds;
@@ -757,6 +890,21 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
       };
     }),
   );
+  const selectedRules = activeRules.map((rule) => ({
+    ruleId: rule.ruleId,
+    form: rule.form,
+    formVersion: rule.formVersion,
+    instruments: rule.instruments,
+    emits: rule.emits,
+    schedule: rule.schedule,
+    declaredAt: rule.declaredAt,
+    body: rule.body,
+    declarationClaimBoundary:
+      "body (including openRisks) contains owner claims as of declaredAt; it is not current runtime policy or readiness",
+    currentRuntimePolicyAndReadiness: "unknown_without_separately_timestamped_current_evidence",
+    activeObservedAt: rule.activeObservedAt,
+    provenance: rule.provenance,
+  }));
   const activeStrategyEvidence: FinanceCommitteeEvidence = {
     id: "finance-controller:active-strategies",
     source: "finance-strategy-rule-ledger",
@@ -772,24 +920,10 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
           ? "This allocation review does not enumerate every active controller rule. Other active rule IDs above remain outside this portfolio allocation scope; their parameters and readiness require their own controller evidence. "
           : "Review all controller rules active at this asOf. ") +
         "Review these declared rule bodies; generic method-kit examples do not replace the active rule parameters.",
-      activeRules: activeRules.map((rule) => ({
-        ruleId: rule.ruleId,
-        form: rule.form,
-        formVersion: rule.formVersion,
-        instruments: rule.instruments,
-        emits: rule.emits,
-        schedule: rule.schedule,
-        declaredAt: rule.declaredAt,
-        body: rule.body,
-        declarationClaimBoundary:
-          "body (including openRisks) contains owner claims as of declaredAt; it is not current runtime policy or readiness",
-        currentRuntimePolicyAndReadiness: "unknown_without_separately_timestamped_current_evidence",
-        activeObservedAt: rule.activeObservedAt,
-        provenance: rule.provenance,
-      })),
+      activeRules: selectedRules,
     }),
   };
-  return [
+  const evidence = [
     activeStrategyEvidence,
     ...histories.map((history) => history.evidence),
     ...buildFinanceMonthlyTrendDerivedEvidence(
@@ -797,6 +931,26 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
       params.asOf,
     ),
   ];
+  return {
+    evidence,
+    source: {
+      directory: path.resolve(params.directory),
+      asOf: params.asOf,
+      storedHeadRef: snapshot.headRef,
+      projectedHeadRef: snapshot.ledger.headRef,
+      storedRecordCount: snapshot.recordCount,
+      projectedRecordCount: snapshot.ledger.recordCount,
+      selectedRuleIds: activeRules.map((rule) => rule.ruleId),
+      selectedRulesSha256: caseflowFingerprint(selectedRules),
+    },
+  };
+}
+
+/** Compatibility evidence surface; the same read also supplies exact owner provenance. */
+export async function buildFinanceActiveStrategyResearchEvidence(
+  params: Parameters<typeof readFinanceActiveStrategyResearchEvidenceAndSource>[0],
+): Promise<readonly FinanceCommitteeEvidence[]> {
+  return (await readFinanceActiveStrategyResearchEvidenceAndSource(params)).evidence;
 }
 
 /** Resolve exact active rule instruments together with their controller evidence. */
@@ -810,9 +964,10 @@ export async function readFinanceActiveStrategyResearchScope(params: {
     intradayInstruments: readonly string[];
     historyMonths: number;
     evidence: readonly FinanceCommitteeEvidence[];
+    source: FinanceActiveStrategyResearchSource;
   }>
 > {
-  const evidence = await buildFinanceActiveStrategyResearchEvidence(params);
+  const { evidence, source } = await readFinanceActiveStrategyResearchEvidenceAndSource(params);
   const activeStrategyEvidence = evidence.find(
     (item) => item.id === "finance-controller:active-strategies",
   );
@@ -845,6 +1000,7 @@ export async function readFinanceActiveStrategyResearchScope(params: {
     intradayInstruments: Object.freeze(intradayInstruments),
     historyMonths,
     evidence,
+    source,
   });
 }
 

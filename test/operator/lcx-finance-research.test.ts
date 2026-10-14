@@ -155,10 +155,18 @@ describe("finance research operator", () => {
       "positive integer",
     );
   });
-  it("rejects an unbounded model output limit before execution", async () => {
-    await expect(runFinanceResearchCli([...input, "--max-model-tokens", "16385"])).rejects.toThrow(
-      "integer from 1 to 16384",
-    );
+  it.each(["0", "Infinity", "NaN", "1.5", "9007199254740992"])(
+    "rejects an invalid model output limit %s before execution",
+    async (value) => {
+      await expect(runFinanceResearchCli([...input, "--max-model-tokens", value])).rejects.toThrow(
+        "positive safe integer",
+      );
+    },
+  );
+  it("keeps a finite model output allowance in planning mode without dispatching research", async () => {
+    // A finite dry-plan allowance does not resolve or call a configured model.
+    const result = await runFinanceResearchCli([...input, "--max-model-tokens", "16385"]);
+    expect("status" in result && result.status).toBe("planned");
   });
   it("records and lists an outcome without invoking research", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "outcome-cli-"));

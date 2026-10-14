@@ -50,6 +50,7 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
       },
       signal,
     });
+    signal.throwIfAborted();
     if (response.status !== 200) {
       throw new Error(`history GET status ${response.status}`);
     }
@@ -72,6 +73,7 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
     reason?: string;
   }> = [];
   for (const stream of ["orders", "activities"] as const) {
+    signal.throwIfAborted();
     let cursor = "";
     let pages = 0;
     let appended = 0;
@@ -156,14 +158,19 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
           }
         }
 
-        const saved = await appendFinanceBrokerHistory(options.directory, {
-          kind: "broker_history",
-          accountId: options.accountId,
-          venue: "alpaca:paper",
-          query: `${stream}:${options.after}:${options.until}`,
-          cursor,
-          payload,
-        });
+        signal.throwIfAborted();
+        const saved = await appendFinanceBrokerHistory(
+          options.directory,
+          {
+            kind: "broker_history",
+            accountId: options.accountId,
+            venue: "alpaca:paper",
+            query: `${stream}:${options.after}:${options.until}`,
+            cursor,
+            payload,
+          },
+          { signal },
+        );
         pages++;
         if (saved.appended) {
           appended++;
@@ -197,6 +204,10 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
         reason = "page budget exhausted; incomplete";
       }
     } catch (error) {
+      // Cancellation is terminal; retain acknowledged transport cleanup errors.
+      if (signal.aborted) {
+        throw error;
+      }
       reason = error instanceof Error ? error.message : "history sync failed";
     }
     streams.push({ stream, complete, pages, appended, ...(reason ? { reason } : {}) });
@@ -211,16 +222,24 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
     positionsReconciled: false,
     executionReceiptsCreated: 0,
   } as const;
-  await appendFinanceBrokerHistory(options.directory, {
-    kind: "broker_history",
-    accountId: options.accountId,
-    venue: "alpaca:paper",
-    query: `sync_receipt:${options.after}:${options.until}`,
-    cursor: "",
-    payload: [
-      { ...receipt, streams: receipt.streams.map(({ appended: _appended, ...stream }) => stream) },
-    ],
-  });
+  signal.throwIfAborted();
+  await appendFinanceBrokerHistory(
+    options.directory,
+    {
+      kind: "broker_history",
+      accountId: options.accountId,
+      venue: "alpaca:paper",
+      query: `sync_receipt:${options.after}:${options.until}`,
+      cursor: "",
+      payload: [
+        {
+          ...receipt,
+          streams: receipt.streams.map(({ appended: _appended, ...stream }) => stream),
+        },
+      ],
+    },
+    { signal },
+  );
   return receipt;
 }
 
@@ -228,7 +247,7 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
 export async function readFinanceBrokerHistory(
   directory: string,
   accountId: string,
-  options: { streams?: readonly string[] } = {},
+  options: { streams?: readonly string[]; signal?: AbortSignal } = {},
 ) {
   if (!accountId.trim()) {
     throw new Error("history account required");
@@ -277,6 +296,7 @@ export async function readFinanceBrokerHistory(
       }
       return facts;
     },
+    { signal: options.signal },
   );
   return {
     directory,

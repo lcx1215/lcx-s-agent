@@ -20,8 +20,34 @@
  * reported as unverifiable rather than quietly adopted.
  */
 
+import { createHash } from "node:crypto";
 import { calculationNumbers, type CalculationRecord } from "./finance-calculation-ledger.js";
 import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
+
+/** Join actual composer output and audit input without copying the full snapshot. */
+export function fingerprintFinanceAnswerEvidence(
+  candidateAnswer: string,
+  snapshot?: FinanceDataGatewaySnapshot,
+) {
+  const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.entries(value)
+              .toSorted(([a], [b]) => a.localeCompare(b))
+              .map(([key, entry]) => [key, canonical(entry)]),
+          )
+        : value;
+  return {
+    candidateSha256: createHash("sha256").update(candidateAnswer).digest("hex"),
+    snapshotSha256: snapshot
+      ? createHash("sha256")
+          .update(JSON.stringify(canonical(snapshot)))
+          .digest("hex")
+      : null,
+  };
+}
 
 export const FIGURE_KINDS = ["observed", "derived", "proposed", "cited", "count"] as const;
 

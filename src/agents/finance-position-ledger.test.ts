@@ -1470,3 +1470,327 @@ describe("sealed broker activities projection", () => {
     await expect(fs.stat(financePositionLedgerPath(directory))).rejects.toThrow();
   });
 });
+
+it("selects broker streams before repeated payload decoding while retaining the global head", async () => {
+  const directory = await storeDirectory();
+  for (const [accountId, stream] of [
+    ["stream-select", "orders"],
+    ["stream-select", "account"],
+    ["foreign-select", "orders"],
+  ]) {
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: `${stream}:select`,
+      cursor: "",
+      payload: [{ id: "fact", value: stream }],
+    });
+  }
+  const reduce = (
+    value: string[],
+    record: Awaited<ReturnType<typeof readFinanceBrokerHistoryRecords>>["records"][number],
+  ) => (record.body.query.startsWith("orders:") ? [...value, record.ref] : value);
+  const legacy = await reduceFinanceBrokerHistoryRecords(
+    directory,
+    "stream-select",
+    "alpaca:paper",
+    [] as string[],
+    reduce,
+  );
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    const selected = await reduceFinanceBrokerHistoryRecords(
+      directory,
+      "stream-select",
+      "alpaca:paper",
+      [] as string[],
+      reduce,
+      { streams: ["orders"] },
+    );
+    expect(selected).toEqual(legacy);
+    expect(parse).toHaveBeenCalledTimes(1);
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("rejects mutation in an omitted broker stream after its proof was warmed", async () => {
+  const directory = await storeDirectory();
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "omitted-tamper",
+    venue: "alpaca:paper",
+    query: "account:select",
+    cursor: "",
+    payload: [{ id: "account", cash: "100" }],
+  });
+  await reduceFinanceBrokerHistoryRecords(
+    directory,
+    "omitted-tamper",
+    "alpaca:paper",
+    0,
+    (n) => n + 1,
+    { streams: ["orders"] },
+  );
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    const row = db.prepare("SELECT body FROM finance_broker_history WHERE sequence=1").get() as {
+      body: string;
+    };
+    const raw = JSON.parse(row.body);
+    raw.body.payload[0].cash = "999";
+    db.prepare("UPDATE finance_broker_history SET body=? WHERE sequence=1").run(
+      JSON.stringify(raw),
+    );
+  } finally {
+    db.close();
+  }
+  await expect(
+    reduceFinanceBrokerHistoryRecords(
+      directory,
+      "omitted-tamper",
+      "alpaca:paper",
+      0,
+      (n) => n + 1,
+      { streams: ["orders"] },
+    ),
+  ).rejects.toThrow("chain mismatch");
+});
+
+it.each(["UTF-8", "UTF-16le", "UTF-16be"] as const)(
+  "preserves Unicode broker bytes through cold and warmed lazy reads: %s",
+  async (encoding) => {
+    const directory = await storeDirectory();
+    const initial = openDatabase(directory);
+    try {
+      initial.exec(`PRAGMA encoding="${encoding}"; CREATE TABLE encoding_fixture(id INTEGER)`);
+    } finally {
+      initial.close();
+    }
+    const body = {
+      kind: "broker_history" as const,
+      accountId: "unicode-byte-account",
+      venue: "alpaca:paper",
+      query: "activities:unicode",
+      cursor: "",
+      payload: [{ id: "字节", note: "报价😀\uFEFF\u0000", price: 1.25 }],
+    };
+    const first = await appendFinanceBrokerHistory(directory, body);
+    expect(
+      (await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue)).records,
+    ).toEqual([first.record]);
+    expect(
+      (await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue)).records,
+    ).toEqual([first.record]);
+    expect(await appendFinanceBrokerHistory(directory, body)).toEqual({
+      appended: false,
+      record: first.record,
+    });
+  },
+);
+
+it("rejects a blob impersonating previously verified broker text", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "blob-byte-account",
+    venue: "alpaca:paper",
+    query: "activities:blob",
+    cursor: "",
+    payload: [{ id: "blob" }],
+  };
+  await appendFinanceBrokerHistory(directory, body);
+  await readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue);
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.exec("UPDATE finance_broker_history SET body=CAST(body AS BLOB)");
+  } finally {
+    db.close();
+  }
+  await expect(
+    readFinanceBrokerHistoryRecords(directory, body.accountId, body.venue),
+  ).rejects.toThrow("invalid broker history row");
+  await expect(appendFinanceBrokerHistory(directory, body)).rejects.toThrow(
+    "invalid broker history row",
+  );
+});
+
+it("retains header proofs for a bounded history above the old eight MiB capacity", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "header-capacity-account",
+    venue: "alpaca:paper",
+    query: `orders:${"q".repeat(600)}`,
+    cursor: "",
+    payload: [{ id: "bounded-fixture" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  const db = openDatabase(directory);
+  let headRef = first.record.ref;
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const insert = db.prepare(
+      "INSERT INTO finance_broker_history(sequence,ref,body) VALUES(?,?,?)",
+    );
+    for (let sequence = 2; sequence <= 16_000; sequence++) {
+      const record = {
+        sequence,
+        previousRef: headRef,
+        body: { ...body, cursor: String(sequence) },
+      };
+      headRef = caseflowFingerprint(record);
+      insert.run(sequence, headRef, JSON.stringify(record));
+    }
+    db.exec("COMMIT");
+  } finally {
+    db.close();
+  }
+  const read = () =>
+    reduceFinanceBrokerHistoryRecords(
+      directory,
+      body.accountId,
+      body.venue,
+      0,
+      (count) => count + 1,
+      { streams: [] },
+    );
+  const cold = await read();
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    expect(await read()).toEqual(cold);
+    expect(cold).toEqual({ value: 0, recordCount: 16_000, headRef });
+    expect(parse.mock.calls.length).toBe(0);
+  } finally {
+    parse.mockRestore();
+  }
+  const changed = openDatabase(directory);
+  try {
+    changed.exec("DROP TRIGGER finance_broker_history_no_update");
+    const row = changed
+      .prepare("SELECT body FROM finance_broker_history WHERE sequence=16000")
+      .get();
+    if (typeof row?.body !== "string") {
+      throw new Error("missing capacity fixture tail");
+    }
+    const record = JSON.parse(row.body);
+    record.body.payload[0].id = "changed-after-warm";
+    changed
+      .prepare("UPDATE finance_broker_history SET body=? WHERE sequence=16000")
+      .run(JSON.stringify(record));
+  } finally {
+    changed.close();
+  }
+  await expect(read()).rejects.toThrow("broker history chain mismatch");
+}, 30_000);
+
+async function cooperativeHistoryFixture() {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "cooperative-scan",
+    venue: "alpaca:paper",
+    query: "activities:cooperative",
+    cursor: "",
+    payload: [{ id: "fill" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  let previousRef = first.record.ref;
+  const db = openDatabase(directory);
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const insert = db.prepare(
+      "INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)",
+    );
+    for (let sequence = 2; sequence <= 600; sequence++) {
+      const row = { sequence, previousRef, body };
+      previousRef = caseflowFingerprint(row);
+      insert.run(sequence, previousRef, JSON.stringify(row));
+    }
+    db.exec("COMMIT");
+  } finally {
+    db.close();
+  }
+  return { directory, body };
+}
+
+it("cooperative broker scan yields to cancellation before reducing the full chain", async () => {
+  const { directory, body } = await cooperativeHistoryFixture();
+  const controller = new AbortController();
+  const reason = new DOMException("host deadline", "AbortError");
+  let reduced = 0;
+  await expect(
+    reduceFinanceBrokerHistoryRecords(
+      directory,
+      body.accountId,
+      body.venue,
+      0,
+      (sum) => {
+        reduced++;
+        if (reduced === 1) {
+          setImmediate(() => controller.abort(reason));
+        }
+        return sum + 1;
+      },
+      { signal: controller.signal },
+    ),
+  ).rejects.toBe(reason);
+  expect(reduced).toBeGreaterThan(0);
+  expect(reduced).toBeLessThan(600);
+  expect(
+    (
+      await reduceFinanceBrokerHistoryRecords(
+        directory,
+        body.accountId,
+        body.venue,
+        0,
+        (sum) => sum + 1,
+      )
+    ).value,
+  ).toBe(600);
+});
+
+it("cooperative broker append cancels its scan and releases the write transaction", async () => {
+  const { directory, body } = await cooperativeHistoryFixture();
+  const controller = new AbortController();
+  const reason = new DOMException("host deadline", "AbortError");
+  setImmediate(() => controller.abort(reason));
+  await expect(
+    appendFinanceBrokerHistory(
+      directory,
+      { ...body, cursor: "new-page" },
+      { signal: controller.signal },
+    ),
+  ).rejects.toBe(reason);
+  const completed = await appendFinanceBrokerHistory(directory, {
+    ...body,
+    cursor: "after-cancel",
+  });
+  expect(completed.record.sequence).toBe(601);
+  expect(completed.appended).toBe(true);
+});
+
+it("cooperative broker appends retain distinct concurrent pages without lock conflicts", async () => {
+  const { directory, body } = await cooperativeHistoryFixture();
+  const results = await Promise.all([
+    appendFinanceBrokerHistory(directory, { ...body, cursor: "page-a" }),
+    appendFinanceBrokerHistory(directory, { ...body, cursor: "page-b" }),
+  ]);
+  expect(
+    results.map((result) => result.record.sequence).toSorted((left, right) => left - right),
+  ).toEqual([601, 602]);
+  expect(
+    (
+      await reduceFinanceBrokerHistoryRecords(
+        directory,
+        body.accountId,
+        body.venue,
+        0,
+        (sum) => sum + 1,
+      )
+    ).recordCount,
+  ).toBe(602);
+});

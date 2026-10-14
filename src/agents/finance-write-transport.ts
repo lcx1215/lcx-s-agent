@@ -105,6 +105,7 @@ export function createFinanceUncachedFetch(
       body: await readBoundedFinanceResponseText(response, {
         maxBytes: ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
         label: "finance uncached GET",
+        signal: init.signal,
       }),
     };
   };

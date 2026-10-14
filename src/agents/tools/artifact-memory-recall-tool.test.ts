@@ -93,6 +93,31 @@ it("names missing config, disabled recall and absent database without creating a
   ).toMatchObject({ gap: "artifact_database_missing" });
   await expect(fs.stat(dbPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
+it("names a missing required action without opening the store or silently choosing a read", async () => {
+  await seed();
+  const before = await fs.readFile(dbPath);
+  const open = vi.spyOn(ArtifactStore, "open");
+  const tool = createArtifactMemoryRecallTool({ config: cfg, agentId: "main", workspaceDir: root });
+  const result = await tool.execute("natural-missing-action", {
+    id: "real-result",
+    field: "/value",
+  });
+  expect(result.details).toMatchObject({
+    available: false,
+    gap: "artifact_action_required",
+    requiredArgs: ["action"],
+    allowedActions: ["read", "search"],
+  });
+  expect(open).not.toHaveBeenCalled();
+  expect(await fs.readFile(dbPath)).toEqual(before);
+  expect(tool.description).toContain("action is required");
+  expect(
+    (await tool.execute("explicit-read", { action: "read", id: "real-result", field: "/value" }))
+      .details,
+  ).toMatchObject({ available: true, selectedValue: 42 });
+  expect(open).toHaveBeenCalledOnce();
+  expect(await fs.readFile(dbPath)).toEqual(before);
+});
 it("reports missing and changed registered originals", async () => {
   await seed();
   const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });

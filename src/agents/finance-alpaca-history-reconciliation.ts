@@ -1,4 +1,6 @@
 import {
+  createFinanceCashMergerCollector,
+  type FinanceCashMerger,
   isAlpacaTradeExecutionType,
   type AlpacaTradeExecutionType,
 } from "./finance-alpaca-activity-contract.js";
@@ -117,6 +119,12 @@ export type FinanceBrokerHistoryReconciliation = Readonly<{
   positions: readonly FinanceBrokerPosition[];
   fills: readonly FinanceBrokerFillObservation[];
   fees: readonly FinanceBrokerFeeObservation[];
+  corporateSettlements?: readonly (FinanceCashMerger & {
+    costBasis: number;
+    settlementPnl: number;
+    boundary: "corporate_settlement_not_order_fill_or_strategy_pnl";
+  })[];
+  invalidCorporateActionCount?: number;
   warnings: readonly string[];
 }>;
 
@@ -285,7 +293,9 @@ export async function reconcileFinanceBrokerHistory(
   accountId: string,
   /** Reuse only a matching observation from this caller's current read; never cache across runs. */
   observedHistory?: Awaited<ReturnType<typeof readFinanceBrokerHistory>>,
+  options: { signal?: AbortSignal } = {},
 ): Promise<FinanceBrokerHistoryReconciliation> {
+  options.signal?.throwIfAborted();
   if (
     observedHistory &&
     (observedHistory.directory !== directory ||
@@ -305,13 +315,17 @@ export async function reconcileFinanceBrokerHistory(
     observedHistory ??
     (await readFinanceBrokerHistory(directory, accountId, {
       streams: ["orders", "activities", "sync_receipt"],
+      signal: options.signal,
     }));
+  options.signal?.throwIfAborted();
   const activities = raw.facts.filter(({ stream }) => stream === "activities");
   const orders = raw.facts.filter(({ stream }) => stream === "orders");
   const fills: FinanceBrokerFillObservation[] = [];
   const fees: FinanceBrokerFeeObservation[] = [];
   let invalidFillCount = 0;
   let invalidFeeCount = 0;
+  let invalidCorporateActionCount = 0;
+  const mergers = createFinanceCashMergerCollector(new Date().toISOString());
   const warnings: string[] = [
     "Broker history is account-scoped Alpaca paper evidence; it is not current account equity and does not authorize orders.",
   ];
@@ -322,12 +336,16 @@ export async function reconcileFinanceBrokerHistory(
         fills.push(parseFill(fact));
       } else if (activityType === "FEE" || activityType === "CFEE") {
         fees.push(parseFee(fact));
+      } else if (activityType === "MA") {
+        mergers.observe(fact, caseflowFingerprint(fact));
       }
     } catch (error) {
       if (activityType === "FILL") {
         invalidFillCount += 1;
       } else if (activityType === "FEE" || activityType === "CFEE") {
         invalidFeeCount += 1;
+      } else if (activityType === "MA") {
+        invalidCorporateActionCount += 1;
       }
       warnings.push(
         `${activityType || "unknown"} activity excluded: ${error instanceof Error ? error.message : String(error)}`,
@@ -365,7 +383,61 @@ export async function reconcileFinanceBrokerHistory(
   }
   const appliedFeeIds = new Set<string>();
   const byInstrument = new Map<string, MutableBrokerPosition>();
+  const merged = mergers.finish();
+  invalidCorporateActionCount += merged.issues.length;
+  warnings.push(...merged.issues);
+  const mergerEvents = merged.events.toSorted((a, b) =>
+    (a.occurredAt ?? a.observedAt).localeCompare(b.occurredAt ?? b.observedAt),
+  );
+  const corporateSettlements: NonNullable<
+    FinanceBrokerHistoryReconciliation["corporateSettlements"]
+  >[number][] = [];
+  const applyMerger = (event: FinanceCashMerger) => {
+    // created_at proves posting, not effective trade time. Same-day fills need exact timing.
+    const ambiguous =
+      event.occurredAt === undefined
+        ? event.businessDate === undefined ||
+          fills.some(
+            (fill) =>
+              fill.instrument === event.instrument &&
+              fill.occurredAt >= event.businessDate! + "T00:00:00.000Z" &&
+              fill.occurredAt <= event.observedAt,
+          )
+        : fills.some(
+            (fill) => fill.instrument === event.instrument && fill.occurredAt === event.occurredAt,
+          );
+    const position = byInstrument.get(event.instrument),
+      removed = -event.quantity;
+    if (ambiguous || !position || position.quantity < removed - 1e-10) {
+      invalidCorporateActionCount++;
+      warnings.push(
+        `cash merger ${event.groupId}: effective timing or recorded holding unavailable; position baseline held`,
+      );
+      return;
+    }
+    const costBasis = position.averageCost * removed;
+    position.quantity += event.quantity;
+    if (Math.abs(position.quantity) <= 1e-10) {
+      position.quantity = 0;
+      position.averageCost = 0;
+    }
+    corporateSettlements.push({
+      ...event,
+      costBasis: round6(costBasis),
+      settlementPnl: round6(event.cash - costBasis),
+      boundary: "corporate_settlement_not_order_fill_or_strategy_pnl",
+    });
+    // Preserve ordinary realized trade PnL and fills; this settlement is a separate outcome.
+  };
+  let mergerIndex = 0;
   for (const fill of fills) {
+    while (
+      mergerIndex < mergerEvents.length &&
+      (mergerEvents[mergerIndex].occurredAt ?? mergerEvents[mergerIndex].observedAt) <=
+        fill.occurredAt
+    ) {
+      applyMerger(mergerEvents[mergerIndex++]);
+    }
     const position = byInstrument.get(fill.instrument) ?? {
       instrument: fill.instrument,
       quantity: 0,
@@ -403,6 +475,10 @@ export async function reconcileFinanceBrokerHistory(
     const effectivePrice = (fill.price * fill.quantity) / Math.abs(signedQuantity);
     applyFill(position, signedQuantity, effectivePrice, usdFee);
     byInstrument.set(fill.instrument, position);
+  }
+
+  while (mergerIndex < mergerEvents.length) {
+    applyMerger(mergerEvents[mergerIndex++]);
   }
 
   // Alpaca CFEE rows can omit order_id while still identifying the traded symbol and the fee
@@ -501,13 +577,17 @@ export async function reconcileFinanceBrokerHistory(
       : complete &&
           invalidFillCount === 0 &&
           invalidFeeCount === 0 &&
+          invalidCorporateActionCount === 0 &&
           ordersMissingFillActivityCount === 0 &&
           unappliedFeeCount === 0
         ? "reconciled"
         : "incomplete";
   const positionsReconciled = historyStatus === "reconciled";
   const positionBaselineUsable =
-    complete && invalidFillCount === 0 && ordersMissingFillActivityCount === 0;
+    complete &&
+    invalidFillCount === 0 &&
+    invalidCorporateActionCount === 0 &&
+    ordersMissingFillActivityCount === 0;
   const feesInterpreted = historyStatus === "reconciled" && unappliedFeeCount === 0;
   if (unmatchedFillCount > 0) {
     warnings.push(
@@ -548,6 +628,10 @@ export async function reconcileFinanceBrokerHistory(
     positions: Object.freeze(positions),
     fills: Object.freeze(fills),
     fees: Object.freeze(fees),
+    ...(corporateSettlements.length > 0
+      ? { corporateSettlements: Object.freeze(corporateSettlements) }
+      : {}),
+    ...(invalidCorporateActionCount > 0 ? { invalidCorporateActionCount } : {}),
     warnings: Object.freeze(warnings),
   });
 }

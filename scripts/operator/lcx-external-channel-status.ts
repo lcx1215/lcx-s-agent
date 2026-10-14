@@ -72,7 +72,16 @@ export function resolveExternalChannelTruth(params: {
   visibleProof: Record<string, unknown> | undefined;
   /** Set when the canonical binding owner was invoked this run. */
   bindingOwnerAvailable?: boolean;
-}): { externalChannelBound: boolean; userVisibleObserved: boolean; bindingStatus: unknown } {
+}): {
+  externalChannelBound: boolean;
+  userVisibleObserved: boolean;
+  bindingStatus: unknown;
+  visibleProofObservation?: {
+    reported: true;
+    adoptedForCurrentBinding: false;
+    reason: "binding_probe_or_visible_status_not_confirmed";
+  };
+} {
   const bindingStatus = params.binding?.status ?? "unavailable";
   const bindingOwnerInvoked = params.bindingOwnerAvailable !== undefined;
   const bindingAvailable = params.bindingOwnerAvailable ?? params.binding !== undefined;
@@ -82,7 +91,12 @@ export function resolveExternalChannelTruth(params: {
   const bindingProvedChannelBound =
     bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
     bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
-  const bindingUserVisibleObserved = params.binding?.userVisibleObserved === true;
+  const bindingVisibleClaimed = params.binding?.userVisibleObserved === true;
+  const independentVisibleReported =
+    bindingVisibleClaimed ||
+    recordValue(params.binding?.visibleProofObservation)?.reported === true;
+  const bindingUserVisibleObserved =
+    bindingStatus === "channel_runtime_probe_ok_user_visible_observed" && bindingVisibleClaimed;
   const legacyExternalChannelBound =
     params.legacyExternalChannelStatus?.externalChannelBound === true;
   const legacyUserVisibleObserved =
@@ -103,6 +117,15 @@ export function resolveExternalChannelTruth(params: {
         ? false
         : legacyUserVisibleObserved || compatibilityVisibleProofObserved,
     bindingStatus,
+    ...(bindingAvailable && independentVisibleReported && !bindingUserVisibleObserved
+      ? {
+          visibleProofObservation: {
+            reported: true as const,
+            adoptedForCurrentBinding: false as const,
+            reason: "binding_probe_or_visible_status_not_confirmed" as const,
+          },
+        }
+      : {}),
   };
 }
 
@@ -430,7 +453,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
     const legacyRepositoryDrift = recordValue(legacy.devLiveDrift);
-    const { bindingStatus, externalChannelBound, userVisibleObserved } =
+    const { bindingStatus, externalChannelBound, userVisibleObserved, visibleProofObservation } =
       resolveExternalChannelTruth({
         binding,
         legacyExternalChannelStatus,
@@ -451,6 +474,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
       canonicalBindingMissingProof: userVisibleObserved ? [] : binding?.missingProof,
       canonicalBindingSelectedCleanAdapter: binding?.selectedCleanAdapter,
       canonicalBindingOwner: "lcx-external-channel-binding",
+      ...(visibleProofObservation ? { visibleProofObservation } : {}),
     };
     const externalCandidateCapture = await readExternalCandidateCapture();
     return {

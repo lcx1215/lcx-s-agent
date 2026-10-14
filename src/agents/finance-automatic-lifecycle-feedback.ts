@@ -24,7 +24,7 @@ import {
 import { FINANCE_DAILY_CYCLE_RUNS_FILENAME, resolveFinanceStateDir } from "./finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import {
-  readFinanceScoredFloorSamples,
+  readFinanceScoredFloorSamplesWithSource,
   readFinanceTuningProposals,
 } from "./finance-tuning-lifecycle.js";
 
@@ -345,7 +345,12 @@ function compactCycleRun(value: unknown) {
         })
         .slice(0, 8)
     : [];
+  const runId =
+    typeof record.runId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(record.runId)
+      ? record.runId
+      : undefined;
   return {
+    ...(runId !== undefined ? { runId } : {}),
     firedAt: boundedText(record.firedAt, 40),
     ...(modelVetoes.length > 0 ? { modelVetoes } : {}),
     status: boundedText(record.status, 32),
@@ -474,11 +479,11 @@ export async function buildFinanceAutomaticLifecycleFeedback(
     read: () => (reconciliations ??= readFinanceLatestBrokerReconciliations(state.directory)),
   };
   try {
-    const [rules, proposals, promotions, samples] = await Promise.all([
+    const [rules, proposals, promotions, scored] = await Promise.all([
       readFinanceStrategyRuleLedger(state.directory, { asOf: observedAt }),
       Promise.resolve(readFinanceTuningProposals(state.directory)),
       Promise.resolve(readFinancePaperPromotions(state.directory)),
-      Promise.resolve(readFinanceScoredFloorSamples(state.directory)),
+      Promise.resolve(readFinanceScoredFloorSamplesWithSource(state.directory)),
     ]);
     const [scheduler, latestCycleByMode] = await Promise.all([
       Promise.resolve(readFinanceSchedulerState(state.directory)),
@@ -689,8 +694,9 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       intradayExecution,
       positionManagement,
       economicFeedback,
-      scoredOutcomeCount: samples.length,
+      scoredOutcomeCount: scored.samples.length,
       tuning: {
+        sourceRead: scored.sourceRead,
         proposalCount: proposals.length,
         latestProposal: latestProposal
           ? {

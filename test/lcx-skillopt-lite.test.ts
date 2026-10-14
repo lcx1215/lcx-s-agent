@@ -71,6 +71,46 @@ function runCli(args: string[], workspaceDir: string) {
   );
 }
 
+type CandidateFeedbackResult = SkillOptResult & {
+  candidatePath: string;
+  receiptPath: string;
+  latestReceiptPath: string;
+  bestSkillPath: string;
+  sourceAutopilotSha256: string;
+  candidateFeedback: {
+    status: string;
+    candidateEditPaused: boolean;
+    deferredTrainCases: string[];
+    consumedReceiptPath: string | null;
+    consumedReceiptSha256: string | null;
+    gaps: string[];
+  };
+};
+const candidateArgs = [
+  "--skill",
+  "single_stock_curve_technical_timing_preflight",
+  "--candidate-edit",
+  "--json",
+];
+function candidateResult(workspaceDir: string): CandidateFeedbackResult {
+  const result = runCli(candidateArgs, workspaceDir);
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as CandidateFeedbackResult;
+}
+async function replacePriorReceipt(
+  workspaceDir: string,
+  prior: CandidateFeedbackResult,
+  edit: (receipt: CandidateFeedbackResult) => void,
+) {
+  const receipt = JSON.parse(
+    await fs.readFile(path.join(workspaceDir, prior.latestReceiptPath), "utf8"),
+  ) as CandidateFeedbackResult;
+  edit(receipt);
+  const bytes = JSON.stringify(receipt, null, 2) + "\n";
+  await fs.writeFile(path.join(workspaceDir, prior.latestReceiptPath), bytes);
+  await fs.writeFile(path.join(workspaceDir, prior.receiptPath), bytes);
+}
+
 describe("lcx-skillopt-lite CLI", () => {
   let workspaceDir: string | undefined;
 
@@ -80,6 +120,167 @@ describe("lcx-skillopt-lite CLI", () => {
       workspaceDir = undefined;
     }
   });
+
+  it("consumes immutable prior candidate feedback and durably pauses unchanged edits across two subsequent runs", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-feedback-"));
+    await seedAutopilot(workspaceDir);
+    const first = candidateResult(workspaceDir);
+    const firstBytes = await fs.readFile(path.join(workspaceDir, first.receiptPath), "utf8");
+    const candidateBytes = await fs.readFile(path.join(workspaceDir, first.candidatePath), "utf8");
+    const root = path.dirname(path.join(workspaceDir, first.candidatePath));
+    expect(first.accepted).toBe(true);
+    for (const previous of [first, undefined]) {
+      const result = candidateResult(workspaceDir);
+      expect(result).toMatchObject({
+        accepted: false,
+        status: "preflight_only_no_candidate_edit",
+        trainCases: [],
+        staticGateOk: true,
+        candidatePath: first.candidatePath,
+        candidateFeedback: {
+          status: "paired_eval_required",
+          candidateEditPaused: true,
+          deferredTrainCases: first.trainCases,
+        },
+      });
+      expect(result.proofChain.targetedEval).toMatchObject({
+        status: "blocked_candidate_injection_unsupported",
+        behaviorAccepted: false,
+      });
+      if (previous) {
+        expect(result.candidateFeedback.consumedReceiptPath).toBe(
+          path.join(workspaceDir, first.receiptPath),
+        );
+        expect(result.candidateFeedback.consumedReceiptSha256).toBe(
+          createHash("sha256").update(firstBytes).digest("hex"),
+        );
+      }
+      const persisted = JSON.parse(
+        await fs.readFile(path.join(workspaceDir, result.latestReceiptPath), "utf8"),
+      );
+      expect(persisted.candidateFeedback).toEqual(result.candidateFeedback);
+      expect(await fs.readFile(path.join(workspaceDir, first.bestSkillPath), "utf8")).toBe(
+        candidateBytes,
+      );
+      expect(await fs.readdir(root)).toHaveLength(1);
+    }
+    expect(await fs.readFile(path.join(workspaceDir, first.receiptPath), "utf8")).toBe(firstBytes);
+  });
+
+  it.each([
+    ["missing_receipt", "previous_receipt_missing"],
+    ["immutable_conflict", "previous_receipt_bytes_conflict"],
+    ["missing_candidate", "previous_candidate_missing_or_unreadable"],
+    ["changed_candidate", "previous_candidate_hash_conflict"],
+    ["changed_best", "previous_best_skill_hash_conflict"],
+    ["cross_skill", "previous_receipt_scope_conflict"],
+    ["missing_source_hash", "previous_source_hash_missing"],
+    ["future_receipt", "previous_receipt_source_time_conflict"],
+    ["unknown_eval", "previous_evaluation_status_unsupported_or_unknown"],
+    ["candidate_identity_conflict", "previous_candidate_identity_conflict"],
+    ["cross_scope_path", "previous_receipt_path_scope_conflict"],
+    ["missing_immutable", "previous_immutable_receipt_missing_or_unreadable"],
+    ["symlink_candidate", "previous_receipt_or_candidate_realpath_scope_conflict"],
+  ])("does not attribute %s as valid prior feedback", async (fault, gap) => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-feedback-"));
+    await seedAutopilot(workspaceDir);
+    const first = candidateResult(workspaceDir);
+    if (fault === "missing_receipt") {
+      await fs.rm(path.join(workspaceDir, first.latestReceiptPath));
+    }
+    if (fault === "immutable_conflict") {
+      await fs.appendFile(path.join(workspaceDir, first.receiptPath), " ");
+    }
+    if (fault === "missing_candidate") {
+      await fs.rm(path.join(workspaceDir, first.candidatePath));
+    }
+    if (fault === "changed_candidate") {
+      await fs.appendFile(path.join(workspaceDir, first.candidatePath), "changed");
+    }
+    if (fault === "changed_best") {
+      await fs.appendFile(path.join(workspaceDir, first.bestSkillPath), "changed");
+    }
+    if (fault === "cross_skill") {
+      await replacePriorReceipt(workspaceDir, first, (prior) => {
+        prior.skillId = "another_skill";
+      });
+    }
+    if (fault === "missing_source_hash") {
+      await replacePriorReceipt(workspaceDir, first, (prior) => {
+        delete (prior as Record<string, unknown>).sourceAutopilotSha256;
+      });
+    }
+    if (fault === "future_receipt") {
+      await replacePriorReceipt(workspaceDir, first, (prior) => {
+        prior.checkedAt = "2099-01-01T00:00:00.000Z";
+      });
+    }
+    if (fault === "unknown_eval") {
+      await replacePriorReceipt(workspaceDir, first, (prior) => {
+        prior.proofChain.targetedEval.status = "accepted_from_unverified_schema";
+      });
+    }
+    if (fault === "candidate_identity_conflict") {
+      await replacePriorReceipt(workspaceDir, first, (prior) => {
+        prior.proofChain.targetedEval.candidateIdentities.push({
+          ...prior.proofChain.targetedEval.candidateIdentities[0],
+        });
+      });
+    }
+    if (fault === "cross_scope_path") {
+      await replacePriorReceipt(workspaceDir, first, (prior) => {
+        prior.candidatePath = "../another-workspace/candidate.md";
+      });
+    }
+    if (fault === "missing_immutable") {
+      await fs.rm(path.join(workspaceDir, first.receiptPath));
+    }
+    if (fault === "symlink_candidate") {
+      const candidate = path.join(workspaceDir, first.candidatePath);
+      const outsideScope = path.join(workspaceDir, "candidate-outside-skill.md");
+      await fs.copyFile(candidate, outsideScope);
+      await fs.rm(candidate);
+      await fs.symlink(outsideScope, candidate);
+    }
+    const result = candidateResult(workspaceDir);
+    expect(result.candidateFeedback).toMatchObject({
+      status: "unverified",
+      candidateEditPaused: false,
+      gaps: [gap],
+    });
+    expect(result.proofChain.targetedEval).toMatchObject({ behaviorAccepted: false });
+  });
+
+  it.each(["source_bytes_same_timestamp", "source_time", "curriculum_limit"])(
+    "records %s as changed input rather than suppressing a new candidate",
+    async (change) => {
+      workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-feedback-"));
+      await seedAutopilot(workspaceDir);
+      const first = candidateResult(workspaceDir);
+      const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
+      if (change === "source_bytes_same_timestamp") {
+        await fs.appendFile(statePath, " ");
+      }
+      if (change === "source_time") {
+        const snapshot = JSON.parse(await fs.readFile(statePath, "utf8"));
+        snapshot.checkedAt = "2026-05-26T11:00:00.000Z";
+        await fs.writeFile(statePath, JSON.stringify(snapshot));
+      }
+      const result = runCli(
+        [...candidateArgs, ...(change === "curriculum_limit" ? ["--max-train-cases", "1"] : [])],
+        workspaceDir,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const parsed = JSON.parse(result.stdout) as CandidateFeedbackResult;
+      expect(parsed.candidateFeedback).toMatchObject({
+        status: "input_changed",
+        candidateEditPaused: false,
+      });
+      expect(parsed.accepted).toBe(true);
+      expect(parsed.candidatePath).not.toBe(first.candidatePath);
+      expect(parsed.proofChain.targetedEval).toMatchObject({ behaviorAccepted: false });
+    },
+  );
 
   it("blocks behavior attribution even when every case is registered", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));

@@ -9,6 +9,7 @@ import {
 import {
   buildFinanceDataGatewaySnapshot,
   type FinanceDataGatewayInput,
+  type FinanceDataGatewaySnapshot,
 } from "../finance-data-gateway.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -42,7 +43,9 @@ const FinanceDataGatewaySnapshotSchema = Type.Object({
   assetClass: Type.String(),
   useCase: Type.String(),
   asOf: Type.String(),
+  asOfMode: Type.Optional(stringEnum(["historical", "live_now"])),
   freshnessMaxMinutes: Type.Optional(Type.Number()),
+  crossSourceSkewMaxMinutes: Type.Optional(Type.Number({ minimum: 0 })),
   requireOfficialReference: Type.Optional(Type.Boolean()),
   observations: Type.Array(FinanceDataGatewayObservationSchema),
   writeReceipt: Type.Optional(Type.Boolean()),
@@ -77,15 +80,31 @@ async function writeReceipt(params: {
   return relPath;
 }
 
+/** Review targets name module inputs; only nextTool names a callable tool. */
+export function financeDataGatewayFollowUp(
+  qualityStatus: FinanceDataGatewaySnapshot["qualityStatus"],
+  availableTools?: readonly string[],
+) {
+  const ready = qualityStatus === "ready";
+  const nextTool = ready ? "finance_framework_core_inspect" : "finance_data_gateway_snapshot";
+  return {
+    ...(availableTools === undefined || availableTools.includes(nextTool) ? { nextTool } : {}),
+    nextReviewTarget: ready ? "finance_framework_core" : "data_provenance_quality_review_input",
+    ...(ready ? {} : { retryOnlyAfter: "new_or_corrected_source_observations" }),
+  };
+}
+
 export function createFinanceDataGatewaySnapshotTool(options?: {
   workspaceDir?: string;
+  /** Host-supplied callable inventory; omitted preserves the ordinary agent inventory. */
+  availableTools?: readonly string[];
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
     label: "Finance Data Gateway Snapshot",
     name: "finance_data_gateway_snapshot",
     description:
-      "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer sources. It requires timestamps, field definitions, provider roles, and conflict visibility before sourced numbers are used. Each primary field needs a different declared provider and source address for its cross-check. Declared shared upstream documents and tracking-only URL differences cannot qualify as cross-checks. Undeclared upstream provenance and paraphrased copies cannot be detected; sourceIndependence.upstreamLineage remains not_assessed.",
+      "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer sources. It requires timestamps, field definitions, provider roles, and conflict visibility before sourced numbers are used. Each primary field needs a different declared provider and source address for its cross-check. Declared shared upstream documents and tracking-only URL differences cannot qualify as cross-checks. Undeclared upstream provenance and paraphrased copies cannot be detected; sourceIndependence.upstreamLineage remains not_assessed. nextReviewTarget is a module input, not a callable tool. For a quality gap, use nextTool only after supplying new or corrected source observations; repeating identical input cannot resolve it.",
     parameters: FinanceDataGatewaySnapshotSchema,
     execute: async (_toolCallId, args) => {
       const params = args as FinanceDataGatewayInput & { writeReceipt?: boolean };
@@ -102,10 +121,7 @@ export function createFinanceDataGatewaySnapshotTool(options?: {
         return jsonResult({
           ...snapshot,
           receiptPath,
-          nextTool:
-            snapshot.qualityStatus === "ready"
-              ? "finance_framework_core_inspect"
-              : "data_provenance_quality_review_input",
+          ...financeDataGatewayFollowUp(snapshot.qualityStatus, options?.availableTools),
         });
       } catch (error) {
         throw new ToolInputError((error as Error).message);

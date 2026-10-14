@@ -7,6 +7,8 @@
  * crossing a module, workflow, evidence, or delivery boundary.
  */
 
+import { LCX_WORKFLOW_PROCESS_CONTRACTS } from "./lcx-workflow-process-contracts.js";
+
 export const LCX_ONTOLOGY_VERSION = "lcx_ontology_v1" as const;
 export const LCX_ONTOLOGY_EVOLUTION_CONTRACT_VERSION = "lcx_ontology_evolution_v1" as const;
 export const LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION = "lcx_ontology_migration_v1" as const;
@@ -1100,6 +1102,7 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "finance_learning_memory",
   "causal_map",
   "review_panel",
+  "model_tool_decision",
   "control_room_summary",
   "visible_reply",
   "source_intake",
@@ -1149,6 +1152,8 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "local_failure_trace",
   "automation_cleanup",
   "system_doctor",
+  "operator_training_supervisor",
+  "operator_agent_exam",
   "operator_latest_receipt",
   "operator_digest",
   "language_router",
@@ -1319,6 +1324,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "live_proof_required",
   "tool_permission_audit_required",
   "human_signoff_checkpoint",
+  "research_quality_gate_required",
   "no_wallet_or_order_execution",
   "market_microstructure_warning_required",
   "paper_only_backtest_required",
@@ -1823,6 +1829,62 @@ export const LCX_ONTOLOGY_STATE_CHAINS = {
   capabilityEvidence: ["missing", "present"],
 } as const;
 
+/** Descriptive handoff contract over existing nodes; it grants no execution authority. */
+export const LCX_FINANCE_RULE_HANDOFF_CONTRACT = {
+  scenario: "central_agent_decision_waterflow",
+  proof: "src/agents/central-harness/rule-handoff.test.ts",
+  receipt: "lcx-central-agent-log-latest.jsonl",
+  stages: [
+    {
+      node: "strategy_rule_ledger",
+      owner: "src/agents/tools/finance-strategy-rule-ledger-read-tool.ts",
+      input:
+        "original strategy rule ledger and rule/instrument identities; account/venue stay with their ledger owners",
+      output: "registered artifact id, source hash, clock and exact rule pointers",
+      blockedBy: "missing source or scope; metadata alone is not rule content",
+    },
+    {
+      node: "memory_recall",
+      owner: "src/agents/tools/artifact-memory-recall-tool.ts",
+      input: "one artifact id and an exact rule field selected for a concrete uncertainty",
+      output: "selectedValue or a named content gap with narrower child pointers",
+      blockedBy: "missing artifact/field or content omitted by the 4 KB step budget",
+    },
+    {
+      node: "central_agent_brain_proposal",
+      owner: "src/agents/central-harness/model-brain.ts",
+      input: "delivered rule content in the bounded perception and unresolved question",
+      output: "retain/change/unresolved, source-bound evidenceUse and short factual reason",
+      blockedBy: "transport deadline, content gap or unattributed judgment",
+    },
+    {
+      node: "central_agent_gate",
+      owner: "src/agents/central-harness/harness-loop.ts",
+      input: "proposed actions and references to actually delivered evidence",
+      output: "independent action gate result and host-verified reference",
+      blockedBy: "hash/scope/cutoff mismatch or forbidden execution authority",
+    },
+    {
+      node: "central_agent_latest_receipt",
+      owner: "src/agents/central-harness/harness-loop.ts",
+      input: "original dispatch results, verified references and diagnosed gaps",
+      output: "one original receipt plus bounded next-cycle feedback",
+      blockedBy: "reference validity does not prove semantic adoption, source trust or quality",
+    },
+  ],
+} as const satisfies {
+  scenario: LcxOntologyWorkflowScenarioId;
+  proof: string;
+  receipt: string;
+  stages: readonly {
+    node: LcxOntologyWorkflowNodeId;
+    owner: string;
+    input: string;
+    output: string;
+    blockedBy: string;
+  }[];
+};
+
 export const LCX_ONTOLOGY_REGISTRY = {
   version: LCX_ONTOLOGY_VERSION,
   entityTypes: LCX_ONTOLOGY_ENTITY_TYPES,
@@ -1836,6 +1898,8 @@ export const LCX_ONTOLOGY_REGISTRY = {
   policy: LCX_ONTOLOGY_REGISTRY_POLICY,
   stateChains: LCX_ONTOLOGY_STATE_CHAINS,
   orchestrationContracts: LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS,
+  financeRuleHandoff: LCX_FINANCE_RULE_HANDOFF_CONTRACT,
+  workflowProcesses: LCX_WORKFLOW_PROCESS_CONTRACTS,
   financeModelWorkflow: {
     version: LCX_FINANCE_MODEL_WORKFLOW_VERSION,
     roles: LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS,

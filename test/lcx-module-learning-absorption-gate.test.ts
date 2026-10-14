@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { seedNativeLearning, learningHash, text } from "./fixtures/lcx-waterflow-learning-probe.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const scriptPath = path.join(repoRoot, "scripts/operator/lcx-module-learning-absorption-gate.ts");
@@ -119,6 +120,71 @@ describe("lcx-module-learning-absorption-gate", () => {
     }
   });
 
+  it("retains actual fresh source/module receipt and bytes hashes without narrowing the global gate", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-selected-learning-gate-"));
+    const seeded = await seedNativeLearning(workspaceDir);
+    const args = [
+      "--guard-log",
+      path.join(workspaceDir, "guard.jsonl"),
+      "--source",
+      seeded.source,
+      "--target-module",
+      "portfolio_risk_gates",
+      "--host-run-id",
+      "offline-continuous-learning",
+      "--receipt-sha256",
+      await learningHash(workspaceDir, text(seeded.plan.receiptPath)),
+      "--source-sha256",
+      await learningHash(workspaceDir, seeded.source),
+    ];
+    const result = runCli(args, workspaceDir);
+    expect(result.status).toBe(0);
+    const gate = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(gate).toMatchObject({
+      absorptionReady: false,
+      consumedReview: {
+        readMode: "fresh_original_review",
+        hostScope: { runId: "offline-continuous-learning" },
+        selection: { sourceUrlOrPath: seeded.source, targetModule: "portfolio_risk_gates" },
+        gaps: [],
+        selectedReceipts: [
+          expect.objectContaining({
+            receiptPath: seeded.plan.receiptPath,
+            receiptSha256: await learningHash(workspaceDir, text(seeded.plan.receiptPath)),
+            sourceUrlOrPath: seeded.source,
+            evaluationVerified: true,
+          }),
+        ],
+      },
+    });
+    expect(gate.blockers).toContain("registered_sources_missing_application_or_eval_evidence");
+  });
+  it.each(["source", "receipt", "missing-module"])(
+    "selected %s conflict remains held with an exact evidence gap",
+    async (fault) => {
+      workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-selected-learning-conflict-"));
+      const seeded = await seedNativeLearning(workspaceDir);
+      const args = [
+        "--guard-log",
+        path.join(workspaceDir, "guard.jsonl"),
+        "--source",
+        seeded.source,
+        "--target-module",
+        fault === "missing-module" ? "technical_timing" : "portfolio_risk_gates",
+        fault === "receipt" ? "--receipt-sha256" : "--source-sha256",
+        "0".repeat(64),
+      ];
+      const result = runCli(args, workspaceDir);
+      expect(result.status).toBe(0);
+      const gate = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(gate.absorptionReady).toBe(false);
+      expect(gate.blockers).toContain(
+        fault === "missing-module"
+          ? "selected_source_module_receipt_missing"
+          : `selected_${fault}_hash_conflict`,
+      );
+    },
+  );
   it("holds application-ready receipts even when global eval is clean", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
     const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());

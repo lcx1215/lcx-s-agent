@@ -64,6 +64,12 @@ function runCli(args: string[], workspaceDir: string, pidFixture: string) {
     {
       cwd: repoRoot,
       encoding: "utf8",
+      env: {
+        ...process.env,
+        // Select private fixture roles without depending on optional live provider configuration.
+        OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL: "fixture/kimi",
+        OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL: "fixture/minimax",
+      },
     },
   );
 }
@@ -111,9 +117,10 @@ describe("lcx-provider-council-acceleration CLI", () => {
       "single_stock_curve_technical_timing_preflight",
       "external_knowledge_expansion_05",
     ]);
-    expect(String(parsed.plannedPrompt)).toContain("Kimi");
-    expect(String(parsed.plannedPrompt)).toContain("DeepSeek");
-    expect(String(parsed.plannedPrompt)).toContain("MiniMax");
+    expect(parsed.requiredRoles).toEqual(["kimi", "minimax", "deepseek"]);
+    expect(String(parsed.plannedPrompt)).toContain("综合角色");
+    expect(String(parsed.plannedPrompt)).toContain("提取角色");
+    expect(String(parsed.plannedPrompt)).toContain("反例和风险审查");
     expect(parsed.outputsFeed).toEqual(
       expect.arrayContaining(["skillopt_candidate_edit", "eval_case", "teacher_curriculum"]),
     );

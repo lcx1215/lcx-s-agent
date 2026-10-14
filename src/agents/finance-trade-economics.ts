@@ -23,6 +23,10 @@ const Policy = z
   })
   .strict();
 export type FinanceTradeEconomicsPolicy = z.infer<typeof Policy>;
+export {
+  Observation as FinanceTradeEconomicsObservationSchema,
+  Policy as FinanceTradeEconomicsPolicySchema,
+};
 
 /** Research estimator only: each estimate reads outcomes closed strictly before the decision. */
 export function estimateFinanceTradeEconomics(params: {

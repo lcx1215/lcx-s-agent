@@ -42,6 +42,130 @@ const value = {
 };
 
 describe("host-owned artifact result recording", () => {
+  it("preserves tool-call identity while binding exact bytes to the host invocation", async () => {
+    const host = await fixture();
+    const input = {
+      ...host,
+      owner: "memory_get",
+      runId: "same-tool-call",
+      invocationRunId: "host-attempt-a",
+      observedAt,
+      value,
+    };
+    const first = await recordAgentArtifact(input);
+    const workspaceId = createHash("sha256")
+      .update(await fs.realpath(host.workspaceDir))
+      .digest("hex");
+    expect(first).toMatchObject({
+      status: "registered",
+      invocationRunId: input.invocationRunId,
+      workspaceId,
+    });
+    const firstBytes = await fs.readFile(path.join(host.workspaceDir, first.relativePath!));
+    expect(JSON.parse(firstBytes.toString())).toEqual({
+      schemaVersion: "lcx_agent_artifact_v1",
+      owner: input.owner,
+      runId: input.runId,
+      value,
+      invocation: { runId: input.invocationRunId, workspaceId },
+      observedAt,
+    });
+    const repeated = await recordAgentArtifact(input);
+    expect(repeated).toEqual({ ...first, status: "unchanged" });
+    expect(await fs.readFile(path.join(host.workspaceDir, first.relativePath!))).toEqual(
+      firstBytes,
+    );
+    const otherRun = await recordAgentArtifact({ ...input, invocationRunId: "host-attempt-b" });
+    expect(otherRun.status).toBe("registered");
+    expect(otherRun.id).not.toBe(first.id);
+    expect(otherRun.sha256).not.toBe(first.sha256);
+    expect(otherRun.workspaceId).toBe(workspaceId);
+    const proofRoot = process.env.LCX_ARTIFACT_INVOCATION_PROOF_DIR;
+    if (proofRoot) {
+      await fs.mkdir(proofRoot, { recursive: true });
+      await fs.writeFile(path.join(proofRoot, "original-attempt-a.json"), firstBytes);
+      await fs.writeFile(
+        path.join(proofRoot, "original-attempt-b.json"),
+        await fs.readFile(path.join(host.workspaceDir, otherRun.relativePath!)),
+      );
+      await fs.writeFile(
+        path.join(proofRoot, "invocation-proof.json"),
+        JSON.stringify({
+          first,
+          repeated,
+          otherRun,
+          workspaceId,
+          hostWorkspace: host.workspaceDir,
+        }),
+      );
+    }
+  });
+
+  it.each(["", " ", " leading", "trailing ", "control\ninside", "nul\0", "x".repeat(241), 7])(
+    "rejects invalid host invocation %j before file or database registration",
+    async (invocationRunId) => {
+      const host = await fixture();
+      const result = await recordAgentArtifact({
+        ...host,
+        owner: "memory_get",
+        runId: "valid-tool-call",
+        // Deliberately bypass the static type only for a malformed host input counterexample.
+        invocationRunId: invocationRunId as string,
+        value,
+      });
+      expect(result).toEqual({
+        status: "unavailable",
+        reason: "artifact_invocation_metadata_invalid",
+      });
+      expect(await fs.readdir(host.workspaceDir)).toEqual([]);
+    },
+  );
+
+  it("uses canonical workspace identity without turning it into a business account", async () => {
+    const host = await fixture();
+    const foreign = await fixture();
+    foreign.config = host.config;
+    const input = {
+      ...host,
+      owner: "memory_get",
+      runId: "shared-call",
+      invocationRunId: "shared-host-attempt",
+      observedAt,
+      value,
+    };
+    const first = await recordAgentArtifact(input);
+    const alias = path.join(host.workspaceDir, "canonical-alias");
+    await fs.symlink(host.workspaceDir, alias);
+    const sameWorkspace = await recordAgentArtifact({ ...input, workspaceDir: alias });
+    expect(sameWorkspace).toEqual({ ...first, status: "unchanged" });
+    const otherWorkspace = await recordAgentArtifact({ ...input, ...foreign });
+    expect(otherWorkspace.status).toBe("registered");
+    expect(otherWorkspace.workspaceId).not.toBe(first.workspaceId);
+    expect(otherWorkspace.id).not.toBe(first.id);
+    expect(otherWorkspace.sha256).not.toBe(first.sha256);
+    const envelope = JSON.parse(
+      await fs.readFile(path.join(host.workspaceDir, first.relativePath!), "utf8"),
+    );
+    expect(envelope.invocation).toEqual({
+      runId: input.invocationRunId,
+      workspaceId: first.workspaceId,
+    });
+    expect(envelope.invocation.accountId).toBeUndefined();
+    expect(envelope.invocation.semanticTruth).toBeUndefined();
+    const store = ArtifactStore.open({
+      dbPath: host.dbPath,
+      workspaceDir: host.workspaceDir,
+      readOnly: true,
+    });
+    try {
+      await expect(store.read(otherWorkspace.id!)).rejects.toMatchObject({
+        code: "artifact_not_registered",
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   it("indexes bounded reference metadata while preserving every original reference and value", async () => {
     const host = await fixture();
     const refs = Array.from({ length: 21 }, (_, index) => `receipt:${index}`);
@@ -386,7 +510,7 @@ describe("host-owned artifact result recording", () => {
 
 describe("artifact recording tool wrapper", () => {
   it("preserves arguments/signal, all original media/content/details and business fields", async () => {
-    const host = await fixture();
+    const host = { ...(await fixture()), invocationRunId: "host-original-wrapper-run" };
     const result = {
       content: [
         { type: "text" as const, text: "original" },
@@ -405,7 +529,10 @@ describe("artifact recording tool wrapper", () => {
     };
     const wrapped = withArtifactResultRecording(tool, host);
     const controller = new AbortController();
-    const params = { secretArgNotRecorded: "test-sentinel" };
+    const params = {
+      secretArgNotRecorded: "test-sentinel",
+      invocationRunId: "tool-argument-cannot-override-host",
+    };
     const output = await wrapped.execute("wrapped", params, controller.signal);
     expect(execute).toHaveBeenCalledWith("wrapped", params, controller.signal, undefined);
     expect(output.details).toBe(result.details);
@@ -415,6 +542,7 @@ describe("artifact recording tool wrapper", () => {
       String((output.content.at(-1) as { text: string }).text),
     ).artifactEvidence;
     expect(evidence.status).toBe("registered");
+    expect(evidence.invocationRunId).toBe(host.invocationRunId);
     expect(
       await fs.readFile(path.join(host.workspaceDir, evidence.relativePath), "utf8"),
     ).not.toContain("test-sentinel");

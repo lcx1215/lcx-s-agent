@@ -106,4 +106,21 @@ describe("backfillOutcomes", () => {
     });
     expect(result.issues.join(" ")).toContain("asOf");
   });
+
+  it("keeps a matured call pending when its first exit bar is after this run's cutoff", async () => {
+    const result = await backfillOutcomes({
+      samples: [sample()],
+      asOf: "2026-02-01T23:00:00.000Z",
+      seriesFor,
+    });
+    expect(result.scored).toEqual([]);
+    expect(result.pending).toEqual([{ instrument: "SPY", dueAt: "2026-02-01T14:00:00.000Z" }]);
+    expect(result.issues.join(" ")).toContain("after settlement cutoff");
+    const later = await backfillOutcomes({
+      samples: [sample()],
+      asOf: "2026-02-02T23:00:00.000Z",
+      seriesFor,
+    });
+    expect(later.scored[0]).toMatchObject({ instrument: "SPY", outcome: 1, movePct: 20 });
+  });
 });

@@ -52,7 +52,9 @@ export async function readFinanceAccountTradingBook(params: {
   directory: string;
   accountId: string;
   venue: string;
+  signal?: AbortSignal;
 }): Promise<FinanceAccountTradingBook> {
+  params.signal?.throwIfAborted();
   // This book's broker adapter is Paper-only; never relabel its positions as another venue.
   if (params.venue !== "alpaca:paper") {
     throw new Error("account trading book requires the exact Alpaca paper venue");
@@ -61,7 +63,14 @@ export async function readFinanceAccountTradingBook(params: {
     accountId: params.accountId,
     venue: params.venue,
   });
-  const brokerHistory = await reconcileFinanceBrokerHistory(params.directory, params.accountId);
+  params.signal?.throwIfAborted();
+  const brokerHistory = await reconcileFinanceBrokerHistory(
+    params.directory,
+    params.accountId,
+    undefined,
+    { signal: params.signal },
+  );
+  params.signal?.throwIfAborted();
   const orderIds = receiptOrderIds(execution.receipts);
   const historicalOnlyInstruments = [
     ...new Set(

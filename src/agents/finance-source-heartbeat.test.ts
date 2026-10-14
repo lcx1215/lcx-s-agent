@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApiCallError } from "./api-call-contract.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { readFinanceFundamentalSnapshot } from "./finance-fundamental-store.js";
+import type { FetchImpl } from "./finance-live-market-source.js";
+import { createBlsMacroSeriesCollectionAdapter } from "./finance-market-collection-registry.js";
 import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
 import {
   planFinanceSourceHeartbeat,
@@ -507,5 +509,44 @@ describe("finance provider heartbeat", () => {
       }),
     ).rejects.toThrow();
     expect(calls).toBe(0);
+  });
+});
+
+it("uses a native BLS series for its natural heartbeat rather than FRED GDP", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-bls-native-"));
+  roots.push(directory);
+  const urls: string[] = [];
+  const fetchImpl: FetchImpl = async (url) => {
+    urls.push(url);
+    const valid = url.endsWith("/CUUR0000SA0");
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          status: valid ? "REQUEST_SUCCEEDED" : "REQUEST_FAILED",
+          Results: {
+            series: [
+              {
+                seriesID: valid ? "CUUR0000SA0" : "GDP",
+                data: valid ? [{ year: "2025", period: "M12", value: "315.6" }] : [],
+              },
+            ],
+          },
+        }),
+    };
+  };
+  const result = await runFinanceSourceHeartbeat({
+    directory,
+    asOf: "2026-10-14T03:00:00Z",
+    realtimeAdapters: [],
+    collectionAdapters: [createBlsMacroSeriesCollectionAdapter({ fetchImpl })],
+  });
+  expect(urls).toEqual(["https://api.bls.gov/publicAPI/v2/timeseries/data/CUUR0000SA0"]);
+  expect(result.healthyCount).toBe(1);
+  expect((await readFinanceSourceHeartbeat({ directory })).records.bls).toMatchObject({
+    status: "healthy",
+    reason: "ok",
+    httpStatus: 200,
   });
 });

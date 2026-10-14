@@ -3,12 +3,14 @@ import fs from "node:fs/promises";
 import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import { ConfiguredFinanceCallStateSchema } from "./configured-finance-model-adapter.js";
 import {
   ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS,
   ALPACA_SAFETY_DIAGNOSTIC_STAGES,
   ALPACA_SAFETY_FAILURE_CODES,
   ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES,
 } from "./finance-alpaca-safety-provider.js";
+import { isSafeFinanceReadFailure } from "./finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES,
@@ -22,6 +24,8 @@ import {
   FinanceStrategyReassessmentSchema,
   FinanceStrategyFeedbackResponseSchema,
   FinanceStrategyReviewFeedbackSchema,
+  FinanceBrokerExitFeedbackSchema,
+  FinanceBrokerExitResponseSchema,
 } from "./finance-expectation-gap.js";
 import { FINANCE_PROTECTED_REDUCTION_STAGES } from "./finance-protection-coordination.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
@@ -37,6 +41,21 @@ import {
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
 const Iso = z.string().datetime();
+const ReadFailureSchema = z
+  .object({
+    code: z.string().max(259),
+    cleanupStatus: z.enum(["confirmed", "unconfirmed"]).optional(),
+  })
+  .strict()
+  .refine(isSafeFinanceReadFailure);
+const QuoteTimingSchema = z
+  .object({
+    quoteAtMs: z.number().int().nonnegative(),
+    checkedAtMs: z.number().int().nonnegative(),
+    aheadMs: z.number().int(),
+  })
+  .strict()
+  .refine((t) => t.aheadMs === t.quoteAtMs - t.checkedAtMs);
 const FinanceIntradayExecutionSafetyFailureRecord = z
   .object({
     stage: z.enum(FINANCE_EXECUTION_SAFETY_FAILURE_STAGES),
@@ -45,6 +64,8 @@ const FinanceIntradayExecutionSafetyFailureRecord = z
     provider: z
       .object({
         reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
+        quoteTiming: QuoteTimingSchema.optional(),
+        transport: ReadFailureSchema.optional(),
         stage: z.enum(ALPACA_SAFETY_DIAGNOSTIC_STAGES).optional(),
         accountArithmetic: z
           .object({
@@ -284,6 +305,7 @@ const IntradayReviewRequestSchema = z
     venue: z.literal("alpaca:paper"),
     accountId: Text.optional(),
     strategyFeedback: FinanceStrategyReviewFeedbackSchema.optional(),
+    brokerExitFeedback: FinanceBrokerExitFeedbackSchema.optional(),
     asOf: Iso,
     signalAnchor: Text,
     ruleIds: z.array(Text).min(1),
@@ -326,6 +348,7 @@ const IntradayReviewDecisionSchema = z
     expectationGap: FinanceExpectationGapSchema.optional(),
     strategyReassessment: FinanceStrategyReassessmentSchema.optional(),
     strategyFeedbackResponse: FinanceStrategyFeedbackResponseSchema.optional(),
+    brokerExitResponse: z.array(FinanceBrokerExitResponseSchema).min(1).max(2).optional(),
   })
   .strict();
 
@@ -338,6 +361,7 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
     provider: Text,
     modelId: Text,
     latencyMs: z.number().finite().nonnegative(),
+    transport: ConfiguredFinanceCallStateSchema.optional(),
     providerCallObserved: z.boolean(),
     adapterAttested: z.boolean(),
     requestIdSha256: Hash.optional(),
@@ -456,12 +480,30 @@ const FinanceIntradayOutcomeBase = z
           "fill_projection",
         ]),
         category: z.enum(["deadline_exceeded", "cancelled", "unexpected"]),
+        cleanupStatus: z.enum(["confirmed", "unconfirmed"]).optional(),
         elapsedMs: z.number().int().nonnegative(),
         /** Current operation only; elapsedMs remains cumulative for legacy readers. */
         stageElapsedMs: z.number().int().nonnegative().optional(),
+        account: z
+          .object({
+            stage: z.enum([
+              "execution_recovery",
+              "broker_reconciliation",
+              "safety_claims",
+              "terminal_order",
+              "safety_facts",
+            ]),
+            code: z.string().max(512),
+            cleanupStatus: z.enum(["confirmed", "unconfirmed"]).optional(),
+            elapsedMs: z.number().int().nonnegative(),
+          })
+          .strict()
+          .optional(),
         quote: z
           .object({
             reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
+            quoteTiming: QuoteTimingSchema.optional(),
+            transport: ReadFailureSchema.optional(),
             stage: z.enum(ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES).optional(),
             httpStatus: z.number().int().min(100).max(599).optional(),
           })

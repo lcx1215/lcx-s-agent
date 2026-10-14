@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  parseArgs as parseFinanceResearchCliArgs,
+  run as runFinanceResearchCli,
+  compactFinanceResearchSummary,
+} from "../../scripts/operator/lcx-finance-research-run.js";
+import {
   captureFinanceIntradayCloseBars,
   readFinanceScheduledResearchFeedback,
   reconcileResidentAlpacaAccount,
@@ -18,9 +23,16 @@ import {
   runFinanceRetiredIntradayExitTick,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
+import * as configuredAdapter from "../../src/agents/configured-finance-model-adapter.js";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { syncAlpacaIntradayBars } from "../../src/agents/finance-alpaca-intraday.js";
+import {
+  appendFinanceBars,
+  readFinanceBarLedger,
+  type FinanceBarAppendInput,
+} from "../../src/agents/finance-bar-ledger.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
+import { latestCompletedWeekdaySessionDate } from "../../src/agents/finance-cycle-schedule.js";
 import {
   appendFinanceIntradayBars,
   readFinanceIntradayLedger,
@@ -34,6 +46,12 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
 } from "../../src/agents/finance-intraday-paper.js";
 import * as intradayPositions from "../../src/agents/finance-intraday-position.js";
+import * as collectionRegistry from "../../src/agents/finance-market-collection-registry.js";
+import * as priceContext from "../../src/agents/finance-night-review-context.js";
+import * as realtimeRegistry from "../../src/agents/finance-realtime-source-registry.js";
+import { financeResearchPortfolioContextSchema } from "../../src/agents/finance-research-portfolio-plan.js";
+import * as researchRunner from "../../src/agents/finance-research-runner.js";
+import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.js";
 import { commitFinanceSchedulerDatabaseState } from "../../src/agents/finance-scheduler-ledger.js";
 import {
   FINANCE_SCHEDULER_LOCK,
@@ -46,9 +64,15 @@ import {
   writeFinanceSchedulerState,
 } from "../../src/agents/finance-scheduler-state.js";
 import {
+  financeBarLedgerPath,
+  financeResearchScoredPath,
+  financeTuningProposalsPath,
+} from "../../src/agents/finance-state-dir.js";
+import {
   activateFinanceStrategyRule,
   retireFinanceStrategyRule,
   declareFinanceStrategyRule,
+  readFinanceStrategyRuleLedger,
 } from "../../src/agents/finance-strategy-rule-ledger.js";
 import type {
   FinanceTradeDecisionReviewer,
@@ -56,6 +80,12 @@ import type {
 } from "../../src/agents/finance-trade-decision-review.js";
 import * as tradeReviewEvidence from "../../src/agents/finance-trade-review-evidence.js";
 import { FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME } from "../../src/agents/finance-universe-selection.js";
+import * as prompt from "../../src/agents/local-text-model-adapter.js";
+import * as checkpointStore from "../../src/agents/logical-agent-pool-checkpoint-store.js";
+import type { QualityHarnessModelRequest } from "../../src/agents/quality-harness-contract.js";
+import * as quantTools from "../../src/agents/tools/quant-math-tool.js";
+import type { OpenClawConfig } from "../../src/config/config.js";
+import { prepareOriginalFinanceModuleMain } from "../fixtures/lcx-waterflow-finance-module-main-probe.js";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -128,9 +158,11 @@ vi.mock("../../src/agents/finance-intraday-monitor.js", () => ({
   runFinanceIntradayMonitorTick: mocks.runIntradayMonitorTick,
   resolveFinanceIntradayCashSession: vi.fn(async () => ({ status: "cash_session_open" })),
 }));
-vi.mock("../../src/agents/finance-result-recording.js", () => ({
-  recordFinanceIntradayResult: mocks.recordFinanceResult,
-}));
+vi.mock("../../src/agents/finance-result-recording.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/agents/finance-result-recording.js")>();
+  return { ...actual, recordFinanceIntradayResult: mocks.recordFinanceResult };
+});
 vi.mock("../../src/agents/finance-intraday-execution.js", () => ({
   executeFinanceIntradayDecision: mocks.executeIntradayDecision,
 }));
@@ -155,12 +187,41 @@ const success: FinanceCycleProcessResult = {
 };
 const REQUIRED_RESEARCH_GATES = ["source", "committee", "quality", "module_execution"] as const;
 
-function acceptedResearchCandidate(planPath: string, asOf: string) {
+// Component replies echo the actual dispatched handoff; this is not native producer proof.
+function dispatchedControllerHandoff(
+  argv: readonly string[],
+): NonNullable<researchRunner.FinanceResearchRunInput["controllerHandoff"]> {
+  const handoffPath = argv[argv.indexOf("--controller-handoff") + 1];
+  const expected = argv[argv.indexOf("--controller-handoff-sha256") + 1];
+  if (!handoffPath || !expected) {
+    throw new Error("controller handoff flags missing");
+  }
+  const bytes = fs.readFileSync(handoffPath);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  expect(sha256).toBe(expected);
+  return {
+    ...(JSON.parse(bytes.toString("utf8")) as Omit<
+      NonNullable<researchRunner.FinanceResearchRunInput["controllerHandoff"]>,
+      "producer"
+    >),
+    producer: { path: handoffPath, sha256, bytes: bytes.length },
+  };
+}
+
+function acceptedResearchCandidate(planPath: string, asOf: string, argv?: readonly string[]) {
   return {
     status: "candidate",
+    ...(argv ? { controllerHandoff: dispatchedControllerHandoff(argv) } : {}),
     plan: { asOf },
     gates: REQUIRED_RESEARCH_GATES.map((id) => ({ id, passed: true })),
     portfolioPlanWritten: planPath,
+    portfolioPlanWrite: {
+      path: planPath,
+      sha256: "a".repeat(64),
+      asOf,
+      accountId: "paper-account",
+      venue: "alpaca",
+    },
   };
 }
 
@@ -189,6 +250,22 @@ function researchAsOfFromArgs(argv: readonly string[]): string {
 let directory: string;
 let originalTermListeners: number;
 let originalIntListeners: number;
+let originalTermListenerRefs: ReturnType<typeof process.listeners>;
+let originalIntListenerRefs: ReturnType<typeof process.listeners>;
+
+function emitSchedulerSignal(signal: "SIGTERM" | "SIGINT"): boolean {
+  const baseline = signal === "SIGTERM" ? originalTermListenerRefs : originalIntListenerRefs;
+  const added = process.listeners(signal).filter((listener) => !baseline.includes(listener));
+  expect(added).toHaveLength(1);
+  const listener = added[0];
+  if (!listener) {
+    throw new Error("scheduler signal listener was not registered");
+  }
+  expect(listener.name).toBe(signal === "SIGTERM" ? "onTerm" : "onInt");
+  // Exercise the real scheduler's cancellation handler without broadcasting to runner listeners.
+  listener.call(process, signal);
+  return true;
+}
 let stderrMessages: string[];
 
 type UniverseSnapshotFixture = { generatedAt: string; selected: string[] };
@@ -307,8 +384,10 @@ beforeEach(() => {
   mocks.readUniverse.mockImplementation(() => {
     throw new Error("fixture has no current dynamic universe snapshot");
   });
-  originalTermListeners = process.listenerCount("SIGTERM");
-  originalIntListeners = process.listenerCount("SIGINT");
+  originalTermListenerRefs = process.listeners("SIGTERM");
+  originalIntListenerRefs = process.listeners("SIGINT");
+  originalTermListeners = originalTermListenerRefs.length;
+  originalIntListeners = originalIntListenerRefs.length;
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
     stderrMessages.push(String(chunk));
@@ -378,7 +457,7 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay
     .mockImplementationOnce(async () => {})
-    .mockImplementationOnce(async () => process.emit("SIGTERM"));
+    .mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
 
   await expect(
     runFinanceScheduler([
@@ -698,16 +777,27 @@ it("fails closed on corrupt state and releases its lock without spawning", async
 });
 
 it("aborts the active cycle on SIGTERM before releasing its lock", async () => {
-  mocks.runCycle.mockImplementation(async ({ signal }: { signal: AbortSignal }) => {
-    expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(true);
-    process.emit("SIGTERM");
-    expect(signal.aborted).toBe(true);
-    expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(true);
-    return { ...success, ok: false, status: "cancelled", exitCode: null, signal: "SIGTERM" };
-  });
-  await expect(runFinanceScheduler(["--once", "day", "--dir", directory])).resolves.toBe(143);
-  expect(readFinanceSchedulerState(directory).lastRun?.status).toBe("cancelled");
-  expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
+  const hostSignalObserver = vi.fn();
+  process.on("SIGTERM", hostSignalObserver);
+  originalTermListenerRefs.push(hostSignalObserver);
+  try {
+    mocks.runCycle.mockImplementation(async ({ signal }: { signal: AbortSignal }) => {
+      expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(true);
+      emitSchedulerSignal("SIGTERM");
+      expect(signal.aborted).toBe(true);
+      expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(true);
+      return { ...success, ok: false, status: "cancelled", exitCode: null, signal: "SIGTERM" };
+    });
+    await expect(runFinanceScheduler(["--once", "day", "--dir", directory])).resolves.toBe(143);
+    expect(readFinanceSchedulerState(directory).lastRun?.status).toBe("cancelled");
+    expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
+    expect(hostSignalObserver).not.toHaveBeenCalled();
+  } finally {
+    process.removeListener("SIGTERM", hostSignalObserver);
+    originalTermListenerRefs = originalTermListenerRefs.filter(
+      (listener) => listener !== hostSignalObserver,
+    );
+  }
 });
 
 it("does not choose a fallback book after a config error", async () => {
@@ -730,7 +820,7 @@ it("continues to the night slot after a failed day without retrying either slot 
   vi.setSystemTime(new Date("2026-09-21T22:00:00Z"));
   mocks.runCycle.mockResolvedValueOnce({ ...success, status: "failed", ok: false, exitCode: 1 });
   mocks.delay.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(runFinanceScheduler(["--loop", "--dir", directory])).resolves.toBe(143);
   expect(mocks.runCycle).toHaveBeenCalledTimes(3);
@@ -747,7 +837,7 @@ it("recomputes market time after a long cycle instead of firing yesterday's nigh
     return success;
   });
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(runFinanceScheduler(["--loop", "--dir", directory])).resolves.toBe(143);
   expect(mocks.runCycle).toHaveBeenCalledOnce();
@@ -758,7 +848,7 @@ it("releases an idle loop on SIGINT without starting a cycle", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-21T10:00:00Z"));
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGINT");
+    emitSchedulerSignal("SIGINT");
   });
   await expect(runFinanceScheduler(["--loop", "--dir", directory])).resolves.toBe(130);
   expect(mocks.runCycle).not.toHaveBeenCalled();
@@ -780,14 +870,14 @@ it("does not block the resident scheduler loop on a slow provider heartbeat", as
       }),
   );
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
 
   const running = runFinanceScheduler(["--loop", "--dir", directory]);
   await new Promise<void>((resolve) => setImmediate(resolve));
   const schedulerReachedNextTick = mocks.delay.mock.calls.length === 1;
   if (!schedulerReachedNextTick) {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   }
   finishHeartbeat?.();
 
@@ -1108,7 +1198,7 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   await expect(
@@ -1233,7 +1323,7 @@ it("prioritizes executable instruments and never submits research-scope signals"
   }));
   mocks.executeIntradayDecision.mockResolvedValue({ status: "placed" });
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await runFinanceScheduler([
     "--loop",
@@ -1289,7 +1379,7 @@ it("monitors only symbols from the validated dynamic universe, never a static ti
   mocks.readUniverse.mockReturnValue(snapshot);
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(
     runFinanceScheduler([
@@ -1327,7 +1417,7 @@ it("allows a receipt-free validated snapshot to bootstrap a first scheduler run"
   mocks.readUniverse.mockReturnValue(snapshot);
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
 
   await expect(
@@ -1357,7 +1447,7 @@ it("rejects a fresh canonical snapshot when the latest receipt is still started"
   appendStartedUniverseReceipt("crashed-before-selected-receipt", "2026-09-20T14:10:00.000Z");
   mocks.readUniverse.mockReturnValue(snapshot);
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
 
   await expect(
@@ -1380,7 +1470,7 @@ it("has no intraday candidates when the dynamic universe receipt is missing or s
   await activateIntradayRule();
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(
     runFinanceScheduler([
@@ -1413,7 +1503,7 @@ it.each([
     appendSelectedUniverseReceipt(snapshot, override);
     mocks.readUniverse.mockReturnValue(snapshot);
     mocks.delay.mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
     await expect(
@@ -1500,7 +1590,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
       progressAtStop = JSON.parse(
         fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
       ) as Record<string, unknown>;
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   await expect(
@@ -1612,7 +1702,7 @@ it("recovers a long-lived monitor after startup without a universe and a success
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   await expect(
@@ -1681,7 +1771,7 @@ it("clears a previously bound universe when the night selector fails", async () 
         fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
       ) as { intraday?: Record<string, unknown> };
       progressAtStop = progress.intraday;
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   await expect(
@@ -1782,7 +1872,7 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   const args = ["--loop", "--dir", directory, "--intraday-monitor", "--no-source-heartbeat"];
@@ -1817,7 +1907,7 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
     return JSON.parse(fs.readFileSync(snapshotPath, "utf8")) as UniverseSnapshotFixture;
   });
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(runFinanceScheduler(args)).resolves.toBe(143);
   expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
@@ -1869,7 +1959,7 @@ it("does not run selector when the started receipt append fails", async () => {
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   await expect(
@@ -1937,7 +2027,7 @@ it("rejects the old snapshot when rename and failed receipt writes fail after st
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
   const args = ["--loop", "--dir", directory, "--intraday-monitor", "--no-source-heartbeat"];
 
@@ -1960,7 +2050,7 @@ it("rejects the old snapshot when rename and failed receipt writes fail after st
 
   mocks.runIntradayMonitorTick.mockClear();
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(runFinanceScheduler(args)).resolves.toBe(143);
   expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
@@ -2027,7 +2117,7 @@ it("does not re-arm a same-millisecond failed snapshot receipt, then recovers on
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
 
   const args = ["--loop", "--dir", directory, "--intraday-monitor", "--no-source-heartbeat"];
@@ -2047,7 +2137,7 @@ it("does not re-arm a same-millisecond failed snapshot receipt, then recovers on
 
   mocks.runIntradayMonitorTick.mockClear();
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(runFinanceScheduler(args)).resolves.toBe(143);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
@@ -2223,6 +2313,44 @@ it("routes the exact portfolio plan to the cycle with a cwd-independent path", a
   expect(mocks.runCycle.mock.calls[0][0].argv).not.toContain("--place");
 });
 
+it.each(["missing", "tampered"] as const)(
+  "refuses a research summary with %s scheduled controller handoff",
+  async (variant) => {
+    const context = path.join(directory, "portfolio-context.json");
+    const plan = path.join(directory, "research-portfolio-plan-latest.json");
+    writePortfolioContext(context);
+    mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
+      const candidate = acceptedResearchCandidate(plan, researchAsOfFromArgs(argv), argv);
+      if (variant === "missing") {
+        delete candidate.controllerHandoff;
+      } else {
+        if (!candidate.controllerHandoff) {
+          throw new Error("component handoff missing");
+        }
+        candidate.controllerHandoff.sourceScope.runId = "unrelated-parent-run";
+      }
+      return { ...success, stdout: JSON.stringify(candidate) };
+    });
+    await expect(
+      runFinanceScheduler([
+        "--once",
+        "day",
+        "--dir",
+        directory,
+        "--research-portfolio-context",
+        context,
+        "--research-ask",
+        "review active strategy budgets",
+      ]),
+    ).resolves.toBe(1);
+    expect(mocks.runCycle).toHaveBeenCalledOnce();
+    expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+      execution: { outcome: "not_run", blockReason: "research_plan_not_accepted" },
+    });
+    expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  },
+);
+
 it("refreshes a grounded research plan before the unique day cycle", async () => {
   vi.stubEnv("LCX_FINANCE_RESEARCH_HTTP_PROXY", "http://127.0.0.1:7897");
   vi.stubEnv("LCX_FINANCE_HTTP_PROXY", "");
@@ -2239,7 +2367,7 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
       });
       return {
         ...success,
-        stdout: JSON.stringify(acceptedResearchCandidate(plan, researchAsOfFromArgs(argv))),
+        stdout: JSON.stringify(acceptedResearchCandidate(plan, researchAsOfFromArgs(argv), argv)),
       };
     })
     .mockResolvedValueOnce(success);
@@ -2310,6 +2438,128 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
     expect.arrayContaining(["--portfolio-plan", plan]),
   );
+});
+
+it("refuses the original planned research receipt before any execution child", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-29T19:35:00.000Z"));
+  const contextPath = path.join(directory, "portfolio-context.json");
+  const planPath = path.join(directory, "research-portfolio-plan-latest.json");
+  writePortfolioContext(contextPath);
+  fs.writeFileSync(planPath, "existing-plan-must-not-be-executed");
+  const fetchGuard = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValue(new Error("Network forbidden"));
+  const modelGuard = vi.fn().mockRejectedValue(new Error("Model calls forbidden"));
+  const moduleGuard = vi.fn().mockRejectedValue(new Error("Module stack forbidden"));
+  const produced: {
+    receipt?: Awaited<ReturnType<typeof runFinanceResearchRun>>;
+    bytes?: string;
+  } = {};
+  mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
+    expect(argv).toContain("--workflow-models");
+    expect(argv).toContain("--execute-modules");
+    const frozenPath = argv[argv.indexOf("--portfolio-context") + 1];
+    const producer = await runFinanceResearchRun({
+      input: {
+        ask: argv[argv.indexOf("--ask") + 1],
+        asOf: researchAsOfFromArgs(argv),
+        decisionMode: "strategy_candidate",
+        executeModules: argv.includes("--execute-modules"),
+        portfolioContext: financeResearchPortfolioContextSchema.parse(
+          JSON.parse(fs.readFileSync(frozenPath, "utf8")),
+        ),
+        targets: [{ id: "offline-plan-qqq", instrument: "QQQ", assetClass: "equity" }],
+      },
+      workspaceDir: directory,
+      financeStateDir: directory,
+      liveFetch: false,
+      allowProviderCalls: false,
+      modelInvoker: modelGuard,
+      moduleExecutor: moduleGuard,
+      batchOptions: { realtimeAdapters: [], collectionAdapters: [] },
+    });
+    const producerBytes = `${JSON.stringify(producer, null, 2)}\n`;
+    produced.receipt = producer;
+    produced.bytes = producerBytes;
+    fs.writeFileSync(path.join(directory, "original-planned-research-receipt.json"), producerBytes);
+    // Only the process transport is replaced. The producer receipt is returned unchanged.
+    return { ...success, stdout: producerBytes };
+  });
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      contextPath,
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(1);
+  const producer = produced.receipt;
+  const producerBytes = produced.bytes;
+  expect(producer).toMatchObject({
+    status: "planned",
+    answerDecision: "return_failed_reason",
+    plan: { asOf: "2026-09-29T19:35:00.000Z" },
+  });
+  expect(producer?.gates).toEqual(
+    expect.arrayContaining([
+      { id: "source", passed: false, reason: "dry plan; no network fetch" },
+      { id: "committee", passed: false, reason: "dry plan; model DAG not executed" },
+      { id: "quality", passed: false, reason: "dry plan; quality harness not executed" },
+    ]),
+  );
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(mocks.spawn).not.toHaveBeenCalled();
+  expect(fetchGuard).not.toHaveBeenCalled();
+  expect(modelGuard).not.toHaveBeenCalled();
+  expect(moduleGuard).not.toHaveBeenCalled();
+  const executionChildCalls = mocks.runCycle.mock.calls.filter(([call]) =>
+    (call as { argv: readonly string[] }).argv.some((arg) =>
+      arg.endsWith("/lcx-finance-daily-cycle.ts"),
+    ),
+  ).length;
+  expect(executionChildCalls).toBe(0);
+  const state = readFinanceSchedulerState(directory);
+  expect(state.lastRun).toMatchObject({
+    ok: false,
+    execution: { outcome: "not_run", blockReason: "research_plan_not_accepted" },
+    researchPlanRefresh: { ok: false, planPath: null, processResult: { stdout: producerBytes } },
+  });
+  expect(state.lastSucceeded.day).toBeUndefined();
+  expect(fs.readFileSync(planPath, "utf8")).toBe("existing-plan-must-not-be-executed");
+  const log = fs.readFileSync(path.join(directory, "daily-cycle-runs.jsonl"), "utf8");
+  expect(JSON.parse(log.trim())).toMatchObject({
+    ok: false,
+    execution: { outcome: "not_run", blockReason: "research_plan_not_accepted" },
+  });
+  const evidenceDir = process.env.LCX_FINANCE_PLANNED_REFUSAL_PROOF_DIR;
+  if (evidenceDir) {
+    fs.mkdirSync(evidenceDir, { recursive: true });
+    fs.cpSync(directory, path.join(evidenceDir, "private-bytes"), { recursive: true });
+    fs.writeFileSync(
+      path.join(evidenceDir, "native-result.json"),
+      JSON.stringify(
+        {
+          producer,
+          producerSha256: createHash("sha256").update(producerBytes!).digest("hex"),
+          schedulerState: state,
+          childArguments: mocks.runCycle.mock.calls[0][0].argv,
+          executionChildCalls,
+          providerCalls: fetchGuard.mock.calls.length,
+          modelCalls: modelGuard.mock.calls.length,
+          moduleCalls: moduleGuard.mock.calls.length,
+          limitation:
+            "Private once-day consumer with process transport substitute; no actual child research, broker execution, service or natural scheduler run.",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  }
 });
 
 it("fails day preflight before research when the account context is invalid", async () => {
@@ -2517,7 +2767,10 @@ it.each([
       plan: { asOf: variant === "stale" ? "2026-09-28T19:35:00.000Z" : firedAt },
       gates,
     };
-    mocks.runCycle.mockResolvedValueOnce({ ...success, stdout: JSON.stringify(payload) });
+    mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => ({
+      ...success,
+      stdout: JSON.stringify({ ...payload, controllerHandoff: dispatchedControllerHandoff(argv) }),
+    }));
 
     await expect(
       runFinanceScheduler([
@@ -2574,7 +2827,24 @@ it.each(["candidate", "needs_review"])(
           }),
         };
       })
-      .mockResolvedValueOnce({ ...success, stdout: JSON.stringify({ status: reviewStatus }) });
+      .mockImplementationOnce(async ({ argv }: { argv: string[] }) => ({
+        ...success,
+        stdout: JSON.stringify(
+          compactFinanceResearchSummary({
+            schemaVersion: "lcx_finance_research_operator_v1",
+            boundary: "local_finance_research_run_only",
+            status: reviewStatus as "candidate" | "needs_review",
+            answerDecision:
+              reviewStatus === "candidate" ? "candidate_for_review" : "return_failed_reason",
+            plan: { asOf: researchAsOfFromArgs(argv) },
+            gates: REQUIRED_RESEARCH_GATES.map((id) => ({
+              id,
+              passed: true,
+              reason: "private gate response",
+            })),
+          }),
+        ),
+      }));
     mocks.readUniverse.mockReturnValue({
       generatedAt: "2026-09-22T22:00:00.000Z",
       selected: ["AAA", "BBB"],
@@ -2651,6 +2921,102 @@ it.each(["candidate", "needs_review"])(
       cycleExitCode: 0,
       exitCode: reviewStatus === "candidate" ? 0 : 2,
       nightReview: { exitCode: 0, ok: reviewStatus === "candidate" },
+    });
+  },
+);
+
+it.each(["source_failed", "quality_failed", "missing_gates"] as const)(
+  "rejects contradictory night candidate research gates: %s",
+  async (fault) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+    await activateIntradayRule();
+    const context = path.join(directory, "portfolio-context.json");
+    writePortfolioContext(context);
+    let summary: ReturnType<typeof compactFinanceResearchSummary> | undefined;
+    mocks.runCycle
+      .mockResolvedValueOnce(success)
+      .mockResolvedValueOnce({
+        ...success,
+        stdout: JSON.stringify({
+          snapshotPersisted: true,
+          generatedAt: "2026-09-22T22:00:00.000Z",
+          selected: ["SPY"],
+        }),
+      })
+      .mockImplementationOnce(async ({ argv }: { argv: string[] }) => {
+        summary = compactFinanceResearchSummary({
+          schemaVersion: "lcx_finance_research_operator_v1",
+          boundary: "local_finance_research_run_only",
+          status: "candidate",
+          answerDecision: "candidate_for_review",
+          plan: { asOf: researchAsOfFromArgs(argv) },
+          gates:
+            fault === "missing_gates"
+              ? []
+              : REQUIRED_RESEARCH_GATES.map((id) => ({
+                  id,
+                  passed: !(
+                    (fault === "source_failed" && id === "source") ||
+                    (fault === "quality_failed" && id === "quality")
+                  ),
+                  reason: "private contradictory low process response",
+                })),
+        });
+        return { ...success, stdout: JSON.stringify(summary) };
+      });
+    mocks.readUniverse.mockReturnValue({
+      generatedAt: "2026-09-22T22:00:00.000Z",
+      selected: ["SPY"],
+    } as never);
+    const result = await runFinanceScheduler([
+      "--once",
+      "night",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active evidence boundaries",
+    ]);
+    const native = readFinanceSchedulerState(directory);
+    const proofDirectory = process.env.LCX_NIGHT_REVIEW_ACCEPTANCE_PROOF_DIR;
+    if (proofDirectory) {
+      fs.mkdirSync(proofDirectory, { recursive: true });
+      fs.writeFileSync(
+        path.join(proofDirectory, `${fault}.json`),
+        JSON.stringify(
+          {
+            boundary:
+              "original_scheduler_consumer_of_private_compact_CLI_response_no_model_or_provider_execution",
+            fault,
+            summary,
+            result,
+            state: native,
+            actualCalls: mocks.runCycle.mock.calls.map(([input]) => ({
+              argv: input.argv,
+              phase: input.phase,
+            })),
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    }
+    expect(result).toBe(1);
+    expect(native.lastSucceeded.night).toBeUndefined();
+    expect(native.lastRun).toMatchObject({
+      ok: false,
+      status: "failed",
+      nightReview: { ok: false },
+    });
+    expect(mocks.runCycle).toHaveBeenCalledTimes(3);
+    const expected =
+      fault === "missing_gates"
+        ? REQUIRED_RESEARCH_GATES.map((id) => `night_review_gate_missing:${id}`)
+        : [`night_review_gate_not_passed:${fault === "source_failed" ? "source" : "quality"}`];
+    expect(native.lastRun).toMatchObject({
+      nightReview: { acceptance: { ok: false, failedReasons: expect.arrayContaining(expected) } },
     });
   },
 );
@@ -2742,7 +3108,7 @@ it("publishes bounded cycle progress and returns to idle without replaying order
       phase: "idle",
       placementEnabled: true,
     });
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   expect(await runFinanceScheduler(["--loop", "--dir", directory, "--place"])).toBe(143);
   expect(mocks.runCycle).toHaveBeenCalledOnce();
@@ -2776,7 +3142,7 @@ it("publishes a no-signal monitor result through the existing progress status", 
       referenceTime,
     });
     expect(status.progress.intraday?.lastTick).not.toHaveProperty("outcomeStatus");
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
 
   await expect(
@@ -2816,7 +3182,7 @@ it("refreshes completed-symbol progress without masking a hung monitor", async (
     }
     return { status: "no_signal" };
   });
-  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+  mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
 
   await expect(
     runFinanceScheduler([
@@ -2865,7 +3231,7 @@ it("publishes the actual outcome of an already-terminal monitor decision", async
       outcomeStatus: "uncertain",
     });
     expect(status.progress.intraday?.lastTick).not.toHaveProperty("executionStatus");
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
 
   await expect(
@@ -2921,7 +3287,7 @@ it("publishes the actual execution result beside its monitored decision", async 
       executionStatus: "already_terminal",
       outcomeStatus: "uncertain",
     });
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
 
   await expect(
@@ -2960,7 +3326,7 @@ it("publishes the actual execution result beside its monitored decision", async 
 it("refreshes broker reconciliation while an Alpaca history loop is idle", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
-  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+  mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
 
   expect(
     await runFinanceScheduler([
@@ -3013,7 +3379,7 @@ it.each(["reconciled", "ready", "differences", "restricted", "blocked"])(
           });
         }
       })
-      .mockImplementationOnce(async () => process.emit("SIGTERM"));
+      .mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
     await expect(
       runFinanceScheduler([
         "--loop",
@@ -3198,7 +3564,7 @@ it.each(["missing_caps", "expired_policy", "unknown_policy", "no_place"])(
             : { authorizationMode: "until_revoked" },
       ),
     );
-    mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+    mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
     await runFinanceScheduler([
       "--loop",
       "--dir",
@@ -3250,7 +3616,7 @@ it("uses the live intraday controller for bounded idle recovery before monitorin
     expect(inspectReconciliation).toHaveBeenCalledOnce();
     return { status: "no_signal" };
   });
-  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+  mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
 
   await expect(
     runFinanceScheduler([
@@ -3300,7 +3666,7 @@ it("continues monitor-only ticks after bounded idle recovery fails", async () =>
     inspectReconciliation,
   });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
-  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+  mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
 
   await expect(
     runFinanceScheduler([
@@ -3541,7 +3907,7 @@ it.each([false, true])(
       } else {
         expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
         expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(failFirstController ? 1 : 2);
-        process.emit("SIGTERM");
+        emitSchedulerSignal("SIGTERM");
       }
     });
     await expect(
@@ -3592,6 +3958,7 @@ it("starts a fresh progress deadline when long research hands off to execution",
           acceptedResearchCandidate(
             path.join(directory, "research-portfolio-plan-latest.json"),
             researchAsOfFromArgs(argv),
+            argv,
           ),
         ),
       };
@@ -3661,8 +4028,9 @@ it.each([false, true])(
       });
     });
     mocks.delay.mockImplementation(async () => {
-      process.emit("SIGTERM");
+      emitSchedulerSignal("SIGTERM");
     });
+    let schedulerSettled = false;
     const running = runFinanceScheduler([
       "--loop",
       "--dir",
@@ -3691,6 +4059,14 @@ it.each([false, true])(
       "--research-ask",
       "fixture",
     ]);
+    void running.then(
+      () => {
+        schedulerSettled = true;
+      },
+      () => {
+        schedulerSettled = true;
+      },
+    );
     try {
       await started;
       await vi.advanceTimersByTimeAsync(60_000);
@@ -3700,7 +4076,7 @@ it.each([false, true])(
       expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(1);
       expect(mocks.runCycle).toHaveBeenCalledTimes(1);
       if (cancel) {
-        process.emit("SIGTERM");
+        emitSchedulerSignal("SIGTERM");
       }
       finishResearch(
         cancel
@@ -3711,6 +4087,7 @@ it.each([false, true])(
                 acceptedResearchCandidate(
                   path.join(directory, "research-portfolio-plan-latest.json"),
                   researchAsOfFromArgs(mocks.runCycle.mock.calls[0][0].argv),
+                  mocks.runCycle.mock.calls[0][0].argv,
                 ),
               ),
             },
@@ -3726,7 +4103,9 @@ it.each([false, true])(
       expect(mocks.runCycle).toHaveBeenCalledTimes(cancel ? 1 : 2);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
-      process.emit("SIGTERM");
+      if (!schedulerSettled) {
+        emitSchedulerSignal("SIGTERM");
+      }
       finishResearch?.({ ...success, ok: false, status: "cancelled", stdout: "" });
       finishIntraday?.();
       await running;
@@ -3851,7 +4230,7 @@ it("automatically wakes the single preflight retry after backoff in the resident
     });
   }
   mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(
     runFinanceScheduler([
@@ -3929,7 +4308,10 @@ it.each([
     ...(variant === "mixed_plan" ? { portfolioPlanWritten: oldPlan } : {}),
     ...(variant === "inline_plan" ? { portfolioPlan: { allocations: [] } } : {}),
   };
-  mocks.runCycle.mockResolvedValueOnce({ ...success, stdout: JSON.stringify(payload) });
+  mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => ({
+    ...success,
+    stdout: JSON.stringify({ ...payload, controllerHandoff: dispatchedControllerHandoff(argv) }),
+  }));
   await expect(
     runFinanceScheduler([
       "--once",
@@ -4027,80 +4409,650 @@ it("consumes the indexed latest day archive under the writer host root, includin
   ).toThrow();
 });
 
-it("passes validated prior-day feedback through the actual scheduled controller evidence file", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-05T19:30:00Z"));
-  const workspace = path.join(directory, "workspace");
-  vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
-  const context = path.join(directory, "portfolio-context.json");
-  writePortfolioContext(context);
-  const scope = JSON.parse(fs.readFileSync(context, "utf8"));
-  const ask = "review active strategy budgets";
-  const sourceAt = "2026-10-02T19:30:00Z";
-  const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-02");
-  fs.mkdirSync(archive, { recursive: true });
-  const filename = path.join(archive, "2026-10-02T19-30-00-000Z__finance-research-run.json");
-  const bytes =
-    JSON.stringify({
-      plan: { ask, asOf: sourceAt, portfolioContext: scope },
-      moduleExecution: { nodes: [], replanFeedback: { status: "completed", nextAction: "none" } },
-      gates: [{ id: "quality", passed: false, reason: "fees_unknown" }],
-    }) + "\n";
-  fs.writeFileSync(filename, bytes);
-  const sourceSha256 = createHash("sha256").update(bytes).digest("hex");
-  const day = {
-    runId: "prior-day",
-    mode: "day",
-    firedAt: sourceAt,
-    researchPlanRefresh: {
-      processResult: {
-        stdout: JSON.stringify({ written: { datedPath: filename, sha256: sourceSha256 } }),
+it.each(["absent", "present"] as const)(
+  "passes original prior Quality failure through the actual next scheduled feedback file without trading (%s history)",
+  async (history) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-02T19:30:00Z"));
+    const externalFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("external_io_forbidden"));
+    const prepared = await prepareOriginalFinanceModuleMain({
+      directory: path.join(directory, "original-prior-research"),
+      fault: "quality_failure",
+    });
+    const producer = await runFinanceResearchRun({
+      input: prepared.input,
+      workspaceDir: prepared.workspace,
+      financeStateDir: prepared.book,
+      liveFetch: true,
+      allowProviderCalls: false,
+      qualityEnabled: true,
+      modelInvoker: async (request, signal) =>
+        prepared.scriptedOutput(request as Parameters<typeof prepared.scriptedOutput>[0], signal),
+      qualityModelRouting: prepared.routing,
+      batchOptions: {
+        realtimeAdapters: [
+          prepared.realtime("primary_market_data"),
+          prepared.realtime("cross_check_market_data"),
+        ],
+        collectionAdapters: [prepared.collection],
+        maxSourcesPerJob: 2,
+        maxConcurrency: 1,
+        sourceTimeoutMs: 20,
+        totalTimeoutMs: 2_000,
       },
-    },
-  };
-  commitFinanceSchedulerDatabaseState(
-    directory,
-    JSON.stringify(readFinanceSchedulerState(directory)),
-    [day],
-  );
-  mocks.runCycle
-    .mockImplementationOnce(async ({ argv }: { argv: string[] }) => {
+    });
+    expect(producer.status).toBe("needs_review");
+    expect(producer.quality?.status).toBe("quality-failed");
+    expect(producer.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(producer.portfolioPlan).toBeUndefined();
+    const oldFeedback = producer.quality?.attempts.at(-1)?.feedback ?? [];
+    const specificGap =
+      "offline_quality_contradiction: supplied evidence does not justify the draft";
+    expect(oldFeedback.some((gap) => gap.includes(specificGap))).toBe(true);
+    vi.setSystemTime(new Date("2026-10-05T19:30:00Z"));
+    const workspace = prepared.workspace;
+    vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspace, "private-next-state"));
+    vi.stubEnv("LCX_MODEL_TRAJECTORY", "0");
+    // The original next CLI reads the scheduler book, not the prior producer's child book.
+    const priorRule = (await readFinanceStrategyRuleLedger(prepared.book)).ledger.rules.find(
+      (rule) => rule.ruleId === "private-trend",
+    );
+    if (!priorRule) {
+      throw new Error("original private rule not found");
+    }
+    for (const transition of priorRule.transitions) {
+      if (transition.body.kind === "declared") {
+        await declareFinanceStrategyRule(directory, transition.body);
+      } else if (transition.body.kind === "activated") {
+        await activateFinanceStrategyRule(directory, transition.body);
+      }
+    }
+    let barWriter: Awaited<ReturnType<typeof appendFinanceBars>> | undefined;
+    let barReadback: Awaited<ReturnType<typeof readFinanceBarLedger>> | undefined;
+    let barLedgerBytes: Buffer | undefined;
+    if (history === "present") {
+      const asOf = new Date().toISOString();
+      const cutoff = Date.parse(latestCompletedWeekdaySessionDate(asOf) + "T00:00:00Z");
+      const bars: Extract<FinanceBarAppendInput, { derivation: "ohlcv" }>["bars"] = [];
+      for (let offset = 1500; offset >= 0; offset--) {
+        const day = new Date(cutoff - offset * 86_400_000);
+        if ([0, 6].includes(day.getUTCDay())) {
+          continue;
+        }
+        const close = 100 + (1500 - offset) * 0.05 + Math.sin(offset);
+        bars.push({
+          date: day.toISOString().slice(0, 10),
+          open: close,
+          high: close + 1,
+          low: close - 1,
+          close,
+          volume: 1000000,
+        });
+      }
+      barWriter = await appendFinanceBars(directory, {
+        instrument: "SPY",
+        derivation: "ohlcv",
+        observedAt: asOf,
+        provenance: {
+          origin: "private offline synthetic historical input",
+          sourceUrlOrArtifact: "fixture://scheduler-private-price-ledger/SPY",
+        },
+        bars,
+      });
+      barReadback = await readFinanceBarLedger(directory, { asOf, instrument: "SPY" });
+      expect(barReadback.headRef).toBe(barWriter.headRef);
+      expect(barReadback.bars.length).toBe(bars.length);
+      expect(barReadback.bars.at(-1)?.date).toBe(latestCompletedWeekdaySessionDate(asOf));
+      barLedgerBytes = fs.readFileSync(financeBarLedgerPath(directory));
+    }
+    const context = path.join(directory, "portfolio-context.json");
+    fs.writeFileSync(context, JSON.stringify(producer.plan.portfolioContext));
+    const ask = producer.plan.ask;
+    const sourceAt = producer.plan.asOf;
+    const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-02");
+    fs.mkdirSync(archive, { recursive: true });
+    const filename = path.join(archive, "2026-10-02T19-30-00-000Z__finance-research-run.json");
+    // Archive the complete actual return unchanged; only source/model IO above is synthetic.
+    const bytes = JSON.stringify(producer, null, 2) + "\n";
+    fs.writeFileSync(filename, bytes);
+    const sourceSha256 = createHash("sha256").update(bytes).digest("hex");
+    const day = {
+      runId: "prior-day",
+      mode: "day",
+      firedAt: sourceAt,
+      researchPlanRefresh: {
+        processResult: {
+          stdout: JSON.stringify({ written: { datedPath: filename, sha256: sourceSha256 } }),
+        },
+      },
+    };
+    commitFinanceSchedulerDatabaseState(
+      directory,
+      JSON.stringify(readFinanceSchedulerState(directory)),
+      [day],
+    );
+    let nextFile: { argv: string[]; path: string; bytes: string } | undefined;
+    let nextCliOutput: Awaited<ReturnType<typeof runFinanceResearchCli>> | undefined;
+    let nextWrittenReadback:
+      | { path: string; sha256: string; bytes: number; raw: string }
+      | undefined;
+    let nextFrozenContext: { path: string; sha256: string; bytes: number; raw: string } | undefined;
+    let nextControllerHandoffReadback:
+      | { path: string; sha256: string; bytes: number; raw: string }
+      | undefined;
+    const nextRunnerInputs: researchRunner.FinanceResearchRunInput[] = [];
+    const nextModelInputs: QualityHarnessModelRequest[] = [];
+    const nextHttpInputs: Array<{ stage: string; model: string; prompt: string }> = [];
+    const nextMathCalls: Array<{
+      toolCallId: string;
+      input: unknown;
+      inputSha256: string;
+      output: unknown;
+    }> = [];
+    const strategyScopeReads: Array<{
+      input: Parameters<typeof priceContext.readFinanceActiveStrategyResearchScope>[0];
+      output: Awaited<ReturnType<typeof priceContext.readFinanceActiveStrategyResearchScope>>;
+    }> = [];
+    const priceHydrationReads: Array<{
+      input: Parameters<typeof priceContext.buildFinanceActiveStrategyResearchEvidence>[0];
+      output: Awaited<ReturnType<typeof priceContext.buildFinanceActiveStrategyResearchEvidence>>;
+    }> = [];
+    let forbiddenNetworkCalls = 0;
+    const proofRoot = process.env.LCX_FINANCE_SCHEDULER_FEEDBACK_PROOF_DIR
+      ? path.join(process.env.LCX_FINANCE_SCHEDULER_FEEDBACK_PROOF_DIR, `${history}-history`)
+      : undefined;
+    const saveHandoff = (phase: "before_assertions" | "completed") => {
+      if (!proofRoot || !nextFile) {
+        return;
+      }
+      fs.mkdirSync(proofRoot, { recursive: true });
+      fs.writeFileSync(path.join(proofRoot, "original-prior-research-receipt.json"), bytes);
+      fs.writeFileSync(
+        path.join(proofRoot, "original-next-controller-evidence.json"),
+        nextFile.bytes,
+      );
+      if (nextWrittenReadback) {
+        fs.writeFileSync(
+          path.join(proofRoot, "next-written-receipt.json"),
+          nextWrittenReadback.raw,
+        );
+      }
+      if (nextFrozenContext) {
+        fs.writeFileSync(path.join(proofRoot, "next-frozen-context.json"), nextFrozenContext.raw);
+      }
+      if (nextControllerHandoffReadback) {
+        fs.writeFileSync(
+          path.join(proofRoot, "next-controller-handoff.json"),
+          nextControllerHandoffReadback.raw,
+        );
+      }
+      if (barLedgerBytes) {
+        fs.writeFileSync(
+          path.join(proofRoot, "original-controller-price-ledger.sqlite"),
+          barLedgerBytes,
+        );
+      }
+      fs.writeFileSync(
+        path.join(
+          proofRoot,
+          phase === "completed" ? "native-handoff.json" : "handoff-before-assertions.json",
+        ),
+        JSON.stringify(
+          {
+            phase,
+            sourceSha256,
+            oldQualityFeedback: oldFeedback,
+            capturedChild: nextFile,
+            nextEvidenceSha256: createHash("sha256").update(nextFile.bytes).digest("hex"),
+            schedulerReadback: readFinanceSchedulerState(directory).lastRun,
+            originalQualityRequests: prepared.qualityRequests,
+            nextRunnerInputs,
+            nextCliOutput,
+            nextWrittenReadback,
+            nextFrozenContext,
+            nextControllerHandoffReadback,
+            nextModelInputs,
+            nextHttpInputs,
+            history,
+            barWriter,
+            barReadback,
+            barLedgerSource: barLedgerBytes
+              ? {
+                  path: financeBarLedgerPath(directory),
+                  sha256: createHash("sha256").update(barLedgerBytes).digest("hex"),
+                  bytes: barLedgerBytes.length,
+                }
+              : undefined,
+            nextMathCalls,
+            priceHydrationReads,
+            strategyScopeReads,
+            localModelHttpCalls: nextHttpInputs.length,
+            forbiddenNetworkCalls,
+            boundary:
+              "actual original prior runner/Quality -> next scheduler file/argv -> original CLI parseArgs/run/checkpoint/runner/model HTTP prompt. Sources and model HTTP bodies are local substitutes; no next input override or accepted receipt stub. Private original rule declarations supply the scheduler book. Not natural semantic adoption, complete scene or trading.",
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    };
+    mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: string[] }) => {
       const evidencePath = argv[argv.indexOf("--controller-evidence") + 1];
-      const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+      const nextBytes = fs.readFileSync(evidencePath, "utf8");
+      const evidence = JSON.parse(nextBytes);
+      nextFile = { argv: [...argv], path: evidencePath, bytes: nextBytes };
+      saveHandoff("before_assertions");
       expect(evidence).toHaveLength(2);
       expect(JSON.parse(evidence[1].text)).toMatchObject({
         sourceSha256,
-        replanStatus: "completed",
-        failedGates: [{ id: "quality", reason: "fees_unknown" }],
+        sourceAsOf: sourceAt,
+        failedGates: expect.arrayContaining([
+          { id: "quality", reason: producer.gates.find((gate) => gate.id === "quality")!.reason },
+        ]),
       });
+      expect(
+        JSON.parse(evidence[1].text).qualityFeedback.some((gap: string) =>
+          gap.includes(specificGap),
+        ),
+      ).toBe(true);
+      expect(argv[argv.indexOf("--ask") + 1]).toBe(ask);
+      const frozenContext = argv[argv.indexOf("--portfolio-context") + 1];
+      const contextBytes = fs.readFileSync(frozenContext);
+      nextFrozenContext = {
+        path: frozenContext,
+        sha256: createHash("sha256").update(contextBytes).digest("hex"),
+        bytes: contextBytes.length,
+        raw: contextBytes.toString("utf8"),
+      };
+      expect(JSON.parse(nextFrozenContext.raw)).toEqual(producer.plan.portfolioContext);
+      if (history === "present") {
+        const manifestPath = argv[argv.indexOf("--controller-handoff") + 1];
+        const manifestBytes = fs.readFileSync(manifestPath);
+        nextControllerHandoffReadback = {
+          path: manifestPath,
+          sha256: createHash("sha256").update(manifestBytes).digest("hex"),
+          bytes: manifestBytes.length,
+          raw: manifestBytes.toString("utf8"),
+        };
+        expect(nextControllerHandoffReadback.sha256).toBe(
+          argv[argv.indexOf("--controller-handoff-sha256") + 1],
+        );
+        expect(JSON.parse(nextControllerHandoffReadback.raw)).toMatchObject({
+          schemaVersion: "finance_scheduled_research_handoff_v1",
+          sourceScope: {
+            accountId: producer.plan.portfolioContext!.accountId,
+            venue: producer.plan.portfolioContext!.venue,
+            asOf: researchAsOfFromArgs(argv),
+          },
+          inputs: {
+            controllerEvidence: {
+              path: evidencePath,
+              sha256: createHash("sha256").update(nextBytes).digest("hex"),
+              bytes: Buffer.byteLength(nextBytes),
+            },
+            portfolioContext: {
+              path: frozenContext,
+              sha256: nextFrozenContext.sha256,
+              bytes: nextFrozenContext.bytes,
+            },
+          },
+        });
+      }
+      const privateConfig: OpenClawConfig = {
+        agents: { defaults: { model: "fixture/fast", memorySearch: { enabled: false } } },
+        tools: {
+          financeModelSlots: {
+            fast: "fixture/fast",
+            reasoning: "fixture/reasoning",
+            review: "fixture/review",
+          },
+        },
+        models: {
+          providers: {
+            fixture: {
+              api: "openai-completions",
+              baseUrl: "https://fixture.invalid/v1",
+              apiKey: "private-synthetic-token",
+              models: ["fast", "reasoning", "review"].map((id) => ({
+                id,
+                name: id,
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 320_000,
+                maxTokens: 32_000,
+              })),
+            },
+          },
+        },
+      };
+      mocks.loadConfig.mockReturnValue(privateConfig);
+      const originalStore = checkpointStore.createCanonicalStateRootLogicalAgentCheckpointStore;
+      vi.spyOn(
+        checkpointStore,
+        "createCanonicalStateRootLogicalAgentCheckpointStore",
+      ).mockImplementation(() =>
+        originalStore({ stateDir: path.join(workspace, "private-next-quality-checkpoints") }),
+      );
+      const originalAdapter = configuredAdapter.createConfiguredFinanceModelAdapter;
+      vi.spyOn(configuredAdapter, "createConfiguredFinanceModelAdapter").mockImplementation(
+        (cfg, options) =>
+          originalAdapter(cfg, {
+            ...options,
+            availabilityStateDirectory: path.join(workspace, "private-next-cooldowns"),
+          }),
+      );
+      const originalRealtimeOptions =
+        realtimeRegistry.resolveFinanceRealtimeSourceRegistryOptionsFromEnv;
+      const originalCollectionOptions =
+        collectionRegistry.resolveFinanceMarketCollectionRegistryOptionsFromEnv;
+      vi.spyOn(
+        realtimeRegistry,
+        "resolveFinanceRealtimeSourceRegistryOptionsFromEnv",
+      ).mockImplementation(() => originalRealtimeOptions({}));
+      vi.spyOn(
+        collectionRegistry,
+        "resolveFinanceMarketCollectionRegistryOptionsFromEnv",
+      ).mockImplementation(() => originalCollectionOptions({}));
+      vi.spyOn(realtimeRegistry, "createFinanceRealtimeSourceRegistry").mockImplementation(() =>
+        ["primary_market_data", "cross_check_market_data"].map((role) => {
+          const adapter = prepared.realtime(
+            role as "primary_market_data" | "cross_check_market_data",
+          );
+          return {
+            ...adapter,
+            collect: async (
+              request: realtimeRegistry.FinanceRealtimeSourceRequest,
+              signal: AbortSignal,
+            ) => {
+              const body = await adapter.collect(request, signal);
+              return {
+                ...body,
+                observedAt: request.asOf,
+                fields: body.fields.map((field) => ({ ...field, sourceTimestamp: request.asOf })),
+              };
+            },
+          };
+        }),
+      );
+      vi.spyOn(collectionRegistry, "createFinanceMarketCollectionRegistry").mockImplementation(
+        () => [
+          {
+            ...prepared.collection,
+            collect: async (request, signal) =>
+              (await prepared.collection.collect(request, signal)).map((item) => ({
+                ...item,
+                observedAt: request.asOf,
+              })),
+          },
+        ],
+      );
+      const requests = new Map<string, QualityHarnessModelRequest>();
+      const originalPrompt = prompt.buildQualityHarnessModelPromptWithCoverage;
+      vi.spyOn(prompt, "buildQualityHarnessModelPromptWithCoverage").mockImplementation(
+        (request) => {
+          const built = originalPrompt(request);
+          requests.set(built.prompt, structuredClone(request));
+          return built;
+        },
+      );
+      const originalRunner = researchRunner.runFinanceResearchRun;
+      vi.spyOn(researchRunner, "runFinanceResearchRun").mockImplementation(async (options) => {
+        nextRunnerInputs.push(structuredClone(options.input));
+        return originalRunner(options);
+      });
+      if (history === "present") {
+        const originalScope = priceContext.readFinanceActiveStrategyResearchScope;
+        vi.spyOn(priceContext, "readFinanceActiveStrategyResearchScope").mockImplementation(
+          async (input) => {
+            const output = await originalScope(input);
+            strategyScopeReads.push({
+              input: structuredClone(input),
+              output: structuredClone(output),
+            });
+            return output;
+          },
+        );
+        const originalQuant = quantTools.createQuantMathTool;
+        vi.spyOn(quantTools, "createQuantMathTool").mockImplementation(() => {
+          const tool = originalQuant();
+          return {
+            ...tool,
+            execute: async (...args: Parameters<typeof tool.execute>) => {
+              const call = {
+                toolCallId: args[0],
+                input: structuredClone(args[1]),
+                inputSha256: createHash("sha256").update(JSON.stringify(args[1])).digest("hex"),
+                output: undefined as unknown,
+              };
+              nextMathCalls.push(call);
+              const output = await tool.execute(...args);
+              call.output = structuredClone(output);
+              return output;
+            },
+          };
+        });
+        const originalPriceEvidence = priceContext.buildFinanceActiveStrategyResearchEvidence;
+        vi.spyOn(priceContext, "buildFinanceActiveStrategyResearchEvidence").mockImplementation(
+          async (input) => {
+            const output = await originalPriceEvidence(input);
+            priceHydrationReads.push({
+              input: structuredClone(input),
+              output: structuredClone(output),
+            });
+            return output;
+          },
+        );
+      }
+      externalFetch.mockImplementation(async (url, init) => {
+        const requestedUrl =
+          typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+        if (
+          requestedUrl !== "https://fixture.invalid/v1/chat/completions" ||
+          typeof init?.body !== "string" ||
+          !init.signal
+        ) {
+          forbiddenNetworkCalls++;
+          throw new Error("external_io_forbidden");
+        }
+        const body = JSON.parse(init.body) as {
+          model: string;
+          messages: Array<{ content: string }>;
+        };
+        const actualPrompt = body.messages[0]?.content;
+        const request = actualPrompt ? requests.get(actualPrompt) : undefined;
+        if (!request || !actualPrompt) {
+          throw new Error("original next CLI model prompt not recorded");
+        }
+        nextModelInputs.push(structuredClone(request));
+        nextHttpInputs.push({ model: body.model, stage: request.stage, prompt: actualPrompt });
+        const response = await prepared.scriptedOutput(request, init.signal);
+        return new Response(
+          JSON.stringify({
+            id: `private-next-http-${nextHttpInputs.length}`,
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(response) } }],
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          }),
+          { status: 200 },
+        );
+      });
+      const options = parseFinanceResearchCliArgs(argv.slice(3));
+      expect(options.financeStateDir).toBe(directory);
+      expect(options.ask).toBe(ask);
+      // Keep the original ISO as-of frozen while the native throttle/deadline clock advances.
+      const nextClock = Date.now();
+      const started = performance.now();
+      vi.spyOn(Date, "now").mockImplementation(
+        () => nextClock + Math.floor(performance.now() - started),
+      );
+      nextCliOutput = await runFinanceResearchCli(options);
+      const written = nextCliOutput.written;
+      if (
+        !written ||
+        typeof written !== "object" ||
+        !("datedPath" in written) ||
+        typeof written.datedPath !== "string" ||
+        !("sha256" in written) ||
+        typeof written.sha256 !== "string"
+      ) {
+        throw new Error("original next CLI archive pin not returned");
+      }
+      const writtenBytes = fs.readFileSync(written.datedPath);
+      nextWrittenReadback = {
+        path: written.datedPath,
+        sha256: createHash("sha256").update(writtenBytes).digest("hex"),
+        bytes: writtenBytes.length,
+        raw: writtenBytes.toString("utf8"),
+      };
+      expect(nextWrittenReadback.sha256).toBe(written.sha256);
+      expect(JSON.parse(nextWrittenReadback.raw)).toEqual(nextCliOutput.receipt);
+      expect(fs.readFileSync(frozenContext)).toEqual(contextBytes);
+      saveHandoff("before_assertions");
+      if (history === "present") {
+        if (!nextControllerHandoffReadback) {
+          throw new Error("actual controller handoff readback missing");
+        }
+        const actualHandoff = {
+          ...JSON.parse(nextControllerHandoffReadback.raw),
+          producer: {
+            path: nextControllerHandoffReadback.path,
+            sha256: nextControllerHandoffReadback.sha256,
+            bytes: nextControllerHandoffReadback.bytes,
+          },
+        };
+        expect(nextRunnerInputs[0]?.controllerHandoff).toEqual(actualHandoff);
+        expect(nextCliOutput.receipt.controllerHandoff).toEqual(actualHandoff);
+        expect(JSON.parse(nextWrittenReadback.raw).controllerHandoff).toEqual(actualHandoff);
+        expect(
+          compactFinanceResearchSummary({ ...nextCliOutput.receipt, ...nextCliOutput })
+            .controllerHandoff,
+        ).toEqual(actualHandoff);
+        const strategyRead = strategyScopeReads[0];
+        if (!strategyRead) {
+          throw new Error("original active-rule scope read not observed");
+        }
+        const activeRuleEvidence = strategyRead.output.evidence.find(
+          (item) => item.id === "finance-controller:active-strategies",
+        );
+        if (!activeRuleEvidence) {
+          throw new Error("actual active-rule evidence missing");
+        }
+        const actualRuleUse = {
+          source: strategyRead.output.source,
+          accountScope: {
+            accountId: nextCliOutput.receipt.plan.portfolioContext!.accountId,
+            venue: nextCliOutput.receipt.plan.portfolioContext!.venue,
+            asOf: nextCliOutput.receipt.plan.asOf,
+          },
+          evidence: {
+            id: activeRuleEvidence.id,
+            sha256: createHash("sha256").update(activeRuleEvidence.text).digest("hex"),
+          },
+          parentRunId: actualHandoff.sourceScope.runId,
+        };
+        expect(strategyRead.input).toMatchObject({
+          directory,
+          asOf: actualRuleUse.accountScope.asOf,
+          strategyIds: nextCliOutput.receipt.plan.portfolioContext!.activeStrategyIds,
+        });
+        expect(nextRunnerInputs[0]?.controllerRuleUse).toEqual(actualRuleUse);
+        expect(nextCliOutput.receipt.controllerRuleUse).toEqual(actualRuleUse);
+        expect(JSON.parse(nextWrittenReadback.raw).controllerRuleUse).toEqual(actualRuleUse);
+        expect(
+          compactFinanceResearchSummary({ ...nextCliOutput.receipt, ...nextCliOutput })
+            .controllerRuleUse,
+        ).toEqual(actualRuleUse);
+        expect(
+          nextRunnerInputs[0]?.controllerEvidence?.find((item) => item.id === activeRuleEvidence.id)
+            ?.text,
+        ).toBe(activeRuleEvidence.text);
+        const hydration = priceHydrationReads.find(
+          (read) => read.input.historyFormat === "daily_calculation",
+        );
+        expect(hydration?.input.directory).toBe(directory);
+        expect(hydration?.input.asOf).toBe(nextCliOutput.receipt.plan.asOf);
+        const price = hydration?.output.find((item) => item.id === "finance-controller:eod:SPY");
+        if (!price) {
+          throw new Error("original controller price hydration not observed");
+        }
+        const projection = JSON.parse(price.text) as {
+          instrument: string;
+          headRef: string;
+          closes: Array<[string, number]>;
+        };
+        expect(projection.instrument).toBe("SPY");
+        expect(projection.headRef).toBe(barReadback?.headRef);
+        expect(price.timestamp).toBe(nextCliOutput.receipt.plan.asOf);
+        expect(nextMathCalls[0]?.input).toEqual({
+          action: "max_drawdown",
+          series: projection.closes.map((row) => row[1]),
+          seriesMode: "levels",
+        });
+        expect(nextMathCalls[0]?.output).toBeDefined();
+        expect(
+          nextCliOutput.receipt.moduleExecution?.nodes.find(
+            (node) => node.moduleId === "quant_math",
+          )?.status,
+        ).toBe("succeeded");
+      }
+      expect(nextCliOutput.receipt.status).not.toBe("candidate");
+      expect(nextCliOutput.receipt.portfolioPlan).toBeUndefined();
+      expect(nextRunnerInputs[0]?.portfolioContext).toMatchObject(producer.plan.portfolioContext!);
+      expect(nextRunnerInputs[0]?.asOf).toBe("2026-10-05T19:30:00.000Z");
+      expect(
+        nextRunnerInputs[0]?.controllerEvidence?.some(
+          (item) => item.text.includes(sourceSha256) && item.text.includes(specificGap),
+        ),
+      ).toBe(true);
+      expect(
+        nextHttpInputs.some(
+          (item) => item.prompt.includes(sourceSha256) && item.prompt.includes(specificGap),
+        ),
+      ).toBe(true);
+      saveHandoff("before_assertions");
       return {
         ...success,
+        exitCode: 1,
+        status: "failed" as const,
+        ok: false,
         stdout: JSON.stringify(
-          acceptedResearchCandidate(
-            path.join(directory, "research-portfolio-plan-latest.json"),
-            researchAsOfFromArgs(argv),
-          ),
+          compactFinanceResearchSummary({ ...nextCliOutput.receipt, ...nextCliOutput }),
         ),
+        stderr: "",
       };
-    })
-    .mockResolvedValueOnce(success);
-  await expect(
-    runFinanceScheduler([
-      "--once",
-      "day",
-      "--dir",
-      directory,
-      "--research-portfolio-context",
-      context,
-      "--research-ask",
-      ask,
-    ]),
-  ).resolves.toBe(0);
-  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
-  expect(readFinanceSchedulerState(directory).lastRun?.researchPlanRefresh).toMatchObject({
-    feedback: { status: "present", sourceSha256 },
-  });
-});
+    });
+    await expect(
+      runFinanceScheduler([
+        "--once",
+        "day",
+        "--dir",
+        directory,
+        "--research-portfolio-context",
+        context,
+        "--research-ask",
+        ask,
+      ]),
+    ).resolves.toBe(1);
+    expect(mocks.runCycle).toHaveBeenCalledTimes(1);
+    expect(nextFile).toBeDefined();
+    expect(fs.readFileSync(filename, "utf8")).toBe(bytes);
+    expect(forbiddenNetworkCalls).toBe(0);
+    expect(nextHttpInputs.length).toBeGreaterThan(0);
+    expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+    expect(readFinanceSchedulerState(directory).lastRun?.researchPlanRefresh).toMatchObject({
+      feedback: { status: "present", sourceSha256 },
+    });
+    if (history === "present") {
+      expect(JSON.parse(nextControllerHandoffReadback!.raw).sourceScope.runId).toBe(
+        readFinanceSchedulerState(directory).lastRun?.runId,
+      );
+    }
+    saveHandoff("completed");
+  },
+);
 
 function closeCaptureSession(closeAt = "2026-10-01T20:00:00.000Z") {
   const sourceUrlOrArtifact =
@@ -4345,7 +5297,7 @@ it("publishes real account-lane busy state during the original idle broker readb
       queuedWork: 0,
       reconciliationPending: false,
     });
-    process.emit("SIGTERM");
+    emitSchedulerSignal("SIGTERM");
   });
   await expect(
     runFinanceScheduler([
@@ -4378,6 +5330,7 @@ it("does not renew the original cycle deadline when account-work observations ch
         acceptedResearchCandidate(
           path.join(directory, "research-portfolio-plan-latest.json"),
           researchAsOfFromArgs(argv),
+          argv,
         ),
       ),
     }))
@@ -4385,7 +5338,7 @@ it("does not renew the original cycle deadline when account-work observations ch
       vi.setSystemTime(new Date(at.getTime() + 14 * 60_000));
       return success;
     });
-  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+  mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
   await expect(
     runFinanceScheduler([
       "--loop",
@@ -4440,3 +5393,163 @@ it("does not renew the original cycle deadline when account-work observations ch
     }),
   );
 });
+
+it.each(["matching", "changed", "foreign", "partial"])(
+  "keeps original night write-to-calibration source custody: %s",
+  async (variant) => {
+    const filename = financeResearchScoredPath(directory);
+    const bytes = Buffer.from('{"conviction":0.7,"outcome":1}\n');
+    fs.writeFileSync(filename, bytes);
+    const source = {
+      path:
+        variant === "foreign"
+          ? path.join(directory, "other-book", "research-scored.jsonl")
+          : filename,
+      sha256:
+        variant === "changed" ? "0".repeat(64) : createHash("sha256").update(bytes).digest("hex"),
+      ...(variant === "partial" ? {} : { bytes: bytes.length }),
+    };
+    mocks.runCycle.mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 1, skipped: 0, ...source },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    });
+    await runFinanceScheduler(["--once", "night", "--dir", directory]);
+    const record = readFinanceSchedulerState(directory).lastRun;
+    if (variant === "matching") {
+      expect(record).toMatchObject({
+        tuningLifecycle: {
+          ok: true,
+          status: "completed",
+          result: { sourceRead: { path: filename, sha256: source.sha256, bytes: bytes.length } },
+        },
+      });
+    } else if (variant === "partial") {
+      expect(record).toMatchObject({
+        ok: false,
+        nightSettlementFailure: {
+          status: "invalid",
+          reason: "night settlement scored source write metadata is invalid",
+        },
+      });
+      expect(record).not.toHaveProperty("tuningLifecycle");
+      expect(record).not.toHaveProperty("nightReview");
+    } else {
+      expect(record).toMatchObject({
+        tuningLifecycle: { ok: false, status: "failed", result: null },
+      });
+    }
+    expect(fs.readFileSync(filename)).toEqual(bytes);
+    expect(fs.existsSync(financeTuningProposalsPath(directory))).toBe(false);
+  },
+);
+
+it.each(["matching", "legacy", "partial", "bad_hash", "count_conflict", "foreign_path"])(
+  "preserves original sample read custody without changing tuning admission: %s",
+  async (variant) => {
+    const filename = path.join(directory, "research-samples.jsonl");
+    const bytes = Buffer.from('{"instrument":"SPY","direction":"none"}\n');
+    fs.writeFileSync(filename, bytes);
+    const pin = {
+      path:
+        variant === "foreign_path"
+          ? path.join(directory, "other-book", "research-samples.jsonl")
+          : filename,
+      status: "available",
+      ...(variant === "legacy"
+        ? {}
+        : {
+            sha256:
+              variant === "bad_hash"
+                ? "invalid-hash"
+                : createHash("sha256").update(bytes).digest("hex"),
+            ...(variant === "partial" ? {} : { bytes: bytes.length }),
+            parsedCount: variant === "count_conflict" ? 2 : 1,
+          }),
+    };
+    mocks.runCycle.mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        sampleSource: pin,
+        sampleCount: 1,
+        scoredFiled: { appended: 0, skipped: 0 },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    });
+    await runFinanceScheduler(["--once", "night", "--dir", directory]);
+    const record = readFinanceSchedulerState(directory).lastRun;
+    if (variant === "matching") {
+      expect(record).toMatchObject({
+        nightSampleSourceRead: pin,
+        tuningLifecycle: { ok: true, status: "no_new_scored_outcomes", result: null },
+      });
+    } else if (variant === "legacy") {
+      expect(record).not.toHaveProperty("nightSampleSourceRead");
+      expect(record).toMatchObject({
+        tuningLifecycle: { ok: true, status: "no_new_scored_outcomes", result: null },
+      });
+    } else {
+      expect(record).toMatchObject({
+        ok: false,
+        nightSettlementFailure: {
+          status: "invalid",
+          reason: "night settlement sample source read metadata is invalid",
+        },
+      });
+      expect(record).not.toHaveProperty("nightSampleSourceRead");
+      expect(record).not.toHaveProperty("tuningLifecycle");
+      expect(record).not.toHaveProperty("nightReview");
+    }
+    expect(fs.readFileSync(filename)).toEqual(bytes);
+    expect(fs.existsSync(financeTuningProposalsPath(directory))).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "keeps the due account read between slow monitor handoffs, failed=%s",
+  async (failed) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.parse("2026-09-22T17:00:00Z");
+    vi.setSystemTime(start);
+    await activateIntradayRule();
+    const order: string[] = [];
+    mocks.syncAlpacaHistory.mockImplementation(async () => {
+      order.push("account");
+      if (failed) {
+        throw new Error("fetch failed");
+      }
+      return { accountId: "paper-account", accountReconciliation: { status: "blocked" } };
+    });
+    mocks.runIntradayMonitorTick.mockImplementation(async ({ instrument }) => {
+      order.push(instrument);
+      vi.setSystemTime(Date.now() + 241_000);
+      return { status: "no_signal" };
+    });
+    mocks.delay.mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
+    await expect(
+      runFinanceScheduler([
+        "--loop",
+        "--dir",
+        directory,
+        "--intraday-monitor",
+        "--intraday-instruments",
+        "SPY,QQQ",
+        "--sync-alpaca-history",
+        "--venue",
+        "alpaca",
+        "--no-source-heartbeat",
+      ]),
+    ).resolves.toBe(143);
+    expect(order).toEqual(["account", "SPY", "account", "QQQ"]);
+    expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+    expect(mocks.historicalMaintenance).not.toHaveBeenCalled();
+  },
+);

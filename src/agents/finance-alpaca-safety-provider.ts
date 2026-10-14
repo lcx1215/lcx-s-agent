@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
+import {
+  financeReadFailureDiagnostic,
+  isSafeFinanceReadFailure,
+  type FinanceReadFailureDiagnostic,
+} from "./finance-alpaca-safety-transport.js";
 import type { FinanceExecutionSafetyFacts } from "./finance-execution-safety.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
 import { classifyFinanceProtectionOrders } from "./finance-protection-coordination.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -147,9 +153,33 @@ export const ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES = [
   "quote_freshness",
   ...QUOTE_REFUSAL_STAGES,
 ] as const;
+export type AlpacaSafetyQuoteTiming = Readonly<{
+  quoteAtMs: number;
+  checkedAtMs: number;
+  aheadMs: number;
+}>;
+export function isSafeAlpacaQuoteTiming(value: unknown): value is AlpacaSafetyQuoteTiming {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  if (Object.keys(value).some((key) => !["quoteAtMs", "checkedAtMs", "aheadMs"].includes(key))) {
+    return false;
+  }
+  const timing = value as Partial<AlpacaSafetyQuoteTiming>;
+  return (
+    Number.isSafeInteger(timing.quoteAtMs) &&
+    Number.isSafeInteger(timing.checkedAtMs) &&
+    Number.isSafeInteger(timing.aheadMs) &&
+    timing.quoteAtMs! >= 0 &&
+    timing.checkedAtMs! >= 0 &&
+    timing.aheadMs === timing.quoteAtMs! - timing.checkedAtMs!
+  );
+}
 export type AlpacaSafetyQuoteDiagnostic = Readonly<{
   stage: (typeof ALPACA_SAFETY_QUOTE_DIAGNOSTIC_STAGES)[number];
   httpStatus?: number;
+  quoteTiming?: AlpacaSafetyQuoteTiming;
+  transport?: FinanceReadFailureDiagnostic;
 }>;
 
 function safeHttpStatus(value: unknown): number | undefined {
@@ -173,6 +203,12 @@ export class AlpacaSafetyQuoteReadError extends Error {
       const httpStatus = safeHttpStatus(diagnostic.httpStatus);
       this.diagnostic = Object.freeze({
         stage: diagnostic.stage,
+        ...(isSafeFinanceReadFailure(diagnostic.transport)
+          ? { transport: { ...diagnostic.transport } }
+          : {}),
+        ...(isSafeAlpacaQuoteTiming(diagnostic.quoteTiming)
+          ? { quoteTiming: { ...diagnostic.quoteTiming } }
+          : {}),
         ...(httpStatus === undefined ? {} : { httpStatus }),
       });
     }
@@ -184,6 +220,8 @@ class AlpacaSafetyProviderFailure extends Error {
     readonly code: AlpacaSafetyFailureCode,
     readonly httpStatus?: number,
     readonly quoteFailureStage?: QuoteRefusalStage,
+    readonly quoteTiming?: AlpacaSafetyQuoteTiming,
+    readonly transport?: FinanceReadFailureDiagnostic,
   ) {
     super(code);
     this.name = "AlpacaSafetyProviderFailure";
@@ -194,8 +232,14 @@ function refuse(
   code: AlpacaSafetyFailureCode,
   httpStatus?: number,
   quoteFailureStage?: QuoteRefusalStage,
+  quoteTiming?: AlpacaSafetyQuoteTiming,
 ): never {
-  throw new AlpacaSafetyProviderFailure(code, safeHttpStatus(httpStatus), quoteFailureStage);
+  throw new AlpacaSafetyProviderFailure(
+    code,
+    safeHttpStatus(httpStatus),
+    quoteFailureStage,
+    quoteTiming,
+  );
 }
 
 const PAPER = "https://paper-api.alpaca.markets";
@@ -227,6 +271,68 @@ function safetyHeaders(credentials: Readonly<{ keyId: string; secret: string }>)
   };
 }
 
+function trackSafetyReads(read: FinanceUncachedFetch, signal: AbortSignal) {
+  const active = new Set<ReturnType<FinanceUncachedFetch>>();
+  const cleanup: ("confirmed" | "unconfirmed")[] = [];
+  const tracked: FinanceUncachedFetch = (url, init) => {
+    const task = read(url, init);
+    active.add(task);
+    void task.then(
+      () => {
+        active.delete(task);
+        if (signal.aborted) {
+          cleanup.push("unconfirmed");
+        }
+      },
+      (error: unknown) => {
+        active.delete(task);
+        if (signal.aborted) {
+          cleanup.push(
+            error instanceof FinanceHttpBodyAbortError ? error.cleanupStatus : "unconfirmed",
+          );
+        }
+      },
+    );
+    return task;
+  };
+  return { read: tracked, active, cleanup };
+}
+
+/** Every in-flight read must acknowledge cleanup; late outcomes cannot become evidence. */
+async function observeCancelledRead(
+  run: Promise<unknown>,
+  fallback: unknown,
+  reads: ReturnType<typeof trackSafetyReads>,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const failure = await Promise.race([
+      Promise.allSettled(reads.active).then(() =>
+        run.then(
+          () => fallback,
+          (error: unknown) => error,
+        ),
+      ),
+      new Promise<unknown>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), 2000);
+      }),
+    ]);
+    return {
+      failure,
+      cleanupStatus:
+        reads.active.size === 0 &&
+        reads.cleanup.length > 0 &&
+        reads.cleanup.every((status) => status === "confirmed")
+          ? ("confirmed" as const)
+          : ("unconfirmed" as const),
+    };
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function readJson(
   read: FinanceUncachedFetch,
   url: string,
@@ -237,8 +343,14 @@ async function readJson(
   let response: Awaited<ReturnType<FinanceUncachedFetch>>;
   try {
     response = await read(url, { headers: { ...headers }, signal });
-  } catch {
-    refuse("alpaca_safety_snapshot_read_unavailable");
+  } catch (error) {
+    throw new AlpacaSafetyProviderFailure(
+      "alpaca_safety_snapshot_read_unavailable",
+      undefined,
+      undefined,
+      undefined,
+      financeReadFailureDiagnostic(error),
+    );
   }
   signal.throwIfAborted();
   if (response.status !== 200) {
@@ -273,7 +385,11 @@ function assertFreshQuote(
     refuse("alpaca_safety_facts_inconsistent", undefined, "quote_timestamp_invalid");
   }
   if (quoteAtMs > now) {
-    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_timestamp_future");
+    refuse("alpaca_safety_facts_inconsistent", undefined, "quote_timestamp_future", {
+      quoteAtMs,
+      checkedAtMs: now,
+      aheadMs: quoteAtMs - now,
+    });
   }
   if (now - quoteAtMs > maxAgeMs) {
     refuse("alpaca_safety_quote_expired", undefined, "quote_age_exceeded");
@@ -421,10 +537,11 @@ export async function readAlpacaPaperSafetyQuote(
     ...(callerSignal ? [callerSignal] : []),
   ]);
   const headers = safetyHeaders(options.credentials);
+  const reads = trackSafetyReads(options.read, signal);
   let failureStage: AlpacaSafetyQuoteDiagnostic["stage"] = "quote_snapshot";
   const run = async () => {
     const response = await readJson(
-      options.read,
+      reads.read,
       latestQuoteUrl(options.instrument, options.stockFeed),
       headers,
       signal,
@@ -455,9 +572,10 @@ export async function readAlpacaPaperSafetyQuote(
   };
 
   let abort: (() => void) | undefined;
+  const running = run();
   try {
     return await Promise.race([
-      run(),
+      running,
       new Promise<never>((_, reject) => {
         abort = () => reject(new Error("aborted"));
         signal.addEventListener("abort", abort, { once: true });
@@ -466,7 +584,18 @@ export async function readAlpacaPaperSafetyQuote(
         }
       }),
     ]);
-  } catch (error) {
+  } catch (caught) {
+    let error: unknown = caught;
+    let cleanupStatus: "confirmed" | "unconfirmed" | undefined;
+    if (signal.aborted) {
+      const cancelled = await observeCancelledRead(running, error, reads);
+      error = cancelled.failure;
+      cleanupStatus = cancelled.cleanupStatus;
+    }
+    const transport = error instanceof AlpacaSafetyProviderFailure ? error.transport : undefined;
+    const failureTransport = cleanupStatus
+      ? { code: transport?.code ?? "transport_cause_unavailable", cleanupStatus }
+      : transport;
     return {
       ok: false,
       reason: signal.aborted
@@ -477,6 +606,10 @@ export async function readAlpacaPaperSafetyQuote(
       ...(options.diagnostics
         ? {
             diagnostic: {
+              ...(failureTransport ? { transport: failureTransport } : {}),
+              ...(error instanceof AlpacaSafetyProviderFailure && error.quoteTiming
+                ? { quoteTiming: error.quoteTiming }
+                : {}),
               stage:
                 !signal.aborted && error instanceof AlpacaSafetyProviderFailure
                   ? (error.quoteFailureStage ??
@@ -524,6 +657,8 @@ export async function readAlpacaPaperSafetyFacts(
       reason: AlpacaSafetyFailureCode;
       diagnostic?: AlpacaSafetyDiagnosticStage;
       accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
+      quoteTiming?: AlpacaSafetyQuoteTiming;
+      transport?: FinanceReadFailureDiagnostic;
     }
 > {
   options = { ...options, credentials: { ...options.credentials } };
@@ -562,7 +697,8 @@ export async function readAlpacaPaperSafetyFacts(
     ...(callerSignal ? [callerSignal] : []),
   ]);
   const headers = safetyHeaders(options.credentials);
-  const get = (url: string) => readJson(options.read, url, headers, signal);
+  const reads = trackSafetyReads(options.read, signal);
+  const get = (url: string) => readJson(reads.read, url, headers, signal);
   let failureStage: AlpacaSafetyDiagnosticStage = "account_snapshot";
   let accountArithmetic: AlpacaSafetyAccountArithmeticDiagnostic | undefined;
   let valuationRetry: AlpacaSafetyAccountArithmeticDiagnostic["valuationRetry"];
@@ -957,9 +1093,10 @@ export async function readAlpacaPaperSafetyFacts(
     };
   };
   let abort: (() => void) | undefined;
+  const running = run();
   try {
     return await Promise.race([
-      run(),
+      running,
       new Promise<never>((_, reject) => {
         abort = () => reject(new Error("aborted"));
         signal.addEventListener("abort", abort, { once: true });
@@ -968,7 +1105,18 @@ export async function readAlpacaPaperSafetyFacts(
         }
       }),
     ]);
-  } catch (error) {
+  } catch (caught) {
+    let error: unknown = caught;
+    let cleanupStatus: "confirmed" | "unconfirmed" | undefined;
+    if (signal.aborted) {
+      const cancelled = await observeCancelledRead(running, error, reads);
+      error = cancelled.failure;
+      cleanupStatus = cancelled.cleanupStatus;
+    }
+    const transport = error instanceof AlpacaSafetyProviderFailure ? error.transport : undefined;
+    const failureTransport = cleanupStatus
+      ? { code: transport?.code ?? "transport_cause_unavailable", cleanupStatus }
+      : transport;
     return {
       ok: false,
       reason: signal.aborted
@@ -985,6 +1133,10 @@ export async function readAlpacaPaperSafetyFacts(
           }
         : {}),
       ...(options.diagnostics && accountArithmetic ? { accountArithmetic } : {}),
+      ...(options.diagnostics && failureTransport ? { transport: failureTransport } : {}),
+      ...(options.diagnostics && error instanceof AlpacaSafetyProviderFailure && error.quoteTiming
+        ? { quoteTiming: error.quoteTiming }
+        : {}),
     };
   } finally {
     if (abort) {

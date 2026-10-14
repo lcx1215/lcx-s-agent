@@ -3,9 +3,11 @@ import fs from "node:fs";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionId } from "../../agents/cli-session.js";
+import { buildCommercialAnswerPlanningSystemPrompt } from "../../agents/commercial-answer-reply-gate.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import {
+  classifyFailoverReason,
   isCompactionFailureError,
   isContextOverflowError,
   isLikelyContextOverflowError,
@@ -223,7 +225,17 @@ export async function runAgentTurnWithFallback(params: {
                   thinkLevel: params.followupRun.run.thinkLevel,
                   timeoutMs: params.followupRun.run.timeoutMs,
                   runId,
-                  extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                  extraSystemPrompt: buildCommercialAnswerPlanningSystemPrompt({
+                    request: params.opts?.commercialAnswerAudit,
+                    messageId: params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid,
+                    ask:
+                      params.sessionCtx.CommandBody ??
+                      params.sessionCtx.RawBody ??
+                      params.commandBody,
+                    runId,
+                    signal: params.opts?.abortSignal,
+                    extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                  }),
                   ownerNumbers: params.followupRun.run.ownerNumbers,
                   cliSessionId,
                   bootstrapPromptWarningSignaturesSeen,
@@ -316,7 +328,15 @@ export async function runAgentTurnWithFallback(params: {
               ...senderContext,
               ...runBaseParams,
               prompt: params.commandBody,
-              extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+              extraSystemPrompt: buildCommercialAnswerPlanningSystemPrompt({
+                request: params.opts?.commercialAnswerAudit,
+                messageId: params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid,
+                ask:
+                  params.sessionCtx.CommandBody ?? params.sessionCtx.RawBody ?? params.commandBody,
+                runId,
+                signal: params.opts?.abortSignal,
+                extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+              }),
               toolResultFormat: (() => {
                 const channel = resolveMessageChannel(
                   params.sessionCtx.Surface,
@@ -590,20 +610,44 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
-      const safeMessage = isTransientHttp
-        ? sanitizeUserFacingText(message, { errorContext: true })
-        : message;
-      const trimmedMessage = safeMessage.replace(/\.\s*$/, "");
+      const failureReason = classifyFailoverReason(message);
+      // Provider errors can contain credentials, paths or request bodies. Publish only fixed copy.
+      const failureDescriptions = {
+        auth: "AI service authentication is unavailable.",
+        auth_permanent: "AI service authentication is unavailable.",
+        billing: "AI service billing is unavailable.",
+        rate_limit: "The AI service is busy. Please try again later.",
+        timeout: "The AI service did not respond in time. Please try again later.",
+        model_not_found: "The configured AI model is unavailable.",
+        session_expired: "The AI session expired. Please start a new session.",
+        format: "The AI service could not accept this request.",
+        unknown: "The AI service could not produce a reply. Please try again later.",
+      };
+      const safeFailure = failureReason
+        ? failureDescriptions[failureReason]
+        : "The AI service could not produce a reply. Please try again later.";
+      emitAgentEvent({
+        runId,
+        sessionKey: params.sessionKey,
+        stream: "lifecycle",
+        data: {
+          phase: "reply_model_failure",
+          status: "failed",
+          reason: failureReason ?? "model_unavailable",
+          errorSha256: crypto.createHash("sha256").update(message).digest("hex"),
+        },
+      });
       const fallbackText = isContextOverflow
         ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."
         : isRoleOrderingError
           ? "⚠️ Message ordering conflict - please try again. If this persists, use /new to start a fresh session."
-          : `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`;
+          : `⚠️ Agent failed before reply: ${safeFailure}`;
 
       return {
         kind: "final",
         payload: {
           text: fallbackText,
+          isError: true,
         },
       };
     }

@@ -1622,3 +1622,165 @@ it("keeps a valid actual call ordinal without adding an artificial model-attempt
   });
   expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
 });
+
+it.each([false, true])(
+  "prioritizes late native feedback with original pointers and preserves coded failures (UTF8=%s)",
+  (unicode) => {
+    const critical = unicode
+      ? "具体来源缺口：" + "缺失账户费用证据，不能声称收益。".repeat(20)
+      : "The private fixture requires unresolved account evidence before adoption.";
+    const seed = qualityFailureReceipt([
+      { taskId: "formatting", status: "failed", modelCalls: [codedQualityCall()] },
+    ]);
+    const nativeFeedback = [
+      "extraction verdict=pass",
+      "classification verdict=pass",
+      "risk verdict=pass",
+      "exposure verdict=pass",
+      "evidence verdict=pass",
+      "adversarial verdict=pass",
+      critical,
+      "risk verdict=pass; material counterevidence remains unresolved",
+      "unknown_lane verdict=pass",
+    ];
+    const result = projectHistorical({
+      ...seed,
+      moduleExecution: {
+        ...seed.moduleExecution,
+        nodes: Array.from({ length: 4 }, (_, index) => ({
+          nodeId: `blocked-${index}`,
+          moduleId: "finance_learning_memory",
+          status: "blocked_missing_evidence",
+          missingEvidence: Array.from(
+            { length: 4 },
+            (_, gap) => `missing-${gap}:` + "中".repeat(30),
+          ),
+        })),
+      },
+      quality: {
+        attempts: [
+          null,
+          {
+            ...seed.quality.attempts[0],
+            feedback: nativeFeedback,
+          },
+        ],
+      },
+    });
+    const feedback = result.qualityFeedback as string[];
+    const refs = result.qualityFeedbackRefs as { pointer: string; truncated: boolean }[];
+    expect(feedback[0]).toEqual(unicode ? expect.stringContaining("具体来源缺口") : critical);
+    expect(refs[0]).toEqual({ pointer: "/quality/attempts/1/feedback/6", truncated: unicode });
+    expect(feedback.every((value) => Buffer.byteLength(value, "utf8") <= 120)).toBe(true);
+    expect(refs).toHaveLength(feedback.length);
+    const unpressured = projectHistorical({
+      ...seed,
+      quality: { attempts: [{ ...seed.quality.attempts[0], feedback: nativeFeedback }] },
+    });
+    expect(unpressured.qualityFeedback).toEqual(
+      expect.arrayContaining([
+        "risk verdict=pass; material counterevidence remains unresolved",
+        "unknown_lane verdict=pass",
+      ]),
+    );
+
+    expect(Number(result.omittedQualityFeedback)).toBe(9 - feedback.length);
+    expect(result.qualityFailures).toEqual([
+      expect.objectContaining({ taskId: "formatting", calls: [codedQualityCall()] }),
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+  },
+);
+
+it("compresses repeated native closure diagnostics while retaining distinct decisions and exact pointers", () => {
+  const seed = qualityFailureReceipt([
+    { taskId: "formatting", status: "failed", modelCalls: [codedQualityCall()] },
+  ]);
+  const concrete = "Missing fee attribution prevents adopting the claimed account return.";
+  const feedback = [
+    ...[
+      "financial_extraction",
+      "news_classification",
+      "risk_check",
+      "portfolio_exposure",
+      "adversarial_challenge",
+    ].map(
+      (role, index) => `${role} finding ${String(index).repeat(64)}: closure_missing_or_invalid`,
+    ),
+    ...Array.from({ length: 5 }, () => concrete),
+    "Final artifact remains incomplete; evidence review requires revision.",
+    concrete,
+  ];
+  const result = projectHistorical({
+    ...seed,
+    quality: { attempts: [{ ...seed.quality.attempts[0], feedback }] },
+  });
+  const selected = result.qualityFeedback as string[];
+  const refs = result.qualityFeedbackRefs as { pointer: string; truncated: boolean }[];
+  expect(selected.slice(0, 2)).toEqual([concrete, feedback[10]]);
+  expect(refs.map((ref) => ref.pointer)).toEqual([
+    "/quality/attempts/0/feedback/5",
+    "/quality/attempts/0/feedback/10",
+    "/quality/attempts/0/feedback/0",
+  ]);
+  expect(selected).toHaveLength(3);
+  expect(result.omittedQualityFeedback).toBe(9);
+  expect(result.qualityFailures).toEqual(projectHistorical(seed).qualityFailures);
+  expect(result.failedGates).toEqual(projectHistorical(seed).failedGates);
+  expect(refs[2].truncated).toBe(true);
+});
+
+it("preserves distinct unknown and claim-specific finding formats in original order", () => {
+  const seed = qualityFailureReceipt([]);
+  const feedback = [
+    `unknown_lane finding ${"a".repeat(64)}: closure_missing_or_invalid`,
+    `unknown_lane finding ${"b".repeat(64)}: closure_missing_or_invalid`,
+    `risk_check finding ${"c".repeat(64)}: artifact_claim_anchor_invalid`,
+    `risk_check finding ${"d".repeat(64)}: artifact_claim_anchor_invalid`,
+    "Another independent unresolved claim.",
+  ];
+  const result = projectHistorical({ ...seed, quality: { attempts: [{ feedback }] } });
+  expect((result.qualityFeedbackRefs as { pointer: string }[]).map((ref) => ref.pointer)).toEqual(
+    [0, 1, 2, 3].map((index) => `/quality/attempts/0/feedback/${index}`),
+  );
+  expect(result.omittedQualityFeedback).toBe(1);
+  expect(
+    (result.qualityFeedback as string[]).every((value) => Buffer.byteLength(value, "utf8") <= 120),
+  ).toBe(true);
+});
+
+it("keeps a concrete native decision after total-budget pruning with precise original omissions", () => {
+  const seed = qualityFailureReceipt([
+    { taskId: "formatting", status: "failed", modelCalls: [codedQualityCall()] },
+    { taskId: "risk", status: "failed", modelCalls: [codedQualityCall("output_invalid", 2)] },
+  ]);
+  const feedback = [
+    `financial_extraction finding ${"a".repeat(64)}: closure_missing_or_invalid`,
+    `risk_check finding ${"b".repeat(64)}: closure_missing_or_invalid`,
+    "具体费用归属缺失：" + "不得采用账户收益结论。".repeat(20),
+    "Independent final artifact audit failed.",
+  ];
+  const result = projectHistorical({
+    ...seed,
+    moduleExecution: {
+      ...seed.moduleExecution,
+      nodes: Array.from({ length: 4 }, (_, index) => ({
+        nodeId: `blocked-${index}`,
+        moduleId: "finance_learning_memory",
+        status: "blocked_missing_evidence",
+        missingEvidence: Array.from({ length: 4 }, () => "中".repeat(35)),
+      })),
+    },
+    missingEvidence: Array.from({ length: 8 }, () => "missing source " + "中".repeat(30)),
+    quality: { attempts: [{ ...seed.quality.attempts[0], feedback }] },
+  });
+  const selected = result.qualityFeedback as string[];
+  const refs = result.qualityFeedbackRefs as { pointer: string; truncated: boolean }[];
+  expect(selected[0]).toContain("具体费用归属缺失");
+  expect(refs[0]).toEqual({ pointer: "/quality/attempts/0/feedback/2", truncated: true });
+  expect(refs).toHaveLength(selected.length);
+  expect(result.omittedQualityFeedback).toBe(feedback.length - selected.length);
+  expect(Number(result.omittedFailures)).toBeGreaterThan(0);
+  expect(result.qualityFailures).toBeDefined();
+  expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+});

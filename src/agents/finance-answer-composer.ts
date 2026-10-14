@@ -19,7 +19,11 @@
 // candidate answer object plus the grounding it used, so the existing audit
 // (buildPipelineResult) stays the terminal authority.
 
-import { checkAnswerGrounding, type GroundingGateResult } from "./finance-answer-grounding-gate.js";
+import {
+  checkAnswerGrounding,
+  fingerprintFinanceAnswerEvidence,
+  type GroundingGateResult,
+} from "./finance-answer-grounding-gate.js";
 import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import { financeDecisionInstructions } from "./finance-decision-policy.js";
 
@@ -59,6 +63,7 @@ export type FinanceComposeResult = {
    */
   grounding: GroundingGateResult;
   modelUsed: string;
+  handoffEvidence: ReturnType<typeof fingerprintFinanceAnswerEvidence>;
 };
 
 const RESEARCH_ONLY_SYSTEM_PREAMBLE = [
@@ -170,5 +175,6 @@ export async function composeFinanceAnswer(
       ...(request.snapshot ? { snapshot: request.snapshot } : {}),
     }),
     modelUsed: request.model,
+    handoffEvidence: fingerprintFinanceAnswerEvidence(candidateAnswer, request.snapshot),
   };
 }

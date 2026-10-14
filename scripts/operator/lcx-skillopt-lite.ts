@@ -457,15 +457,209 @@ function displayValue(value: unknown): string {
   return "";
 }
 
-async function readJsonIfExists(filePath: string): Promise<Record<string, unknown> | undefined> {
+async function readJsonIfExists(filePath: string) {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+    const bytes = await fs.readFile(filePath, "utf8");
+    return { snapshot: JSON.parse(bytes) as Record<string, unknown>, sha256: sha256(bytes) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
     }
     throw error;
   }
+}
+
+function sha256(bytes: string): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+type CandidateFeedback = {
+  status: "not_candidate_history" | "unverified" | "input_changed" | "paired_eval_required";
+  consumedReceiptPath: string | null;
+  consumedReceiptSha256: string | null;
+  sourceAutopilotSha256: string | null;
+  candidatePath: string | null;
+  candidateSha256: string | null;
+  evaluationStatus: string | null;
+  candidateEditPaused: boolean;
+  deferredTrainCases: string[];
+  gaps: string[];
+};
+
+// This is receipt readback for duplicate work, never an evaluation of candidate behavior.
+async function readCandidateFeedback(params: {
+  workspaceDir: string;
+  spec: SkillSpec;
+  latestReceiptPath: string;
+  bestSkillPath: string;
+  bestSkill: string | undefined;
+  sourcePath: string;
+  sourceSha256: string | undefined;
+  sourceCheckedAt: string | undefined;
+  split: ReturnType<typeof buildCaseSplit>;
+  proposedMarkdown: string;
+}): Promise<CandidateFeedback> {
+  const feedback: CandidateFeedback = {
+    status: "not_candidate_history",
+    consumedReceiptPath: null,
+    consumedReceiptSha256: null,
+    sourceAutopilotSha256: null,
+    candidatePath: null,
+    candidateSha256: null,
+    evaluationStatus: null,
+    candidateEditPaused: false,
+    deferredTrainCases: [],
+    gaps: [],
+  };
+  const fail = (gap: string) => {
+    feedback.status = "unverified";
+    feedback.gaps.push(gap);
+    return feedback;
+  };
+  let bytes: string;
+  let prior: Record<string, unknown>;
+  try {
+    bytes = await fs.readFile(params.latestReceiptPath, "utf8");
+    prior = recordValue(JSON.parse(bytes));
+  } catch (error) {
+    return fail(
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+        ? "previous_receipt_missing"
+        : "previous_receipt_unreadable",
+    );
+  }
+  feedback.consumedReceiptSha256 = sha256(bytes);
+  if (prior.boundary !== "local_skillopt_lite_only" || prior.skillId !== params.spec.id) {
+    return fail("previous_receipt_scope_conflict");
+  }
+  if (prior.phase === "bootstrap") {
+    return feedback;
+  }
+  if (prior.phase !== "candidate-edit") {
+    return fail("previous_receipt_phase_unknown");
+  }
+  const skillRoot = path.dirname(params.bestSkillPath);
+  const receiptPath =
+    typeof prior.receiptPath === "string"
+      ? path.resolve(params.workspaceDir, prior.receiptPath)
+      : null;
+  const candidatePath =
+    typeof prior.candidatePath === "string"
+      ? path.resolve(params.workspaceDir, prior.candidatePath)
+      : null;
+  if (
+    !receiptPath ||
+    path.dirname(receiptPath) !== path.join(skillRoot, "receipts") ||
+    !candidatePath ||
+    path.dirname(candidatePath) !== path.join(skillRoot, "candidates") ||
+    typeof prior.bestSkillPath !== "string" ||
+    path.resolve(params.workspaceDir, prior.bestSkillPath) !== params.bestSkillPath ||
+    typeof prior.latestReceiptPath !== "string" ||
+    path.resolve(params.workspaceDir, prior.latestReceiptPath) !== params.latestReceiptPath
+  ) {
+    return fail("previous_receipt_path_scope_conflict");
+  }
+  feedback.consumedReceiptPath = receiptPath;
+  feedback.candidatePath = candidatePath;
+  try {
+    const rootRealPath = await fs.realpath(skillRoot);
+    if (
+      path.dirname(await fs.realpath(receiptPath)) !== path.join(rootRealPath, "receipts") ||
+      path.dirname(await fs.realpath(candidatePath)) !== path.join(rootRealPath, "candidates")
+    ) {
+      return fail("previous_receipt_or_candidate_realpath_scope_conflict");
+    }
+  } catch {
+    // File-specific missing/reading failures below retain their exact owner gap.
+  }
+  try {
+    if (sha256(await fs.readFile(receiptPath, "utf8")) !== feedback.consumedReceiptSha256) {
+      return fail("previous_receipt_bytes_conflict");
+    }
+  } catch {
+    return fail("previous_immutable_receipt_missing_or_unreadable");
+  }
+  const sourceTime = Date.parse(params.sourceCheckedAt ?? "");
+  const receiptTime = Date.parse(typeof prior.checkedAt === "string" ? prior.checkedAt : "");
+  if (
+    !Number.isFinite(sourceTime) ||
+    !Number.isFinite(receiptTime) ||
+    receiptTime < sourceTime ||
+    receiptTime > Date.now()
+  ) {
+    return fail("previous_receipt_source_time_conflict");
+  }
+  if (
+    typeof prior.sourceAutopilotPath !== "string" ||
+    path.resolve(prior.sourceAutopilotPath) !== params.sourcePath
+  ) {
+    return fail("previous_receipt_source_scope_conflict");
+  }
+  if (typeof prior.sourceAutopilotSha256 !== "string" || !params.sourceSha256) {
+    return fail("previous_source_hash_missing");
+  }
+  feedback.sourceAutopilotSha256 = prior.sourceAutopilotSha256;
+  const targetedEval = recordValue(recordValue(prior.proofChain).targetedEval);
+  feedback.evaluationStatus = typeof targetedEval.status === "string" ? targetedEval.status : null;
+  const identities = Array.isArray(targetedEval.candidateIdentities)
+    ? targetedEval.candidateIdentities
+        .map(recordValue)
+        .filter((row) => row.skillId === params.spec.id)
+    : [];
+  const identity = identities[0];
+  if (
+    identities.length !== 1 ||
+    identity.path !== candidatePath ||
+    typeof identity.sha256 !== "string" ||
+    identity.materialized !== true
+  ) {
+    return fail("previous_candidate_identity_conflict");
+  }
+  feedback.candidateSha256 = identity.sha256;
+  try {
+    if (sha256(await fs.readFile(candidatePath, "utf8")) !== identity.sha256) {
+      return fail("previous_candidate_hash_conflict");
+    }
+  } catch {
+    return fail("previous_candidate_missing_or_unreadable");
+  }
+  if (params.bestSkill === undefined || sha256(params.bestSkill) !== identity.sha256) {
+    return fail("previous_best_skill_hash_conflict");
+  }
+  if (
+    targetedEval.status !== "blocked_candidate_injection_unsupported" ||
+    targetedEval.candidateInjectionSupported !== false ||
+    targetedEval.behaviorAccepted !== false ||
+    !["candidate_edit_static_accepted_pending_eval", "preflight_only_no_candidate_edit"].includes(
+      String(prior.status),
+    )
+  ) {
+    return fail("previous_evaluation_status_unsupported_or_unknown");
+  }
+  const previousFeedback = recordValue(prior.candidateFeedback);
+  const priorTrainCases =
+    previousFeedback.candidateEditPaused === true
+      ? previousFeedback.deferredTrainCases
+      : prior.trainCases;
+  const sameCases = (actual: unknown, expected: string[]) =>
+    Array.isArray(actual) && JSON.stringify(actual) === JSON.stringify(expected);
+  if (
+    prior.sourceAutopilotSha256 !== params.sourceSha256 ||
+    prior.sourceAutopilotCheckedAt !== params.sourceCheckedAt ||
+    !sameCases(priorTrainCases, params.split.trainCases) ||
+    !sameCases(prior.validationCases, params.split.validationCases) ||
+    !sameCases(prior.regressionCases, params.split.regressionCases) ||
+    sha256(params.proposedMarkdown) !== identity.sha256
+  ) {
+    feedback.status = "input_changed";
+    feedback.gaps.push("source_course_or_candidate_changed_requires_new_paired_eval");
+    return feedback;
+  }
+  feedback.status = "paired_eval_required";
+  feedback.candidateEditPaused = true;
+  feedback.deferredTrainCases = [...params.split.trainCases];
+  feedback.gaps.push("unchanged_candidate_requires_valid_paired_behavior_eval_before_another_edit");
+  return feedback;
 }
 
 function extractLatestAutopilotTruth(
@@ -981,7 +1175,7 @@ async function main() {
       ? GOVERNANCE_AUTOPILOT_LATEST_PATH
       : path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
   const snapshot = await readJsonIfExists(statePath);
-  const truth = extractLatestAutopilotTruth(snapshot);
+  const truth = extractLatestAutopilotTruth(snapshot?.snapshot);
   const explicitSkill = !["auto", "all"].includes(options.skillId);
   const specs = selectSpecs(options, truth);
   const timestamp = new Date().toISOString().replaceAll(":", "-");
@@ -992,7 +1186,7 @@ async function main() {
       const skillRoot = path.join(workspaceDir, "memory", "skillopt-lite", spec.id);
       const bestSkillPath = path.join(skillRoot, "best_skill.md");
       const latestReceiptPath = path.join(skillRoot, "skillopt-lite-latest.json");
-      const candidatePath = path.join(skillRoot, "candidates", `${timestamp}.md`);
+      let candidatePath = path.join(skillRoot, "candidates", `${timestamp}.md`);
       const receiptPath = path.join(skillRoot, "receipts", `${timestamp}.json`);
       const existingBestSkill = await readTextIfExists(bestSkillPath);
       const outputMarkdown =
@@ -1000,6 +1194,30 @@ async function main() {
           ? appendCandidateEdit(existingBestSkill ?? markdown, spec, split.trainCases)
           : markdown;
       const gate = staticGate(spec, outputMarkdown);
+      const candidateFeedback =
+        options.phase === "candidate-edit"
+          ? await readCandidateFeedback({
+              workspaceDir,
+              spec,
+              latestReceiptPath,
+              bestSkillPath,
+              bestSkill: existingBestSkill,
+              sourcePath: statePath,
+              sourceSha256: snapshot?.sha256,
+              sourceCheckedAt: truth.checkedAt,
+              split,
+              proposedMarkdown: outputMarkdown,
+            })
+          : null;
+      if (!gate.ok && candidateFeedback?.candidateEditPaused) {
+        candidateFeedback.candidateEditPaused = false;
+        candidateFeedback.status = "unverified";
+        candidateFeedback.gaps.push("static_gate_failed_before_feedback_pause");
+      }
+      if (gate.ok && candidateFeedback?.candidateEditPaused && candidateFeedback.candidatePath) {
+        candidatePath = candidateFeedback.candidatePath;
+        split.trainCases = [];
+      }
       const accepted =
         options.phase === "bootstrap" ? gate.ok : gate.ok && split.trainCases.length > 0;
       const status = gate.ok
@@ -1016,6 +1234,7 @@ async function main() {
         gate,
         accepted,
         status,
+        candidateFeedback,
         bestSkillPath,
         latestReceiptPath,
         candidatePath,
@@ -1054,7 +1273,7 @@ async function main() {
     skillId: packet.spec.id,
     path: packet.candidatePath,
     sha256: createHash("sha256").update(packet.outputMarkdown).digest("hex"),
-    materialized: false,
+    materialized: packet.candidateFeedback?.candidateEditPaused === true,
   }));
   const proofChain = buildProofChain({
     truth,
@@ -1092,6 +1311,8 @@ async function main() {
     checkedAt: new Date().toISOString(),
     sourceAutopilotPath: statePath,
     sourceAutopilotCheckedAt: truth.checkedAt,
+    sourceAutopilotSha256: snapshot?.sha256 ?? null,
+    candidateFeedback: primary.candidateFeedback,
     activeProcessCount: truth.activeProcessCount,
     selectedCleanAdapter: truth.selectedCleanAdapter,
     latestCandidateAdapter: truth.latestCandidateAdapter,
@@ -1122,6 +1343,7 @@ async function main() {
     skillPackets: skillPackets.map((packet) => ({
       skillId: packet.spec.id,
       title: packet.spec.title,
+      candidateFeedback: packet.candidateFeedback,
       status: packet.status,
       accepted: packet.accepted,
       trainCases: packet.split.trainCases,
@@ -1160,6 +1382,7 @@ async function main() {
         skillId: packet.spec.id,
         status: packet.status,
         accepted: packet.accepted,
+        candidateFeedback: packet.candidateFeedback,
         trainCases: packet.split.trainCases,
         validationCases: packet.split.validationCases,
         regressionCases: packet.split.regressionCases,
@@ -1175,7 +1398,7 @@ async function main() {
         latestReceiptPath: packet.relativeLatestReceiptPath,
       };
       await fs.mkdir(path.dirname(packet.receiptPath), { recursive: true });
-      if (options.phase === "candidate-edit") {
+      if (options.phase === "candidate-edit" && !packet.candidateFeedback?.candidateEditPaused) {
         await fs.mkdir(path.dirname(packet.candidatePath), { recursive: true });
         await fs.writeFile(packet.candidatePath, packet.outputMarkdown, "utf8");
         const identity = candidateIdentities.find((entry) => entry.skillId === packet.spec.id);

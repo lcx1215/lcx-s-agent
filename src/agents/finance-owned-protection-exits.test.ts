@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   type FinanceExecutionReceipt,
@@ -352,4 +352,42 @@ describe("owned OTO protection exit projection", () => {
       }),
     ).resolves.toEqual([]);
   });
+});
+
+it("does not open the broker history when there are no entry receipts", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "empty-owned-exits-"));
+  directories.push(directory);
+  const access = vi.spyOn(fs, "access");
+  try {
+    await expect(
+      readFinanceOwnedProtectionExitFacts({
+        directory,
+        accountId: "paper-account",
+        venue: "alpaca:paper",
+        receipts: [],
+      }),
+    ).resolves.toEqual([]);
+    expect(access).not.toHaveBeenCalled();
+  } finally {
+    access.mockRestore();
+  }
+});
+it("still validates account and cutoff on an empty ownership request", async () => {
+  await expect(
+    readFinanceOwnedProtectionExitFacts({
+      directory: "/unused",
+      accountId: "",
+      venue: "alpaca:paper",
+      receipts: [],
+    }),
+  ).rejects.toThrow("exact Alpaca paper account");
+  await expect(
+    readFinanceOwnedProtectionExitFacts({
+      directory: "/unused",
+      accountId: "paper-account",
+      venue: "alpaca:paper",
+      receipts: [],
+      asOf: "invalid",
+    }),
+  ).rejects.toThrow("invalid owned exit cutoff");
 });

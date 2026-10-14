@@ -3,6 +3,7 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
+import { readFileWithinRoot, SafeOpenError } from "../../infra/fs-safe.js";
 import { resolveMemoryBackendConfig } from "../../memory/backend-config.js";
 import { isFileMissingError, statRegularFile } from "../../memory/fs-utils.js";
 import { getMemorySearchManager } from "../../memory/index.js";
@@ -77,12 +78,15 @@ async function readMemoryFileDirectly(params: {
   relPath: string;
   from?: number;
   lines?: number;
+  readOnlyWorkspaceDir?: string;
 }): Promise<{ text: string; path: string; missing?: true }> {
   const rawPath = params.relPath.trim();
   if (!rawPath) {
     throw new Error("path required");
   }
-  const workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
+  const workspaceDir = params.readOnlyWorkspaceDir
+    ? path.resolve(params.readOnlyWorkspaceDir)
+    : resolveAgentWorkspaceDir(params.cfg, params.agentId);
   const absPath = path.isAbsolute(rawPath)
     ? path.resolve(rawPath)
     : path.resolve(workspaceDir, rawPath);
@@ -102,9 +106,17 @@ async function readMemoryFileDirectly(params: {
 
   let content: string;
   try {
-    content = await fs.readFile(absPath, "utf-8");
+    content = params.readOnlyWorkspaceDir
+      ? (
+          await readFileWithinRoot({
+            rootDir: workspaceDir,
+            relativePath: normalizedRelPath,
+            maxBytes: 512 * 1024,
+          })
+        ).buffer.toString("utf-8")
+      : await fs.readFile(absPath, "utf-8");
   } catch (err) {
-    if (isFileMissingError(err)) {
+    if (isFileMissingError(err) || (err instanceof SafeOpenError && err.code === "not-found")) {
       return { text: "", path: normalizedRelPath, missing: true };
     }
     throw err;
@@ -216,6 +228,8 @@ export function createMemorySearchTool(options: {
 export function createMemoryGetTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
+  /** Trusted host-only file read; bypasses search/index/provider initialization. */
+  readOnlyWorkspaceDir?: string;
 }): AnyAgentTool | null {
   const ctx = resolveMemoryToolContext(options);
   if (!ctx) {
@@ -232,11 +246,7 @@ export function createMemoryGetTool(options: {
       const relPath = readStringParam(params, "path", { required: true });
       const from = readNumberParam(params, "from", { integer: true });
       const lines = readNumberParam(params, "lines", { integer: true });
-      const { manager, error } = await getMemorySearchManager({
-        cfg,
-        agentId,
-      });
-      if (!manager) {
+      const readDirect = async (managerError?: string) => {
         try {
           return jsonResult(
             await readMemoryFileDirectly({
@@ -245,12 +255,28 @@ export function createMemoryGetTool(options: {
               relPath,
               from: from ?? undefined,
               lines: lines ?? undefined,
+              readOnlyWorkspaceDir: options.readOnlyWorkspaceDir,
             }),
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          return jsonResult({ path: relPath, text: "", disabled: true, error: error ?? message });
+          return jsonResult({
+            path: relPath,
+            text: "",
+            disabled: true,
+            error: managerError ?? message,
+          });
         }
+      };
+      if (options.readOnlyWorkspaceDir) {
+        return readDirect();
+      }
+      const { manager, error } = await getMemorySearchManager({
+        cfg,
+        agentId,
+      });
+      if (!manager) {
+        return readDirect(error);
       }
       try {
         const result = await manager.readFile({

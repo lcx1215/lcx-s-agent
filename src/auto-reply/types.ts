@@ -1,4 +1,6 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
+import type { CommercialAnswerAuditRequest } from "../agents/commercial-answer-reply-gate.js";
+import type { ProviderCouncilEvidenceInput } from "../agents/provider-council-evidence.js";
 import type { TypingController } from "./reply/typing.js";
 
 export type BlockReplyContext = {
@@ -23,6 +25,10 @@ export type TypingPolicy =
 export type GetReplyOptions = {
   /** Override run id for agent events (defaults to random UUID). */
   runId?: string;
+  /** Host-bound original role artifact for completion attribution; never a model assertion. */
+  providerCouncilEvidence?: ProviderCouncilEvidenceInput;
+  /** Explicit commercial outlet audit; ordinary chat does not select this flow implicitly. */
+  commercialAnswerAudit?: CommercialAnswerAuditRequest;
   /** Abort signal for the underlying agent run. */
   abortSignal?: AbortSignal;
   /** Optional inbound images (used for webchat attachments). */

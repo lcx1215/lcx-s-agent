@@ -7,6 +7,7 @@ import {
   type FinanceBrainModuleId,
 } from "./finance-brain-orchestration.js";
 import { createCalculationLedger } from "./finance-calculation-ledger.js";
+import type { FinanceMarketCollectionReceipt } from "./finance-market-collection-registry.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
 import { createFinanceTradeResultRecallCapability } from "./finance-trade-result-recall.js";
 import type { PairSpreadDiagnostics } from "./quant-math-pair-spread.js";
@@ -16,6 +17,7 @@ import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
 import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
 import { createFinanceLearningCapabilityApplyTool } from "./tools/finance-learning-capability-apply-tool.js";
 import { createFinanceLearningCapabilityInspectTool } from "./tools/finance-learning-capability-inspect-tool.js";
+import { createFinanceMarketCollectionRefreshTool } from "./tools/finance-market-collection-refresh-tool.js";
 import { createQuantLabTool } from "./tools/quant-lab-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 
@@ -129,8 +131,17 @@ const financialBoundary =
   "recorded_financial_knowledge_research_only_not_market_or_account_facts" as const;
 const brokerFeedbackBoundary =
   "recorded_broker_fill_feedback_not_strategy_edge_or_expected_return" as const;
+const marketCollectionBoundary =
+  "public_news_research_only_not_verified_event_or_execution_quote" as const;
 export const FinanceTradeReviewEvidenceRequestSchema = z.union([
   MathEvidenceRequestSchema,
+  z
+    .object({
+      candidateId: Text,
+      action: z.literal("market_collection"),
+      keyword: Text.optional(),
+    })
+    .strict(),
   z
     .object({
       candidateId: Text,
@@ -248,6 +259,7 @@ export const FinanceTradeReviewToolEvidenceSchema = z
       "recorded_daily_history_research_only_no_execution_or_fresh_quote",
       financialBoundary,
       brokerFeedbackBoundary,
+      marketCollectionBoundary,
     ]),
   })
   .strict()
@@ -261,12 +273,18 @@ export type FinanceTradeReviewEvidenceScope = Readonly<{
   accountId: string;
   instruments: readonly string[];
   financialCapabilities?: readonly FinanceTradeReviewFinancialCapability[];
+  marketCollectionTool?: AnyAgentTool;
   artifactRecallOptions?: Readonly<{
     config: OpenClawConfig;
     workspaceDir?: string;
     agentId?: string;
   }>;
 }>;
+
+/** Reuse the registered collection tool; this seam adds no provider or execution owner. */
+export function createFinanceTradeReviewMarketCollectionTool(workspaceDir: string): AnyAgentTool {
+  return createFinanceMarketCollectionRefreshTool({ workspaceDir });
+}
 export type FinanceTradeReviewFinancialCapability = Readonly<{
   toolName: string;
   moduleIds: readonly FinanceBrainModuleId[];
@@ -621,6 +639,9 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
       ) {
         throw new Error("financial capability outside host tool/module scope");
       }
+      if (request.action === "market_collection" && !scope.marketCollectionTool) {
+        throw new Error("market collection outside host tool scope");
+      }
     }
     const scopeKey = JSON.stringify([scope.directory, scope.accountId, packet.venue, packet.asOf]);
     if (packet !== observationPacket || scopeKey !== observationScope) {
@@ -645,6 +666,103 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
         const candidate = packet.candidates.find(
           (item) => item.candidateId === request.candidateId,
         )!;
+        if (request.action === "market_collection") {
+          let output: unknown = { reason: "public_news_unavailable" };
+          let status: FinanceTradeReviewToolEvidence["status"] = "unavailable";
+          let sourceRef = "gdelt_public_news_titles";
+          let summary = summarizeEvidence(output, {});
+          try {
+            const result = await scope.marketCollectionTool!.execute(
+              "trade-review-public-news",
+              {
+                instrument: candidate.instrument,
+                assetClass: "us_equity",
+                collection: "news",
+                seriesId: request.keyword ?? candidate.instrument,
+                asOf: packet.asOf,
+                sourceIds: ["gdelt_public_news_titles"],
+                limit: 2,
+                maxSources: 1,
+                timeoutMs: 10000,
+                liveFetch: true,
+                writeReceipt: true,
+              },
+              signal,
+            );
+            signal.throwIfAborted();
+            const receipt = result.details as FinanceMarketCollectionReceipt & {
+              receiptPath?: string;
+            };
+            output = receipt;
+            if (
+              receipt.request.instrument !== candidate.instrument ||
+              receipt.request.asOf !== packet.asOf ||
+              receipt.request.collection !== "news" ||
+              receipt.selectedSourceIds.length !== 1 ||
+              !receipt.selectedSourceIds.every((id) => id === "gdelt_public_news_titles")
+            ) {
+              throw new Error("public_news_source_scope_mismatch");
+            }
+            const item = receipt.records[0];
+            if (
+              receipt.status === "ready" &&
+              item &&
+              item.collection === "news" &&
+              Number.isFinite(Date.parse(item.sourceTimestamp)) &&
+              Date.parse(item.sourceTimestamp) <= Date.parse(packet.asOf) &&
+              typeof item.data.title === "string" &&
+              typeof item.data.url === "string"
+            ) {
+              sourceRef = receipt.receiptPath ?? sourceRef;
+              summary = summarizeEvidence(
+                {},
+                {
+                  title: item.data.title.slice(0, 240),
+                  titleTruncated: item.data.title.length > 240,
+                  url: item.data.url.length <= 300 ? item.data.url : undefined,
+                  urlOmitted: item.data.url.length > 300,
+                  sourceTimestamp: item.sourceTimestamp,
+                  delayStatus: item.delayStatus,
+                  returnedRecords: receipt.records.length,
+                  omittedRecords: receipt.records.length - 1,
+                  receiptStatus: receipt.status,
+                },
+              );
+              status = "completed";
+            } else {
+              summary = summarizeEvidence(
+                {},
+                { reason: "public_news_missing_or_outside_cutoff", receiptStatus: receipt.status },
+              );
+            }
+          } catch (error) {
+            signal.throwIfAborted();
+            summary = summarizeEvidence(
+              {},
+              {
+                reason:
+                  error instanceof Error && error.message === "public_news_source_scope_mismatch"
+                    ? error.message
+                    : "public_news_unavailable",
+              },
+            );
+          }
+          results.push(
+            FinanceTradeReviewToolEvidenceSchema.parse({
+              action: request.action,
+              candidateId: request.candidateId,
+              accountId: scope.accountId,
+              asOf: packet.asOf,
+              status,
+              sourceRef,
+              requestSha256: digest(request),
+              resultSha256: digest(output),
+              summary,
+              boundary: marketCollectionBoundary,
+            }),
+          );
+          continue;
+        }
         if (request.action === "artifact_search" || request.action === "artifact_read") {
           let output: Record<string, unknown> = {};
           let status: FinanceTradeReviewToolEvidence["status"] = "unavailable";

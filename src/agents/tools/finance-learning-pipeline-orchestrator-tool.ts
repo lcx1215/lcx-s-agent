@@ -19,6 +19,10 @@ import {
   countApplicationReadyRetrievedCandidates,
   writeFinanceLearningRetrievalReview,
 } from "./finance-learning-retrieval-review-tool.js";
+import {
+  FinanceLearningTaskSchema,
+  FinanceLearningPriorTaskSchema,
+} from "./finance-learning-task-evaluation.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./finance-research-source-workbench-tool.js";
 import {
   inspectEvidenceFile,
@@ -69,6 +73,8 @@ const SOURCE_INTAKE_STATUS_ORDER = [
 type SourceIntakeStatus = (typeof SOURCE_INTAKE_STATUS_ORDER)[number];
 
 const FinanceLearningPipelineOrchestratorSchema = Type.Object({
+  financialTask: Type.Optional(FinanceLearningTaskSchema),
+  priorTaskReceiptSource: Type.Optional(FinanceLearningPriorTaskSchema),
   adapterName: Type.Optional(Type.String()),
   adapterType: Type.Optional(stringEnum(FINANCE_EXTERNAL_SOURCE_ADAPTER_TYPES)),
   inputPath: Type.Optional(Type.String()),
@@ -1052,11 +1058,24 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       const retainedCandidateCount = inspectResults.reduce((sum, item) => {
         return sum + (typeof item.candidateCount === "number" ? item.candidateCount : 0);
       }, 0);
+      if (
+        (params.financialTask !== undefined || params.priorTaskReceiptSource !== undefined) &&
+        (!applicationValidationQuery || normalizedArticleArtifactPaths.length !== 1)
+      ) {
+        throw new Error("financial_task_requires_application_query_and_one_exact_intake_source");
+      }
       const applicationValidation = applicationValidationQuery
         ? ((
             await applyTool.execute(`${toolCallId}:application-validation`, {
               queryText: applicationValidationQuery,
               maxCandidates: maxAppliedCapabilities,
+              ...(params.financialTask !== undefined || params.priorTaskReceiptSource !== undefined
+                ? {
+                    sourceArticlePath: normalizedArticleArtifactPaths[0],
+                    financialTask: params.financialTask,
+                    priorTaskReceiptSource: params.priorTaskReceiptSource,
+                  }
+                : {}),
             })
           ).details as Record<string, unknown>)
         : null;
@@ -1228,6 +1247,13 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
         applicationValidation: applicationValidationQuery
           ? {
               ok: applicationValidation?.ok === true,
+              ...(applicationValidation?.taskApplication
+                ? {
+                    taskApplication: applicationValidation.taskApplication,
+                    consumedTaskReceipt: applicationValidation.consumedTaskReceipt ?? null,
+                    nextTaskReceiptSource: applicationValidation.nextTaskReceiptSource,
+                  }
+                : {}),
               applicationValidationQuery,
               maxAppliedCapabilities,
               applicationValidationStatus,

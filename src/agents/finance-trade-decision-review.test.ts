@@ -2079,3 +2079,122 @@ it("keeps the default four-call native budget shared across re-entry and skips u
   expect(nativeBudgets[0]!.snapshot()).toEqual({ limit: 4, reserved: 4, remaining: 0 });
   expect(factory).toHaveBeenCalledTimes(4);
 });
+
+it.each(["retain", "change", "ignore", "wrong_value", "wrong_account"] as const)(
+  "broker exit feedback changes original model decision: %s",
+  async (mode) => {
+    const entry = {
+      feedbackId: "e".repeat(64),
+      instrument: "SPY",
+      signalId: "old-entry",
+      decisionRef: "a".repeat(64),
+      receiptId: "old-receipt",
+      entryOrderId: "buy",
+      exitOrderId: "stop",
+      entryPrice: 100,
+      entryQuantity: 10,
+      exitQuantity: 10,
+      exitAveragePrice: 94.3,
+      grossPnl: -57,
+      lastFillAt: "2026-09-23T14:00:00.000Z",
+      partialFillCount: 2,
+      exitActivityRefs: ["p1", "p2"],
+      sourceHistoryRefs: ["d".repeat(64)],
+      omittedActivityRefCount: 0,
+      fees: "not_attributed" as const,
+      netPnl: null,
+    };
+    const feedback = {
+      accountId: mode === "wrong_account" ? "other" : "paper-a",
+      instrument: "SPY",
+      ruleId: intradayRequest.candidates[0].strategyRule,
+      activationRef: "b".repeat(64),
+      asOf: intradayRequest.asOf,
+      historyRef: "d".repeat(64),
+      entries: [entry],
+      boundary:
+        "broker_parent_leg_entry_binding_not_new_execution_receipt_or_strategy_alpha" as const,
+    };
+    const packet = { ...intradayRequest, accountId: "paper-a", brokerExitFeedback: feedback };
+    const model: LogicalAgentModelAdapter = {
+      ...adapter(null),
+      requiredSideEffects: [],
+      observe: undefined,
+      invoke: vi.fn(async (call) => {
+        const supplied = call.payload as FinanceIntradayTradeDecisionReviewRequest;
+        expect(supplied.brokerExitFeedback).toEqual(feedback);
+        return {
+          schemaVersion: packet.schemaVersion,
+          decisions: [
+            {
+              candidateId: packet.candidates[0].candidateId,
+              decision: mode === "change" ? "veto" : "approve",
+              rationale:
+                mode === "change"
+                  ? "Current continuation evidence is missing after the earlier stop; seek new structure."
+                  : "Earlier stop loss does not invalidate this distinct current setup.",
+              ...(mode === "ignore"
+                ? {}
+                : {
+                    brokerExitResponse: [
+                      {
+                        feedbackId: entry.feedbackId,
+                        observedExitQuantity: 10,
+                        observedGrossPnl: mode === "wrong_value" ? 57 : -57,
+                        consequence: mode === "change" ? "need_more_evidence" : "retain_candidate",
+                        reason:
+                          mode === "change"
+                            ? "Current continuation has not been established; seek a new closed bar before this entry."
+                            : "The current packet has a new supported breakout; retain despite the historical loss.",
+                      },
+                    ],
+                  }),
+            },
+          ],
+        };
+      }),
+    };
+    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model });
+    const result = await reviewer(packet, new AbortController().signal);
+    if (mode === "retain" || mode === "change") {
+      expect(result.status).toBe("completed");
+      expect(result.decisions?.[0].decision).toBe(mode === "change" ? "veto" : "approve");
+      expect(result.decisions?.[0].brokerExitResponse?.[0].observedGrossPnl).toBe(-57);
+    } else {
+      expect(result.status).toBe("failed");
+    }
+  },
+);
+
+it.each(["provider_http", "local_cooldown"] as const)(
+  "retains payment origin in original review failure (%s)",
+  async (paymentRefusalSource) => {
+    const transport = {
+      requestIdSha256: "a".repeat(64),
+      stage: "failed" as const,
+      cleanupStatus: "not_required" as const,
+      requestDispatched: paymentRefusalSource === "provider_http",
+      paymentRefusalSource,
+      cooldownUntil: "2026-10-13T15:35:06.309Z",
+      ...(paymentRefusalSource === "provider_http" ? { httpStatus: 402 } : {}),
+    };
+    const model = {
+      ...adapter(null),
+      invoke: vi.fn(async () => {
+        throw new ModelAdapterError("provider_payment_required");
+      }),
+      inspectCall: () => transport,
+    };
+    const result = await createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model })(
+      request,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      failureCode: "provider_payment_required",
+      transport,
+    });
+    expect(isValidFinanceTradeDecisionReviewResult(result, request)).toBe(true);
+    expect(model.invoke).toHaveBeenCalledTimes(1);
+  },
+);

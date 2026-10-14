@@ -1241,7 +1241,7 @@ export function buildFinanceResearchModelEvidence(
         const fields = job.receipt.snapshot?.normalizedFields ?? [];
         if (fields.length) {
           facts.push(
-            `${prefix}: quote fields ${JSON.stringify(fields.slice(0, 3).map((f) => ({ name: f.name, value: f.value, sourceTimestamp: f.sourceTimestamp })))}; unresolved provider values=${JSON.stringify(job.receipt.snapshot?.conflicts ?? [])}`,
+            `${prefix}: quote fields ${JSON.stringify(fields.slice(0, 3).map((f) => ({ name: f.name, value: f.value, sourceTimestamp: f.sourceTimestamp, unit: f.unit, currency: f.currency, adjusted: f.adjusted, providerName: f.providerName, providerRole: f.providerRole, fieldDefinition: f.fieldDefinition, sourceUrlOrArtifact: f.sourceUrlOrArtifact, upstreamSourceUrlOrArtifact: f.upstreamSourceUrlOrArtifact })))}; field coverage=${Math.min(3, fields.length)}/${fields.length}; omitted fields=${Math.max(0, fields.length - 3)}; full fields remain in original job ${job.jobId} receipt.snapshot.normalizedFields; unresolved provider values=${JSON.stringify(job.receipt.snapshot?.conflicts ?? [])}`,
           );
         }
       }
@@ -1440,6 +1440,59 @@ export function buildFinanceHistoricalResearchFeedback(params: {
     gates.some((gate) => gate.id === "quality") && Array.isArray(lastAttempt?.feedback)
       ? lastAttempt.feedback.filter((value): value is string => typeof value === "string")
       : [];
+  const attemptIndex = Array.isArray(quality.attempts)
+    ? quality.attempts.lastIndexOf(lastAttempt)
+    : -1;
+  const feedbackEntries =
+    qualityFeedback.length && Array.isArray(lastAttempt?.feedback)
+      ? lastAttempt.feedback.flatMap((value: unknown, index: number) =>
+          typeof value === "string" ? [{ value, index }] : [],
+        )
+      : [];
+  // Successful review summaries precede actual findings in the original quality receipt.
+  // Do not spend the bounded diagnostic window on these when a concrete issue exists.
+  const purePassSummaries = new Set(
+    Object.values(STAGE_BY_AGENT_ID).map((stage) => `${stage} verdict=pass`),
+  );
+  const structuralFindingReason = (value: string) => {
+    const finding = /^([a-z][a-z0-9_]*) finding [a-f0-9]{64}: (closure_missing_or_invalid)$/u.exec(
+      value,
+    );
+    return finding && Object.hasOwn(STAGE_BY_AGENT_ID, finding[1]) ? finding[2] : undefined;
+  };
+  const seenFeedback = new Set<string>();
+  const distinctFeedback = feedbackEntries.filter(({ value }) => {
+    const reason = structuralFindingReason(value);
+    const key = reason ? `structure:${reason}` : `text:${value}`;
+    if (seenFeedback.has(key)) {
+      return false;
+    }
+    seenFeedback.add(key);
+    return true;
+  });
+  // Keep concrete decisions ahead of repeated closure bookkeeping even under total-budget pruning.
+  // The retained original indices still permit narrow reading of every omitted native detail.
+  const selectedFeedback = [
+    ...distinctFeedback.filter(
+      ({ value }) => !purePassSummaries.has(value) && !structuralFindingReason(value),
+    ),
+    ...distinctFeedback.filter(({ value }) => structuralFindingReason(value)),
+    ...distinctFeedback.filter(({ value }) => purePassSummaries.has(value)),
+  ].slice(0, 4);
+  const feedbackText = (value: string) => {
+    if (Buffer.byteLength(value, "utf8") <= 120) {
+      return value;
+    }
+    const suffix = " [truncated]";
+    let preview = "";
+    for (const character of value) {
+      if (Buffer.byteLength(preview + character + suffix, "utf8") > 120) {
+        break;
+      }
+      preview += character;
+    }
+    return preview + suffix;
+  };
   const failedQualityStages =
     gates.some((gate) => gate.id === "quality") && Array.isArray(lastAttempt?.stages)
       ? lastAttempt.stages.filter(isEvidenceRecord).filter((stage) => stage.status === "failed")
@@ -1490,8 +1543,16 @@ export function buildFinanceHistoricalResearchFeedback(params: {
       .slice(0, 4)
       .map((gate) => ({ id: text(gate.id), reason: text(gate.reason) })),
     omittedFailedGates: Math.max(0, gates.length - 4),
-    qualityFeedback: qualityFeedback.slice(0, 4).map(text),
-    omittedQualityFeedback: Math.max(0, qualityFeedback.length - 4),
+    qualityFeedback: selectedFeedback.map(({ value }) => feedbackText(value)),
+    ...(selectedFeedback.length
+      ? {
+          qualityFeedbackRefs: selectedFeedback.map(({ value, index }) => ({
+            pointer: `/quality/attempts/${attemptIndex}/feedback/${index}`,
+            truncated: feedbackText(value) !== value,
+          })),
+        }
+      : {}),
+    omittedQualityFeedback: Math.max(0, qualityFeedback.length - selectedFeedback.length),
     ...(qualityFailures.length
       ? {
           qualityFailures,
@@ -1511,8 +1572,9 @@ export function buildFinanceHistoricalResearchFeedback(params: {
     } else if (result.failures.length > 1) {
       result.failures.pop();
       result.omittedFailures += 1;
-    } else if (result.qualityFeedback.length > (qualityFailures.length ? 0 : 1)) {
+    } else if (result.qualityFeedback.length > 1) {
       result.qualityFeedback.pop();
+      result.qualityFeedbackRefs?.pop();
       result.omittedQualityFeedback += 1;
     } else if (result.failedGates.length > 1) {
       result.failedGates.pop();

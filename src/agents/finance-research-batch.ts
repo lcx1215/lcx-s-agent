@@ -115,10 +115,10 @@ export const DEFAULT_POOL = [
  * Falls back to an empty list, and callers keep their own fallback, so a ledger
  * that cannot be read never silently becomes "sample nothing".
  */
-async function activeRuleInstruments(): Promise<string[]> {
+async function activeRuleInstruments(directory?: string): Promise<string[]> {
   try {
-    const directory = resolveFinanceStateDir({}).directory;
-    const read = (await readFinanceStrategyRuleLedger(directory, {})) as {
+    const state = resolveFinanceStateDir({ directory });
+    const read = (await readFinanceStrategyRuleLedger(state.directory, {})) as {
       ledger?: { rules?: readonly unknown[] };
     };
     const out = new Set<string>();
@@ -597,7 +597,7 @@ export async function runResearchBatch(
   const recordPath =
     params.recordPath ??
     financeResearchSamplesPath(resolveFinanceStateDir({ directory: params.directory }).directory);
-  const ruleUniverse = await activeRuleInstruments();
+  const ruleUniverse = await activeRuleInstruments(params.directory);
   const pool = ruleUniverse.length > 0 ? ruleUniverse : [...DEFAULT_POOL];
   const requested = (params.instruments ?? pool)
     .map((value) => value.trim().toUpperCase())

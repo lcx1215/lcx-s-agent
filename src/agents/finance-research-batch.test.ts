@@ -3,6 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordedKeys, researchPricedRows, runResearchBatch } from "./finance-research-batch.js";
+import {
+  activateFinanceStrategyRule,
+  declareFinanceStrategyRule,
+  readFinanceStrategyRuleLedger,
+} from "./finance-strategy-rule-ledger.js";
 
 vi.mock("./finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: (env: NodeJS.ProcessEnv) => env,
@@ -23,6 +28,7 @@ vi.mock("./finance-credential-env.js", () => ({
 const KEY = { FMP_API_KEY: "test-key" };
 
 const savedStateDir = process.env.LCX_FINANCE_STATE_DIR;
+const scopeDirectories: string[] = [];
 
 afterEach(() => {
   if (savedStateDir === undefined) {
@@ -30,6 +36,121 @@ afterEach(() => {
   } else {
     process.env.LCX_FINANCE_STATE_DIR = savedStateDir;
   }
+  for (const directory of scopeDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("runResearchBatch native rule scope", () => {
+  async function scopedBooks() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "research-rule-scope-"));
+    scopeDirectories.push(root);
+    const books = { root, a: path.join(root, "a"), b: path.join(root, "b") };
+    fs.mkdirSync(books.a);
+    fs.mkdirSync(books.b);
+    process.env.LCX_FINANCE_STATE_DIR = books.a;
+    return books;
+  }
+
+  async function activate(directory: string, instruments: string[]) {
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "scope-rule",
+      form: "expression",
+      instruments,
+      emits: "target_weights",
+      schedule: { kind: "daily", at: "21:30", timezone: "America/New_York" },
+      body: { expression: "close > sma(close, 20)" },
+      observedAt: "2026-09-17T00:00:00Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "scope-rule",
+      observedAt: "2026-09-17T01:00:00Z",
+    });
+  }
+
+  async function retain(
+    name: string,
+    books: Awaited<ReturnType<typeof scopedBooks>>,
+    result: Awaited<ReturnType<typeof runResearchBatch>>,
+  ) {
+    const proofRoot = process.env.LCX_FINANCE_BATCH_SCOPE_PROOF_DIR;
+    if (!proofRoot) {
+      return;
+    }
+    const destination = path.join(proofRoot, name);
+    fs.mkdirSync(destination, { recursive: true });
+    fs.cpSync(books.root, path.join(destination, "private-books"), { recursive: true });
+    fs.writeFileSync(
+      path.join(destination, "native-result.json"),
+      JSON.stringify(
+        {
+          defaultDirectory: books.a,
+          explicitDirectory: name === "default_compatibility" ? null : books.b,
+          result,
+          a: await readFinanceStrategyRuleLedger(books.a),
+          b: await readFinanceStrategyRuleLedger(books.b),
+          boundary: "private_native_ledgers_zero_collection_no_model_or_provider",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  }
+
+  it("does not borrow an active rule from the default book when the explicit book is empty", async () => {
+    const books = await scopedBooks();
+    await activate(books.a, ["AAA"]);
+    const result = await runResearchBatch({ directory: books.b, instruments: [], env: {} });
+    await retain("explicit_empty", books, result);
+    expect(result.recordPath).toBe(path.join(books.b, "research-samples.jsonl"));
+    expect(result.universeSource).toBe("fallback_pool");
+    expect(result.recorded).toEqual([]);
+    expect(result.requested).toBe(0);
+  });
+
+  it("reads active rules from the explicit book while the default book is empty", async () => {
+    const books = await scopedBooks();
+    await activate(books.b, ["BBB"]);
+    const result = await runResearchBatch({ directory: books.b, instruments: [], env: {} });
+    await retain("explicit_active", books, result);
+    expect(result.universeSource).toBe("active_rule");
+    expect(result.recorded).toEqual([]);
+    expect(result.requested).toBe(0);
+  });
+
+  it("selects only the explicit book's instruments before skipping already priced samples", async () => {
+    const books = await scopedBooks();
+    await activate(books.a, ["AAA", "AAB"]);
+    await activate(books.b, ["BBB"]);
+    // All possible symbols are already priced today: the original selector executes, while
+    // the original idempotency filter prevents every source collection call.
+    fs.writeFileSync(
+      path.join(books.b, "research-samples.jsonl"),
+      ["AAA", "AAB", "BBB"]
+        .map((instrument) =>
+          JSON.stringify({ instrument, asOf: new Date().toISOString(), lastPrice: 1 }),
+        )
+        .join("\n") + "\n",
+    );
+    const result = await runResearchBatch({ directory: books.b, env: {} });
+    await retain("explicit_instruments", books, result);
+    expect(result.universeSource).toBe("active_rule");
+    expect(result.requested).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.recorded).toEqual([]);
+  });
+
+  it("preserves default-book selection when no explicit directory is supplied", async () => {
+    const books = await scopedBooks();
+    await activate(books.a, ["AAA"]);
+    const result = await runResearchBatch({ instruments: [], env: {} });
+    await retain("default_compatibility", books, result);
+    expect(result.recordPath).toBe(path.join(books.a, "research-samples.jsonl"));
+    expect(result.universeSource).toBe("active_rule");
+    expect(result.recorded).toEqual([]);
+  });
 });
 
 describe("runResearchBatch sample path", () => {

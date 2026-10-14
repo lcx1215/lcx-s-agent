@@ -23,11 +23,15 @@ export type ArtifactRecordingReceipt = Readonly<{
   id?: string;
   sha256?: string;
   relativePath?: string;
+  invocationRunId?: string;
+  workspaceId?: string;
 }>;
 export type ArtifactRecordingHost = Readonly<{
   config: OpenClawConfig;
   agentId: string;
   workspaceDir: string;
+  /** Host invocation identity, distinct from a tool call and any business account. */
+  invocationRunId?: string;
 }>;
 type RecordingInput = ArtifactRecordingHost &
   Readonly<{
@@ -178,11 +182,33 @@ export async function recordAgentArtifact(
     ) {
       throw new Error("artifact_metadata_invalid");
     }
+    const invocationRunId = input.invocationRunId;
+    if (
+      invocationRunId !== undefined &&
+      (typeof invocationRunId !== "string" ||
+        !invocationRunId ||
+        invocationRunId.trim() !== invocationRunId ||
+        Buffer.byteLength(invocationRunId) > 240 ||
+        /\p{Cc}/u.test(invocationRunId))
+    ) {
+      throw new Error("artifact_invocation_metadata_invalid");
+    }
+    // Legacy calls retain their original wire bytes and validation/read ordering.
+    let workspace: string | undefined;
+    let invocation: { runId: string; workspaceId: string } | undefined;
+    if (invocationRunId !== undefined) {
+      workspace = await fs.realpath(input.workspaceDir);
+      invocation = {
+        runId: invocationRunId,
+        workspaceId: createHash("sha256").update(workspace).digest("hex"),
+      };
+    }
     const envelope = {
       schemaVersion: "lcx_agent_artifact_v1",
       owner: input.owner,
       runId: input.runId,
       value: input.value,
+      ...(invocation ? { invocation } : {}),
       ...(input.observedAt !== undefined
         ? { observedAt: new Date(input.observedAt).toISOString() }
         : {}),
@@ -206,7 +232,7 @@ export async function recordAgentArtifact(
       throw new Error("artifact_budget_exceeded");
     }
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const workspace = await fs.realpath(input.workspaceDir);
+    workspace ??= await fs.realpath(input.workspaceDir);
     const id = `artifact-${createHash("sha256")
       .update(JSON.stringify([workspace, sha256]))
       .digest("hex")}`;
@@ -256,7 +282,14 @@ export async function recordAgentArtifact(
       mimeType: "application/json",
       ...projectArtifactSourceRefs(input.sourceReceiptRefs, summarizeAgentArtifact(input.value)),
     });
-    return { status: registered.status, reason: "ok", ...artifact };
+    return {
+      status: registered.status,
+      reason: "ok",
+      ...artifact,
+      ...(invocation
+        ? { invocationRunId: invocation.runId, workspaceId: invocation.workspaceId }
+        : {}),
+    };
   } catch (error) {
     const reason =
       error instanceof ArtifactStoreError

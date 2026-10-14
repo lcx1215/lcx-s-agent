@@ -37,6 +37,15 @@ if (values.paired) {
     throw new Error("--replay FILE --policy FILE --output FILE required; research only");
   }
   const input = JSON.parse(await fs.readFile(values.replay, "utf8"));
+  const rawReceipt: unknown = input.receipt;
+  if (!rawReceipt || typeof rawReceipt !== "object" || Array.isArray(rawReceipt)) {
+    throw new Error("original intraday replay receipt required");
+  }
+  const { receiptRef, ...receiptBody } = rawReceipt as Record<string, unknown>;
+  // Verify the original full body before the selected-field parser removes other fields.
+  if (typeof receiptRef !== "string" || receiptRef !== caseflowFingerprint(receiptBody)) {
+    throw new Error("intraday replay receipt fingerprint mismatch");
+  }
   const policy = JSON.parse(await fs.readFile(values.policy, "utf8"));
   const frozenAt = z.string().datetime({ offset: true }).parse(policy.frozenAt);
   if (Date.parse(frozenAt) > Date.now()) {
@@ -72,6 +81,7 @@ if (values.paired) {
     executionAuthority: "none",
     sourceReplay: path.resolve(values.replay),
     sourceReplayRef: caseflowFingerprint(input),
+    sourceReplayReceiptRef: receipt.receiptRef,
     datasetRef: receipt.datasetRef,
     strategyRule: receipt.strategyRule,
     policyRef: caseflowFingerprint(policy),

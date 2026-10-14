@@ -13,6 +13,10 @@ import {
   type AlpacaSafetyQuoteBinding,
 } from "./finance-alpaca-safety-provider.js";
 import {
+  FinanceAccountReadError,
+  type FinanceAccountReadStage,
+} from "./finance-alpaca-safety-transport.js";
+import {
   assessFinanceBrokerExecutionReadiness,
   type FinanceExecutionReconciliation,
   brokerSymbol,
@@ -241,6 +245,8 @@ export function createFinanceAlpacaCycleController(options: {
       throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
         reason: result.reason,
         stage: result.diagnostic,
+        ...(result.transport ? { transport: result.transport } : {}),
+        ...(result.quoteTiming ? { quoteTiming: result.quoteTiming } : {}),
         ...(result.accountArithmetic ? { accountArithmetic: result.accountArithmetic } : {}),
       });
     }
@@ -260,10 +266,19 @@ export function createFinanceAlpacaCycleController(options: {
 
   async function reconcile(
     signal: AbortSignal,
-    { inspectOnly = false, recoverPending = true } = {},
+    {
+      inspectOnly = false,
+      recoverPending = true,
+      onStage,
+    }: {
+      inspectOnly?: boolean;
+      recoverPending?: boolean;
+      onStage?: (stage: FinanceAccountReadStage) => void;
+    } = {},
   ) {
     // A failed or inspect-only refresh must not leave an older success reusable.
     reusableReconciliation = undefined;
+    onStage?.("execution_recovery");
     const recovery = await recoverConfirmedFinanceExecutions({
       safetyStateDir: options.directory,
       accountId: policy.accountId,
@@ -332,6 +347,7 @@ export function createFinanceAlpacaCycleController(options: {
     });
     // Pending execution authority must not stop the resident account feed.
     // Refresh broker facts before reporting the unchanged recovery refusal.
+    onStage?.("broker_reconciliation");
     const snapshot = await syncFinanceBrokerReconciliation({
       directory: options.directory,
       accountId: policy.accountId,
@@ -348,6 +364,7 @@ export function createFinanceAlpacaCycleController(options: {
     ) {
       throw new FinanceExecutionSafetyFactsError("execution_recovery_incomplete");
     }
+    onStage?.("safety_claims");
     const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
     if (
       claims.some(
@@ -362,6 +379,7 @@ export function createFinanceAlpacaCycleController(options: {
     const last = claims.toReversed().find((claim) => claim.status === "confirmed");
     const latestClaim = claims.at(-1);
     if (last?.binding && last.fill) {
+      onStage?.("terminal_order");
       const terminal = await readAlpacaPaperTerminalOrder({
         accountId: policy.accountId,
         intent: last.binding.intent,
@@ -487,35 +505,49 @@ export function createFinanceAlpacaCycleController(options: {
       if (!instruments.has(instrument)) {
         throw new Error("instrument outside controller universe");
       }
-      const { snapshot } = await reconcile(signal);
-      const observed = await facts(instrument, candidate?.side ?? "buy", signal);
-      assertSamePositions(observed.positions, snapshot.positions);
-      const reconciliation = readinessFor(snapshot, observed.positions);
-      if (reconciliation.status === "blocked") {
-        throw new Error("updated uncertainty exceeds isolation policy");
-      }
-      return {
-        reconciliation,
-        accountId: policy.accountId,
-        venue: "alpaca:paper",
-        observedAt: observed.facts.observedAt,
-        expiresAt: observed.facts.expiresAt,
-        equity: observed.facts.account.equity,
-        positions: observed.positions,
-        executionCapacity: Object.freeze({
-          source: "controller_account_safety_facts" as const,
+      let readStage: FinanceAccountReadStage = "execution_recovery";
+      let readStartedAt = performance.now();
+      const onStage = (stage: FinanceAccountReadStage) => {
+        readStage = stage;
+        readStartedAt = performance.now();
+      };
+      try {
+        const { snapshot } = await reconcile(signal, { onStage });
+        onStage("safety_facts");
+        const observed = await facts(instrument, candidate?.side ?? "buy", signal);
+        assertSamePositions(observed.positions, snapshot.positions);
+        const reconciliation = readinessFor(snapshot, observed.positions);
+        if (reconciliation.status === "blocked") {
+          throw new FinanceExecutionSafetyFactsError("broker_reconciliation_blocked");
+        }
+        return {
+          reconciliation,
           accountId: policy.accountId,
-          venue: "alpaca:paper" as const,
+          venue: "alpaca:paper",
           observedAt: observed.facts.observedAt,
           expiresAt: observed.facts.expiresAt,
-          policyPlanId: policy.planId,
-          policyRevision: policy.revision,
-          grossExposure: observed.facts.account.grossExposure,
-          maxGrossExposure: policy.maxGrossExposure,
-          uncertaintyReserve: reconciliation.uncertaintyReserve,
-          availableCash: observed.facts.account.availableCash,
-        }),
-      };
+          equity: observed.facts.account.equity,
+          positions: observed.positions,
+          executionCapacity: Object.freeze({
+            source: "controller_account_safety_facts" as const,
+            accountId: policy.accountId,
+            venue: "alpaca:paper" as const,
+            observedAt: observed.facts.observedAt,
+            expiresAt: observed.facts.expiresAt,
+            policyPlanId: policy.planId,
+            policyRevision: policy.revision,
+            grossExposure: observed.facts.account.grossExposure,
+            maxGrossExposure: policy.maxGrossExposure,
+            uncertaintyReserve: reconciliation.uncertaintyReserve,
+            availableCash: observed.facts.account.availableCash,
+          }),
+        };
+      } catch (error) {
+        if (error instanceof FinanceExecutionSafetyFactsError) {
+          throw error;
+        }
+        throw new FinanceAccountReadError(readStage, performance.now() - readStartedAt, error);
+      }
     },
     executionQuoteProvider,
     prepareExecutionQuote: async (request, signal) => {

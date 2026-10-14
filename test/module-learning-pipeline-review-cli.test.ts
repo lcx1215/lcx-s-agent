@@ -79,7 +79,8 @@ describe("module-learning-pipeline-review CLI", () => {
         counts: expect.objectContaining({
           receiptFiles: 1,
           validReceipts: 1,
-          applicationReady: 1,
+          applicationReady: 0,
+          missingEvidence: 1,
           weakModuleLearning: 1,
           boundaryViolations: 0,
         }),
@@ -152,7 +153,8 @@ describe("module-learning-pipeline-review CLI", () => {
         updated: false,
         counts: expect.objectContaining({
           receiptFiles: 1,
-          applicationReady: 1,
+          applicationReady: 0,
+          missingEvidence: 1,
           weakModuleLearning: 1,
         }),
       }),

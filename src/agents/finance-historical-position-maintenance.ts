@@ -91,10 +91,15 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
   const policy = financeAlpacaCyclePolicySchema.parse(options.policy);
   const account = { accountId: policy.accountId, venue: "alpaca:paper" as const };
   const [book, strategies, reconciliation] = await Promise.all([
-    readFinanceAccountTradingBook({ directory: options.directory, ...account }),
+    readFinanceAccountTradingBook({
+      directory: options.directory,
+      ...account,
+      signal: options.signal,
+    }),
     readFinanceStrategyRuleLedger(options.directory),
     readFinanceBrokerReconciliation(options.directory, policy.accountId),
   ]);
+  options.signal.throwIfAborted();
   if (!book.brokerBaselineUsable || !reconciliation.ok) {
     return { ...result, status: "blocked" };
   }

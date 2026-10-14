@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   annualisedVol,
   FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
@@ -30,6 +31,7 @@ import {
 import {
   declareFinanceStrategyRule,
   activateFinanceStrategyRule,
+  readFinanceStrategyRuleLedger,
 } from "./finance-strategy-rule-ledger.js";
 import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
 import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
@@ -951,11 +953,35 @@ it("limits portfolio research scope to the exact active strategy ids", async () 
         observedAt: "2026-09-02T00:00:00Z",
       });
     }
+    // A future stored event must not become the cutoff's projected rule head.
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "future",
+      form: "trend",
+      instruments: ["FUTURE"],
+      emits: "weights",
+      schedule: { kind: "daily" },
+      body: { frozenRule: { lookbackMonths: 99 } },
+      observedAt: "2026-09-06T00:00:00Z",
+    });
     const scope = await readFinanceActiveStrategyResearchScope({
       directory,
       asOf: "2026-09-05T00:00:00Z",
       strategyIds: ["mean"],
     });
+    const ledger = await readFinanceStrategyRuleLedger(directory, { asOf: "2026-09-05T00:00:00Z" });
+    expect(scope.source).toEqual({
+      directory,
+      asOf: "2026-09-05T00:00:00Z",
+      storedHeadRef: ledger.headRef,
+      projectedHeadRef: ledger.ledger.headRef,
+      storedRecordCount: 5,
+      projectedRecordCount: 4,
+      selectedRuleIds: ["mean"],
+      selectedRulesSha256: caseflowFingerprint(JSON.parse(scope.evidence[0].text).activeRules),
+    });
+    expect(scope.source.storedHeadRef).not.toBe(scope.source.projectedHeadRef);
+    expect(scope.evidence[0].text).not.toContain('"future"');
     expect(scope.instruments).toEqual(["QQQ"]);
     expect(scope.intradayInstruments).toEqual(["QQQ"]);
     expect(scope.historyMonths).toBe(12);

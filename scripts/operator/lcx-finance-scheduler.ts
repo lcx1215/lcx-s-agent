@@ -72,6 +72,9 @@ import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance
 import {
   financeResearchPortfolioAbstentionSchema,
   financeResearchPortfolioContextSchema,
+  financeScheduledResearchHandoffSchema,
+  financeResearchControllerHandoffSchema,
+  type FinanceResearchControllerHandoff,
 } from "../../src/agents/finance-research-portfolio-plan.js";
 import {
   readFinanceResearchEquityUniverseSnapshot,
@@ -107,6 +110,7 @@ import {
 import { runFinanceSourceHeartbeat } from "../../src/agents/finance-source-heartbeat.js";
 import {
   FINANCE_DAILY_CYCLE_RUNS_FILENAME,
+  FINANCE_RESEARCH_SAMPLES_FILENAME,
   resolveFinanceStateDir,
   type FinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
@@ -114,6 +118,7 @@ import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy
 import { createFinanceTradeDecisionReviewer } from "../../src/agents/finance-trade-decision-review.js";
 import {
   createFinanceTradeReviewFinancialCapabilities,
+  createFinanceTradeReviewMarketCollectionTool,
   type FinanceTradeReviewEvidenceScope,
 } from "../../src/agents/finance-trade-review-evidence.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
@@ -442,6 +447,18 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
 
 /** Exit zero alone does not establish that the cycle accepted its inputs. */
 /** Storage success and research acceptance are separate observations. */
+export function inspectFinanceResearchControllerHandoff(
+  value: unknown,
+  expected: FinanceResearchControllerHandoff | undefined,
+): boolean {
+  const parsed = financeResearchControllerHandoffSchema.safeParse(value);
+  return Boolean(
+    expected &&
+    parsed.success &&
+    caseflowFingerprint(parsed.data) === caseflowFingerprint(expected),
+  );
+}
+
 export function inspectFinanceResearchReceiptPersistence(stdout: string): boolean {
   try {
     const summary = JSON.parse(stdout) as {
@@ -483,7 +500,17 @@ export function cycleOutputSucceeded(stdout: string): boolean {
   }
 }
 
-function parseNightSettlement(stdout: string): FinanceNightSettlementSummary {
+type PinnedNightSettlement = FinanceNightSettlementSummary & {
+  sampleSource?: Readonly<{
+    path: string;
+    status: "available" | "invalid_json";
+    sha256: string;
+    bytes: number;
+    parsedCount?: number;
+  }>;
+};
+
+function parseNightSettlement(stdout: string, directory?: string): PinnedNightSettlement {
   const payload = JSON.parse(stdout) as Record<string, unknown>;
   const scoredFiled = payload.scoredFiled as Record<string, unknown> | undefined;
   if (
@@ -496,16 +523,126 @@ function parseNightSettlement(stdout: string): FinanceNightSettlementSummary {
   ) {
     throw new Error("night settlement output is missing its durable feedback summary");
   }
+  const hasSourceWrite =
+    Object.hasOwn(scoredFiled, "sha256") || Object.hasOwn(scoredFiled, "bytes");
+  if (
+    hasSourceWrite &&
+    (typeof scoredFiled.path !== "string" ||
+      !scoredFiled.path.trim() ||
+      typeof scoredFiled.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(scoredFiled.sha256) ||
+      !Number.isSafeInteger(scoredFiled.bytes) ||
+      Number(scoredFiled.bytes) < 0)
+  ) {
+    throw new Error("night settlement scored source write metadata is invalid");
+  }
+  const sampleSource = payload.sampleSource as Record<string, unknown> | undefined;
+  const hasSourceRead =
+    sampleSource !== null &&
+    typeof sampleSource === "object" &&
+    ["sha256", "bytes", "parsedCount"].some((key) => Object.hasOwn(sampleSource, key));
+  if (
+    hasSourceRead &&
+    (typeof sampleSource.path !== "string" ||
+      !sampleSource.path.trim() ||
+      (directory !== undefined &&
+        path.resolve(sampleSource.path) !==
+          path.resolve(directory, FINANCE_RESEARCH_SAMPLES_FILENAME)) ||
+      (sampleSource.status !== "available" && sampleSource.status !== "invalid_json") ||
+      typeof sampleSource.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(sampleSource.sha256) ||
+      !Number.isSafeInteger(sampleSource.bytes) ||
+      Number(sampleSource.bytes) < 0 ||
+      (sampleSource.status === "available"
+        ? !Number.isSafeInteger(sampleSource.parsedCount) ||
+          Number(sampleSource.parsedCount) < 0 ||
+          sampleSource.parsedCount !== payload.sampleCount
+        : sampleSource.parsedCount !== undefined || payload.sampleCount !== null))
+  ) {
+    throw new Error("night settlement sample source read metadata is invalid");
+  }
   return Object.freeze({
+    ...(hasSourceRead
+      ? {
+          sampleSource: Object.freeze({
+            path: sampleSource.path as string,
+            status: sampleSource.status as "available" | "invalid_json",
+            sha256: sampleSource.sha256 as string,
+            bytes: Number(sampleSource.bytes),
+            ...(sampleSource.status === "available"
+              ? { parsedCount: Number(sampleSource.parsedCount) }
+              : {}),
+          }),
+        }
+      : {}),
     scoredFiled: Object.freeze({
       appended: Number(scoredFiled.appended),
       skipped: Number(scoredFiled.skipped),
+      ...(hasSourceWrite
+        ? {
+            sourceWrite: Object.freeze({
+              path: scoredFiled.path as string,
+              sha256: scoredFiled.sha256 as string,
+              bytes: Number(scoredFiled.bytes),
+            }),
+          }
+        : {}),
     }),
     reflection: payload.reflection,
     pending: Object.freeze([...payload.pending]),
     declined: Object.freeze([...payload.declined]),
     issues: Object.freeze([...payload.issues]),
   });
+}
+
+/** A missing forecast stream must not suppress independently gated portfolio research. */
+function unavailableNightSampleSettlement(
+  result: FinanceCycleProcessResult,
+  directory: string,
+  asOf: string,
+): FinanceNightSettlementSummary | undefined {
+  if (
+    result.ok ||
+    result.status !== "failed" ||
+    result.signal !== null ||
+    !Number.isSafeInteger(result.exitCode) ||
+    Number(result.exitCode) <= 0 ||
+    result.outputTruncated
+  ) {
+    return undefined;
+  }
+  try {
+    const payload = JSON.parse(result.stdout) as Record<string, unknown>;
+    const source = payload.sampleSource as Record<string, unknown> | undefined;
+    if (
+      payload.ok !== false ||
+      payload.mode !== "night" ||
+      payload.directory !== directory ||
+      payload.asOf !== asOf ||
+      payload.failureKind !== "night_sample_source_gate" ||
+      !source ||
+      source.path !== path.join(directory, FINANCE_RESEARCH_SAMPLES_FILENAME) ||
+      !["missing", "unreadable", "invalid_json"].includes(String(source.status)) ||
+      payload.sampleCount !== null ||
+      !Array.isArray(payload.scored) ||
+      payload.scored.length !== 0 ||
+      payload.reflection !== null ||
+      !Array.isArray(payload.issues) ||
+      !payload.issues.includes(`night_sample_source_${String(source.status)}`) ||
+      payload.issues.some((issue) => issue !== `night_sample_source_${String(source.status)}`)
+    ) {
+      return undefined;
+    }
+    const settlement = parseNightSettlement(result.stdout, directory);
+    return settlement.scoredFiled.appended === 0 &&
+      settlement.scoredFiled.skipped === 0 &&
+      settlement.pending.length === 0 &&
+      settlement.declined.length === 0
+      ? settlement
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Research egress is child-local; trading retains its independently configured route. */
@@ -526,13 +663,71 @@ export function financeResearchProcessEnv(
   return { ...env, LCX_FINANCE_HTTP_PROXY: proxy };
 }
 
+type NightResearchAcceptance = {
+  ok: boolean;
+  expectedAsOf: string;
+  failedReasons: string[];
+};
+
+function inspectNightResearchAcceptance(
+  result: FinanceCycleProcessResult,
+  expectedAsOf: string,
+): NightResearchAcceptance {
+  const failedReasons: string[] = [];
+  if (
+    !result.ok ||
+    result.status !== "succeeded" ||
+    result.exitCode !== 0 ||
+    result.signal ||
+    result.outputTruncated
+  ) {
+    failedReasons.push("night_review_process_not_completed");
+  }
+  try {
+    const payload: unknown = JSON.parse(result.stdout);
+    if (!isObjectRecord(payload)) {
+      failedReasons.push("night_review_summary_invalid_shape");
+    } else {
+      if (
+        payload.schemaVersion !== "lcx_finance_research_operator_v1" ||
+        payload.boundary !== "local_finance_research_run_only"
+      ) {
+        failedReasons.push("night_review_summary_contract_conflict");
+      }
+      if (payload.status !== "candidate" || payload.answerDecision !== "candidate_for_review") {
+        failedReasons.push("night_review_candidate_not_accepted");
+      }
+      if (!isObjectRecord(payload.plan) || payload.plan.asOf !== expectedAsOf) {
+        failedReasons.push("night_review_as_of_conflict");
+      }
+      const gates: unknown[] = Array.isArray(payload.gates) ? payload.gates : [];
+      for (const id of ["source", "committee", "quality", "module_execution"]) {
+        const matching = gates.filter((gate) => isObjectRecord(gate) && gate.id === id);
+        if (matching.length === 0) {
+          failedReasons.push(`night_review_gate_missing:${id}`);
+        } else if (matching.length !== 1) {
+          failedReasons.push(`night_review_gate_ambiguous:${id}`);
+        } else if (!isObjectRecord(matching[0]) || matching[0].passed !== true) {
+          failedReasons.push(`night_review_gate_not_passed:${id}`);
+        }
+      }
+      if (gates.some((gate) => !isObjectRecord(gate) || gate.passed !== true)) {
+        failedReasons.push("night_review_gate_invalid_or_not_passed");
+      }
+    }
+  } catch {
+    failedReasons.push("night_review_summary_invalid_json");
+  }
+  return { ok: failedReasons.length === 0, expectedAsOf, failedReasons };
+}
+
 async function runNightResearchReview(params: {
   context: CycleContext;
   attempt: { firedAt: string; etDate: string };
   settlement: FinanceNightSettlementSummary;
-}): Promise<FinanceCycleProcessResult> {
+}): Promise<FinanceCycleProcessResult & { acceptance: NightResearchAcceptance }> {
+  const reviewAsOf = new Date().toISOString();
   try {
-    const reviewAsOf = new Date().toISOString();
     const evidencePath = path.join(
       params.context.root.directory,
       `night-review-evidence-${params.attempt.etDate}.json`,
@@ -545,7 +740,7 @@ async function runNightResearchReview(params: {
       includeResearchScope: true,
     });
     await writeFinanceNightReviewEvidence(evidencePath, evidence);
-    return runScheduledCycleProcess(params.context, "night_review", {
+    const result = await runScheduledCycleProcess(params.context, "night_review", {
       argv: [
         "--import",
         "tsx",
@@ -575,8 +770,14 @@ async function runNightResearchReview(params: {
       timeoutMs: params.context.options.timeoutMs,
       signal: params.context.signal,
     });
+    return { ...result, acceptance: inspectNightResearchAcceptance(result, reviewAsOf) };
   } catch (error) {
     return {
+      acceptance: {
+        ok: false,
+        expectedAsOf: reviewAsOf,
+        failedReasons: ["night_review_preparation_failed"],
+      },
       exitCode: null,
       signal: null,
       status: "failed",
@@ -589,8 +790,10 @@ async function runNightResearchReview(params: {
 }
 
 type DayResearchPreflightResult = FinanceCycleProcessResult & {
+  portfolioScope?: { accountId: string; venue: "paper" | "alpaca" };
   controllerEvidenceStatus?: "invalid_scope" | "invalid_config" | "read_failed";
   feedback?: Record<string, unknown>;
+  controllerHandoff?: FinanceResearchControllerHandoff;
 };
 
 function failedDayResearchPreflight(
@@ -751,6 +954,7 @@ async function runDayResearchPreflight(params: {
     `day-research-portfolio-context-${params.attempt.etDate}-${params.attempt.runId}.json`,
   );
   let historicalFeedback: Record<string, unknown> | undefined;
+  let controllerHandoff: FinanceResearchControllerHandoff;
   try {
     const accountEvidence = await buildFinanceBrokerAccountResearchEvidence({
       directory: params.context.root.directory,
@@ -783,6 +987,41 @@ async function runDayResearchPreflight(params: {
       mode: 0o600,
       flag: "wx",
     });
+    const inputPin = (filename: string) => {
+      const bytes = fs.readFileSync(filename);
+      return {
+        path: filename,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      };
+    };
+    const handoff = financeScheduledResearchHandoffSchema.parse({
+      schemaVersion: "finance_scheduled_research_handoff_v1",
+      sourceScope: {
+        runId: params.attempt.runId,
+        accountId: portfolioContext.accountId,
+        venue: portfolioContext.venue,
+        asOf: params.attempt.firedAt,
+      },
+      inputs: {
+        controllerEvidence: inputPin(evidencePath),
+        portfolioContext: inputPin(frozenContextPath),
+      },
+    });
+    const handoffPath = path.join(
+      params.context.root.directory,
+      `day-research-handoff-${params.attempt.etDate}-${params.attempt.runId}.json`,
+    );
+    const handoffBytes = Buffer.from(`${JSON.stringify(handoff)}\n`);
+    fs.writeFileSync(handoffPath, handoffBytes, { mode: 0o600, flag: "wx" });
+    controllerHandoff = {
+      ...handoff,
+      producer: {
+        path: handoffPath,
+        sha256: createHash("sha256").update(handoffBytes).digest("hex"),
+        bytes: handoffBytes.length,
+      },
+    };
   } catch (error) {
     params.context.signal.throwIfAborted();
     return failedDayResearchPreflight("read_failed", error);
@@ -816,6 +1055,10 @@ async function runDayResearchPreflight(params: {
         evidencePath,
         "--portfolio-context",
         frozenContextPath,
+        "--controller-handoff",
+        controllerHandoff.producer.path,
+        "--controller-handoff-sha256",
+        controllerHandoff.producer.sha256,
         "--portfolio-plan-out",
         params.portfolioPlanPath,
         "--persist-theses",
@@ -827,7 +1070,12 @@ async function runDayResearchPreflight(params: {
       timeoutMs: params.context.options.timeoutMs,
       signal: params.context.signal,
     });
-    return { ...result, feedback: historicalFeedback };
+    return {
+      ...result,
+      feedback: historicalFeedback,
+      controllerHandoff,
+      portfolioScope: { accountId: portfolioContext.accountId, venue: portfolioContext.venue },
+    };
   } catch (error) {
     if (error instanceof SchedulerProgressBeforeDispatchError) {
       return failedDayResearchPreflight("read_failed", error);
@@ -851,6 +1099,9 @@ function runNightTuning(params: {
       result: runFinanceTuningLifecycle({
         directory: params.directory,
         generatedAt: params.firedAt,
+        ...(params.settlement.scoredFiled.sourceWrite
+          ? { expectedSource: params.settlement.scoredFiled.sourceWrite }
+          : {}),
       }),
     });
   } catch (error) {
@@ -1430,6 +1681,9 @@ function createIntradayTradeDecisionReviewer(
         ? {
             ...evidenceScope,
             financialCapabilities,
+            marketCollectionTool: createFinanceTradeReviewMarketCollectionTool(
+              process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+            ),
             artifactRecallOptions: {
               config,
               agentId: "main",
@@ -1854,13 +2108,25 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
       const payload = JSON.parse(research.stdout) as {
         status?: unknown;
         portfolioPlanWritten?: unknown;
+        portfolioPlanWrite?: {
+          path?: unknown;
+          sha256?: unknown;
+          asOf?: unknown;
+          accountId?: unknown;
+          venue?: unknown;
+        };
         portfolioPlan?: unknown;
         portfolioAbstention?: unknown;
+        controllerHandoff?: unknown;
         plan?: { asOf?: unknown };
         gates?: { id?: unknown; passed?: unknown }[];
       };
       if (
         payload.status !== "candidate" ||
+        !inspectFinanceResearchControllerHandoff(
+          payload.controllerHandoff,
+          research.controllerHandoff,
+        ) ||
         payload.plan?.asOf !== attempt.firedAt ||
         !Array.isArray(payload.gates) ||
         !payload.gates.every((gate) => gate?.passed === true) ||
@@ -1889,12 +2155,22 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
       return undefined;
     }
   })();
+  const planWrite = researchPayload?.portfolioPlanWrite;
+  const producerPlanBound =
+    planWrite?.path === portfolioPlanPath &&
+    typeof planWrite.sha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(planWrite.sha256) &&
+    planWrite.asOf === attempt.firedAt &&
+    research?.portfolioScope !== undefined &&
+    planWrite.accountId === research.portfolioScope.accountId &&
+    planWrite.venue === research.portfolioScope.venue;
   const researchAccepted =
     research === undefined ||
     (researchPayload !== undefined &&
       researchPayload.portfolioAbstention === undefined &&
       researchPayload.portfolioPlan === undefined &&
-      researchPayload.portfolioPlanWritten === portfolioPlanPath);
+      researchPayload.portfolioPlanWritten === portfolioPlanPath &&
+      producerPlanBound);
   const result = researchAccepted
     ? await runScheduledCycleProcess(context, "execution", {
         argv: [
@@ -1906,7 +2182,20 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
           mode,
           "--dir",
           directory,
-          ...(research ? ["--portfolio-plan", portfolioPlanPath] : []),
+          ...(research
+            ? [
+                "--portfolio-plan",
+                portfolioPlanPath,
+                "--portfolio-plan-sha256",
+                String(planWrite?.sha256),
+                "--portfolio-plan-parent-run",
+                attempt.runId,
+                "--portfolio-plan-as-of",
+                attempt.firedAt,
+                "--portfolio-plan-account",
+                String(planWrite?.accountId),
+              ]
+            : []),
           ...context.options.extraArgs.filter(
             (arg) => mode === "day" || (arg !== "--place" && arg !== "--equity-from-venue"),
           ),
@@ -1916,9 +2205,20 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
         signal: context.signal,
       })
     : research;
-  const cycleAccepted = researchAccepted && result.ok && cycleOutputSucceeded(result.stdout);
-  const settlement =
-    mode === "night" && cycleAccepted ? parseNightSettlement(result.stdout) : undefined;
+  let cycleAccepted = researchAccepted && result.ok && cycleOutputSucceeded(result.stdout);
+  let settlement: PinnedNightSettlement | undefined;
+  let nightSettlementFailure: { status: "invalid"; reason: string } | undefined;
+  if (mode === "night" && cycleAccepted) {
+    try {
+      settlement = parseNightSettlement(result.stdout, directory);
+    } catch (error) {
+      cycleAccepted = false;
+      nightSettlementFailure = {
+        status: "invalid",
+        reason: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+      };
+    }
+  }
   const intradayCloseCapture = settlement
     ? await captureFinanceIntradayCloseBars({
         directory,
@@ -1934,24 +2234,21 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   const tuningLifecycle = settlement
     ? runNightTuning({ directory, firedAt: attempt.firedAt, settlement })
     : undefined;
+  const reviewSettlement = nightSettlementFailure
+    ? undefined
+    : (settlement ??
+      (mode === "night"
+        ? unavailableNightSampleSettlement(result, directory, attempt.firedAt)
+        : undefined));
   const nightReview =
-    settlement && context.options.researchPlan
+    reviewSettlement && context.options.researchPlan
       ? await runNightResearchReview({
           context,
           attempt,
-          settlement,
+          settlement: reviewSettlement,
         })
       : undefined;
-  const nightReviewAccepted =
-    nightReview === undefined ||
-    (nightReview.ok &&
-      (() => {
-        try {
-          return (JSON.parse(nightReview.stdout) as Record<string, unknown>).status === "candidate";
-        } catch {
-          return false;
-        }
-      })());
+  const nightReviewAccepted = nightReview === undefined || nightReview.acceptance.ok;
   const accepted =
     researchAbstention !== undefined ||
     (cycleAccepted && (tuningLifecycle?.ok ?? true) && nightReviewAccepted);
@@ -1986,6 +2283,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             status: research.status,
             exitCode: research.exitCode,
             planPath: researchAccepted ? portfolioPlanPath : null,
+            ...(researchAccepted && planWrite ? { portfolioPlanWrite: planWrite } : {}),
             ...(research.controllerEvidenceStatus
               ? { controllerEvidenceStatus: research.controllerEvidenceStatus }
               : {}),
@@ -1999,6 +2297,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
       ? {
           nightReview: {
             ok: nightReviewAccepted,
+            acceptance: nightReview.acceptance,
             status: nightReview.status,
             exitCode: nightReview.exitCode,
             evidencePath: path.join(directory, `night-review-evidence-${attempt.etDate}.json`),
@@ -2010,6 +2309,8 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     ...(intradayCloseCapture ? { intradayCloseCapture } : {}),
     ...(universeSelection ? { universeSelection } : {}),
     ...(tuningLifecycle ? { tuningLifecycle } : {}),
+    ...(settlement?.sampleSource ? { nightSampleSourceRead: settlement.sampleSource } : {}),
+    ...(nightSettlementFailure ? { nightSettlementFailure } : {}),
   };
 
   if (record.ok) {
@@ -2470,14 +2771,14 @@ async function runTradingTick(context: CycleContext): Promise<void> {
   return context.reconciliationWake ? context.reconciliationWake.run(work) : work();
 }
 
-async function runTradingTickOnAccountLane(context: CycleContext): Promise<void> {
+async function reconcileIdleAccountIfDue(context: CycleContext): Promise<void> {
   const args = context.options.extraArgs;
-  await refreshActiveIntradayBinding(context);
   const venueIndex = args.indexOf("--venue");
   const idleReconciliationEnabled =
     args.includes("--sync-alpaca-history") && venueIndex >= 0 && args[venueIndex + 1] === "alpaca";
   const now = Date.now();
   if (
+    !context.signal.aborted &&
     idleReconciliationEnabled &&
     (context.lastIdleReconciliationAtMs === undefined ||
       now - context.lastIdleReconciliationAtMs >= FINANCE_IDLE_RECONCILIATION_INTERVAL_MS)
@@ -2496,6 +2797,11 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
       }
     }
   }
+}
+
+async function runTradingTickOnAccountLane(context: CycleContext): Promise<void> {
+  await refreshActiveIntradayBinding(context);
+  await reconcileIdleAccountIfDue(context);
   await runFinanceRetiredIntradayExitTick(context);
   if (context.options.intraday) {
     const executionInstruments = new Set(context.options.intraday.executionInstruments);
@@ -2505,6 +2811,11 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
         Number(executionInstruments.has(right)) - Number(executionInstruments.has(left)),
     );
     for (const instrument of instruments) {
+      if (context.signal.aborted) {
+        break;
+      }
+      // A slow multi-symbol scan must not starve the original periodic account reader.
+      await reconcileIdleAccountIfDue(context);
       if (context.signal.aborted) {
         break;
       }

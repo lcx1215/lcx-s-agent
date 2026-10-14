@@ -2867,6 +2867,25 @@ describe("same-cycle governance input", () => {
     return file;
   }
 
+  it.each(["future", "previous_cycle", "unknown_status"])(
+    "rejects %s owner metadata instead of presenting a completed batch",
+    async (fault) => {
+      const value = structuredClone(current);
+      if (fault === "future") {
+        value.byOwner.mindModel.runReceipt.checkedAt = "2026-10-07T04:00:00.000Z";
+      }
+      if (fault === "previous_cycle") {
+        value.byOwner.mindModel.runReceipt.checkedAt = "2026-10-07T02:59:00.000Z";
+      }
+      if (fault === "unknown_status") {
+        value.byOwner.mindModel.runReceipt.status = "invented_success";
+      }
+      await expect(readCentralGovernanceInput(await inputFile(value))).rejects.toThrow(
+        "central_governance_input_unavailable_or_invalid",
+      );
+    },
+  );
+
   it("uses current owner results while keeping final governance explicitly pending", async () => {
     const input = await readCentralGovernanceInput(await inputFile(current));
     const digest = projectGovernanceDigest(input);
@@ -2892,6 +2911,48 @@ describe("same-cycle governance input", () => {
     ]);
     expect(digest.sourceSha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(2048);
+  });
+
+  it.each([
+    { status: "invented_success" },
+    { checkedAt: "2026-10-07T02:59:59.000Z" },
+    { checkedAt: "2026-10-07T03:00:06.000Z" },
+    { checkedAt: "invalid" },
+    { trialDecision: "production_approved" },
+    { status: ["fresh"] },
+    { completedAt: "2026-10-07T03:00:06.000Z" },
+  ])("rejects unbound shadow observation metadata %j", async (patch) => {
+    const value = {
+      ...current,
+      multiAgentPatternShadow: {
+        status: "fresh",
+        checkedAt: current.checkedAt,
+        reason: "observed original source",
+        experimentId: "original-shadow",
+        completedAt: snapshot.observedAt,
+        trialDecision: "unverified",
+        ...patch,
+      },
+    };
+    await expect(readCentralGovernanceInput(await inputFile(value))).rejects.toThrow(
+      "central_governance_input_unavailable_or_invalid",
+    );
+  });
+
+  it("keeps the original shadow block and cost gap in the bounded decision digest", async () => {
+    const value = {
+      ...current,
+      multiAgentPatternShadow: {
+        status: "blocked",
+        checkedAt: current.checkedAt,
+        experimentId: "original-shadow",
+        trialDecision: "unverified",
+        trialDecisionReason: "explicit cost basis is missing",
+        reason: "original recovery evidence absent",
+      },
+    };
+    const input = await readCentralGovernanceInput(await inputFile(value));
+    expect(projectGovernanceDigest(input).shadow).toMatchObject(value.multiAgentPatternShadow);
   });
 
   it.each([true, undefined])(

@@ -5,6 +5,7 @@ const syncMocks = vi.hoisted(() => ({
   history: vi.fn(),
   readHistory: vi.fn(),
   latest: vi.fn(),
+  projection: vi.fn(),
 }));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncAlpacaPaperHistory: syncMocks.history,
@@ -18,10 +19,17 @@ vi.mock("./finance-position-ledger.js", () => ({
     venue: string,
     initial: T,
     reduce: (value: T, record: BrokerHistoryRecord) => T,
+    options?: { streams?: readonly string[] },
   ) => {
+    syncMocks.projection(options);
     const history = await syncMocks.readHistory(directory, accountId, venue);
     return {
-      value: history.records.reduce(reduce, initial),
+      value: history.records
+        .filter(
+          (record: BrokerHistoryRecord) =>
+            !options?.streams || options.streams.includes(record.body.query.split(":", 1)[0]),
+        )
+        .reduce(reduce, initial),
       headRef: history.headRef,
       recordCount: history.records.length,
     };
@@ -308,6 +316,23 @@ describe("canonical account observation", () => {
     });
     return { snapshot, read };
   }
+  it("projects only activities for reconciliation without changing account reads", async () => {
+    syncMocks.projection.mockClear();
+    const { snapshot, read } = await reconcile();
+    expect(syncMocks.projection).toHaveBeenCalledExactlyOnceWith({
+      streams: ["activities"],
+      signal: expect.any(AbortSignal),
+    });
+    expect(snapshot.status).toBe("reconciled");
+    expect(read.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/v2/account",
+      "/v2/account/activities/CFEE",
+      "/v2/account/activities/FEE",
+      "/v2/positions",
+      "/v2/orders",
+      "/v2/account",
+    ]);
+  });
   it("persists only validated final-account values with no additional GET", async () => {
     const { snapshot, read } = await reconcile({
       equity: "123.45",
@@ -594,4 +619,105 @@ it("validates the local calendar date without rejecting a valid offset crossing 
   expect(
     reconcileFinanceBrokerActivities({ ...input, asOf: "2026-02-30T00:30:00Z" }).issues,
   ).toContain("unsupported_activity:offset-fee");
+});
+
+describe("executed cash merger original accounting", () => {
+  const merger = {
+    activity_type: "MA",
+    activity_sub_type: "CMA",
+    group_id: "merger-group",
+    corporate_action_id: "corporate-action",
+    symbol: "WBD",
+    currency: "USD",
+    status: "executed",
+    created_at: "2026-10-12T16:34:45.467312Z",
+  };
+  const cashLeg = { ...merger, id: "merger-cash", net_amount: "992.53" };
+  const shareLeg = { ...merger, id: "merger-shares", net_amount: "0", qty: "-32", price: "30.97" };
+  const earlier = [
+    {
+      id: "funding",
+      activity_type: "CSD",
+      status: "executed",
+      currency: "USD",
+      net_amount: "1000",
+    },
+    {
+      id: "buy",
+      activity_type: "FILL",
+      type: "fill",
+      side: "buy",
+      symbol: "WBD",
+      qty: "32",
+      price: "30",
+    },
+  ];
+  const run = (rows: Record<string, unknown>[]) =>
+    reconcileFinanceBrokerActivities({
+      activities: [...earlier, ...rows],
+      positions: [],
+      cash: 1032.53,
+      completeFromInception: true,
+      asOf: "2026-10-13T12:00:00Z",
+    });
+  it("uses the matched broker pair once, regardless of order, without making a fill or fee", () => {
+    const result = run([shareLeg, cashLeg, cashLeg]);
+    expect(result.status).toBe("reconciled");
+    expect(result.quantities).toContainEqual({ instrument: "WBD", quantity: 0 });
+    expect(result.cashDifference).toBeCloseTo(0, 8);
+    expect(result.fees).toEqual([]);
+    expect(result.corporateActions).toEqual([
+      {
+        type: "CMA",
+        groupId: "merger-group",
+        corporateActionId: "corporate-action",
+        instrument: "WBD",
+        activityIds: ["merger-cash", "merger-shares"],
+        quantity: -32,
+        cash: 992.53,
+      },
+    ]);
+  });
+  it.each([
+    [cashLeg],
+    [shareLeg],
+    [cashLeg, { ...shareLeg, group_id: "other-group" }],
+    [cashLeg, { ...shareLeg, symbol: "OTHER" }],
+    [cashLeg, { ...shareLeg, status: "pending" }],
+    [cashLeg, { ...shareLeg, currency: "EUR" }],
+    [cashLeg, { ...shareLeg, created_at: "2026-10-14T00:00:00Z" }],
+    [cashLeg, { ...shareLeg, activity_sub_type: "SMA" }],
+    [cashLeg, { ...shareLeg, qty: "32" }],
+  ])("keeps incomplete or unsupported corporate evidence blocked (%#)", (...rows) => {
+    const result = run(rows);
+    expect(result.status).toBe("unresolved");
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.corporateActions).toBeUndefined();
+    expect(result.cashFromActivities).toBe(40);
+  });
+});
+
+it("stops cancelled reconciliation before accepting a late account response", async () => {
+  syncMocks.append.mockReset();
+  syncMocks.history.mockReset();
+  const controller = new AbortController();
+  const cancelled = new Error("synthetic reconciliation cancellation");
+  const read = vi.fn(async () => {
+    controller.abort(cancelled);
+    return { status: 200, body: JSON.stringify({ id: "account", currency: "USD" }) };
+  });
+  await expect(
+    syncFinanceBrokerReconciliation({
+      directory: "fixture",
+      accountId: "account",
+      after: "1999-01-01T00:00:00Z",
+      until: "2020-01-01T00:00:00Z",
+      credentials: { keyId: "fixture", secretKey: "fixture" },
+      read,
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(cancelled);
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(syncMocks.history).not.toHaveBeenCalled();
+  expect(syncMocks.append).not.toHaveBeenCalled();
 });

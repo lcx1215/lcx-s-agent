@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { recordAgentArtifact } from "../../src/agents/artifact-result-recording.js";
+import { projectCleanupReview } from "../../src/agents/central-harness/cleanup-review-handoff.js";
+import { fitGovernanceDigest } from "../../src/agents/central-harness/governance-digest-budget.js";
+import { projectFlowHandoff } from "../../src/agents/central-harness/governance-input.js";
 import {
   boundPerception,
   compactReceipts,
@@ -40,6 +43,7 @@ import {
   backfillOwnerArtifacts,
   type OwnerArtifactBackfillReceipt,
 } from "../../src/memory/artifact-owner-backfill.js";
+import { LCX_RUN_STATUSES } from "../../src/shared/lcx-run-receipt.js";
 import {
   CENTRAL_AGENT_LATEST_PATH,
   CENTRAL_AGENT_LOG_JSONL_PATH,
@@ -142,10 +146,11 @@ async function readLatest<T>(
   name: string,
   fallback: T,
   onUnavailable?: (status: SnapshotReadFailure) => void,
+  stateDirectory = STATE_DIR,
 ): Promise<T> {
   let raw: string;
   try {
-    raw = await fs.readFile(path.join(STATE_DIR, name), "utf8");
+    raw = await fs.readFile(path.join(stateDirectory, name), "utf8");
   } catch (error) {
     const missing = isRecord(error) && error.code === "ENOENT";
     onUnavailable?.(missing ? "missing" : "read_failed");
@@ -202,6 +207,31 @@ export async function readCentralGovernanceInput(
     ) {
       throw new Error("invalid handoff");
     }
+    if (value.multiAgentPatternShadow !== undefined) {
+      const shadow = value.multiAgentPatternShadow;
+      if (
+        !isRecord(shadow) ||
+        typeof shadow.status !== "string" ||
+        !["fresh", "stale", "blocked", "missing"].includes(shadow.status) ||
+        typeof shadow.checkedAt !== "string" ||
+        !Number.isFinite(Date.parse(shadow.checkedAt)) ||
+        Date.parse(shadow.checkedAt) < Date.parse(value.snapshot.observedAt) ||
+        Date.parse(shadow.checkedAt) > Date.parse(value.checkedAt) ||
+        typeof shadow.reason !== "string" ||
+        (shadow.trialDecision !== undefined &&
+          (typeof shadow.trialDecision !== "string" ||
+            !["pass", "downrank", "unverified", "discard"].includes(shadow.trialDecision))) ||
+        (shadow.status === "fresh" &&
+          (typeof shadow.experimentId !== "string" ||
+            !shadow.experimentId.trim() ||
+            typeof shadow.completedAt !== "string" ||
+            !Number.isFinite(Date.parse(shadow.completedAt)) ||
+            Date.parse(shadow.completedAt) > Date.parse(shadow.checkedAt) ||
+            shadow.trialDecision === undefined))
+      ) {
+        throw new Error("invalid shadow observation binding");
+      }
+    }
     const owners: Record<string, unknown> = {};
     const failures: string[] = [];
     for (const [id, owner] of Object.entries(value.byOwner)) {
@@ -217,7 +247,10 @@ export async function readCentralGovernanceInput(
         owner.runReceipt.snapshot.sourceCommit !== value.snapshot.sourceCommit ||
         owner.runReceipt.snapshot.observedAt !== value.snapshot.observedAt ||
         typeof owner.runReceipt.checkedAt !== "string" ||
-        !Number.isFinite(Date.parse(owner.runReceipt.checkedAt))
+        !Number.isFinite(Date.parse(owner.runReceipt.checkedAt)) ||
+        Date.parse(owner.runReceipt.checkedAt) < Date.parse(value.snapshot.observedAt) ||
+        Date.parse(owner.runReceipt.checkedAt) > Date.parse(value.checkedAt) ||
+        !(LCX_RUN_STATUSES as readonly unknown[]).includes(owner.runReceipt.status)
       ) {
         throw new Error("invalid owner binding");
       }
@@ -277,6 +310,7 @@ export async function buildPerception(
   task?: CentralHostTask,
   governanceInput?: Readonly<Record<string, unknown>>,
   resumeScan?: Readonly<Record<string, unknown>>,
+  options: Readonly<{ stateDirectory?: string }> = {},
 ): Promise<CentralPerception> {
   // A failed read is an evidence gap, not an empty/healthy system. Keep only
   // bounded status codes; source contents and filesystem error text stay out.
@@ -288,6 +322,7 @@ export async function buildPerception(
     "lcx-control-room-latest.json",
     {},
     onUnavailable("controlRoom"),
+    options.stateDirectory,
   );
   const governance =
     governanceInput ??
@@ -295,11 +330,13 @@ export async function buildPerception(
       "lcx-governance-autopilot-latest.json",
       {},
       onUnavailable("governance"),
+      options.stateDirectory,
     ));
   const learningWorkflow = await readLatest<Record<string, unknown>>(
     "lcx-learning-workflow-latest.json",
     {},
     onUnavailable("learningWorkflow"),
+    options.stateDirectory,
   );
   const observedAt = new Date().toISOString();
   const financeAutomaticLifecycle =
@@ -420,8 +457,12 @@ export function projectGovernanceDigest(
     failedGates: listSlice(summary.failedGates),
     blockedGates: listSlice(summary.blockedGates),
     shadow: {
+      status: boundedString(shadow.status, 40),
       experimentId: boundedString(shadow.experimentId, 60),
       trialDecision: boundedString(shadow.trialDecision, 60),
+      trialDecisionReason: boundedString(shadow.trialDecisionReason, 240),
+      reason: boundedString(shadow.reason, 180),
+      checkedAt: boundedString(shadow.checkedAt, 40),
       completion: boundedString(shadow.completedAt, 40),
     },
     projectionReader: {
@@ -444,6 +485,108 @@ export function projectGovernanceDigest(
   const owners = isPresentObject(state.owners as Record<string, unknown>)
     ? (state.owners as Record<string, unknown>)
     : {};
+  if (isRecord(owners.providerCouncilAcceleration)) {
+    const council = owners.providerCouncilAcceleration;
+    const cleanup = isRecord(council.providerRunCleanup) ? council.providerRunCleanup : undefined;
+    if (council.providerRunTimedOut === true || cleanup || council.providerRunFailureCode) {
+      digest.providerCouncilRun = {
+        ...(typeof council.providerRunTimedOut === "boolean"
+          ? { timedOut: council.providerRunTimedOut }
+          : {}),
+        failureCode: ["provider_council_timeout", "provider_council_failed"].includes(
+          String(council.providerRunFailureCode),
+        )
+          ? council.providerRunFailureCode
+          : "not_observed",
+        cleanupStatus:
+          cleanup?.scope === "local_council_operation_only_remote_execution_not_confirmed" &&
+          cleanup.cancellationRequested === true &&
+          cleanup.status === "local_operation_settled"
+            ? "local_operation_settled"
+            : cleanup
+              ? "cleanup_unconfirmed"
+              : "not_observed",
+        cancellationRequested: cleanup?.cancellationRequested === true,
+        remoteCancellation: "not_confirmed",
+        actionAuthority: "diagnostic_only",
+      };
+    }
+  }
+  if (owners.flowGraph !== undefined) {
+    digest.flowHandoff = projectFlowHandoff(owners.flowGraph);
+  }
+  if (isRecord(owners.changeImpact) && isRecord(owners.changeImpact.cleanupReview)) {
+    // Already bounded at the original owner seam; preserve the substantive
+    // review verdict separately from the impact owner's source artifact label.
+    digest.cleanupReview = projectCleanupReview(owners.changeImpact.cleanupReview);
+  }
+  if (isRecord(owners.selfRepairHands)) {
+    const repair = owners.selfRepairHands;
+    const latest = isRecord(repair.latestWrittenReceipt) ? repair.latestWrittenReceipt : {};
+    const observed = isRecord(repair.diagnosticFeedback)
+      ? repair.diagnosticFeedback
+      : isRecord(latest.diagnosticFeedbackReadback)
+        ? latest.diagnosticFeedbackReadback
+        : undefined;
+    const feedback =
+      observed ?? (isRecord(latest.diagnosticFeedback) ? latest.diagnosticFeedback : undefined);
+    if (feedback) {
+      const map = isRecord(feedback.map) ? feedback.map : {};
+      const governance = isRecord(feedback.governance) ? feedback.governance : {};
+      const originalDiagnostic =
+        observed?.status === "read" && typeof observed.diagnostic === "string"
+          ? observed.diagnostic
+          : undefined;
+      // The original reader puts identity on its first line. Keep the actual
+      // source uncertainty first; identity has separate whole-or-omitted fields.
+      const diagnostic =
+        originalDiagnostic?.startsWith("Owner-map diagnostic only: ") &&
+        originalDiagnostic.includes("\n")
+          ? originalDiagnostic.slice(originalDiagnostic.indexOf("\n") + 1)
+          : originalDiagnostic;
+      digest.selfRepairFeedback = {
+        status:
+          observed?.status === "read" || observed?.status === "blocked"
+            ? observed.status
+            : "not_observed",
+        sourceRunId:
+          typeof feedback.sourceRunId === "string" && feedback.sourceRunId.length <= 160
+            ? feedback.sourceRunId
+            : undefined,
+        sourceCheckedAt: boundedString(feedback.sourceCheckedAt, 40),
+        itemId:
+          typeof feedback.itemId === "string" && feedback.itemId.length <= 160
+            ? feedback.itemId
+            : undefined,
+        mapPath: typeof map.path === "string" && map.path.length <= 240 ? map.path : undefined,
+        identityFieldsOmitted: [
+          ["sourceRunId", feedback.sourceRunId, 160],
+          ["itemId", feedback.itemId, 160],
+          ["mapPath", map.path, 240],
+        ].flatMap(([field, value, limit]) =>
+          typeof value === "string" && typeof limit === "number" && value.length > limit
+            ? [field]
+            : [],
+        ),
+        mapSha256:
+          typeof map.sha256 === "string" && /^[a-f0-9]{64}$/u.test(map.sha256)
+            ? map.sha256
+            : undefined,
+        governanceSha256:
+          typeof governance.sha256 === "string" && /^[a-f0-9]{64}$/u.test(governance.sha256)
+            ? governance.sha256
+            : undefined,
+        blockers: observed ? listSlice(observed.blockers) : [],
+        diagnostic: boundedString(diagnostic, 512),
+        diagnosticOmitted: diagnostic !== undefined && diagnostic.length > 512,
+        proofLevel: "reference_readback_only",
+        semanticTruth: "not_proven",
+        actionAuthority: false,
+        candidateOnly: true,
+        reuseAllowed: false,
+      };
+    }
+  }
   const failures = new Set(listSlice(summary.structuralOwnerFailures));
   const entries = Object.entries(owners).toSorted(
     ([a], [b]) => Number(failures.has(b)) - Number(failures.has(a)),
@@ -496,7 +639,7 @@ export function projectGovernanceDigest(
     digest.ownerResults = results;
     digest.ownerResultsOmitted = candidates - results.length;
   }
-  return digest;
+  return fitGovernanceDigest(digest);
 }
 
 /**

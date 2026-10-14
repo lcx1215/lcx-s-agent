@@ -1,4 +1,5 @@
 import type { ArtifactRecordingReceipt } from "../artifact-result-recording.js";
+import type { ConfiguredFinanceCallState } from "../configured-finance-model-adapter.js";
 
 /** LCX Central Agent Harness types.
  *
@@ -78,6 +79,9 @@ export type CentralStep = {
   finishedAtMs?: number;
 };
 
+/** Trusted host dispatch identity; never model-selected tool arguments. */
+export type CentralToolInvocation = Readonly<{ runId: string }>;
+
 /** Tool registry entry: wraps an existing owner or capability as a bounded tool. */
 export type CentralToolSpec = Readonly<{
   ownerId: string;
@@ -98,6 +102,7 @@ export type CentralToolSpec = Readonly<{
   execute: (
     args: Readonly<Record<string, unknown>>,
     signal: AbortSignal,
+    invocation?: CentralToolInvocation,
   ) => Promise<Readonly<Record<string, unknown>>>;
 }>;
 
@@ -148,9 +153,26 @@ export type CentralFinancePerceptionEvidence = Readonly<{
   omittedBytes?: number;
 }>;
 
+export type CentralEvidenceUse = Readonly<{
+  artifactId: string;
+  sourceSha256: string;
+  field: string;
+  effect: "retain" | "change" | "unresolved";
+  reason: string;
+  scope?: Readonly<Partial<Record<"accountId" | "venue" | "instrument" | "ruleId", string>>>;
+}>;
+export type CentralVerifiedEvidenceUse = Omit<CentralEvidenceUse, "scope"> &
+  Readonly<{
+    scope?: CentralEvidenceUse["scope"] & Readonly<{ instruments?: readonly string[] }>;
+    verification: "reference_verified" | "unresolved" | "invalid_reference";
+    gap?: string;
+    sourceValueSha256?: string;
+  }>;
+
 /** The bounded action batch the brain returns (validated by an output contract). */
 export type CentralActionPlan = Readonly<{
   actions: readonly CentralProposedAction[];
+  evidenceUse?: readonly CentralEvidenceUse[];
   note: string;
 }>;
 
@@ -168,6 +190,7 @@ export type CentralRunStageDurationsMs = Readonly<{
 
 /** Safe provenance for one central-brain adapter call; never stores raw response IDs. */
 export type CentralBrainCallEvidence = Readonly<{
+  transport?: ConfiguredFinanceCallState;
   adapterInvoked: true;
   providerCallObserved: boolean;
   observationIdSha256?: string;
@@ -184,6 +207,9 @@ export type CentralRunReceipt = Readonly<{
   actionsApproved: number;
   actionsBlockedByGate: number;
   steps: readonly CentralStep[];
+  evidenceUse?: readonly CentralVerifiedEvidenceUse[];
+  ruleHandoff?: import("./rule-handoff.js").CentralRuleHandoff;
+  ontologyEdges?: readonly import("../../shared/lcx-ontology.js").LcxOntologyEdge[];
   boundaries: readonly string[];
   /** Model-call evidence (ModelCallReceipt condensed) — provenance for the brain call. */
   brainCall: Readonly<{

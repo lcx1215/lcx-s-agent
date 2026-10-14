@@ -462,6 +462,19 @@ describe("caller module composition within fixed gates", () => {
     expect(baseline.primaryModules).toContain("macro_rates_inflation");
     expect(plan.primaryModules.slice(0, 2)).toEqual(["technical_timing", "credit_liquidity"]);
     expect(plan.primaryModules).not.toContain("macro_rates_inflation");
+    expect(plan.composition.inputReadback).toEqual(plan.selectionTrace.compositionModuleInput);
+    expect(plan.composition.inputReadback).not.toBe(plan.selectionTrace.compositionModuleInput);
+    expect(plan.composition.inputReadback?.moduleIds).toEqual([
+      "technical_timing",
+      "credit_liquidity",
+      "finance_learning_memory",
+    ]);
+    expect(plan.composition.nodes.map((node) => node.moduleId)).toEqual(
+      expect.arrayContaining(["technical_timing", "credit_liquidity", "causal_map"]),
+    );
+    expect(plan.composition.nodes.map((node) => node.moduleId)).not.toContain(
+      "macro_rates_inflation",
+    );
     expect(plan.primaryModules).toContain("causal_map");
     expect(plan.supportingModules).toEqual(["finance_learning_memory"]);
     expect(plan.selectionTrace).toMatchObject({

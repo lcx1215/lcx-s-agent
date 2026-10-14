@@ -10,6 +10,7 @@ import {
   syncAlpacaPaperHistory,
 } from "./finance-alpaca-history-sync.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
 import {
   appendFinanceExecutionReceipt,
   appendFinancePositionMark,
@@ -38,6 +39,71 @@ function reply(value: unknown) {
   return { status: 200, body: JSON.stringify(value) };
 }
 describe("Alpaca raw history sync", () => {
+  it.each(["late_response", "read_rejection"] as const)(
+    "stops cancelled history without writing a late page or sync receipt: %s",
+    async (mode) => {
+      const controller = new AbortController();
+      const cancelled = new Error("synthetic history cancellation");
+      const requests: string[] = [];
+      const options = await setup(async (raw) => {
+        const pathname = new URL(raw).pathname;
+        requests.push(pathname);
+        if (pathname === "/v2/account") {
+          return reply({ id: "synthetic-account" });
+        }
+        controller.abort(cancelled);
+        if (mode === "read_rejection") {
+          throw cancelled;
+        }
+        return reply([]);
+      });
+      await expect(syncAlpacaPaperHistory({ ...options, signal: controller.signal })).rejects.toBe(
+        cancelled,
+      );
+      expect(requests).toEqual(["/v2/account", "/v2/orders"]);
+      expect(
+        (
+          await readFinanceBrokerHistoryRecords(
+            options.directory,
+            options.accountId,
+            "alpaca:paper",
+          )
+        ).records,
+      ).toEqual([]);
+    },
+  );
+
+  it("stops cancelled history while retaining earlier pages and confirmed cleanup", async () => {
+    const controller = new AbortController();
+    const cleanup = new FinanceHttpBodyAbortError("confirmed");
+    const requests: string[] = [];
+    const options = await setup(async (raw) => {
+      const pathname = new URL(raw).pathname;
+      requests.push(pathname);
+      if (pathname === "/v2/account") {
+        return reply({ id: "synthetic-account" });
+      }
+      if (pathname === "/v2/orders") {
+        return reply([{ id: "saved", submitted_at: "2025-01-02T00:00:00Z" }]);
+      }
+      controller.abort();
+      throw cleanup;
+    });
+    await expect(syncAlpacaPaperHistory({ ...options, signal: controller.signal })).rejects.toBe(
+      cleanup,
+    );
+    expect(requests).toEqual(["/v2/account", "/v2/orders", "/v2/account/activities"]);
+    const history = await readFinanceBrokerHistoryRecords(
+      options.directory,
+      options.accountId,
+      "alpaca:paper",
+    );
+    expect(history.records).toHaveLength(1);
+    expect(history.records[0]?.body.payload).toEqual([
+      { id: "saved", submitted_at: "2025-01-02T00:00:00Z" },
+    ]);
+    expect(history.records[0]?.body.query).toMatch(/^orders:/u);
+  });
   it("retains only requested streams while reporting all unique observations and stale revisions", async () => {
     const { directory, accountId } = await setup(async () => reply([]));
     const append = (query: string, payload: Record<string, unknown>[]) =>

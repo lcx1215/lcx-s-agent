@@ -490,9 +490,9 @@ it("does not fill an unexplained quantity gap with invented fees", async () => {
 it("rejects account changes and never retries a missing previously confirmed order", async () => {
   const f = await fixture();
   f.account.id = "another-account";
-  await expect(f.controller.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow(
-    "account mismatch",
-  );
+  await expect(f.controller.accountBookProvider(AbortSignal.timeout(5000))).rejects.toMatchObject({
+    diagnostic: { stage: "broker_reconciliation" },
+  });
   f.account.id = f.accountId;
   expect((await f.place("first")).status).toBe("placed");
   f.orders.splice(0);
@@ -1820,4 +1820,32 @@ it("reuses already restored original protection while completing the terminal cl
     venue: "alpaca:paper",
   });
   expect(claims.at(-1)?.status).toBe("confirmed");
+});
+
+it("classifies account transport failure at the original reconciliation seam", async () => {
+  const f = await fixture();
+  const read = vi.fn(async () => {
+    throw Object.assign(new Error("PRIVATE_TOKEN"), { code: "ECONNRESET" });
+  });
+  const controller = createFinanceAlpacaCycleController({ ...f.options, read });
+  const error = await controller
+    .accountBookProvider(new AbortController().signal)
+    .catch((error: unknown) => error);
+  expect(error).toMatchObject({
+    diagnostic: { stage: "broker_reconciliation", code: "ECONNRESET" },
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it("stops known reconciliation blocking before reading safety facts", async () => {
+  const f = await fixture();
+  f.positions[0].qty = "0.999";
+  await expect(f.controller.accountBookProvider(new AbortController().signal)).rejects.toThrow(
+    "broker_reconciliation_blocked",
+  );
+  expect(f.read.mock.calls.some(([url]) => new URL(url).pathname.startsWith("/v2/assets/"))).toBe(
+    false,
+  );
+  expect(f.execute).not.toHaveBeenCalled();
 });

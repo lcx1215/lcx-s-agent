@@ -132,6 +132,35 @@ gateway exposes `finance_data_gateway_snapshot` as evidence, not as a source of
 unverified current numbers. The **LCX Agent Universe Index Doctrine** remains
 inventory-only and is not deletion authority.
 
+The canonical ontology registry also describes each declared workflow's original
+owners, inputs, outputs and blocking prerequisites. A readable graph remains
+`structure_only`. Use `lcx-flow-graph --handoff-evidence <local-index.json> --json`
+to check field references in existing producer and consumer receipts. The index
+is an array of `WorkflowHandoffEvidence` from the flow-graph owner: each node
+selects its scope, output and consumed inputs with a local path, JSON pointer and
+SHA-256 of the original receipt. Consumer inputs must appear in the consumer's
+own receipt. Missing fields, changed hashes, conflicting scopes and activity
+after a declared block identify the affected node and original owner. A verified
+handoff proves receipt content passed through that seam; semantic use, real
+channel delivery and source quality still require their own evidence. No tests,
+model calls or workflow dispatch occur when reading this index.
+
+A shared receipt file can contain several stages, but the producer field itself
+cannot serve as proof that the consumer read it. Finance composition also remains
+a candidate step: the original answer audit reports the exact candidate and
+snapshot fingerprints it consumed, the gateway's source gaps and next steps,
+and its own terminal decision. Matching fingerprints prove input identity only.
+The existing `requireGrounding` option remains explicit; these receipt fields
+do not enable it or change any execution gate.
+
+Caseflow checks an adopted packet against its retained research status, passed
+gates and linked evidence at both publication and readback. A legal ontology and
+a newly computed content hash cannot promote a blocked snapshot. Quality failure
+is a distinct research gate, not proof of human signoff. Offline trace captures
+may select actual arguments observed at source/model seams and native persisted
+packet/outcome fields; they remain engineering evidence, never business state or
+proof that a paid provider, broker or external channel ran.
+
 These anchors are not extra authorities. They are the head vocabulary that
 must remain connected to the workflow, proof, and boundary surfaces below.
 

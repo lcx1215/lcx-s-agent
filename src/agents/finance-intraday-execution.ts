@@ -5,6 +5,8 @@ import {
   type FinanceAlpacaRunRequest,
 } from "./finance-alpaca-run.js";
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
+import { FinanceAccountReadError } from "./finance-alpaca-safety-transport.js";
+import { readFinanceBrokerExitFeedback } from "./finance-broker-profit-feedback.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   executionQuoteIssue,
@@ -67,7 +69,10 @@ type Controller = Required<
 // Race only preparation reads, never a venue dispatch or its durable receipt.
 // Providers that ignore cancellation may finish later; their result cannot resume execution.
 class PreparationDeadlineError extends Error {
-  constructor() {
+  constructor(
+    readonly cleanupStatus?: "confirmed" | "unconfirmed",
+    readonly account?: FinanceAccountReadError["diagnostic"],
+  ) {
     super("intraday preparation deadline exceeded");
   }
 }
@@ -76,17 +81,57 @@ function waitForPreparation<T>(
   caller: AbortSignal,
   read: (signal: AbortSignal) => Promise<T>,
   timeoutMs = 120_000,
+  confirmAccountCleanup = false,
 ): Promise<T> {
   const deadline = AbortSignal.timeout(timeoutMs);
   const signal = AbortSignal.any([caller, deadline]);
   return new Promise<T>((resolve, reject) => {
+    let pending: Promise<T> | undefined;
+    let aborting = false;
     const onAbort = () => {
+      if (aborting) {
+        return;
+      }
+      aborting = true;
       signal.removeEventListener("abort", onAbort);
-      reject(
-        caller.aborted
-          ? new Error("intraday preparation cancelled")
-          : new PreparationDeadlineError(),
-      );
+      if (!confirmAccountCleanup) {
+        reject(
+          caller.aborted
+            ? new Error("intraday preparation cancelled")
+            : new PreparationDeadlineError(),
+        );
+        return;
+      }
+      // The execution deadline is unchanged. Only local cleanup is observed here;
+      // a late account result can never resume the candidate.
+      void (async () => {
+        await Promise.resolve();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const failure = await Promise.race([
+            pending?.then(
+              () => undefined,
+              (error: unknown) => error,
+            ) ?? Promise.resolve(undefined),
+            new Promise<undefined>((resolve) => {
+              timer = setTimeout(() => resolve(undefined), 2000);
+            }),
+          ]);
+          const account =
+            failure instanceof FinanceAccountReadError ? failure.diagnostic : undefined;
+          const cleanupStatus =
+            account?.cleanupStatus ??
+            (failure instanceof FinanceExecutionSafetyFactsError
+              ? failure.provider?.transport?.cleanupStatus
+              : undefined) ??
+            "unconfirmed";
+          reject(new PreparationDeadlineError(cleanupStatus, account));
+        } finally {
+          if (timer) {
+            clearTimeout(timer);
+          }
+        }
+      })();
     };
     if (signal.aborted) {
       onAbort();
@@ -94,7 +139,8 @@ function waitForPreparation<T>(
     }
     signal.addEventListener("abort", onAbort, { once: true });
     try {
-      void read(signal).then(
+      pending = read(signal);
+      void pending.then(
         (value) => {
           signal.removeEventListener("abort", onAbort);
           if (signal.aborted) {
@@ -105,7 +151,11 @@ function waitForPreparation<T>(
         },
         (error: unknown) => {
           signal.removeEventListener("abort", onAbort);
-          reject(error);
+          if (signal.aborted) {
+            onAbort();
+          } else {
+            reject(error);
+          }
         },
       );
     } catch (error) {
@@ -507,6 +557,14 @@ export async function executeFinanceIntradayDecision(params: {
         : signal.aborted || error instanceof PreparationDeadlineError
           ? "deadline_exceeded"
           : "unexpected",
+      ...(stage === "account_book" && error instanceof FinanceAccountReadError
+        ? { account: error.diagnostic }
+        : stage === "account_book" && error instanceof PreparationDeadlineError && error.account
+          ? { account: error.account }
+          : {}),
+      ...(error instanceof PreparationDeadlineError && error.cleanupStatus
+        ? { cleanupStatus: error.cleanupStatus }
+        : {}),
       elapsedMs: Math.max(0, Math.round(observedAt - startedAt)),
       stageElapsedMs: Math.max(0, Math.round(observedAt - stageStartedAt)),
       ...(!signal.aborted &&
@@ -587,11 +645,15 @@ export async function executeFinanceIntradayDecision(params: {
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
     setStage("account_book");
-    const account = await waitForPreparation(signal, (signal) =>
-      params.controller.accountBookProvider(signal, {
-        instrument: input.instrument,
-        side: input.action,
-      }),
+    const account = await waitForPreparation(
+      signal,
+      (signal) =>
+        params.controller.accountBookProvider(signal, {
+          instrument: input.instrument,
+          side: input.action,
+        }),
+      120_000,
+      true,
     );
     const reconciliation = account.reconciliation;
     if (
@@ -640,6 +702,22 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
+    // Only strategy-bound, owned-position reductions bypass discretionary model review.
+    const protectiveExit =
+      input.action === "sell" &&
+      ["opening_range_stop", "reward_target", "pre_close"].includes(input.reason);
+    const brokerExitFeedback =
+      !protectiveExit && input.strategyBinding
+        ? await waitForPreparation(signal, () =>
+            readFinanceBrokerExitFeedback(params.directory, {
+              accountId: params.controller.accountId,
+              instrument: input.instrument,
+              ruleId: input.strategyRule,
+              activationRef: input.strategyBinding!.activationRef,
+              asOf: new Date(now()).toISOString(),
+            }),
+          )
+        : undefined;
     setStage("initial_quote");
     let quote = {
       ...(await waitForPreparation(signal, (signal) =>
@@ -804,10 +882,6 @@ export async function executeFinanceIntradayDecision(params: {
         }
       }
     }
-    // Only strategy-bound, owned-position reductions bypass discretionary model review.
-    const protectiveExit =
-      input.action === "sell" &&
-      ["opening_range_stop", "reward_target", "pre_close"].includes(input.reason);
     if (!protectiveExit) {
       const reconciliation = account.reconciliation;
       setStage("decision_context");
@@ -859,6 +933,7 @@ export async function executeFinanceIntradayDecision(params: {
         venue: "alpaca:paper",
         accountId: params.controller.accountId,
         ...(strategyFeedback ? { strategyFeedback } : {}),
+        ...(brokerExitFeedback ? { brokerExitFeedback } : {}),
         asOf: new Date(reviewAtMs).toISOString(),
         signalAnchor: input.signalId,
         ruleIds: [input.strategyRule],
@@ -988,6 +1063,7 @@ export async function executeFinanceIntradayDecision(params: {
           provider: reviewResult.provider,
           modelId: reviewResult.modelId,
           latencyMs: reviewResult.latencyMs,
+          ...(reviewResult.transport ? { transport: reviewResult.transport } : {}),
           providerCallObserved: reviewResult.providerCallObserved,
           adapterAttested: reviewResult.adapterAttested,
           ...(reviewResult.quoteApprovalPolicy
@@ -1017,13 +1093,15 @@ export async function executeFinanceIntradayDecision(params: {
       );
       const reviewResult = tradeDecisionReview!;
       const reviewedDecision = reviewResult.decision;
-      if (strategyFeedback && reviewResult.status === "failed") {
+      if ((strategyFeedback || brokerExitFeedback) && reviewResult.status === "failed") {
         const outcome = await appendFinanceIntradayOutcome(params.directory, {
           signalId: input.signalId,
           status: "refused",
           reasons: [
-            "strategy_applicability_recheck_unavailable",
-            `priorSignalId=${strategyFeedback.signalId}`,
+            brokerExitFeedback
+              ? "broker_exit_feedback_review_unavailable"
+              : "strategy_applicability_recheck_unavailable",
+            ...(strategyFeedback ? [`priorSignalId=${strategyFeedback.signalId}`] : []),
           ],
           tradeDecisionReview,
           ...reviewHistory(),

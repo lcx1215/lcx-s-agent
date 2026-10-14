@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile as readPortfolioFile } from "node:fs/promises";
 import type { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import {
@@ -26,11 +27,13 @@ import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-h
  */
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
+import { financeReadFailureDiagnostic } from "../../src/agents/finance-alpaca-safety-transport.js";
 import {
   refreshFinanceEodBarsAndMarks,
   runFinanceDailyCycle,
 } from "../../src/agents/finance-daily-cycle.js";
 import { bindFinanceDailyStrategy } from "../../src/agents/finance-daily-strategy.js";
+import { FinanceHttpBodyAbortError } from "../../src/agents/finance-http-body.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
 import {
@@ -116,13 +119,20 @@ function scoredOutcomeKey(row: Record<string, unknown>): string {
 async function appendScoredOutcomes(
   path: string,
   rows: readonly Record<string, unknown>[],
-): Promise<{ path: string; appended: number; skipped: number }> {
+): Promise<{ path: string; appended: number; skipped: number; sha256?: string; bytes?: number }> {
   let existing: string[] = [];
+  let existingBytes: Buffer | undefined;
   try {
     const { readFile } = await import("node:fs/promises");
-    existing = (await readFile(path, "utf8")).split("\n").filter((line) => line.trim().length > 0);
-  } catch {
-    existing = [];
+    existingBytes = await readFile(path);
+    existing = existingBytes
+      .toString("utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+  } catch (error) {
+    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
+      throw error;
+    }
   }
   const known = new Set<string>();
   for (const line of existing) {
@@ -135,16 +145,33 @@ async function appendScoredOutcomes(
   }
   const fresh = rows.filter((row) => !known.has(scoredOutcomeKey(row)));
   if (fresh.length === 0) {
-    return { path, appended: 0, skipped: rows.length };
+    return {
+      path,
+      appended: 0,
+      skipped: rows.length,
+      ...(existingBytes === undefined
+        ? {}
+        : {
+            sha256: createHash("sha256").update(existingBytes).digest("hex"),
+            bytes: existingBytes.length,
+          }),
+    };
   }
   const { writeFile, rename, mkdir } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
   await mkdir(dirname(path), { recursive: true });
   const lines = [...existing, ...fresh.map((row) => JSON.stringify(row))];
   const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, `${lines.join("\n")}\n`, "utf8");
+  const writtenBytes = Buffer.from(`${lines.join("\n")}\n`, "utf8");
+  await writeFile(tmp, writtenBytes);
   await rename(tmp, path);
-  return { path, appended: fresh.length, skipped: rows.length - fresh.length };
+  return {
+    path,
+    appended: fresh.length,
+    skipped: rows.length - fresh.length,
+    sha256: createHash("sha256").update(writtenBytes).digest("hex"),
+    bytes: writtenBytes.length,
+  };
 }
 
 /**
@@ -182,6 +209,10 @@ type Options = Readonly<{
   equityFromVenue: boolean;
   syncAlpacaHistory: boolean;
   portfolioPlanPath?: string;
+  portfolioPlanSha256?: string;
+  portfolioPlanParentRun?: string;
+  portfolioPlanAsOf?: string;
+  portfolioPlanAccount?: string;
   executionPolicyPath?: string;
   /**
    * Declared risk caps. They are flags rather than constants because a boundary nobody chose
@@ -224,6 +255,10 @@ function parseArgs(argv: readonly string[]): Options {
     syncAlpacaHistory: false,
     directory: undefined as string | undefined,
     portfolioPlanPath: undefined as string | undefined,
+    portfolioPlanSha256: undefined as string | undefined,
+    portfolioPlanParentRun: undefined as string | undefined,
+    portfolioPlanAsOf: undefined as string | undefined,
+    portfolioPlanAccount: undefined as string | undefined,
     executionPolicyPath: undefined as string | undefined,
     // Defaults, not constants: they reproduce the previous behaviour when nothing is passed.
     maxOrderNotional: 10_000,
@@ -248,6 +283,30 @@ function parseArgs(argv: readonly string[]): Options {
         throw new Error("--portfolio-plan requires a path");
       }
       options.portfolioPlanPath = next;
+      index += 1;
+    } else if (
+      [
+        "--portfolio-plan-sha256",
+        "--portfolio-plan-parent-run",
+        "--portfolio-plan-as-of",
+        "--portfolio-plan-account",
+      ].includes(arg)
+    ) {
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${arg} requires a value`);
+      }
+      if (arg === "--portfolio-plan-sha256") {
+        options.portfolioPlanSha256 = next;
+      }
+      if (arg === "--portfolio-plan-parent-run") {
+        options.portfolioPlanParentRun = next;
+      }
+      if (arg === "--portfolio-plan-as-of") {
+        options.portfolioPlanAsOf = next;
+      }
+      if (arg === "--portfolio-plan-account") {
+        options.portfolioPlanAccount = next;
+      }
       index += 1;
     } else if (arg === "--sync-alpaca-history") {
       options.syncAlpacaHistory = true;
@@ -362,6 +421,90 @@ export async function runFinanceDailyCycleOperator(
     };
   }
 
+  let loadedPortfolioPlan: ReturnType<typeof financePortfolioPlanSchema.parse> | undefined;
+  let portfolioPlanReadback: Record<string, unknown> | undefined;
+  let portfolioPlanInput: Record<string, unknown> | undefined;
+  const pinRequested = [
+    options.portfolioPlanSha256,
+    options.portfolioPlanParentRun,
+    options.portfolioPlanAsOf,
+    options.portfolioPlanAccount,
+  ].some((value) => value !== undefined);
+  if ((options.mode === "day" && options.portfolioPlanPath) || pinRequested) {
+    try {
+      if (
+        pinRequested &&
+        (options.mode !== "day" ||
+          !options.portfolioPlanPath ||
+          !options.portfolioPlanSha256 ||
+          !/^[a-f0-9]{64}$/u.test(options.portfolioPlanSha256) ||
+          !options.portfolioPlanParentRun ||
+          !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(options.portfolioPlanParentRun) ||
+          !options.portfolioPlanAsOf ||
+          !options.portfolioPlanAccount)
+      ) {
+        throw new Error("portfolio plan caller binding is incomplete or invalid");
+      }
+      const bytes = await readPortfolioFile(options.portfolioPlanPath!);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      if (pinRequested) {
+        portfolioPlanInput = {
+          read: { path: options.portfolioPlanPath, sha256, bytes: bytes.length },
+          expected: {
+            sha256: options.portfolioPlanSha256,
+            parentRunId: options.portfolioPlanParentRun,
+            asOf: options.portfolioPlanAsOf,
+            accountId: options.portfolioPlanAccount,
+            venue: options.venue,
+          },
+          boundary: "actual_read_not_plan_acceptance_or_execution_authority",
+        };
+      }
+      if (pinRequested && sha256 !== options.portfolioPlanSha256) {
+        throw new Error("portfolio plan bytes do not match producer SHA256");
+      }
+      loadedPortfolioPlan = financePortfolioPlanSchema.parse(JSON.parse(bytes.toString("utf8")));
+      if (portfolioPlanInput) {
+        portfolioPlanInput.parsedScope = {
+          asOf: loadedPortfolioPlan.asOf,
+          accountId: loadedPortfolioPlan.accountId,
+          venue: loadedPortfolioPlan.venue,
+        };
+      }
+      if (
+        pinRequested &&
+        (loadedPortfolioPlan.asOf !== options.portfolioPlanAsOf ||
+          loadedPortfolioPlan.accountId !== options.portfolioPlanAccount ||
+          loadedPortfolioPlan.venue !== options.venue)
+      ) {
+        throw new Error("portfolio plan producer scope does not match caller");
+      }
+      validateFinancePortfolioPlan(loadedPortfolioPlan, options.asOf, options.venue);
+      if (pinRequested) {
+        portfolioPlanReadback = {
+          path: options.portfolioPlanPath,
+          sha256,
+          parentRunId: options.portfolioPlanParentRun,
+          asOf: loadedPortfolioPlan.asOf,
+          accountId: loadedPortfolioPlan.accountId,
+          venue: loadedPortfolioPlan.venue,
+          status: "verified",
+        };
+      }
+    } catch (error) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        failureKind: "portfolio_plan_binding_gate",
+        error: error instanceof Error ? error.message : String(error),
+        ...(options.portfolioPlanParentRun ? { parentRunId: options.portfolioPlanParentRun } : {}),
+        ...(portfolioPlanInput ? { portfolioPlanInput } : {}),
+      };
+    }
+  }
+
   let universeSnapshot: FinanceResearchEquityUniverseSnapshot | undefined;
   if (options.mode === "day") {
     try {
@@ -411,8 +554,11 @@ export async function runFinanceDailyCycleOperator(
   let historySync: Awaited<ReturnType<typeof syncConfiguredAlpacaPaperHistory>> | undefined;
   let historyReconciliation: Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>> | undefined;
   if (options.syncAlpacaHistory) {
+    const historyStartedAt = performance.now();
+    let historyStage: "history_sync" | "history_reconciliation" = "history_sync";
     try {
       historySync = await (deps.syncHistory ?? syncConfiguredAlpacaPaperHistory)({ directory });
+      historyStage = "history_reconciliation";
       historyReconciliation = await reconcileFinanceBrokerHistory(directory, historySync.accountId);
       if (
         historySync.status !== "raw_history_synced" ||
@@ -432,13 +578,27 @@ export async function runFinanceDailyCycleOperator(
           historyReconciliation,
         };
       }
-    } catch {
+    } catch (error) {
+      const diagnostic = financeReadFailureDiagnostic(error);
+      const cancelled =
+        error instanceof FinanceHttpBodyAbortError ||
+        (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"));
       return {
         directory,
         mode: options.mode,
         asOf: options.asOf,
         ok: false,
         error: "Alpaca history sync failed; cycle not started",
+        historyFailure: {
+          stage: historyStage,
+          category: cancelled
+            ? "cancelled"
+            : diagnostic.code === "transport_cause_unavailable"
+              ? "unclassified"
+              : "transport",
+          ...diagnostic,
+          elapsedMs: Math.max(0, Math.round(performance.now() - historyStartedAt)),
+        },
       };
     }
   }
@@ -505,6 +665,7 @@ export async function runFinanceDailyCycleOperator(
   }
 
   const base = {
+    ...(portfolioPlanReadback ? { portfolioPlanReadback } : {}),
     directory,
     mode: options.mode,
     asOf: options.asOf,
@@ -524,12 +685,7 @@ export async function runFinanceDailyCycleOperator(
     let deferredStrategyIds: string[] = [];
     let dayEodRefresh: Awaited<ReturnType<typeof refreshFinanceEodBarsAndMarks>> | undefined;
     const dayEodRefreshWarnings: string[] = [];
-    let portfolioPlan =
-      options.mode === "day" && options.portfolioPlanPath
-        ? financePortfolioPlanSchema.parse(
-            JSON.parse(await readPortfolioFile(options.portfolioPlanPath, "utf8")),
-          )
-        : undefined;
+    let portfolioPlan = loadedPortfolioPlan;
     if (portfolioPlan) {
       validateFinancePortfolioPlan(portfolioPlan, options.asOf, options.venue);
     }
@@ -879,14 +1035,32 @@ export async function runFinanceDailyCycleOperator(
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     let samples: unknown[] = [];
+    const samplePath = join(directory, SAMPLES_FILE);
+    let sampleStatus: "available" | "missing" | "unreadable" | "invalid_json" = "available";
+    let sampleRead: { sha256: string; bytes: number; parsedCount?: number } | undefined;
     try {
-      samples = (await readFile(join(directory, SAMPLES_FILE), "utf8"))
+      const sampleBytes = await readFile(samplePath);
+      sampleRead = {
+        sha256: createHash("sha256").update(sampleBytes).digest("hex"),
+        bytes: sampleBytes.length,
+      };
+      samples = sampleBytes
+        .toString("utf8")
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line) as unknown);
-    } catch {
-      samples = [];
+      sampleRead.parsedCount = samples.length;
+    } catch (error) {
+      sampleStatus =
+        error instanceof SyntaxError
+          ? "invalid_json"
+          : error !== null &&
+              typeof error === "object" &&
+              "code" in error &&
+              error.code === "ENOENT"
+            ? "missing"
+            : "unreadable";
     }
     // Night runs after the cash close. The day slot (15:30 ET) collects EOD bars inside the
     // session, so its book reaches only the previous completed day; a fill stamped later that same
@@ -935,10 +1109,18 @@ export async function runFinanceDailyCycleOperator(
         }
       }
     }
-    const settled = await backfillOutcomes({
-      samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
-      asOf: options.asOf,
-    });
+    const settled =
+      sampleStatus === "available"
+        ? await backfillOutcomes({
+            samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
+            asOf: options.asOf,
+          })
+        : {
+            scored: [],
+            pending: [],
+            declined: [],
+            issues: [`night_sample_source_${sampleStatus}`],
+          };
     // Filed, not just computed. A settlement that is worked out every night and then dropped
     // leaves calibration with nothing to read: the scored file stays empty, and the tool that
     // tells the model how its last judgement went reports "no history" forever. The samples the
@@ -954,12 +1136,14 @@ export async function runFinanceDailyCycleOperator(
     const payload = {
       ...base,
       ok: issues.length === 0,
+      ...(sampleStatus === "available" ? {} : { failureKind: "night_sample_source_gate" }),
+      sampleSource: { path: samplePath, status: sampleStatus, ...sampleRead },
       ruleIds,
       // Stated because an empty `ruleIds` is otherwise indistinguishable from a rule book that
       // could not be read: settlement went ahead either way, and this says which it was.
       rulesActive: ruleIds.length > 0,
       modelCalls: 0,
-      sampleCount: samples.length,
+      sampleCount: sampleStatus === "available" ? samples.length : null,
       scored: settled.scored,
       scoredFiled,
       pending: settled.pending,

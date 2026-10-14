@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { DirectionalOutcomeSample } from "./finance-calibrated-floor.js";
@@ -18,27 +19,69 @@ function isCalibrationScore(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
+export type FinanceScoredSourceRead = Readonly<{
+  status: "read" | "absent";
+  path: string;
+  sha256?: string;
+  bytes?: number;
+  includedSampleCount: number;
+  ignoredRowCount: number;
+  usedFields: readonly ["conviction", "outcome"];
+  boundary: "raw_ledger_bytes_and_parsed_fields_not_source_truth";
+}>;
+
+/** The bytes hashed here are the same single read used by the legacy score parser. */
+export function readFinanceScoredFloorSamplesWithSource(directory: string): Readonly<{
+  samples: readonly DirectionalOutcomeSample[];
+  sourceRead: FinanceScoredSourceRead;
+}> {
+  const filename = financeResearchScoredPath(directory);
+  const identity = {
+    path: filename,
+    usedFields: Object.freeze(["conviction", "outcome"] as const),
+    boundary: "raw_ledger_bytes_and_parsed_fields_not_source_truth" as const,
+  };
+  if (!existsSync(filename)) {
+    return Object.freeze({
+      samples: [],
+      sourceRead: Object.freeze({
+        ...identity,
+        status: "absent",
+        includedSampleCount: 0,
+        ignoredRowCount: 0,
+      }),
+    });
+  }
+  const bytes = readFileSync(filename);
+  const rows = bytes.toString("utf8").split("\n").filter(Boolean);
+  const samples: DirectionalOutcomeSample[] = rows.flatMap((line) => {
+    try {
+      const row = JSON.parse(line) as { conviction?: unknown; outcome?: unknown };
+      const conviction = Number(row.conviction);
+      return Number.isFinite(conviction) && (row.outcome === 0 || row.outcome === 1)
+        ? [{ conviction, outcome: row.outcome }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  return Object.freeze({
+    samples,
+    sourceRead: Object.freeze({
+      ...identity,
+      status: "read",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+      includedSampleCount: samples.length,
+      ignoredRowCount: rows.length - samples.length,
+    }),
+  });
+}
+
 export function readFinanceScoredFloorSamples(
   directory: string,
 ): readonly DirectionalOutcomeSample[] {
-  const filename = financeResearchScoredPath(directory);
-  if (!existsSync(filename)) {
-    return [];
-  }
-  return readFileSync(filename, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        const row = JSON.parse(line) as { conviction?: unknown; outcome?: unknown };
-        const conviction = Number(row.conviction);
-        return Number.isFinite(conviction) && (row.outcome === 0 || row.outcome === 1)
-          ? [{ conviction, outcome: row.outcome }]
-          : [];
-      } catch {
-        return [];
-      }
-    });
+  return readFinanceScoredFloorSamplesWithSource(directory).samples;
 }
 
 export function readFinanceTuningProposals(directory: string): readonly TuningProposal[] {
@@ -79,6 +122,7 @@ export function readFinanceTuningProposals(directory: string): readonly TuningPr
 }
 
 export type FinanceTuningLifecycleResult = Readonly<{
+  sourceRead: FinanceScoredSourceRead;
   proposal: TuningProposalResult;
   newlyRecorded: number;
   /** Kept empty for response compatibility; directional scores no longer promote paper gates. */
@@ -94,8 +138,29 @@ export function runFinanceTuningLifecycle(params: {
   directory: string;
   generatedAt?: string;
   minSamples?: number;
+  expectedSource?: Readonly<{ path: string; sha256: string; bytes: number }>;
 }): FinanceTuningLifecycleResult {
-  const samples = readFinanceScoredFloorSamples(params.directory);
+  const { samples, sourceRead } = readFinanceScoredFloorSamplesWithSource(params.directory);
+  if (params.expectedSource !== undefined) {
+    const expected = params.expectedSource;
+    if (
+      !expected ||
+      typeof expected.path !== "string" ||
+      !expected.path.trim() ||
+      typeof expected.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(expected.sha256) ||
+      !Number.isSafeInteger(expected.bytes) ||
+      expected.bytes < 0 ||
+      sourceRead.status !== "read" ||
+      path.resolve(expected.path) !== path.resolve(sourceRead.path) ||
+      expected.sha256 !== sourceRead.sha256 ||
+      expected.bytes !== sourceRead.bytes
+    ) {
+      throw new Error(
+        "input_source_mismatch: finance scored source path/hash/bytes or availability mismatch",
+      );
+    }
+  }
   // This prior value is retained only as the forecast-calibration comparison point.
   const currentFloor =
     latestFinanceDirectionalCalibrationPromotion(params.directory)?.promoted ?? null;
@@ -122,6 +187,7 @@ export function runFinanceTuningLifecycle(params: {
     proposals: Object.freeze(fresh),
   });
   return Object.freeze({
+    sourceRead,
     proposal: freshProposal,
     newlyRecorded: fresh.length,
     promotions: Object.freeze([]),

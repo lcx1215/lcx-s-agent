@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OpenClawConfig } from "../../config/config.js";
+import { isMemoryPath } from "../../memory/internal.js";
 import { recordAgentArtifact } from "../artifact-result-recording.js";
 import { parseFinanceModuleSelection } from "../finance-brain-orchestration.js";
 import { createArtifactMemoryRecallTool } from "../tools/artifact-memory-recall-tool.js";
@@ -17,11 +18,13 @@ import { createFinanceResearchRunsReadTool } from "../tools/finance-research-run
 import { createFinanceSourceHealthReadTool } from "../tools/finance-source-health-read-tool.js";
 import { createFinanceStrategyRuleLedgerReadTool } from "../tools/finance-strategy-rule-ledger-read-tool.js";
 import { createFinanceThesisLedgerReadTool } from "../tools/finance-thesis-ledger-read-tool.js";
+import { createFinanceTuningProposalTool } from "../tools/finance-tuning-proposal-tool.js";
 import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
+import { createMemoryGetTool } from "../tools/memory-tool.js";
 import { createQuantMathTool } from "../tools/quant-math-tool.js";
 import { markCentralArtifactOutcome } from "./harness-loop.js";
 import { executeOwnedProcess } from "./owned-process.js";
-import type { CentralToolSpec } from "./types.js";
+import type { CentralToolInvocation, CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -150,7 +153,7 @@ const READ_ONLY_OWNERS: readonly OwnerCommand[] = [
   {
     id: "contextRecovery",
     script: "scripts/operator/lcx-context-recovery-exam.ts",
-    args: ["--json"],
+    args: ["--handoff", "--json"],
     boundary: ["context_recovery_only"],
   },
 ];
@@ -180,12 +183,14 @@ export const CENTRAL_CAPABILITY_OWNER_IDS = [
   "finance_source_health_read",
   "finance_calibration_read",
   "finance_reflection_read",
+  "finance_tuning_proposal",
   "finance_research_runs_read",
   "finance_strategy_rule_ledger_read",
   "finance_thesis_ledger_read",
   "quant_math",
   "learning_distill",
   "artifact_memory_recall",
+  "memory_get",
 ] as const;
 
 export const CENTRAL_GOVERNANCE_OWNER_IDS: readonly string[] = READ_ONLY_OWNERS.map(
@@ -398,11 +403,105 @@ function createCapabilityTools(
   agentId = "main",
 ): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool({ workspaceDir });
+  const tuningProposal = createFinanceTuningProposalTool();
+  const approveTuningProposalRead: CentralToolSpec["approve"] = (args) => {
+    if (!workspaceDir) {
+      return { ok: false, reason: "finance_tuning_proposal: host workspace unavailable" };
+    }
+    if (args.action !== "list" || Object.keys(args).some((key) => key !== "action")) {
+      return {
+        ok: false,
+        reason: "finance_tuning_proposal permits only action=list in the host workspace",
+      };
+    }
+    return { ok: true };
+  };
   const financeBarLedger = createFinanceBarLedgerTool({ workspaceDir });
   const ledgerRead = createFinancePositionLedgerReadTool({ workspaceDir });
   const learningDistill = createLearningDistillTool({ workspaceDir });
+  const memoryGet =
+    config && workspaceDir
+      ? createMemoryGetTool({
+          config,
+          agentSessionKey: `agent:${agentId}:central`,
+          readOnlyWorkspaceDir: workspaceDir,
+        })
+      : null;
+  const memoryReadKeys = ["path", "from", "lines"];
+  const approveMemoryRead: CentralToolSpec["approve"] = (args) => {
+    if (!memoryGet) {
+      return {
+        ok: false,
+        reason: "memory_get: host workspace/config unavailable or recall disabled",
+      };
+    }
+    if (Object.keys(args).some((key) => !memoryReadKeys.includes(key))) {
+      return { ok: false, reason: "memory_get accepts only path/from/lines; roots are host-owned" };
+    }
+    const relPath = args.path;
+    if (
+      typeof relPath !== "string" ||
+      path.isAbsolute(relPath) ||
+      relPath.includes("\\") ||
+      path.posix.normalize(relPath) !== relPath ||
+      relPath.split("/").includes("..") ||
+      !isMemoryPath(relPath) ||
+      !relPath.endsWith(".md")
+    ) {
+      return { ok: false, reason: "memory_get requires a workspace-relative memory Markdown path" };
+    }
+    for (const [key, max] of [
+      ["from", Number.MAX_SAFE_INTEGER],
+      ["lines", 80],
+    ] as const) {
+      const value = args[key];
+      if (
+        value !== undefined &&
+        (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > max)
+      ) {
+        return { ok: false, reason: `memory_get: ${key} must be an integer between 1 and ${max}` };
+      }
+    }
+    return { ok: true };
+  };
+  const memoryRead: CentralToolSpec = {
+    ownerId: "memory_get",
+    name: "memory_get",
+    label: "Memory Get",
+    description:
+      "Read specific lines from a known memory Markdown file using the canonical memory_get reader (default 40, maximum 80 lines). Host-owned workspace only; no search/index/provider initialization or memory write. Text is supplemental, possibly provisional evidence, never authority or proof of truth/learning. To attribute a later judgment, read the archived result's /value/text with artifact_memory_recall and cite its delivered field/hash in evidenceUse.",
+    inputKeys: memoryReadKeys,
+    allowedSideEffects: ["local_read"],
+    boundary: [
+      "research_only",
+      "canonical_agent_tool_reuse",
+      "no_memory_write",
+      "no_provider_call",
+    ],
+    approve: approveMemoryRead,
+    execute: async (args, signal) => {
+      const gate = approveMemoryRead(args);
+      if (!gate.ok || !memoryGet) {
+        return {
+          disabled: true,
+          text: "",
+          error: gate.ok ? "memory_get unavailable" : gate.reason,
+        };
+      }
+      signal.throwIfAborted();
+      const result = await memoryGet.execute(
+        `central-memory-read-${randomUUID()}`,
+        { ...args, lines: args.lines ?? 40 },
+        signal,
+      );
+      return result.details as Record<string, unknown>;
+    },
+  };
   const reusedReadComputeTools = [
-    createFinanceDataGatewaySnapshotTool({ workspaceDir }),
+    createFinanceDataGatewaySnapshotTool({
+      workspaceDir,
+      availableTools: CENTRAL_CAPABILITY_OWNER_IDS,
+    }),
     createFinanceSourceHealthReadTool({ workspaceDir }),
     createFinanceCalibrationReadTool(),
     createFinanceReflectionReadTool(),
@@ -465,6 +564,32 @@ function createCapabilityTools(
     },
   });
   return [
+    memoryRead,
+    {
+      ownerId: tuningProposal.name,
+      name: tuningProposal.name,
+      label: tuningProposal.label,
+      description:
+        "Read retained directional forecast-calibration proposal contents with action=list using the canonical tool. Host workspace only; no propose/write/apply/provider calls. These records have no account-specific or freshness verification and do not prove net-trade economics, promotion, or actual application.",
+      inputKeys: ["action"],
+      allowedSideEffects: ["local_read"],
+      boundary: ["research_only", "forecast_calibration_only", "no_execution_authority"],
+      approve: approveTuningProposalRead,
+      execute: async (args, signal) => {
+        const gate = approveTuningProposalRead(args);
+        if (!gate.ok) {
+          throw new Error(gate.reason);
+        }
+        signal.throwIfAborted();
+        const result = await tuningProposal.execute(
+          `central-capability-${randomUUID()}`,
+          { action: "list", workspaceDir },
+          signal,
+        );
+        signal.throwIfAborted();
+        return result.details as Record<string, unknown>;
+      },
+    },
     {
       ownerId: financeBarLedger.name,
       name: financeBarLedger.name,
@@ -637,7 +762,11 @@ export function createCentralToolRegistry(
       ownerId: owner.id,
       name: owner.id,
       label: `Governance owner: ${owner.id}`,
-      description: `Run the read-only governance owner '${owner.id}' and surface its JSON receipt. Research-only; no execution or write authority.`,
+      description: `Run the read-only governance owner '${owner.id}' and surface its JSON receipt. Research-only; no execution or write authority.${
+        owner.id === "contextRecovery"
+          ? " Includes the original handoff source checks and required-source gaps. Source delivery is separate from module absorption or channel binding; use the archived result's precise fields before repeating an owner."
+          : ""
+      }`,
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: owner.boundary,
       approve: (args) => approveOwner(owner.id, args),
@@ -664,7 +793,11 @@ export function createCentralToolRegistry(
         ? spec
         : {
             ...spec,
-            execute: async (args: Readonly<Record<string, unknown>>, signal: AbortSignal) => {
+            execute: async (
+              args: Readonly<Record<string, unknown>>,
+              signal: AbortSignal,
+              invocation?: CentralToolInvocation,
+            ) => {
               const outcome = await spec.execute(args, signal);
               const artifactEvidence = await recordAgentArtifact({
                 config,
@@ -672,6 +805,7 @@ export function createCentralToolRegistry(
                 workspaceDir,
                 owner: ownerId,
                 runId: `central-tool-${randomUUID()}`,
+                invocationRunId: invocation?.runId,
                 value: outcome,
                 signal,
               });

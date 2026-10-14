@@ -307,3 +307,45 @@ it("describes schema fields without echoing model-authored values or unknown key
   expect(detail).not.toContain("secret_untrusted_key");
   expect(detail).not.toContain("private text");
 });
+
+describe("optional original learning-task producer handoff", () => {
+  const learning = {
+    sourceArtifacts: ["evidence-1"],
+    sourceArticlePath: "memory/research-sources/original.md",
+    priorTaskReceiptSource: {
+      path: "memory/finance-learning-apply-usage-receipts/original.json",
+      sha256: "a".repeat(64),
+      taskId: "original-task",
+    },
+  };
+  it("advertises and preserves optional source-bound feedback in the existing runner contract", () => {
+    const p = plan();
+    const contract = financeProducerInputContract(p, ["evidence-1"]);
+    expect(contract.jsonSchema.properties).toHaveProperty("finance_learning_memory");
+    expect(contract.jsonSchema.required).not.toContain("finance_learning_memory");
+    const parsed = parseFinanceDomainProducerInputs({
+      plan: p,
+      evidenceIds: new Set(["evidence-1"]),
+      value: { ...validInputsForPlan(p), finance_learning_memory: learning },
+    });
+    expect(parsed.finance_learning_memory).toEqual(learning);
+  });
+  it.each([
+    { ...learning, sourceArtifacts: ["not-supplied"] },
+    { ...learning, executionRequested: true },
+    {
+      ...learning,
+      priorTaskReceiptSource: { ...learning.priorTaskReceiptSource, sha256: "invalid" },
+    },
+    { sourceArtifacts: learning.sourceArtifacts, sourceArticlePath: learning.sourceArticlePath },
+  ])("rejects unsupported learning handoffs (%#)", (value) => {
+    const p = plan();
+    expect(() =>
+      parseFinanceDomainProducerInputs({
+        plan: p,
+        evidenceIds: new Set(["evidence-1"]),
+        value: { ...validInputsForPlan(p), finance_learning_memory: value },
+      }),
+    ).toThrow();
+  });
+});

@@ -655,6 +655,36 @@ export function buildFinanceExecutionReceipt(params: {
   });
 }
 
+/** Detached diagnostic observations of original handoffs; never dispatch or execution authority. */
+export type FinanceExecutionObservation = Readonly<{
+  node:
+    | "execution_intent"
+    | "explicit_run_authorization"
+    | "declared_execution_adapter"
+    | "order_placement"
+    | "execution_receipt"
+    | "position_ledger";
+  input?: unknown;
+  output?: unknown;
+  status?: "refused";
+  reason?: string;
+}>;
+export type FinanceExecutionObserver = (observation: FinanceExecutionObservation) => void;
+
+export function observeFinanceExecution(
+  observer: FinanceExecutionObserver | undefined,
+  observation: FinanceExecutionObservation,
+): void {
+  if (!observer) {
+    return;
+  }
+  try {
+    observer(structuredClone(observation));
+  } catch {
+    // A diagnostic sink cannot change the native gate, settlement, or ledger result.
+  }
+}
+
 /**
  * Place one order through a declared adapter, or refuse with named reasons.
  *
@@ -663,6 +693,7 @@ export function buildFinanceExecutionReceipt(params: {
  */
 export async function placeFinanceOrder(
   request: FinanceOrderPlacementRequest,
+  observer?: FinanceExecutionObserver,
 ): Promise<FinanceOrderPlacementResult> {
   // Keep the capability object identity, but snapshot all model/caller mutable trade data
   // before any await; checks, execution and receipt must describe one intent.
@@ -680,7 +711,15 @@ export async function placeFinanceOrder(
       return Object.freeze(snapshot);
     }),
   };
+  observeFinanceExecution(observer, { node: "execution_intent", output: request.intent });
   const refusalReasons = collectRefusalReasons(request);
+  observeFinanceExecution(observer, {
+    node: "explicit_run_authorization",
+    input: request.intent,
+    ...(refusalReasons.length
+      ? { status: "refused", reason: refusalReasons.join("; ") }
+      : { output: request.intent }),
+  });
   if (refusalReasons.length > 0) {
     return Object.freeze({
       status: "refused" as const,
@@ -698,6 +737,13 @@ export async function placeFinanceOrder(
   }
 
   const { intent } = request;
+  observeFinanceExecution(observer, {
+    node: "declared_execution_adapter",
+    input: intent,
+    output: intent,
+  });
+  let receiptInput: FinanceExecutionFill | undefined;
+  let settled = false;
   const safety = await withFinanceExecutionSafety({
     context: request.safetyContext,
     intent,
@@ -708,17 +754,42 @@ export async function placeFinanceOrder(
     supportsProtectedReduction: adapter.supportsProtectedReduction,
     signal: request.signal,
     recordedAt: request.recordedAt,
-    buildReceipt: (fill, recordedAt, accountId) =>
-      buildFinanceExecutionReceipt({ intent, adapter, fill, recordedAt, accountId }),
-    execute: (signal, facts) => adapter.execute(intent, signal, facts),
+    buildReceipt: (fill, recordedAt, accountId) => {
+      if (observer) {
+        receiptInput = structuredClone(fill);
+      }
+      return buildFinanceExecutionReceipt({ intent, adapter, fill, recordedAt, accountId });
+    },
+    execute: observer
+      ? async (signal, facts) => {
+          observeFinanceExecution(observer, { node: "order_placement", input: intent });
+          const fill = await adapter.execute(intent, signal, facts);
+          if (!settled && !signal.aborted) {
+            observeFinanceExecution(observer, { node: "order_placement", output: fill });
+          }
+          return fill;
+        }
+      : (signal, facts) => adapter.execute(intent, signal, facts),
   });
+  settled = true;
   if (!safety.ok) {
+    observeFinanceExecution(observer, {
+      node: receiptInput === undefined ? "order_placement" : "execution_receipt",
+      input: receiptInput ?? intent,
+      status: "refused",
+      reason: safety.reasons.join("; "),
+    });
     return Object.freeze({
       status: "refused" as const,
       refusalReasons: Object.freeze(safety.reasons),
       ...(safety.failure ? { safetyFailure: safety.failure } : {}),
     });
   }
+  observeFinanceExecution(observer, {
+    node: "execution_receipt",
+    input: receiptInput,
+    output: safety.receipt,
+  });
   return Object.freeze({
     status: "placed" as const,
     refusalReasons: Object.freeze([] as const),

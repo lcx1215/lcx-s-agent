@@ -41,6 +41,8 @@ import {
   type FinanceRiskBudget,
   missingUnattendedCaps,
   placeFinanceOrder,
+  observeFinanceExecution,
+  type FinanceExecutionObserver,
 } from "../../src/agents/finance-execution-adapter.ts";
 import type { FinanceExecutionSafetyContextFactory } from "../../src/agents/finance-execution-safety.js";
 import { evaluateFinanceMandate } from "../../src/agents/finance-mandate.js";
@@ -282,7 +284,10 @@ export function parseArgs(args: readonly string[]): Options {
 
 export async function buildFinanceLiveExecutionPayload(
   options: Options,
-  control: { createSafetyContext?: FinanceExecutionSafetyContextFactory } = {},
+  control: {
+    createSafetyContext?: FinanceExecutionSafetyContextFactory;
+    observe?: FinanceExecutionObserver;
+  } = {},
 ) {
   if (!options.assetClass?.trim()) {
     throw new Error("--asset-class is required; unknown strategy class cannot bypass the mandate");
@@ -375,21 +380,24 @@ export async function buildFinanceLiveExecutionPayload(
     rationale: options.rationale,
   };
 
-  const placement = await placeFinanceOrder({
-    mode: "live_execution",
-    adapters,
-    executionAdapterId,
-    budget,
-    committedInstrumentNotional: 0,
-    ordersPlacedThisRun: 0,
-    intent,
-    safetyContext: control.createSafetyContext?.({
-      intent,
+  const placement = await placeFinanceOrder(
+    {
+      mode: "live_execution",
+      adapters,
+      executionAdapterId,
       budget,
-      adapterId: executionAdapterId,
-      venue: adapters[0].venue,
-    }),
-  });
+      committedInstrumentNotional: 0,
+      ordersPlacedThisRun: 0,
+      intent,
+      safetyContext: control.createSafetyContext?.({
+        intent,
+        budget,
+        adapterId: executionAdapterId,
+        venue: adapters[0].venue,
+      }),
+    },
+    control.observe,
+  );
 
   const receipts: readonly FinanceExecutionReceipt[] =
     placement.receipt === undefined ? [] : [placement.receipt];
@@ -413,6 +421,7 @@ export async function buildFinanceLiveExecutionPayload(
     // no trace in the book, and a mark can always be appended on its own by the ledger entry.
     durableReason = "order_refused_so_nothing_was_recorded";
   } else {
+    observeFinanceExecution(control.observe, { node: "position_ledger", input: placement.receipt });
     const receiptAppend = await appendFinanceExecutionReceipt(
       location.directory,
       placement.receipt,
@@ -436,6 +445,9 @@ export async function buildFinanceLiveExecutionPayload(
   }
 
   const after = wrote ? await readFinancePositionLedger(location.directory) : null;
+  if (after) {
+    observeFinanceExecution(control.observe, { node: "position_ledger", output: after });
+  }
   const recordCount = after?.recordCount ?? before.recordCount;
   const venueOrderPlaced = !paperAdapterOnly && placement.status === "placed";
 

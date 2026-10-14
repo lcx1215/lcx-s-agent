@@ -4,14 +4,17 @@ import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import {
   readFinanceBrokerInstrumentFeedback,
+  readFinanceBrokerExitFeedback,
   readFinanceBrokerProfitFeedback,
   summarizeFinanceBrokerFills,
   summarizeFinanceBrokerFillsByInstrument,
   attributeFinanceBrokerFills,
 } from "./finance-broker-profit-feedback.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { appendFinanceIntradayDecision } from "./finance-intraday-control-ledger.js";
 import {
   appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
@@ -770,4 +773,171 @@ describe("sealed readonly instrument economics", () => {
         expect((await read(directory)).status).toBe("unavailable");
       }),
   );
+});
+
+it.each([
+  "linked",
+  "orphan",
+  "foreign",
+  "activation",
+  "future",
+  "too_much",
+  "late_publication",
+  "other_candidate",
+] as const)("native exit feedback joins partial stop fills: %s", async (fault) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "exit-feedback-"));
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-23T13:30:00Z"));
+  const accountId = "paper-exit",
+    ruleId = "opening_range_breakout_long_next_bar_v1",
+    activationRef = "b".repeat(64),
+    asOf = "2026-09-23T15:00:00.000Z";
+  try {
+    await appendFinanceIntradayDecision(directory, {
+      signalId: "entry-signal",
+      instrument: "SPY",
+      sessionDate: "2026-09-23",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: "2026-09-23T13:30:00.000Z",
+      datasetHeadRef: "c".repeat(64),
+      strategyRule: ruleId,
+      strategyBinding: {
+        declarationRef: "a".repeat(64),
+        activationRef,
+        declaredInstruments: ["SPY"],
+        parameters: { openingRangeBars: 6, rewardRisk: 2, intervalSeconds: 300, feed: "iex" },
+        scope: "strategy_universe",
+      },
+    });
+    vi.setSystemTime(new Date(asOf));
+    await appendFinanceExecutionReceipt(directory, {
+      schemaVersion: "lcx_finance_execution_receipt_v1",
+      receiptId: "entry-receipt",
+      accountId: fault === "foreign" ? "other" : accountId,
+      intentId: "intent:entry-signal",
+      decisionRef: { source: "intraday_signal", id: "entry-signal" },
+      runAuthorizationId: "synthetic-run",
+      adapterId: "alpaca",
+      adapterKind: "venue",
+      venue: "alpaca:paper",
+      instrument: "SPY",
+      side: "buy",
+      orderType: "market",
+      quantity: 10,
+      referencePrice: 100,
+      referencePriceAt: "2026-09-23T13:30:00.000Z",
+      notional: 1000,
+      fill: {
+        filledQuantity: 10,
+        fillPrice: 100,
+        filledAt: "2026-09-23T13:31:00.000Z",
+        venueRef: "alpaca:paper:buy-order",
+        terminalOrderIdentity: { orderId: "buy-order", terminal: true },
+      },
+      executionAuthority: "declared_execution_adapter_required",
+      recordedAt: "2026-09-23T13:31:00.000Z",
+    });
+    const orders = [
+      {
+        id: "buy-order",
+        symbol: "SPY",
+        side: "buy",
+        order_class: "oto",
+        filled_qty: "10",
+        filled_at: "2026-09-23T13:31:00.000Z",
+        legs:
+          fault === "orphan"
+            ? []
+            : [
+                {
+                  id: "stop-order",
+                  symbol: "SPY",
+                  side: "sell",
+                  type: "stop",
+                  qty: "10",
+                  filled_qty: fault === "too_much" ? "11" : "10",
+                },
+              ],
+      },
+    ];
+    const activities = [
+      {
+        id: "buy-fill",
+        activity_type: "FILL",
+        type: "fill",
+        order_id: "buy-order",
+        symbol: "SPY",
+        side: "buy",
+        order_class: "oto",
+        filled_qty: "10",
+        filled_at: "2026-09-23T13:31:00.000Z",
+        qty: "10",
+        price: "100",
+        transaction_time: "2026-09-23T13:31:00.000Z",
+      },
+      ...[
+        ["3", "95"],
+        [fault === "too_much" ? "8" : "7", "94"],
+      ].map(([qty, price], i) => ({
+        id: `stop-part-${i}`,
+        activity_type: "FILL",
+        type: "partial_fill",
+        order_id: "stop-order",
+        symbol: "SPY",
+        side: "sell",
+        qty,
+        price,
+        transaction_time:
+          fault === "future" ? "2026-09-23T16:00:00.000Z" : `2026-09-23T14:0${i}:00.000Z`,
+      })),
+    ];
+    for (const [stream, payload] of [
+      ["orders", orders],
+      ["activities", activities],
+    ] as const) {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query: `${stream}:2026-09-01T00:00:00Z:${fault === "late_publication" ? "2026-09-23T16:00:00.000Z" : asOf}`,
+        cursor: "",
+        payload: [...payload],
+      });
+    }
+    const read = () =>
+      readFinanceBrokerExitFeedback(directory, {
+        accountId,
+        instrument: "SPY",
+        ruleId,
+        activationRef: fault === "activation" ? "d".repeat(64) : activationRef,
+        asOf,
+      });
+    if (fault === "future" || fault === "too_much" || fault === "orphan") {
+      await expect(read()).rejects.toThrow("oto_child");
+    } else {
+      const feedback = await read();
+      if (fault !== "linked" && fault !== "other_candidate") {
+        expect(feedback).toBeUndefined();
+      } else {
+        expect(feedback?.entries[0]).toMatchObject({
+          signalId: "entry-signal",
+          instrument: "SPY",
+          entryOrderId: "buy-order",
+          exitOrderId: "stop-order",
+          exitQuantity: 10,
+          exitAveragePrice: 94.3,
+          grossPnl: -57,
+          partialFillCount: 2,
+          fees: "not_attributed",
+          netPnl: null,
+        });
+      }
+    }
+    expect((await readFinancePositionLedger(directory)).receipts).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

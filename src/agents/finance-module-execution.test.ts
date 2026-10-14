@@ -158,7 +158,12 @@ describe("finance module execution", () => {
       expect(result.receipt.moduleToolsDispatched).toBe(false);
       expect(result.receipt.replanFeedback.status).toBe("blocked_hard");
       expect(result.receipt.replanFeedback.nextAction).toBe("stop");
-      expect(result.evidence).toHaveLength(0);
+      expect(result.evidence).toHaveLength(1);
+      expect(result.evidence[0].id).toMatch(/:diagnostic$/u);
+      expect(JSON.parse(result.evidence[0].text)).toMatchObject({
+        basis: "module_refusal_diagnostic_not_market_evidence",
+        toolOutput: { ok: false },
+      });
       expect(
         result.receipt.nodes.every(
           (node) => node.status === "blocked_missing_evidence" || node.status === "failed",

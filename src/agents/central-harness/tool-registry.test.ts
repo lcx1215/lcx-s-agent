@@ -4,6 +4,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { appendFinanceBars } from "../finance-bar-ledger.js";
+import { financeResearchScoredPath, financeTuningProposalsPath } from "../finance-state-dir.js";
+import { runFinanceTuningLifecycle } from "../finance-tuning-lifecycle.js";
 import { compactReceipts, runCentralHarnessCycle } from "./harness-loop.js";
 import { buildCentralToolCatalog } from "./model-brain.js";
 import { executeOwnedProcess } from "./owned-process.js";
@@ -265,4 +267,134 @@ it("preserves successful output and nonzero owner receipts", async () => {
       options,
     ),
   ).rejects.toMatchObject({ code: 1, stdout: '{"ok":false}' });
+});
+
+it("carries canonical calibration proposal contents into the next central decision without proposal authority", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "central-tuning-proposal-"));
+  const directory = path.join(root, "state", "finance");
+  try {
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(
+      financeResearchScoredPath(directory),
+      Array.from({ length: 5 }, () => JSON.stringify({ conviction: 0.7, outcome: 1 })).join("\n") +
+        "\n",
+    );
+    const produced = runFinanceTuningLifecycle({ directory, generatedAt: "2026-10-13T00:00:00Z" });
+    expect(produced.newlyRecorded).toBe(1);
+    expect(produced.paperExecutionPromotion.status).toBe("blocked");
+    const before = await fs.readFile(financeTuningProposalsPath(directory));
+    const registry = createCentralToolRegistry({ workspaceDir: root });
+    const spec = registry.get("finance_tuning_proposal")!;
+    expect(spec.allowedSideEffects).toEqual(["local_read"]);
+    expect(spec.inputKeys).toEqual(["action"]);
+    expect(spec.approve({ action: "list" })).toEqual({ ok: true });
+    for (const args of [
+      { action: "propose" },
+      { action: "list", workspaceDir: os.tmpdir() },
+      { action: "list", accountId: "foreign-account" },
+      { action: "list", source: "fixture://foreign" },
+      { action: "list", asOf: "2027-01-01" },
+    ]) {
+      expect(spec.approve(args).ok).toBe(false);
+    }
+    expect(createCentralToolRegistry().get(spec.ownerId)!.approve({ action: "list" }).ok).toBe(
+      false,
+    );
+    const perception = {
+      observedAt: "2026-10-13T00:00:00Z",
+      ownerTotals: {},
+      controlRoom: {},
+      backlog: [],
+      boundaries: [],
+    };
+    const first = await runCentralHarnessCycle({
+      perception,
+      registry,
+      brain: {
+        propose: async () => ({
+          kind: "proposed",
+          provider: "offline-fixture",
+          modelId: "scripted-consumer",
+          plan: {
+            actions: [{ ownerId: spec.ownerId, args: { action: "list" } }],
+            note: "read retained proposal",
+          },
+        }),
+      },
+    });
+    expect(first.steps[0].outcome).toMatchObject({
+      count: 1,
+      proposals: produced.proposal.proposals,
+    });
+    const backlog = compactReceipts([first], 10);
+    const second = await runCentralHarnessCycle({
+      perception: { ...perception, backlog },
+      registry,
+      brain: {
+        propose: async (seen) => {
+          expect(seen.backlog).toEqual(backlog);
+          const outcome = backlog[0].outcomes[0].outcome;
+          expect(outcome).toMatchObject({
+            proposals: [
+              {
+                proposed: 0.7,
+                sampleCount: 5,
+                scope: "forecast_calibration_only",
+                evidence: produced.proposal.proposals[0].evidence,
+              },
+            ],
+          });
+          return {
+            kind: "proposed",
+            provider: "offline-fixture",
+            modelId: "scripted-consumer",
+            plan: {
+              actions: [],
+              note: `review forecast floor ${produced.proposal.proposals[0].proposed}; paper promotion remains blocked`,
+            },
+          };
+        },
+      },
+    });
+    expect(second.brainCall.note).toBe(
+      "review forecast floor 0.7; paper promotion remains blocked",
+    );
+    expect(await fs.readFile(financeTuningProposalsPath(directory))).toEqual(before);
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(spec.execute({ action: "list" }, aborted.signal)).rejects.toThrow();
+    await fs.writeFile(
+      financeTuningProposalsPath(directory),
+      '{"scope":"execution","proposed":0.7}\nnot-json\n',
+    );
+    expect(await spec.execute({ action: "list" }, new AbortController().signal)).toMatchObject({
+      count: 0,
+      proposals: [],
+    });
+    await fs.unlink(financeTuningProposalsPath(directory));
+    expect(await spec.execute({ action: "list" }, new AbortController().signal)).toMatchObject({
+      count: 0,
+      proposals: [],
+    });
+    if (process.env.LCX_CENTRAL_PROPOSAL_PROOF_DIR) {
+      await fs.mkdir(process.env.LCX_CENTRAL_PROPOSAL_PROOF_DIR, { recursive: true });
+      await fs.writeFile(
+        path.join(process.env.LCX_CENTRAL_PROPOSAL_PROOF_DIR, "native-consumption.json"),
+        JSON.stringify(
+          {
+            produced,
+            originalProposalBytes: before.toString("utf8"),
+            first,
+            backlog,
+            second,
+            boundary: "scripted_local_consumer_not_natural_adoption_or_promotion",
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

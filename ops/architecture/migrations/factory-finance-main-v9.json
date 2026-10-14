@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "fromVersion": 8,
+  "toVersion": 9,
+  "scenarioIds": ["finance_automatic_paper_trading_waterflow"],
+  "reason": "The original configured day scheduler directly invokes research; the central planning-only capability is not its mandatory execution upstream.",
+  "changes": {
+    "requiredHandoff": "Replace schedule-to-central-to-research with the original runDayResearchPreflight-to-research invocation; preserve all source, quality, authority and execution gates.",
+    "feedback": "Active rule bodies feed the original research owner; central lifecycle perception reads the ledger independently for supervision, without becoming the scheduler's caller.",
+    "owners": "Separate original plan writer, intent/authorization adapter, safety gate and position ledger; retain the daily rule binding prerequisite.",
+    "acceptance": "Source-backed topology and offline consumer checks are not whole-cycle execution or natural semantic adoption.",
+    "registry": "Retain all 28 scenes and canonical relation/state vocabularies. Only descriptive workflow edges and owner semantics change."
+  },
+  "nonEffects": [
+    "no scheduler or owner stack execution",
+    "no new tool loop, automation or forced paid calls",
+    "no broker authority or risk changes",
+    "no restart or deployment"
+  ]
+}

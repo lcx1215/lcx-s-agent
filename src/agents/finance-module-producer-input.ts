@@ -13,6 +13,10 @@ import {
   validateFinanceDomainEvidenceGate,
 } from "./tools/finance-evidence-gates.js";
 import { FINANCE_FRAMEWORK_DOMAIN_PRODUCER_SPECS } from "./tools/finance-framework-domain-producer-tools.js";
+import {
+  FinanceLearningTaskValidator,
+  FinanceLearningPriorTaskValidator,
+} from "./tools/finance-learning-task-evaluation.js";
 
 const producerDomains = new Set<FinanceBrainModuleId>(
   FINANCE_FRAMEWORK_DOMAIN_PRODUCER_SPECS.map((spec) => spec.domain),
@@ -45,6 +49,17 @@ const ProducerInput = z
     doctrineMutationRequested: z.literal(false).optional(),
   })
   .strict();
+
+const LearningApplicationInput = z
+  .object({
+    sourceArtifacts: TextList,
+    sourceArticlePath: Text,
+    financialTask: FinanceLearningTaskValidator.optional(),
+    priorTaskReceiptSource: FinanceLearningPriorTaskValidator.optional(),
+  })
+  .strict();
+const hasLearningModule = (plan: FinanceBrainOrchestrationPlan) =>
+  plan.composition.nodes.some((node) => node.moduleId === "finance_learning_memory");
 
 /** Fixed schema diagnostics only: never echo provider output, IDs, or unknown keys. */
 export function describeFinanceProducerInputError(error: unknown): string {
@@ -140,6 +155,34 @@ export function financeProducerInputContract(
       ],
     };
   };
+  const properties: Record<string, Record<string, unknown> & { allOf?: readonly unknown[] }> = {
+    ...Object.fromEntries(
+      selectedModuleIds.map((moduleId) => [
+        moduleId,
+        {
+          allOf: [
+            { $ref: "#/$defs/producerInput" },
+            {
+              properties: {
+                domain: { const: moduleId },
+                evidenceCategories: evidenceCategoriesSchema(moduleId),
+              },
+            },
+          ],
+        },
+      ]),
+    ),
+    ...(hasLearningModule(plan)
+      ? {
+          finance_learning_memory: {
+            ...z.toJSONSchema(LearningApplicationInput),
+            anyOf: [{ required: ["financialTask"] }, { required: ["priorTaskReceiptSource"] }],
+            description:
+              "Optional source-bound task or pinned previous task result only when supplied evidence identifies it. Do not invent paths, task IDs or hashes; omit this field to retain ordinary guidance. Original apply independently validates and evaluates it; no execution or promotion authority.",
+          },
+        }
+      : {}),
+  };
   return Object.freeze({
     outputPath: "artifact.supportingAnalysis.financeFrameworkProducerInputs",
     container: "object keyed by every selectedModuleId, never a flat producer object or an array",
@@ -147,22 +190,7 @@ export function financeProducerInputContract(
       type: "object",
       additionalProperties: false,
       required: selectedModuleIds,
-      properties: Object.fromEntries(
-        selectedModuleIds.map((moduleId) => [
-          moduleId,
-          {
-            allOf: [
-              { $ref: "#/$defs/producerInput" },
-              {
-                properties: {
-                  domain: { const: moduleId },
-                  evidenceCategories: evidenceCategoriesSchema(moduleId),
-                },
-              },
-            ],
-          },
-        ]),
-      ),
+      properties,
       $defs: { producerInput: z.toJSONSchema(ProducerInput) },
     },
     selectedModuleIds,
@@ -197,7 +225,7 @@ export function parseFinanceDomainProducerInputs(params: {
   evidenceIds: ReadonlySet<string>;
 }): FinanceDomainProducerInputs {
   const selected = selectedFinanceProducerModuleIds(params.plan);
-  if (selected.length === 0) {
+  if (selected.length === 0 && params.value === undefined) {
     return Object.freeze({});
   }
   if (!params.value || typeof params.value !== "object" || Array.isArray(params.value)) {
@@ -205,7 +233,9 @@ export function parseFinanceDomainProducerInputs(params: {
   }
   const raw = params.value as Record<string, unknown>;
   const unknown = Object.keys(raw).filter(
-    (moduleId) => !selected.includes(moduleId as FinanceBrainModuleId),
+    (moduleId) =>
+      !selected.includes(moduleId as FinanceBrainModuleId) &&
+      !(moduleId === "finance_learning_memory" && hasLearningModule(params.plan)),
   );
   if (unknown.length > 0) {
     throw new Error(
@@ -246,6 +276,16 @@ export function parseFinanceDomainProducerInputs(params: {
       throw new Error("finance producer input failed selected domain evidence gate");
     }
     parsed[moduleId] = Object.freeze({ ...input });
+  }
+  if (raw.finance_learning_memory !== undefined) {
+    const learning = LearningApplicationInput.parse(raw.finance_learning_memory);
+    if (learning.financialTask === undefined && learning.priorTaskReceiptSource === undefined) {
+      throw new Error("learning input requires an explicit task or original task receipt");
+    }
+    if (learning.sourceArtifacts.some((id) => !params.evidenceIds.has(id))) {
+      throw new Error("learning producer input cites unknown evidence");
+    }
+    parsed.finance_learning_memory = Object.freeze(learning);
   }
   return Object.freeze(parsed);
 }

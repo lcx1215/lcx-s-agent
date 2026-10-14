@@ -143,7 +143,9 @@ describe("finance_data_gateway_snapshot tool", () => {
       expect.objectContaining({
         ok: true,
         qualityStatus: "needs_review",
-        nextTool: "data_provenance_quality_review_input",
+        nextTool: "finance_data_gateway_snapshot",
+        nextReviewTarget: "data_provenance_quality_review_input",
+        retryOnlyAfter: "new_or_corrected_source_observations",
         requiredNextSteps: expect.arrayContaining(["run_data_provenance_quality_review"]),
         conflicts: [
           expect.objectContaining({

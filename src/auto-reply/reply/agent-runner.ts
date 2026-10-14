@@ -1,10 +1,15 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createCommercialAnswerReplyGate } from "../../agents/commercial-answer-reply-gate.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { createFinanceReplyEvidenceTracker } from "../../agents/finance-reply-evidence.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { queueEmbeddedPiMessage } from "../../agents/pi-embedded.js";
+import { verifyProviderCouncilEvidence } from "../../agents/provider-council-evidence.js";
 import { hasNonzeroUsage } from "../../agents/usage.js";
+import { applyVisibleAnswerAdoptionGate } from "../../agents/visible-answer-adoption-gate.js";
 import {
   resolveAgentIdFromSessionKey,
   resolveSessionFilePath,
@@ -15,7 +20,7 @@ import {
   updateSessionStoreEntry,
 } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
-import { emitAgentEvent } from "../../infra/agent-events.js";
+import { emitAgentEvent, onAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { generateSecureUuid } from "../../infra/secure-random.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
@@ -28,7 +33,7 @@ import {
 } from "../fallback-state.js";
 import type { OriginatingChannelType, TemplateContext } from "../templating.js";
 import { resolveResponseUsageMode, type VerboseLevel } from "../thinking.js";
-import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import type { BlockReplyContext, GetReplyOptions, ReplyPayload } from "../types.js";
 import { runAgentTurnWithFallback } from "./agent-runner-execution.js";
 import {
   createShouldEmitToolOutput,
@@ -45,13 +50,18 @@ import {
   hasUnbackedReminderCommitment,
 } from "./agent-runner-reminder-guard.js";
 import { appendUsageLine, formatResponseUsageLine } from "./agent-runner-utils.js";
-import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-reply-pipeline.js";
+import {
+  createAudioAsVoiceBuffer,
+  createBlockReplyPipeline,
+  createBlockReplyPayloadKey,
+} from "./block-reply-pipeline.js";
 import { resolveEffectiveBlockStreamingConfig } from "./block-streaming.js";
 import { createFollowupRunner } from "./followup-runner.js";
 import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-routing.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import { enqueueFollowupRun, type FollowupRun, type QueueSettings } from "./queue.js";
+import { applyReplyThreading } from "./reply-payloads.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
 import { createTypingSignaler } from "./typing-mode.js";
@@ -116,9 +126,307 @@ export async function runReplyAgent(params: {
     shouldInjectGroupIntro,
     typingMode,
   } = params;
+  const financeEvidence = createFinanceReplyEvidenceTracker({
+    workspaceDir: followupRun.run.workspaceDir,
+    sessionKey: sessionKey ?? followupRun.run.sessionKey,
+    signal: opts?.abortSignal,
+  });
+  let financeStreamSuppressed = false;
+  const guardFinanceReply = async (
+    payload: ReplyPayload,
+    surface: "partial" | "block" | "final",
+    callbackSignal?: AbortSignal,
+  ): Promise<ReplyPayload> => {
+    const failedCurrentAudit = !opts?.commercialAnswerAudit && commercialGate.hasFailed();
+    if (!payload.text && !failedCurrentAudit) {
+      return payload;
+    }
+    const candidateText = payload.text ?? "";
+    if (callbackSignal?.aborted || councilRunStopped) {
+      financeEvidence.stop();
+    }
+    // References can arrive after a claim. Hold this tool's answer until its original
+    // final candidate is available; partial callbacks remain snapshots, never concatenate them.
+    if (surface !== "final" && financeEvidence.hasReceipt()) {
+      financeStreamSuppressed = true;
+      return { ...payload, text: "", mediaUrl: undefined, mediaUrls: undefined };
+    }
+    const checkedRunId = commercialCallerRunId;
+    const decision = await financeEvidence.check(candidateText, commandBody);
+    if (commercialCallerRunId !== checkedRunId) {
+      // A fallback started while the old candidate awaited source readback.
+      // Discard that candidate without poisoning or selecting evidence for the new run.
+      return { ...payload, text: "", mediaUrl: undefined, mediaUrls: undefined, isError: true };
+    }
+    if (councilGateRunId && financeEvidence.hasReceipt()) {
+      emitAgentEvent({
+        runId: councilGateRunId,
+        sessionKey,
+        stream: "lifecycle",
+        data: {
+          phase: "finance_reply_evidence_gate",
+          surface,
+          ...decision,
+          text: undefined,
+          auditInput: undefined,
+          candidateSha256: createHash("sha256").update(candidateText).digest("hex"),
+          streamingHeldForFinal: financeStreamSuppressed,
+        },
+      });
+    }
+    const checkedPayload = { ...payload, text: decision.text };
+    if (opts?.commercialAnswerAudit || !commercialCallerRunId) {
+      return checkedPayload;
+    }
+    const messageId = sessionCtx.MessageSidFull ?? sessionCtx.MessageSid;
+    commercialGate.selectFinanceEvidence(decision, commercialCallerRunId);
+    if (!commercialGate.hasRequest()) {
+      return checkedPayload;
+    }
+    // Grounding already consumed the original figures. Audit the actual cleaned reply body.
+    const audited = commercialGate.check(
+      checkedPayload,
+      surface,
+      councilRunStopped || callbackSignal?.aborted === true,
+      {
+        runId: commercialCallerRunId,
+        messageId,
+        sessionKey,
+        replyChannelAccountId: sessionCtx.AccountId,
+      },
+    );
+    if (audited.trace) {
+      emitAgentEvent({
+        runId: commercialCallerRunId,
+        sessionKey,
+        stream: "lifecycle",
+        data: {
+          phase: "commercial_answer_terminal_gate",
+          surface,
+          selection: commercialGate.financeSelection()
+            ? "verified_finance_reference"
+            : "failed_finance_reference",
+          financeReceiptSha256: commercialGate.financeSelection()?.receiptSha256,
+          financeSnapshotPointer: commercialGate.financeSelection()?.snapshotPointer,
+          auditInputGaps: commercialGate.financeSelection()?.auditInputGaps,
+          ...audited.trace,
+        },
+      });
+    }
+    return audited.payload;
+  };
+  let councilGateRunId = opts?.runId;
+  let commercialCallerRunId: string | undefined;
+  let councilRunStopped = false;
+  const councilStreamText = { partial: "", block: "" };
+  let presentationBlockPending = "";
+  let presentationBlockFailed = false;
+  const guardCouncilReply = (
+    payload: ReplyPayload,
+    surface: "partial" | "block" | "final",
+    callbackSignal?: AbortSignal,
+  ): ReplyPayload => {
+    if (opts?.abortSignal?.aborted || callbackSignal?.aborted || councilRunStopped) {
+      if (councilGateRunId) {
+        emitAgentEvent({
+          runId: councilGateRunId,
+          sessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "reply_run_stopped_gate",
+            surface,
+            status: "blocked",
+            reason:
+              opts?.abortSignal?.aborted || callbackSignal?.aborted
+                ? "reply_run_cancelled"
+                : "reply_model_stopped",
+            candidateSha256: createHash("sha256")
+              .update(payload.text ?? "")
+              .digest("hex"),
+          },
+        });
+      }
+      // A stopped ordinary reply is not exempt just because it makes no council claim.
+      if (
+        surface !== "final" ||
+        !payload.text ||
+        !verifyProviderCouncilEvidence(commandBody, payload.text).required
+      ) {
+        return {
+          ...payload,
+          text:
+            surface === "final"
+              ? /\p{Script=Han}/u.test(commandBody)
+                ? "回复未完成：本次运行已取消或超时。"
+                : "The response did not finish: this run was cancelled or timed out."
+              : "",
+          mediaUrl: undefined,
+          mediaUrls: undefined,
+          isError: surface === "final" ? true : payload.isError,
+        };
+      }
+      // Keep the existing council-specific refusal and its evidence reason below.
+      payload = { ...payload, mediaUrl: undefined, mediaUrls: undefined, isError: true };
+    }
+    if (!payload.text) {
+      return payload;
+    }
+    let text = payload.text;
+    if (surface !== "final") {
+      const previous = councilStreamText[surface];
+      text = text.startsWith(previous) ? text : previous + text;
+      // Retain sentence context across delivery chunks without accumulating an unbounded stream.
+      councilStreamText[surface] = text.slice(-12 * 1024);
+    }
+    const inboundId = sessionCtx.MessageSidFull ?? sessionCtx.MessageSid;
+    const source = opts?.providerCouncilEvidence;
+    const evidence =
+      opts?.abortSignal?.aborted || callbackSignal?.aborted || councilRunStopped
+        ? {
+            messageId: inboundId ?? followupRun.messageId ?? "",
+            unavailableReason: "provider_council_run_cancelled",
+          }
+        : source
+          ? { ...source, messageId: inboundId ?? followupRun.messageId ?? "" }
+          : undefined;
+    const proof = verifyProviderCouncilEvidence(commandBody, text, evidence);
+    const present = () => {
+      const decision = applyVisibleAnswerAdoptionGate({
+        userMessage: commandBody,
+        answerText: surface === "block" ? presentationBlockPending + payload.text : text,
+        presentationOnly: true,
+        streaming: surface !== "final",
+      });
+      if (surface === "block") {
+        presentationBlockPending = decision.pendingText ?? "";
+        if (presentationBlockFailed) {
+          return { ...payload, text: "" };
+        }
+        presentationBlockFailed = decision.status === "replaced";
+      }
+      return { ...payload, text: decision.text };
+    };
+    if (!proof.required) {
+      return present();
+    }
+    if (councilGateRunId) {
+      emitAgentEvent({
+        runId: councilGateRunId,
+        sessionKey,
+        stream: "lifecycle",
+        data: {
+          phase: "provider_council_completion_gate",
+          surface,
+          status: proof.status === "verified" ? "ok" : "blocked",
+          candidateSha256: createHash("sha256").update(text).digest("hex"),
+          providerCouncil: proof,
+        },
+      });
+    }
+    if (proof.status === "verified") {
+      return present();
+    }
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: commandBody,
+      answerText: text,
+      providerEvidence: evidence,
+    });
+    return { ...payload, text: decision.text };
+  };
   const trackedToolStarts = new Set<string>();
+  const commercialGate = createCommercialAnswerReplyGate({
+    request: opts?.commercialAnswerAudit,
+    messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
+    ask: sessionCtx.CommandBody ?? sessionCtx.RawBody ?? commandBody,
+    signal: opts?.abortSignal,
+    historicalSystemPrompt: followupRun.run.extraSystemPrompt,
+  });
+  const guardReply = async (
+    payload: ReplyPayload,
+    surface: "partial" | "block" | "final",
+    signal?: AbortSignal,
+  ) => {
+    const commercial = opts?.commercialAnswerAudit
+      ? commercialGate.check(payload, surface, councilRunStopped || signal?.aborted === true, {
+          runId: commercialCallerRunId,
+          messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
+          sessionKey,
+          replyChannelAccountId: sessionCtx.AccountId,
+        })
+      : { payload, trace: undefined };
+    if (commercial.trace && councilGateRunId) {
+      emitAgentEvent({
+        runId: councilGateRunId,
+        sessionKey,
+        stream: "lifecycle",
+        data: { phase: "commercial_answer_terminal_gate", surface, ...commercial.trace },
+      });
+    }
+    if (opts?.commercialAnswerAudit && surface !== "final") {
+      return commercial.payload;
+    }
+    return guardCouncilReply(
+      await guardFinanceReply(commercial.payload, surface, signal),
+      surface,
+      signal,
+    );
+  };
+  const sealFinalReplies = (payloads: ReplyPayload[]) => {
+    if (!commercialGate.hasRequest() || !opts?.abortSignal?.aborted) {
+      return payloads;
+    }
+    // Awaited typing and bookkeeping can cancel a previously audited candidate.
+    const cancelled = commercialGate.check(payloads[0] ?? { text: "" }, "final", true);
+    if (cancelled.trace && councilGateRunId) {
+      emitAgentEvent({
+        runId: councilGateRunId,
+        sessionKey,
+        stream: "lifecycle",
+        data: {
+          phase: "commercial_answer_terminal_gate",
+          surface: "final_seal",
+          ...(!opts?.commercialAnswerAudit
+            ? {
+                selection: commercialGate.financeSelection()
+                  ? "verified_finance_reference"
+                  : "failed_finance_reference",
+              }
+            : {}),
+          ...cancelled.trace,
+        },
+      });
+    }
+    return [cancelled.payload];
+  };
+  const actuallyDeliveredBlockKeys = new Set<string>();
   const trackedOpts = {
     ...opts,
+    onAgentRunStart: (runId: string) => {
+      commercialGate.startFinanceRun(runId);
+      councilGateRunId = runId;
+      commercialCallerRunId = runId;
+      financeEvidence.start(runId);
+      opts?.onAgentRunStart?.(runId);
+    },
+    onAssistantMessageStart: async () => {
+      councilStreamText.partial = "";
+      councilStreamText.block = "";
+      presentationBlockPending = "";
+      presentationBlockFailed = false;
+      await opts?.onAssistantMessageStart?.();
+    },
+    onPartialReply: opts?.onPartialReply
+      ? async (payload: ReplyPayload) => opts.onPartialReply?.(await guardReply(payload, "partial"))
+      : undefined,
+    onBlockReply: opts?.onBlockReply
+      ? async (payload: ReplyPayload, context?: BlockReplyContext) => {
+          const guarded = await guardReply(payload, "block", context?.abortSignal);
+          await opts.onBlockReply?.(guarded, context);
+          if (guarded.text || guarded.mediaUrl || guarded.mediaUrls?.length) {
+            actuallyDeliveredBlockKeys.add(createBlockReplyPayloadKey(guarded));
+          }
+        }
+      : undefined,
     onToolStart: async (payload: { name?: string; phase?: string }) => {
       const normalizedName = payload.name?.trim().toLowerCase();
       if (payload.phase === "start" && normalizedName) {
@@ -177,7 +485,7 @@ export async function runReplyAgent(params: {
   const blockReplyPipeline =
     blockStreamingEnabled && opts?.onBlockReply
       ? createBlockReplyPipeline({
-          onBlockReply: opts.onBlockReply,
+          onBlockReply: trackedOpts.onBlockReply!,
           timeoutMs: blockReplyTimeoutMs,
           coalescing: blockReplyCoalescing,
           buffer: createAudioAsVoiceBuffer({ isAudioPayload }),
@@ -343,6 +651,7 @@ export async function runReplyAgent(params: {
         `Role ordering conflict (${reason}). Restarting session ${sessionKey} -> ${nextSessionId}.`,
       cleanupTranscripts: true,
     });
+  const unsubscribeFinanceEvidence = onAgentEvent((event) => financeEvidence.observe(event));
   try {
     const runStartedAt = Date.now();
     const runOutcome = await runAgentTurnWithFallback({
@@ -370,7 +679,17 @@ export async function runReplyAgent(params: {
     });
 
     if (runOutcome.kind === "final") {
-      return finalizeWithFollowup(runOutcome.payload, queueKey, runFollowupTurn);
+      const [payload] = applyReplyThreading({
+        payloads: sealFinalReplies([
+          opts?.commercialAnswerAudit
+            ? await guardReply(runOutcome.payload, "final")
+            : runOutcome.payload,
+        ]),
+        replyToMode,
+        replyToChannel,
+        currentMessageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
+      });
+      return finalizeWithFollowup(payload, queueKey, runFollowupTurn);
     }
 
     const {
@@ -406,6 +725,13 @@ export async function runReplyAgent(params: {
       }
     }
 
+    const completedBeforeCompactionTimeout =
+      runResult.meta?.timedOut === true &&
+      runResult.meta.timedOutDuringCompaction === true &&
+      runResult.meta.promptCompleted === true;
+    councilRunStopped = Boolean(
+      (runResult.meta?.aborted || runResult.meta?.timedOut) && !completedBeforeCompactionTimeout,
+    );
     const payloadArray = runResult.payloads ?? [];
 
     if (blockReplyPipeline) {
@@ -508,9 +834,11 @@ export async function runReplyAgent(params: {
       payloads: payloadArray,
       isHeartbeat,
       didLogHeartbeatStrip,
-      blockStreamingEnabled,
-      blockReplyPipeline,
-      directlySentBlockKeys,
+      blockStreamingEnabled: blockStreamingEnabled && !financeStreamSuppressed,
+      blockReplyPipeline: financeStreamSuppressed ? null : blockReplyPipeline,
+      directlySentBlockKeys: financeStreamSuppressed
+        ? actuallyDeliveredBlockKeys
+        : directlySentBlockKeys,
       replyToMode,
       replyToChannel,
       currentMessageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
@@ -525,7 +853,12 @@ export async function runReplyAgent(params: {
       }),
       accountId: sessionCtx.AccountId,
     });
-    const { replyPayloads } = payloadResult;
+    councilGateRunId = runId;
+    commercialCallerRunId = runId;
+    const replyPayloads: ReplyPayload[] = [];
+    for (const payload of payloadResult.replyPayloads) {
+      replyPayloads.push(await guardReply(payload, "final"));
+    }
     didLogHeartbeatStrip = payloadResult.didLogHeartbeatStrip;
 
     if (replyPayloads.length === 0) {
@@ -721,6 +1054,7 @@ export async function runReplyAgent(params: {
     if (responseUsageLine) {
       finalPayloads = appendUsageLine(finalPayloads, responseUsageLine);
     }
+    finalPayloads = sealFinalReplies(finalPayloads);
 
     return finalizeWithFollowup(
       finalPayloads.length === 1 ? finalPayloads[0] : finalPayloads,
@@ -733,6 +1067,8 @@ export async function runReplyAgent(params: {
     finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
     throw error;
   } finally {
+    financeEvidence.stop();
+    unsubscribeFinanceEvidence();
     blockReplyPipeline?.stop();
     typing.markRunComplete();
     // Safety net: the dispatcher's onIdle callback normally fires

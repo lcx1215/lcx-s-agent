@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,11 @@ import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
 import * as positionLedger from "./finance-position-ledger.js";
 import { FINANCE_SCHEDULER_LOCK, FINANCE_SCHEDULER_PID } from "./finance-scheduler-lock.js";
 import { writeFinanceSchedulerState } from "./finance-scheduler-state.js";
-import { financePositionLedgerPath, financeResearchScoredPath } from "./finance-state-dir.js";
+import {
+  FINANCE_DAILY_CYCLE_RUNS_FILENAME,
+  financePositionLedgerPath,
+  financeResearchScoredPath,
+} from "./finance-state-dir.js";
 import { runFinanceTuningLifecycle } from "./finance-tuning-lifecycle.js";
 
 let directory: string;
@@ -600,4 +605,130 @@ it("keeps two broker accounts, costs unknown and ownership diagnostics separate 
   ).toEqual(["account-b"]);
   expect(economic).toMatchObject({ omittedAccounts: 1 });
   expect(Buffer.byteLength(JSON.stringify(economic), "utf8")).toBeLessThanOrEqual(2000);
+});
+
+it("retains exact scheduler run identity in the Central lifecycle readback", async () => {
+  const runId = "7e65f908-563a-491c-b542-4c14e59aabf3";
+  writeFinanceSchedulerState(directory, {
+    lastFired: { night: "2026-02-02" },
+    lastStatus: { night: "succeeded" },
+    lastSucceeded: { night: "2026-02-02" },
+    lastRun: {
+      runId,
+      mode: "night",
+      status: "succeeded",
+      firedAt: "2026-02-02T23:00:00.000Z",
+      stdout: JSON.stringify({ ok: true, sampleCount: 0 }),
+      execution: { outcome: "settlement", venue: "paper" },
+    },
+  });
+  const feedback = await buildFinanceAutomaticLifecycleFeedback({
+    directory,
+    observedAt: "2026-02-03T00:00:00.000Z",
+  });
+  expect(feedback).toMatchObject({
+    scheduler: {
+      latestCycleByMode: {
+        night: { runId, status: "succeeded", execution: { outcome: "settlement" } },
+      },
+    },
+  });
+  expect(feedback).not.toHaveProperty("accountId");
+});
+
+it("omits missing or unsafe scheduler identities without truncating or inventing one", async () => {
+  const values: unknown[] = [
+    undefined,
+    "",
+    " native-id ",
+    "native\nid",
+    "a".repeat(129),
+    123,
+    { runId: "nested" },
+  ];
+  for (const [index, runId] of values.entries()) {
+    const privateDirectory = path.join(directory, `invalid-${index}`);
+    fs.mkdirSync(privateDirectory);
+    fs.writeFileSync(
+      path.join(privateDirectory, FINANCE_DAILY_CYCLE_RUNS_FILENAME),
+      JSON.stringify({
+        runId,
+        mode: "night",
+        status: "failed",
+        firedAt: "2026-02-02T23:00:00.000Z",
+        stdout: JSON.stringify({ ok: false }),
+        execution: { outcome: "settlement", venue: "paper" },
+      }) + "\n",
+    );
+    const feedback = await buildFinanceAutomaticLifecycleFeedback({
+      directory: privateDirectory,
+      observedAt: "2026-02-03T00:00:00.000Z",
+    });
+    expect(feedback).toMatchObject({
+      scheduler: { latestCycleByMode: { night: { status: "failed" } } },
+    });
+    expect(feedback).not.toHaveProperty("scheduler.latestCycleByMode.night.runId");
+  }
+});
+
+it("independently rereads the tuning ledger bytes with matching pins and visible partial or absent input", async () => {
+  const filename = financeResearchScoredPath(directory);
+  const bytes = Buffer.from('{"conviction":0.75,"outcome":1}\ninvalid-row\n');
+  fs.writeFileSync(filename, bytes);
+  const lifecycle = runFinanceTuningLifecycle({ directory, generatedAt: "2026-09-23T00:00:00Z" });
+  const first = await buildFinanceAutomaticLifecycleFeedback({
+    directory,
+    observedAt: "2026-09-23T00:01:00Z",
+  });
+  expect(first).toMatchObject({
+    scoredOutcomeCount: 1,
+    tuning: { sourceRead: lifecycle.sourceRead },
+  });
+  expect(lifecycle.sourceRead).toMatchObject({
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    ignoredRowCount: 1,
+  });
+  fs.appendFileSync(filename, '{"conviction":0.8,"outcome":0}\n');
+  const changed = runFinanceTuningLifecycle({ directory, generatedAt: "2026-09-23T00:02:00Z" });
+  const next = await buildFinanceAutomaticLifecycleFeedback({
+    directory,
+    observedAt: "2026-09-23T00:03:00Z",
+  });
+  expect(changed.sourceRead.sha256).not.toBe(lifecycle.sourceRead.sha256);
+  expect(next).toMatchObject({
+    scoredOutcomeCount: 2,
+    tuning: { sourceRead: changed.sourceRead },
+    paperExecutionPromotion: { status: "blocked", executionThresholdPromotionEligible: false },
+  });
+  fs.rmSync(filename);
+  const missing = await buildFinanceAutomaticLifecycleFeedback({
+    directory,
+    observedAt: "2026-09-23T00:04:00Z",
+  });
+  expect(missing).toMatchObject({
+    scoredOutcomeCount: 0,
+    tuning: {
+      sourceRead: { status: "absent", path: filename, includedSampleCount: 0, ignoredRowCount: 0 },
+    },
+  });
+  const proofDir = process.env.LCX_TUNING_SCORED_READ_PROOF_DIR;
+  if (proofDir) {
+    fs.mkdirSync(proofDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(proofDir, "native-scored-readback.json"),
+      JSON.stringify(
+        {
+          originalSourceBytesHex: bytes.toString("hex"),
+          lifecycle,
+          first,
+          changed,
+          next,
+          missing,
+          boundary: "original_independent_readers_private_ledger_no_account_or_source_truth",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  }
 });

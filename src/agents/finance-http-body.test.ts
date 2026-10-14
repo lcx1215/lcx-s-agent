@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_FINANCE_HTTP_BODY_MAX_BYTES,
   readBoundedFinanceResponseText,
@@ -42,5 +42,35 @@ describe("bounded finance HTTP response body", () => {
 
   it("keeps the shared default finite", () => {
     expect(DEFAULT_FINANCE_HTTP_BODY_MAX_BYTES).toBe(8 * 1024 * 1024);
+  });
+});
+
+describe("finance body cancellation after response headers", () => {
+  it("cancels a stalled body and confirms releasing the read lock", async () => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }));
+    const controller = new AbortController();
+    const read = readBoundedFinanceResponseText(response, { signal: controller.signal });
+    controller.abort(new Error("cycle deadline"));
+    await expect(read).rejects.toMatchObject({ cleanupStatus: "confirmed" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it("does not claim cleanup when cancellation never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const response = new Response(
+        new ReadableStream<Uint8Array>({ cancel: () => new Promise(() => {}) }),
+      );
+      const controller = new AbortController();
+      const read = readBoundedFinanceResponseText(response, { signal: controller.signal });
+      const check = expect(read).rejects.toMatchObject({ cleanupStatus: "unconfirmed" });
+      controller.abort(new Error("cycle deadline"));
+      await vi.advanceTimersByTimeAsync(1500);
+      await check;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

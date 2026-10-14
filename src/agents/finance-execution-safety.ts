@@ -4,6 +4,8 @@ import path from "node:path";
 import { acquireFileLock } from "../plugin-sdk/file-lock.js";
 import {
   ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS,
+  isSafeAlpacaQuoteTiming,
+  type AlpacaSafetyQuoteTiming,
   ALPACA_SAFETY_DIAGNOSTIC_STAGES,
   ALPACA_SAFETY_FAILURE_CODES,
 } from "./finance-alpaca-safety-provider.js";
@@ -12,6 +14,10 @@ import type {
   AlpacaSafetyFailureCode,
   AlpacaSafetyDiagnosticStage,
 } from "./finance-alpaca-safety-provider.js";
+import {
+  isSafeFinanceReadFailure,
+  type FinanceReadFailureDiagnostic,
+} from "./finance-alpaca-safety-transport.js";
 import type {
   FinanceExecutionReconciliation,
   FinanceQuantityDifferenceIsolation,
@@ -132,6 +138,8 @@ export type FinanceExecutionSafetyFailure = Readonly<{
     reason: AlpacaSafetyFailureCode;
     stage?: AlpacaSafetyDiagnosticStage;
     accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
+    quoteTiming?: AlpacaSafetyQuoteTiming;
+    transport?: FinanceReadFailureDiagnostic;
   }>;
   attempt?: FinanceExecutionSafetyAttempt;
 }>;
@@ -258,6 +266,8 @@ export class FinanceExecutionSafetyFactsError extends Error {
     reason: AlpacaSafetyFailureCode;
     stage?: AlpacaSafetyDiagnosticStage;
     accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
+    quoteTiming?: AlpacaSafetyQuoteTiming;
+    transport?: FinanceReadFailureDiagnostic;
   }>;
 
   constructor(
@@ -266,8 +276,16 @@ export class FinanceExecutionSafetyFactsError extends Error {
       reason: AlpacaSafetyFailureCode;
       stage?: AlpacaSafetyDiagnosticStage;
       accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
+      quoteTiming?: AlpacaSafetyQuoteTiming;
+      transport?: FinanceReadFailureDiagnostic;
     },
   ) {
+    if (provider?.quoteTiming !== undefined && !isSafeAlpacaQuoteTiming(provider.quoteTiming)) {
+      throw new Error("invalid quote timing diagnostic");
+    }
+    if (provider?.transport !== undefined && !isSafeFinanceReadFailure(provider.transport)) {
+      throw new Error("invalid finance read diagnostic");
+    }
     const accountArithmetic = provider?.accountArithmetic;
     const arithmeticValues = accountArithmetic?.values;
     const valuationRetry = accountArithmetic?.valuationRetry;
@@ -338,6 +356,8 @@ export class FinanceExecutionSafetyFactsError extends Error {
     this.provider = provider
       ? Object.freeze({
           reason: provider.reason,
+          ...(provider.transport ? { transport: { ...provider.transport } } : {}),
+          ...(provider.quoteTiming ? { quoteTiming: { ...provider.quoteTiming } } : {}),
           ...(provider.stage === undefined ? {} : { stage: provider.stage }),
           ...(accountArithmetic === undefined
             ? {}

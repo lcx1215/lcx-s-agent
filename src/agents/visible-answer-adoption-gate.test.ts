@@ -1,8 +1,55 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   applyVisibleAnswerAdoptionGate,
   findVisibleAnswerAdoptionGateFailures,
 } from "./visible-answer-adoption-gate.js";
+
+describe("original presentation process evidence", () => {
+  it("binds the original readability input to normalized bytes rather than the raw internal tail", () => {
+    const raw = "这是直接可见的答案。\n分发状态：只发控制室摘要。";
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "请给直接答案。",
+      answerText: raw,
+      presentationOnly: true,
+      captureProcessEvidence: true,
+    });
+    expect(decision.status).toBe("adopted");
+    expect(decision.text).toBe("这是直接可见的答案。");
+    const normalizedSha = createHash("sha256").update(decision.text).digest("hex");
+    expect(decision.presentationProcessEvidence).toEqual({
+      boundary: "original_presentation_suboperation_hashes_not_semantic_quality",
+      normalizerOutputSha256: normalizedSha,
+      readabilityInputSha256: normalizedSha,
+    });
+    expect(normalizedSha).not.toBe(createHash("sha256").update(raw).digest("hex"));
+  });
+  it("keeps default shape and the original replacement verdict when capture is not selected", () => {
+    const input = {
+      userMessage: "请直接回答，不输出内部工作单。",
+      answerText: '```json\n{"work_order":{"output_contract":"internal"}}\n```',
+      presentationOnly: true,
+    };
+    const legacy = applyVisibleAnswerAdoptionGate(input);
+    const captured = applyVisibleAnswerAdoptionGate({ ...input, captureProcessEvidence: true });
+    expect(legacy).not.toHaveProperty("presentationProcessEvidence");
+    expect(legacy.status).toBe("replaced");
+    expect(legacy.failedReasons).toContain("raw_work_order_json_visible_answer");
+    expect(captured.status).toBe(legacy.status);
+    expect(captured.text).toBe(legacy.text);
+    expect(captured.failedReasons).toEqual(legacy.failedReasons);
+    expect(captured.presentationProcessEvidence?.normalizerOutputSha256).toBe(
+      captured.presentationProcessEvidence?.readabilityInputSha256,
+    );
+    expect(
+      applyVisibleAnswerAdoptionGate({
+        ...input,
+        presentationOnly: false,
+        captureProcessEvidence: true,
+      }),
+    ).not.toHaveProperty("presentationProcessEvidence");
+  });
+});
 
 describe("visible answer adoption gate", () => {
   it("rejects professional-sounding filler for ordinary visible questions", () => {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { getAgentRunContext } from "../../infra/agent-events.js";
 import {
   FINANCE_BRAIN_MODULES,
   financeBrainModuleCatalog,
@@ -19,6 +20,7 @@ import {
   createFinanceModelWorkflow,
   type FinanceWorkflowSlotModels,
 } from "../finance-model-workflow.js";
+import { buildFinanceHistoricalResearchFeedback } from "../finance-research-evidence.js";
 import { runFinanceResearchRun } from "../finance-research-runner.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import { jsonResult, readStringParam, ToolInputError, type AnyAgentTool } from "./common.js";
@@ -144,16 +146,33 @@ export function createFinanceResearchRunTool(options?: {
   config?: OpenClawConfig;
   slotModels?: FinanceWorkflowSlotModels;
   executeResearch?: typeof runFinanceResearchRun;
+  /** Independently supplied host context, not part of the model-visible schema. */
+  agentRunId?: string;
+  agentSessionKey?: string;
 }): AnyAgentTool {
   const workspace = resolveWorkspaceRoot(options?.workspaceDir);
+  const hostRunId = options?.agentRunId;
+  const hostSessionKey = options?.agentSessionKey;
+  const safeIdentity = (value: unknown): value is string =>
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    value.trim() === value &&
+    Array.from(value).every(
+      (character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127,
+    );
   return {
     name: "finance_research_run",
     label: "Finance Research Workflow",
     description:
-      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. moduleSelection composes registered analytical modules while required risk/math/review lanes remain; executeModules explicitly dispatches their existing bounded tools against fetched evidence and returns per-node receipts. Partial or conflicted sources may support conditional research candidates while original quality flags remain visible; candidate status is not verified data or execution readiness. An already-authorized automatic controller may consume the candidate and execute after its separate order checks pass; this research tool itself does not place orders, and auxiliary uncertainty is not a permanent system-wide trading veto. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
+      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. moduleSelection composes registered analytical modules while required risk/math/review lanes remain; executeModules explicitly dispatches their existing bounded tools against fetched evidence and returns per-node receipts. The bounded reviewFeedback preserves original Quality and module diagnostic gaps with exact receipt pointers and SHA. Consume decision-dependent gaps in the next moduleSelection or targets, or stop; it does not trigger retries, expand budgets or prove adoption. Partial or conflicted sources may support conditional research candidates while original quality flags remain visible; candidate status is not verified data or execution readiness. An already-authorized automatic controller may consume the candidate and execute after its separate order checks pass; this research tool itself does not place orders, and auxiliary uncertainty is not a permanent system-wide trading veto. When quoting observed numbers from this receipt, optionally append a figures JSON fence and a finance_evidence JSON fence {toolCallId,receiptSha256,snapshotPointer,instrument,asOf,accountId?}; snapshotPointer must name the exact /batch/jobs/N/receipt/snapshot inspected, and accountId must come from its original portfolioContext when applicable. This explicit reference lets the reply host check the declared figures; a receipt hash is content identity, not source truth. Unreferenced text is not counted as evidence adoption. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
     parameters: schema,
     execute: async (toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
+      // Copy the session string: getAgentRunContext returns a mutable map entry.
+      const registeredOnEntry = safeIdentity(hostRunId)
+        ? getAgentRunContext(hostRunId)?.sessionKey
+        : undefined;
       const params = args as Record<string, unknown>;
       const ask = readStringParam(params, "ask", { required: true });
       const asOf = readStringParam(params, "asOf", { required: true });
@@ -244,12 +263,82 @@ export function createFinanceResearchRunTool(options?: {
         });
         signal.throwIfAborted();
         await fs.mkdir(path.dirname(receiptPath), { recursive: true });
-        await fs.writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {
+        signal.throwIfAborted();
+        const originalPayloadBytes = `${JSON.stringify(receipt, null, 2)}\n`;
+        const currentRegisteredSession = safeIdentity(hostRunId)
+          ? getAgentRunContext(hostRunId)?.sessionKey
+          : undefined;
+        const identityGap =
+          !safeIdentity(hostRunId) || !safeIdentity(hostSessionKey) || !safeIdentity(toolCallId)
+            ? "host_identity_missing_or_invalid"
+            : registeredOnEntry === undefined
+              ? "host_context_missing_on_entry"
+              : registeredOnEntry !== hostSessionKey
+                ? "host_context_session_conflict_on_entry"
+                : currentRegisteredSession === undefined
+                  ? "host_context_disappeared"
+                  : currentRegisteredSession !== registeredOnEntry
+                    ? "host_context_session_changed"
+                    : undefined;
+        const custodyBoundary =
+          "host_tool_invocation_custody_only_not_business_or_account_identity";
+        const toolInvocation = identityGap
+          ? {
+              schemaVersion: "finance_research_tool_invocation_v1",
+              status: "not_observed" as const,
+              boundary: custodyBoundary,
+              reason: identityGap,
+            }
+          : {
+              schemaVersion: "finance_research_tool_invocation_v1",
+              status: "observed" as const,
+              boundary: custodyBoundary,
+              caller: { runId: hostRunId, sessionKey: hostSessionKey, toolCallId },
+              native: {
+                batchCorrelationId: receipt.batch?.correlationId,
+                qualityRunId: receipt.quality?.runId,
+              },
+              contextValidation: "matched_on_entry_and_before_receipt_publication",
+              payloadSha256: createHash("sha256").update(originalPayloadBytes).digest("hex"),
+              payloadHashBoundary: "native_receipt_json_without_toolInvocation_plus_final_newline",
+            };
+        // Legacy/unknown callers keep the original payload. Only checked host custody is persisted.
+        const receiptBytes =
+          toolInvocation.status === "observed"
+            ? `${JSON.stringify({ ...receipt, toolInvocation }, null, 2)}\n`
+            : originalPayloadBytes;
+        const receiptSha256 = createHash("sha256").update(receiptBytes).digest("hex");
+        await fs.writeFile(receiptPath, receiptBytes, {
           mode: 0o600,
           flag: "wx",
         });
+        signal.throwIfAborted();
         return jsonResult({
+          receiptPath,
+          receiptSha256,
+          financeEvidenceReferenceContract: {
+            optional: true,
+            fence: "finance_evidence",
+            fields: [
+              "toolCallId",
+              "receiptSha256",
+              "snapshotPointer",
+              "instrument",
+              "asOf",
+              "accountId?",
+            ],
+            snapshotPointer: "/batch/jobs/N/receipt/snapshot",
+            figuresFence: "figures",
+            scope:
+              "actual current tool call; hash binds content, not source truth or execution authority",
+          },
           status: "status" in receipt ? receipt.status : "unknown",
+          reviewFeedback: buildFinanceHistoricalResearchFeedback({
+            receipt,
+            sourceRef: receiptPath,
+            sourceSha256: receiptSha256,
+          }),
+          toolInvocation,
           // Keep actionable composition feedback ahead of large sections so the
           // central harness's bounded receipt can inform the next proposal.
           composition: {
@@ -270,7 +359,6 @@ export function createFinanceResearchRunTool(options?: {
           },
           gates: "gates" in receipt ? receipt.gates : [],
           missingEvidence: "missingEvidence" in receipt ? receipt.missingEvidence : [],
-          receiptPath,
           orchestration: receipt.plan.orchestration,
           plannedTargets: receipt.plan.targets,
           moduleCatalog: financeBrainModuleCatalog(),

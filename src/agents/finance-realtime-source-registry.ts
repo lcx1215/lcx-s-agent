@@ -528,7 +528,11 @@ export function createYahooDelayedMarketAdapter(
     providerName: "yahoo-public-chart",
     providerRole: "primary_market_data",
     priority: 10,
-    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
+    supports: (request) => {
+      const assetClass = request.assetClass.trim().toLowerCase();
+      // Prediction-market identifiers and resolution packets are not Yahoo chart symbols.
+      return assetClass !== "crypto" && assetClass !== "prediction_market";
+    },
     collect: async (request, signal) => {
       if (signal.aborted) {
         throw new Error("yahoo adapter cancelled before fetch");

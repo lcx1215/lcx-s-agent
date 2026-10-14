@@ -624,3 +624,42 @@ it("reads back original protected reduction phase observations from the intraday
       ?.protectedReduction,
   ).toEqual(diagnostic);
 });
+
+it("persists exact future-quote timing without accepting contradictory arithmetic", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "quote-timing-ledger-"));
+  try {
+    const quoteTiming = { quoteAtMs: 1791910000100, checkedAtMs: 1791910000000, aheadMs: 100 };
+    const input = {
+      signalId: "quote-timing",
+      status: "refused" as const,
+      reasons: ["quote_timestamp_future"],
+      executionFailure: {
+        stage: "initial_quote" as const,
+        category: "unexpected" as const,
+        elapsedMs: 1000,
+        quote: {
+          reason: "alpaca_safety_facts_inconsistent" as const,
+          stage: "quote_timestamp_future" as const,
+          quoteTiming,
+        },
+      },
+    };
+    await appendFinanceIntradayOutcome(directory, input);
+    expect(
+      (await readFinanceIntradayOutcome(directory, input.signalId))?.executionFailure?.quote
+        ?.quoteTiming,
+    ).toEqual(quoteTiming);
+    await expect(
+      appendFinanceIntradayOutcome(directory, {
+        ...input,
+        signalId: "bad-timing",
+        executionFailure: {
+          ...input.executionFailure,
+          quote: { ...input.executionFailure.quote, quoteTiming: { ...quoteTiming, aheadMs: 0 } },
+        },
+      }),
+    ).rejects.toThrow();
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

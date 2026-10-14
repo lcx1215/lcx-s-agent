@@ -48,9 +48,9 @@ function dayAfter(iso: string, days: number): string {
 }
 
 /** First bar at or after `iso`; returns undefined when the horizon is beyond the data. */
-function closeAtOrAfter(bars: readonly Bar[], iso: string): Bar | undefined {
+function closeAtOrAfter(bars: readonly Bar[], iso: string, cutoffDate: string): Bar | undefined {
   const day = iso.slice(0, 10);
-  return bars.find((bar) => bar.date >= day);
+  return bars.find((bar) => bar.date >= day && bar.date <= cutoffDate);
 }
 
 export async function backfillOutcomes(params: {
@@ -141,6 +141,12 @@ export async function backfillOutcomes(params: {
   for (const instrument of new Set(closed.map((entry) => entry.sample.instrument.toUpperCase()))) {
     try {
       const bars = await loadBars(instrument);
+      const cutoffDate = new Date(asOfMs).toISOString().slice(0, 10);
+      if (bars.some((bar) => bar.date > cutoffDate)) {
+        issues.push(
+          `${instrument}: price series contains bars after settlement cutoff ${cutoffDate}`,
+        );
+      }
       barsByInstrument.set(
         instrument,
         bars.toSorted((a, b) => a.date.localeCompare(b.date)),
@@ -157,7 +163,7 @@ export async function backfillOutcomes(params: {
       issues.push(`${instrument}: no price series to settle against`);
       continue;
     }
-    const exitBar = closeAtOrAfter(bars, entry.dueAt);
+    const exitBar = closeAtOrAfter(bars, entry.dueAt, new Date(asOfMs).toISOString().slice(0, 10));
     if (!exitBar) {
       // The horizon is past but the market has not traded since; that is not a settled call.
       pending.push({ instrument, dueAt: entry.dueAt });

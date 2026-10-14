@@ -30,6 +30,61 @@ export const FinanceStrategyReviewFeedbackSchema = z
     reassessment: FinanceStrategyReassessmentSchema,
   })
   .strict();
+/** Observed broker exit linked by parent/leg and the original account-bound entry. */
+export const FinanceBrokerExitFeedbackSchema = z
+  .object({
+    accountId: z.string().min(1),
+    instrument: z.string().min(1),
+    ruleId: z.string().min(1),
+    activationRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    asOf: z.string().datetime(),
+    historyRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    entries: z
+      .array(
+        z
+          .object({
+            feedbackId: z.string().regex(/^[a-f0-9]{64}$/u),
+            instrument: z.string().min(1),
+            signalId: z.string().min(1),
+            decisionRef: z.string().regex(/^[a-f0-9]{64}$/u),
+            receiptId: z.string().min(1),
+            entryOrderId: z.string().min(1),
+            exitOrderId: z.string().min(1),
+            entryPrice: z.number().finite().positive(),
+            entryQuantity: z.number().finite().positive(),
+            exitQuantity: z.number().finite().positive(),
+            exitAveragePrice: z.number().finite().positive(),
+            grossPnl: z.number().finite(),
+            lastFillAt: z.string().datetime({ offset: true }),
+            partialFillCount: z.number().int().positive(),
+            exitActivityRefs: z.array(z.string()).max(8),
+            sourceHistoryRefs: z
+              .array(z.string().regex(/^[a-f0-9]{64}$/u))
+              .min(1)
+              .max(10),
+            omittedActivityRefCount: z.number().int().nonnegative(),
+            fees: z.literal("not_attributed"),
+            netPnl: z.null(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(2),
+    boundary: z.literal(
+      "broker_parent_leg_entry_binding_not_new_execution_receipt_or_strategy_alpha",
+    ),
+  })
+  .strict();
+export const FinanceBrokerExitResponseSchema = z
+  .object({
+    feedbackId: z.string().regex(/^[a-f0-9]{64}$/u),
+    observedExitQuantity: z.number().finite().positive(),
+    observedGrossPnl: z.number().finite(),
+    consequence: z.enum(["retain_candidate", "veto_candidate", "need_more_evidence"]),
+    reason: z.string().trim().min(1).max(240),
+  })
+  .strict();
+
 import { financeAlpacaMarketSessionIssue } from "./finance-alpaca-market-calendar.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
 

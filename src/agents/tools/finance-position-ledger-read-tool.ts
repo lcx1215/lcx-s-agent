@@ -175,6 +175,25 @@ function brokerTradeEconomicsDiagnostic(
     unsupportedFeeCount,
     feeTotals: brokerHistory.feeTotals,
     realizedTradePnlAfterFees,
+    ...(brokerHistory.corporateSettlements?.length
+      ? {
+          corporateSettlementOutcomes: {
+            count: brokerHistory.corporateSettlements.length,
+            observedSettlementPnl: Number(
+              brokerHistory.corporateSettlements
+                .reduce((sum, event) => sum + event.settlementPnl, 0)
+                .toFixed(6),
+            ),
+            sample: brokerHistory.corporateSettlements.slice(-2),
+            omittedCount: Math.max(0, brokerHistory.corporateSettlements.length - 2),
+            boundary:
+              "observed_corporate_settlement_minus_recorded_basis_not_order_fill_or_strategy_pnl; unallocated_cost_gaps_remain",
+          },
+        }
+      : {}),
+    ...(brokerHistory.invalidCorporateActionCount
+      ? { invalidCorporateActionCount: brokerHistory.invalidCorporateActionCount }
+      : {}),
     netProfitability: "not_proven" as const,
     executionThresholdPromotionEligible: false,
     blockers: Object.freeze(blockers),

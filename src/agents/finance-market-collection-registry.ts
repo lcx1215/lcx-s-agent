@@ -15,6 +15,7 @@ import {
   type FinanceDataProviderRole,
   type FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
+import { createDeribitPublicCollectionAdapters } from "./finance-deribit-collection.js";
 import {
   createBinancePublicEodHistoryCollectionAdapter,
   createFredPublicIndexHistoryCollectionAdapter,
@@ -724,6 +725,13 @@ export function createBlsMacroSeriesCollectionAdapter(
     providerName: "bls-public-macro-series",
     providerRole: "official_or_issuer_reference",
     priority: 10,
+    // The generic macro heartbeat uses FRED's GDP ID; BLS needs its own native series.
+    sampleRequest: {
+      instrument: "CPI",
+      assetClass: "macro",
+      collection: "macro_series",
+      seriesId: "CUUR0000SA0",
+    },
     supports: (request) =>
       isMacroSeries(request) &&
       Boolean(request.seriesId ?? request.instrument) &&
@@ -1373,6 +1381,10 @@ export function createFinanceMarketCollectionRegistry(
 ): readonly FinanceMarketCollectionAdapter[] {
   const adapters: FinanceMarketCollectionAdapter[] = [
     ...createRegisteredCapabilityAdapters(options),
+    ...createDeribitPublicCollectionAdapters({
+      fetchImpl: options.fetchImpl,
+      captureRawResponse: options.captureRawResponse,
+    }),
     createBinancePublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createFredPublicIndexHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createBlsMacroSeriesCollectionAdapter({ fetchImpl: options.fetchImpl }),

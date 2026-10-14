@@ -1460,6 +1460,7 @@ export async function runFinanceDailyCycle(
       ...(result.requestIdSha256 ? { requestIdSha256: result.requestIdSha256 } : {}),
       ...(result.toolEvidence ? { toolEvidence: result.toolEvidence } : {}),
       ...(result.modelCallEvidence ? { modelCallEvidence: result.modelCallEvidence } : {}),
+      ...(result.transport ? { transport: result.transport } : {}),
       ...(result.taskObjectiveSha256 ? { taskObjectiveSha256: result.taskObjectiveSha256 } : {}),
       ...(result.status === "completed" ? { decisions: result.decisions } : {}),
     };
