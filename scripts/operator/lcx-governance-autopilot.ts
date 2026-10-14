@@ -8,6 +8,14 @@ import {
   recordAgentArtifact,
   type ArtifactRecordingReceipt,
 } from "../../src/agents/artifact-result-recording.js";
+import {
+  compactCleanupReview,
+  reviewCleanupBeforeDecision,
+} from "../../src/agents/central-harness/cleanup-review-handoff.js";
+import {
+  buildCentralGovernanceInput,
+  compactFlowGraphOwner,
+} from "../../src/agents/central-harness/governance-input.js";
 import { readFinancePositionLedger } from "../../src/agents/finance-position-ledger.ts";
 import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.ts";
 import type { OpenClawConfig } from "../../src/config/config.js";
@@ -64,13 +72,17 @@ import {
   readLatestShadowSnapshot,
   type ShadowLatestSnapshot,
 } from "./lcx-multi-agent-pattern-shadow.ts";
-import { buildOwnerBrief, writeOwnerBrief } from "./lcx-owner-brief.ts";
+import { buildOwnerBriefWithPriorCollection, writeOwnerBrief } from "./lcx-owner-brief.ts";
 import { buildOwnerControlMap, writeOwnerControlMap } from "./lcx-owner-control-map.ts";
 import {
   buildProblemClusterRadarFromSnapshots,
   collectProblemRadarExclusiveSnapshots,
   type OwnerSnapshot as ProblemRadarOwnerSnapshot,
 } from "./lcx-problem-cluster-radar.ts";
+import {
+  compactCommercialAcceptanceFailures,
+  readCommercialAcceptanceFeedback,
+} from "./local-brain-training-plan.ts";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -298,7 +310,7 @@ const OWNER_COMMANDS: OwnerCommand[] = [
   {
     id: "contextRecovery",
     script: "scripts/operator/lcx-context-recovery-exam.ts",
-    args: ["--json"],
+    args: ["--handoff", "--json"],
     required: true,
   },
   {
@@ -418,17 +430,124 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       blockedGates: payload.blockedGates,
       watchGates: payload.watchGates,
       nextActions: payload.nextActions,
+      failureDiagnostics: compactCommercialAcceptanceFailures(payload),
     };
   }
 
   if (id === "changeImpact") {
+    let strayGate = payload.strayGate;
+    if (strayGate && typeof strayGate === "object" && !Array.isArray(strayGate)) {
+      const gate = { ...(strayGate as Record<string, unknown>) };
+      const prior = gate.priorWork;
+      if (prior && typeof prior === "object" && !Array.isArray(prior)) {
+        const value = prior as Record<string, unknown>;
+        if (Buffer.byteLength(JSON.stringify(value), "utf8") > 4096) {
+          const reads = Array.isArray(value.reads) ? value.reads : [];
+          const gaps = Array.isArray(value.gaps) ? value.gaps : [];
+          const keptReads = reads.slice(0, 2);
+          const gapIndices =
+            value.blocksPlan === true && gaps.length > 4
+              ? [gaps.length - 1, 0, 1, 2]
+              : gaps.slice(0, 4).map((_gap, index) => index);
+          const summary = {
+            ...value,
+            reads: keptReads,
+            readsOmitted: reads.length - keptReads.length,
+            gaps: gapIndices.map((index) => gaps[index]),
+            gapIndices,
+            gapsOmitted: gaps.length - gapIndices.length,
+            fullReadbackPointer: "/strayGate/priorWork",
+          };
+          while (Buffer.byteLength(JSON.stringify(summary), "utf8") > 4096 && keptReads.length) {
+            keptReads.pop();
+            summary.readsOmitted += 1;
+          }
+          gate.priorWork =
+            Buffer.byteLength(JSON.stringify(summary), "utf8") <= 4096
+              ? summary
+              : {
+                  status: value.status,
+                  blocksPlan: value.blocksPlan,
+                  baselineCommit: value.baselineCommit,
+                  cleanup: value.cleanup,
+                  semanticEquivalence: "not_proven",
+                  reads: [],
+                  readsOmitted: reads.length,
+                  gaps: ["prior_work_summary_budget_requires_original_receipt"],
+                  gapsOmitted: gaps.length,
+                  fullReadbackPointer: "/strayGate/priorWork",
+                };
+          strayGate = { ...gate };
+        }
+      }
+      const consolidation = gate.consolidation;
+      const mechanism = gate.mechanismReview;
+      if (mechanism && typeof mechanism === "object" && !Array.isArray(mechanism)) {
+        const value = mechanism as Record<string, unknown>;
+        const checks = Array.isArray(value.checks) ? value.checks : [];
+        gate.mechanismReview = {
+          status: value.status,
+          disposition: value.disposition,
+          decisionStatus: value.decisionStatus,
+          reason: value.reason,
+          targetPath: value.targetPath,
+          ownerPath: value.ownerPath,
+          checks: checks.slice(0, 2),
+          checksOmitted: Math.max(0, checks.length - 2),
+          fullReadbackPointer: "/strayGate/mechanismReview",
+          coverage: "selected_behavior_reports_only",
+          semanticEquivalence: "not_proven",
+          sourceMutationAuthorized: false,
+        };
+        strayGate = gate;
+      }
+      if (consolidation && typeof consolidation === "object" && !Array.isArray(consolidation)) {
+        const value = consolidation as Record<string, unknown>;
+        if (Buffer.byteLength(JSON.stringify(value), "utf8") > 2048) {
+          const routes = Array.isArray(value.routes) ? value.routes : [];
+          const conflicts = Array.isArray(value.conflicts) ? value.conflicts : [];
+          const summary = {
+            status: value.status,
+            blocksPlan: value.blocksPlan,
+            normSource: value.normSource,
+            routes: routes.slice(0, 1),
+            routeCount: routes.length,
+            conflicts: conflicts.slice(0, 2),
+            conflictCount: conflicts.length,
+            fullReadbackPointer: "/strayGate/consolidation",
+            semanticEquivalence: "not_proven",
+          };
+          if (Buffer.byteLength(JSON.stringify(summary), "utf8") > 2048) {
+            summary.routes = [];
+          }
+          while (
+            Buffer.byteLength(JSON.stringify(summary), "utf8") > 2048 &&
+            summary.conflicts.length
+          ) {
+            summary.conflicts.pop();
+          }
+          gate.consolidation = summary;
+          strayGate = gate;
+        }
+      }
+    }
     return {
       changedFiles: payload.changedFiles,
+      changedFilesReadback: payload.changedFilesReadback,
+      strayGate,
       affectedLanes: payload.affectedLanes,
       unmatchedFiles: payload.unmatchedFiles,
       recommendedFastCommands: payload.recommendedFastCommands,
       deferredCommands: payload.deferredCommands,
       safetyNotes: payload.safetyNotes,
+      ...(payload.cleanupReview
+        ? {
+            cleanupReview: compactCleanupReview(
+              payload.cleanupReview,
+              payload.cleanupReviewCoverage,
+            ),
+          }
+        : {}),
     };
   }
 
@@ -466,6 +585,10 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       untrackedFiles: summary?.untrackedFiles,
       workspaceArtifactFiles: summary?.workspaceArtifactFiles,
       liveSidecarFiles: summary?.liveSidecarFiles,
+      artifactInventoryComplete: summary?.artifactInventoryComplete,
+      unreadableArtifactAreas: summary?.unreadableArtifactAreas,
+      artifactReadFailures: summary?.artifactReadFailures,
+      visibleInventory: repo?.visibleInventory,
       unmatchedChangedFiles: summary?.unmatchedChangedFiles,
       staleRuntimeCandidates: summary?.staleRuntimeCandidates,
       largeRuntimeCandidates: summary?.largeRuntimeCandidates,
@@ -549,6 +672,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     const latestCandidateEval = recordValue(payload.latestCandidateEval);
     const activeGuardAdapterTruth = recordValue(payload.activeGuardAdapterTruth);
     return {
+      acceptanceFeedback: payload.acceptanceFeedback,
       activeProcessCount: arrayValue(payload.activeProcesses).length,
       activeHeavyEvalCounts: payload.activeHeavyEvalCounts,
       latestGuardEvent: payload.latestGuardEvent,
@@ -644,6 +768,12 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       signalKey: payload.signalKey,
       issue: payload.issue,
       domain: payload.domain,
+      sourceReview: payload.sourceReview,
+      diagnosticFeedback: payload.diagnosticFeedback,
+      contentReview: payload.contentReview,
+      candidateOnly: payload.candidateOnly,
+      reuseAllowed: payload.reuseAllowed,
+      semanticTruth: payload.semanticTruth,
       allowlistedWriteRoots: payload.allowlistedWriteRoots,
       memoryCleaner: memoryCleaner
         ? {
@@ -720,7 +850,34 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
   }
 
   if (id === "providerCouncilAcceleration") {
+    const cleanup = recordValue(payload.providerRunCleanup);
+    const validCleanup =
+      cleanup &&
+      ["local_operation_settled", "cleanup_unconfirmed"].includes(String(cleanup.status)) &&
+      cleanup.scope === "local_council_operation_only_remote_execution_not_confirmed" &&
+      cleanup.cancellationRequested === true;
     return {
+      ...(typeof payload.providerRunTimedOut === "boolean"
+        ? { providerRunTimedOut: payload.providerRunTimedOut }
+        : {}),
+      ...(typeof payload.providerRunError === "string" && payload.providerRunError
+        ? {
+            providerRunFailureCode:
+              payload.providerRunTimedOut === true
+                ? "provider_council_timeout"
+                : "provider_council_failed",
+          }
+        : {}),
+      ...(payload.providerRunCleanup !== undefined
+        ? {
+            providerRunCleanup: {
+              status: validCleanup ? cleanup.status : "cleanup_unconfirmed",
+              scope: "local_council_operation_only_remote_execution_not_confirmed",
+              cancellationRequested: cleanup?.cancellationRequested === true,
+              ...(validCleanup ? {} : { reason: "provider_cleanup_receipt_invalid" }),
+            },
+          }
+        : {}),
       status: payload.status,
       action: payload.action,
       profile: payload.profile,
@@ -790,11 +947,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
   }
 
   if (id === "flowGraph") {
-    return {
-      summary: payload.summary,
-      actionableFailures: payload.actionableFailures,
-      diagnosticEntries: recordValue(payload.summary)?.diagnosticEntries,
-    };
+    return compactFlowGraphOwner(payload);
   }
 
   if (id === "headTail") {
@@ -948,7 +1101,28 @@ async function runOwner(
 ): Promise<OwnerRun> {
   const startedAt = performance.now();
   const durationMs = () => Math.max(0, Math.round(performance.now() - startedAt));
-  const args = ["--import", "tsx", command.script, ...(command.args ?? [])];
+  // The prior snapshot is read before this child, never from the acceptance built later in this cycle.
+  const acceptanceFeedback =
+    command.id === "trainingPlan"
+      ? await readCommercialAcceptanceFeedback({
+          receiptPath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
+          captureHostPin: true,
+          currentRunId: params.parentRunId,
+          observedAt: params.snapshot.observedAt,
+        })
+      : undefined;
+  const feedbackArgs =
+    acceptanceFeedback?.status === "observed" && acceptanceFeedback.source
+      ? [
+          "--acceptance-feedback-receipt",
+          acceptanceFeedback.source.path,
+          "--acceptance-feedback-sha256",
+          acceptanceFeedback.source.sha256,
+          "--acceptance-feedback-current-run-id",
+          params.parentRunId ?? "",
+        ]
+      : [];
+  const args = ["--import", "tsx", command.script, ...(command.args ?? []), ...feedbackArgs];
   const renderedCommand = `node ${args.join(" ")}`;
   try {
     const { stdout } = await execFileAsync(process.execPath, args, {
@@ -957,6 +1131,9 @@ async function runOwner(
       maxBuffer: EXEC_MAX_BUFFER,
     });
     const payload = JSON.parse(stdout) as Record<string, unknown>;
+    if (acceptanceFeedback && acceptanceFeedback.status !== "observed") {
+      payload.acceptanceFeedback = acceptanceFeedback;
+    }
     return captureOwnerRun(
       ownerRunFromPayload(command, payload, {
         commandText: renderedCommand,
@@ -977,6 +1154,9 @@ async function runOwner(
     };
     try {
       const payload = JSON.parse(details.stdout ?? "") as Record<string, unknown>;
+      if (acceptanceFeedback && acceptanceFeedback.status !== "observed") {
+        payload.acceptanceFeedback = acceptanceFeedback;
+      }
       return captureOwnerRun(
         ownerRunFromPayload(command, payload, {
           commandText: renderedCommand,
@@ -1020,28 +1200,17 @@ async function runOwner(
 async function runCentralOwnerAfterSnapshots(
   command: OwnerCommand,
   completedOwners: readonly OwnerRun[],
-  params: { parentRunId: string; snapshot: LcxRunSnapshot },
+  params: {
+    parentRunId: string;
+    snapshot: LcxRunSnapshot;
+    multiAgentPatternShadow?: ShadowLatestSnapshot;
+  },
 ): Promise<OwnerRun> {
   let temporaryDirectory: string | undefined;
   let result: OwnerRun | undefined;
   const commandText = `node --import tsx ${command.script} ${(command.args ?? []).join(" ")}`;
   try {
-    const input = {
-      schemaVersion: "lcx_central_governance_input_v1",
-      boundary: "same_cycle_completed_owners_only",
-      phase: "before_central_decision",
-      checkedAt: new Date().toISOString(),
-      parentRunId: params.parentRunId,
-      snapshot: params.snapshot,
-      byOwner: Object.fromEntries(
-        completedOwners
-          .filter((owner) => owner.id !== "centralAgent")
-          .map((owner) => [
-            owner.id,
-            { id: owner.id, ok: owner.ok, compact: owner.compact, runReceipt: owner.runReceipt },
-          ]),
-      ),
-    };
+    const input = buildCentralGovernanceInput(completedOwners, params);
     const serialized = JSON.stringify(input);
     if (Buffer.byteLength(serialized, "utf8") > 512 * 1024) {
       throw new Error("central governance input exceeds 512 KiB");
@@ -1770,6 +1939,9 @@ function buildContextRecoveryHandoff({
     "## Provider Council Acceleration",
     `- status: ${inlineValue(providerCouncilAccelerationCompact?.status)}`,
     `- action: ${inlineValue(providerCouncilAccelerationCompact?.action)}`,
+    `- failure: ${inlineValue(providerCouncilAccelerationCompact?.providerRunFailureCode)}`,
+    `- cleanup: ${inlineValue(recordValue(providerCouncilAccelerationCompact?.providerRunCleanup)?.status)}`,
+    "- cleanup scope: local council operation; remote execution cancellation remains unconfirmed",
     `- profile: ${inlineValue(providerCouncilAccelerationCompact?.profile)}`,
     `- gitClean: ${inlineValue(providerCouncilAccelerationCompact?.gitClean)}`,
     `- activeEvalOrMlx: ${inlineValue(providerCouncilAccelerationCompact?.activeEvalOrMlx)}`,
@@ -1909,6 +2081,46 @@ const [sharedOwnerSnapshots, acceptanceProbes] = await Promise.all([
   acceptanceProbesPromise,
 ]);
 const { directOwners, problemRadarExclusive } = sharedOwnerSnapshots;
+// Review settled, pinned sources before the decision child; the final governance
+// receipt does not exist yet and must never become this stage's input.
+const changeImpactIndex = directOwners.findIndex((run) => run.id === "changeImpact");
+const impactRun = directOwners[changeImpactIndex];
+if (impactRun?.payload) {
+  const cleanup = await reviewCleanupBeforeDecision(directOwners, {
+    config: ownerArtifactRecordingConfig ?? null,
+    rootDir: DEFAULT_WORKSPACE_DIR,
+    repoRoot,
+    parentRunId: governanceRunId,
+    snapshot: governanceSnapshot,
+  });
+  const payload = {
+    ...impactRun.payload,
+    ok:
+      impactRun.ok === true &&
+      impactRun.runReceipt.status === "passed" &&
+      cleanup.review.status === "reviewed",
+    cleanupReview: cleanup.review,
+    cleanupReviewInputArtifact: cleanup.predecisionArtifact,
+    cleanupReviewCoverage: {
+      selectedCandidates: cleanup.selectedCandidates,
+      omittedCandidates: cleanup.omittedCandidates,
+    },
+    impactSourceArtifact: impactRun.compact.artifactEvidence,
+    impactSourceRunReceipt: impactRun.runReceipt,
+  };
+  const command = directOwnerCommands.find((entry) => entry.id === "changeImpact")!;
+  directOwners[changeImpactIndex] = await captureOwnerRun(
+    ownerRunFromPayload(command, payload, {
+      commandText: `${impactRun.command} (same-cycle cleanup review)`,
+      receiptCommandLabel: `${impactRun.command} (same-cycle cleanup review)`,
+      exitCode: impactRun.exitCode,
+      error: impactRun.error,
+      parentRunId: governanceRunId,
+      snapshot: governanceSnapshot,
+    }),
+    payload,
+  );
+}
 const directByOwner = ownerMap(directOwners);
 const problemRadarBuildStartedAt = performance.now();
 const problemRadarPayload = await buildProblemClusterRadarFromSnapshots(
@@ -2019,7 +2231,13 @@ const commercialAcceptanceOwnerRun = await captureOwnerRun(
 const centralAgentOwnerRun = await runCentralOwnerAfterSnapshots(
   centralAgentCommand,
   [...directOwners, problemRadarOwnerRun, commercialAcceptanceOwnerRun],
-  { parentRunId: governanceRunId, snapshot: governanceSnapshot },
+  {
+    parentRunId: governanceRunId,
+    snapshot: governanceSnapshot,
+    multiAgentPatternShadow: problemRadarExclusive.multiAgentPatternShadow?.payload as
+      | ShadowLatestSnapshot
+      | undefined,
+  },
 );
 const ownerFanoutDurationMs = Math.max(0, Math.round(performance.now() - ownerFanoutStartedAt));
 const ownerById = new Map(
@@ -2215,6 +2433,8 @@ const receipt = {
     blockedGates: byOwner.commercialAcceptance?.compact.blockedGates ?? [],
     affectedLanes: byOwner.changeImpact?.compact.affectedLanes ?? [],
     unmatchedFiles: byOwner.changeImpact?.compact.unmatchedFiles ?? [],
+    changeImpactSourceReadback: byOwner.changeImpact?.compact.changedFilesReadback,
+    changeImpactStrayGate: byOwner.changeImpact?.compact.strayGate,
     projectionReaderCoverageStatus: byOwner.projectionReaderAudit?.compact.coverageStatus,
     projectionReaderContractReadyForAllAdapters:
       byOwner.projectionReaderAudit?.compact.readerContractReadyForAllAdapters,
@@ -2568,25 +2788,28 @@ const ownerControlMap = buildOwnerControlMap({
     ],
   },
 });
-const ownerBrief = buildOwnerBrief({
-  checkedAt: receipt.checkedAt,
-  snapshot: governanceSnapshot,
-  governance: receipt,
-  localFailureTrace,
-  paths: {
-    latestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
-    latestJsonPath: OWNER_BRIEF_LATEST_JSON_PATH,
-    ownerControlMapMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
-    sourcePaths: [
-      GOVERNANCE_AUTOPILOT_LATEST_PATH,
-      EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
-      LOCAL_FAILURE_TRACE_LATEST_PATH,
-      MONOTONIC_DATA_LEDGER_LATEST_PATH,
-      CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
-      MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
-    ],
+const ownerBrief = await buildOwnerBriefWithPriorCollection(
+  {
+    checkedAt: receipt.checkedAt,
+    snapshot: governanceSnapshot,
+    governance: receipt,
+    localFailureTrace,
+    paths: {
+      latestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
+      latestJsonPath: OWNER_BRIEF_LATEST_JSON_PATH,
+      ownerControlMapMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+      sourcePaths: [
+        GOVERNANCE_AUTOPILOT_LATEST_PATH,
+        EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+        LOCAL_FAILURE_TRACE_LATEST_PATH,
+        MONOTONIC_DATA_LEDGER_LATEST_PATH,
+        CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+        MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+      ],
+    },
   },
-});
+  repoRoot,
+);
 const realCostLedger = await readJsonRecord(REAL_COST_LEDGER_LATEST_JSON_PATH);
 const monotonicDataLedger = await readJsonRecord(MONOTONIC_DATA_LEDGER_LATEST_PATH);
 

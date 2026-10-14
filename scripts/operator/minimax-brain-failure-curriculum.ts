@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -26,12 +27,187 @@ type FailureEvalSnapshot = {
   passRate: number;
 };
 
+type FailureEvalAttempt = {
+  at: string;
+  snapshot?: FailureEvalSnapshot;
+  source: { path: string; sha256: string; pointer: string; lineSha256?: string };
+  reason?: string;
+};
+
 export type FailureCurriculumOptions = {
   guardLogPath?: string;
   evalReceiptPath?: string;
   maxPrompts: number;
   startIndex?: number;
+  caller?: TrainingCallerRef;
+  workspaceDir?: string;
 };
+
+export type TrainingCallerRef = { path: string; pointer: string; sha256: string; runId: string };
+type TrainingSourceRef = FailureEvalAttempt["source"];
+export type TrainingSourceSelection = { guardLogPath: string; evalReceiptPath?: string };
+const trainingHash = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/** Record the actual caller once; this is not an identity for any training worker or account. */
+export async function recordTrainingCaller(options: {
+  logPath: string;
+  workspaceDir: string;
+  owner: "minimax-brain-training-guard" | "minimax-quota-brain-saturator";
+}): Promise<TrainingCallerRef> {
+  const entry = {
+    at: new Date().toISOString(),
+    event: "training_caller_start",
+    owner: options.owner,
+    runId: randomUUID(),
+    workspaceDir: path.resolve(options.workspaceDir),
+    boundary: "caller_observation_only_no_account_or_worker_identity",
+  };
+  const row = JSON.stringify(entry);
+  await fs.mkdir(path.dirname(options.logPath), { recursive: true });
+  await fs.appendFile(options.logPath, `${row}\n`);
+  const rows = (await fs.readFile(options.logPath, "utf8")).split(/\r?\n/u);
+  const index = rows.indexOf(row);
+  if (index < 0) {
+    throw new Error("training_caller_record_unavailable");
+  }
+  return {
+    path: path.resolve(options.logPath),
+    pointer: `line:${index + 1}`,
+    sha256: trainingHash(row),
+    runId: entry.runId,
+  };
+}
+
+export async function readTrainingCaller(ref: TrainingCallerRef, workspaceDir: string) {
+  if (
+    !ref ||
+    !/^line:[1-9]\d*$/u.test(ref.pointer) ||
+    !/^[a-f0-9]{64}$/u.test(ref.sha256) ||
+    typeof ref.runId !== "string" ||
+    !ref.runId
+  ) {
+    throw new Error("training_caller_reference_invalid");
+  }
+  const raw = await fs.readFile(ref.path, "utf8");
+  const row = raw.split(/\r?\n/u)[Number(ref.pointer.slice(5)) - 1];
+  if (!row || trainingHash(row) !== ref.sha256) {
+    throw new Error("training_caller_hash_conflict");
+  }
+  const caller = JSON.parse(row) as Record<string, unknown>;
+  if (
+    caller.event !== "training_caller_start" ||
+    !["minimax-brain-training-guard", "minimax-quota-brain-saturator"].includes(
+      String(caller.owner),
+    ) ||
+    caller.runId !== ref.runId ||
+    caller.workspaceDir !== path.resolve(workspaceDir)
+  ) {
+    throw new Error("training_caller_identity_conflict");
+  }
+  return caller;
+}
+
+/** JSONL may append unrelated rows; a later eval still supersedes this selection. */
+export async function verifyTrainingFailureSource(
+  ref: TrainingSourceRef,
+  selection?: TrainingSourceSelection,
+) {
+  const raw = await fs.readFile(ref.path, "utf8");
+  if (ref.pointer.startsWith("line:")) {
+    const rows = raw.split(/\r?\n/u);
+    const index = Number(ref.pointer.slice(5)) - 1;
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      !ref.lineSha256 ||
+      trainingHash(rows[index] ?? "") !== ref.lineSha256
+    ) {
+      throw new Error("training_failure_source_hash_conflict");
+    }
+    const latest = await latestFailureSnapshot(ref.path);
+    if (latest?.source.pointer !== ref.pointer || latest.source.lineSha256 !== ref.lineSha256) {
+      throw new Error("training_failure_source_superseded");
+    }
+  } else if (trainingHash(raw) !== ref.sha256) {
+    throw new Error("training_failure_source_hash_conflict");
+  }
+  if (selection) {
+    if (
+      typeof selection.guardLogPath !== "string" ||
+      !selection.guardLogPath.trim() ||
+      (selection.evalReceiptPath !== undefined &&
+        (typeof selection.evalReceiptPath !== "string" || !selection.evalReceiptPath.trim()))
+    ) {
+      throw new Error("training_failure_source_selection_invalid");
+    }
+    // Reselect across the same original sources, not only the previously selected file.
+    const review = await reviewFailureCurriculum({ ...selection, maxPrompts: 1 });
+    const selected = review.selectedEvaluation?.source;
+    if (
+      review.status !== "ready" ||
+      !selected ||
+      path.resolve(selected.path) !== path.resolve(ref.path) ||
+      selected.pointer !== ref.pointer ||
+      (ref.pointer.startsWith("line:")
+        ? selected.lineSha256 !== ref.lineSha256
+        : selected.sha256 !== ref.sha256)
+    ) {
+      throw new Error(`training_failure_source_superseded:${review.reason}`);
+    }
+  }
+  return {
+    ...ref,
+    observedFileSha256: trainingHash(raw),
+    selectionVerification: selection
+      ? ("original_sources_reselected" as const)
+      : ("not_observed" as const),
+  };
+}
+
+export type TrainingPromptHandoff = {
+  caller: TrainingCallerRef;
+  prompt: { path: string; sha256: string };
+  source?: TrainingSourceRef;
+  selection?: TrainingSourceSelection;
+};
+
+/** Independently read the exact prompt and source that the caller supplied. */
+export async function readTrainingPromptHandoff(options: {
+  handoff: { path: string; sha256: string };
+  caller: TrainingCallerRef;
+  promptFile: string;
+  promptText: string;
+  workspaceDir: string;
+}) {
+  const raw = await fs.readFile(options.handoff.path, "utf8");
+  if (trainingHash(raw) !== options.handoff.sha256) {
+    throw new Error("training_prompt_handoff_hash_conflict");
+  }
+  const handoff = JSON.parse(raw) as TrainingPromptHandoff;
+  if (JSON.stringify(handoff.caller) !== JSON.stringify(options.caller)) {
+    throw new Error("training_prompt_caller_conflict");
+  }
+  const caller = await readTrainingCaller(options.caller, options.workspaceDir);
+  if (
+    path.resolve(handoff.prompt.path) !== path.resolve(options.promptFile) ||
+    handoff.prompt.sha256 !== trainingHash(options.promptText)
+  ) {
+    throw new Error("training_prompt_hash_conflict");
+  }
+  const source = handoff.source
+    ? await verifyTrainingFailureSource(handoff.source, handoff.selection)
+    : undefined;
+  return {
+    status: "read" as const,
+    caller,
+    callerRef: options.caller,
+    prompt: handoff.prompt,
+    source,
+    selection: handoff.selection,
+    semanticAdoption: "not_proven" as const,
+    scopeBoundary: "caller_observation_only_no_account_or_worker_identity" as const,
+  };
+}
 
 const HOME = process.env.HOME ?? os.homedir();
 const DEFAULT_GUARD_LOG = path.join(
@@ -331,50 +507,81 @@ function evalSnapshotFromPayload(
   const filteredParseRecoveredCaseIds = Array.isArray(parseRecoveredCaseIds)
     ? parseRecoveredCaseIds.filter((entry): entry is string => typeof entry === "string")
     : [];
-  if (
-    filteredFailedCaseIds.length === 0 &&
-    filteredParseRecoveredCaseIds.length === 0 &&
-    filteredModelContractFailureCaseIds.length === 0
-  ) {
-    return undefined;
-  }
   const passed = (summary as { passed?: unknown }).passed;
   const total = (summary as { total?: unknown }).total;
   const passRate = (summary as { passRate?: unknown }).passRate;
+  if (
+    typeof passed !== "number" ||
+    !Number.isSafeInteger(passed) ||
+    passed < 0 ||
+    typeof total !== "number" ||
+    !Number.isSafeInteger(total) ||
+    total <= 0 ||
+    passed > total ||
+    typeof passRate !== "number" ||
+    !Number.isFinite(passRate) ||
+    passRate < 0 ||
+    passRate > 1
+  ) {
+    return undefined;
+  }
   return {
     at: typeof payload.at === "string" ? payload.at : "",
     adapterPath,
     failedCaseIds: filteredFailedCaseIds,
     modelContractFailureCaseIds: filteredModelContractFailureCaseIds,
     parseRecoveredCaseIds: filteredParseRecoveredCaseIds,
-    passed: typeof passed === "number" ? passed : 0,
-    total: typeof total === "number" ? total : 0,
-    passRate: typeof passRate === "number" ? passRate : 0,
+    passed,
+    total,
+    passRate,
   };
 }
 
-async function latestFailureSnapshot(logPath: string): Promise<FailureEvalSnapshot | undefined> {
-  let raw = "";
+async function latestFailureSnapshot(logPath: string): Promise<FailureEvalAttempt | undefined> {
+  let raw: string;
   try {
     raw = await fs.readFile(logPath, "utf8");
   } catch {
     return undefined;
   }
-  const snapshots = raw
-    .split(/\r?\n/u)
-    .filter(Boolean)
-    .map(parseJsonLine)
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
-    .map(evalSnapshotFromPayload)
-    .filter((entry): entry is FailureEvalSnapshot => Boolean(entry));
-  return snapshots.toSorted((left, right) => right.at.localeCompare(left.at))[0];
+  const source = {
+    path: path.resolve(logPath),
+    sha256: createHash("sha256").update(raw).digest("hex"),
+  };
+  // The last appended attempt includes success and timeout. Filtering failures
+  // first resurrects an older verdict after a later attempt resolved or invalidated it.
+  const attempts = raw.split(/\r?\n/u).flatMap((line, index) => {
+    const entry = parseJsonLine(line);
+    if (
+      !entry ||
+      !["candidate_hardened_eval", "stable_hardened_eval"].includes(String(entry.name)) ||
+      !["step_ok", "step_non_passing", "step_timeout", "step_failed"].includes(String(entry.event))
+    ) {
+      return [];
+    }
+    return [
+      {
+        at: typeof entry.at === "string" ? entry.at : "",
+        snapshot: evalSnapshotFromPayload(entry),
+        source: { ...source, pointer: `line:${index + 1}`, lineSha256: trainingHash(line) },
+        reason:
+          entry.event === "step_timeout"
+            ? "latest_eval_timeout"
+            : entry.event === "step_failed"
+              ? "latest_eval_failed"
+              : undefined,
+      },
+    ];
+  });
+  return attempts.at(-1);
 }
 
 async function receiptFailureSnapshot(
   receiptPath: string,
-): Promise<FailureEvalSnapshot | undefined> {
+): Promise<FailureEvalAttempt | undefined> {
   try {
-    const receipt = JSON.parse(await fs.readFile(receiptPath, "utf8")) as {
+    const raw = await fs.readFile(receiptPath, "utf8");
+    const receipt = JSON.parse(raw) as {
       boundary?: unknown;
       generatedAt?: unknown;
       requested?: { contractOnly?: unknown };
@@ -389,12 +596,20 @@ async function receiptFailureSnapshot(
     ) {
       return undefined;
     }
-    return evalSnapshotFromPayload({
-      event: "step_non_passing",
-      name: "candidate_hardened_eval",
+    return {
       at: receipt.generatedAt,
-      result: { adapterPath: receipt.resolved?.adapterPath, summary: receipt.summary },
-    });
+      snapshot: evalSnapshotFromPayload({
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        at: receipt.generatedAt,
+        result: { adapterPath: receipt.resolved?.adapterPath, summary: receipt.summary },
+      }),
+      source: {
+        path: path.resolve(receiptPath),
+        sha256: createHash("sha256").update(raw).digest("hex"),
+        pointer: "/summary",
+      },
+    };
   } catch {
     return undefined;
   }
@@ -427,22 +642,82 @@ function recipeForCaseId(
   return fallbackRecipe(caseId, priority);
 }
 
-export async function buildFailureCurriculumPrompts(
-  options: FailureCurriculumOptions,
-): Promise<TeacherPrompt[]> {
+export async function reviewFailureCurriculum(options: FailureCurriculumOptions) {
+  const receipt = {
+    owner: "scripts/operator/minimax-brain-failure-curriculum.ts",
+    boundary: "eval_failure_curriculum_only" as const,
+    checkedAt: new Date().toISOString(),
+    status: "blocked" as "blocked" | "ready" | "no_failure",
+    reason: "failure_eval_not_observed",
+    selectedEvaluation: undefined as FailureEvalAttempt | undefined,
+    requestedSources: [
+      options.guardLogPath ?? DEFAULT_GUARD_LOG,
+      ...(options.evalReceiptPath ? [options.evalReceiptPath] : []),
+    ],
+    selection: {
+      guardLogPath: options.guardLogPath ?? DEFAULT_GUARD_LOG,
+      evalReceiptPath: options.evalReceiptPath,
+    },
+    sourceReads: [] as FailureEvalAttempt[],
+    prompts: [] as TeacherPrompt[],
+    semanticAdoption: "not_proven" as const,
+    scopeVerification: "not_proven" as const,
+    freshness: "latest_observed_attempt_only" as const,
+    caller: undefined as Awaited<ReturnType<typeof readTrainingCaller>> | undefined,
+  };
   if (options.maxPrompts <= 0) {
-    return [];
+    receipt.reason = "failure_prompt_budget_empty";
+    return receipt;
+  }
+  if (options.caller) {
+    try {
+      if (!options.workspaceDir) {
+        throw new Error("training_caller_workspace_missing");
+      }
+      receipt.caller = await readTrainingCaller(options.caller, options.workspaceDir);
+    } catch (error) {
+      receipt.reason = String(error);
+      return receipt;
+    }
   }
   const logSnapshot = await latestFailureSnapshot(options.guardLogPath ?? DEFAULT_GUARD_LOG);
   const receiptSnapshot = options.evalReceiptPath
     ? await receiptFailureSnapshot(options.evalReceiptPath)
     : undefined;
-  const snapshot =
-    receiptSnapshot && (!logSnapshot || receiptSnapshot.at > logSnapshot.at)
-      ? receiptSnapshot
-      : logSnapshot;
+  receipt.sourceReads = [logSnapshot, receiptSnapshot].filter(
+    (source): source is FailureEvalAttempt => source !== undefined,
+  );
+  if (
+    logSnapshot &&
+    receiptSnapshot &&
+    Date.parse(logSnapshot.at) === Date.parse(receiptSnapshot.at) &&
+    JSON.stringify(logSnapshot.snapshot) !== JSON.stringify(receiptSnapshot.snapshot)
+  ) {
+    receipt.reason = "eval_sources_same_time_conflict";
+    return receipt;
+  }
+  const selected =
+    logSnapshot && !Number.isFinite(Date.parse(logSnapshot.at))
+      ? logSnapshot
+      : receiptSnapshot &&
+          (!logSnapshot || Date.parse(receiptSnapshot.at) > Date.parse(logSnapshot.at))
+        ? receiptSnapshot
+        : logSnapshot;
+  receipt.selectedEvaluation = selected;
+  if (!selected) {
+    return receipt;
+  }
+  if (
+    !Number.isFinite(Date.parse(selected.at)) ||
+    Date.parse(selected.at) > Date.parse(receipt.checkedAt)
+  ) {
+    receipt.reason = "latest_eval_time_invalid_or_future";
+    return receipt;
+  }
+  const snapshot = selected.snapshot;
   if (!snapshot) {
-    return [];
+    receipt.reason = selected.reason ?? "latest_eval_result_unavailable";
+    return receipt;
   }
   const recipeByCaseId = new Map(FAILURE_CASE_RECIPES.map((recipe) => [recipe.caseId, recipe]));
   const focusCaseIds = Array.from(
@@ -459,12 +734,16 @@ export async function buildFailureCurriculumPrompts(
     )
     .slice(0, options.maxPrompts);
   const startIndex = options.startIndex ?? 0;
-  return recipes.map((recipe, index) => ({
+  receipt.status = recipes.length > 0 ? "ready" : "no_failure";
+  receipt.reason =
+    recipes.length > 0 ? "latest_eval_failures_selected" : "latest_eval_has_no_failure_cases";
+  receipt.prompts = recipes.map((recipe, index) => ({
     id: `failure_focus_${recipe.caseId}_${String(startIndex + index).padStart(5, "0")}`,
     userMessage: `${recipe.userMessage} 验收码 minimax-failure-focus-${String(startIndex + index).padStart(5, "0")}`,
     sourceSummary: [
       recipe.sourceSummary,
       `Latest failed eval adapter ${path.basename(snapshot.adapterPath)} passed ${snapshot.passed}/${snapshot.total} (${snapshot.passRate}).`,
+      `Eval source ${selected.source.path} sha256 ${selected.source.sha256} ${selected.source.pointer} at ${selected.at}; failedCaseIds/parseRecoveredCaseIds/modelContractFailureCaseIds include ${recipe.caseId}.`,
       snapshot.modelContractFailureCaseIds.includes(recipe.caseId)
         ? "Native model contract failed despite assisted acceptance. Generate a compact JSON training target with canonical module ids and all required evidence gaps; do not depend on normalization or runtime hardening. Use an adjacent task, not a copied eval answer."
         : undefined,
@@ -476,6 +755,13 @@ export async function buildFailureCurriculumPrompts(
       .filter((entry): entry is string => typeof entry === "string")
       .join(" "),
   }));
+  return receipt;
+}
+
+export async function buildFailureCurriculumPrompts(
+  options: FailureCurriculumOptions,
+): Promise<TeacherPrompt[]> {
+  return (await reviewFailureCurriculum(options)).prompts;
 }
 
 export const __test = {

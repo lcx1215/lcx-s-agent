@@ -1307,8 +1307,48 @@ function exampleFromWorkReceipt(raw: string, sourcePath: string): DistillExample
   };
 }
 
-async function examplesFromFile(filePath: string, workspaceDir: string): Promise<DistillExample[]> {
-  const raw = await fs.readFile(filePath, "utf8");
+type DatasetSourceRead = { path: string; sha256: string; bytes: number };
+
+function boundedDatasetSourceReads(reads: DatasetSourceRead[]) {
+  const pins: DatasetSourceRead[] = [];
+  const omittedRanges: Array<{ firstIndex: number; lastIndex: number }> = [];
+  let retainedBytes = 0;
+  for (const [index, read] of reads.entries()) {
+    const size = Buffer.byteLength(JSON.stringify(read), "utf8");
+    if (pins.length < 16 && retainedBytes + size <= 3072) {
+      pins.push(read);
+      retainedBytes += size;
+    } else {
+      const previous = omittedRanges.at(-1);
+      if (previous?.lastIndex === index - 1) {
+        previous.lastIndex = index;
+      } else {
+        omittedRanges.push({ firstIndex: index, lastIndex: index });
+      }
+    }
+  }
+  return {
+    boundary: "actual_source_file_bytes_not_source_trust",
+    readCount: reads.length,
+    pins,
+    omittedCount: reads.length - pins.length,
+    omittedRanges,
+    omittedFields: omittedRanges.length > 0 ? ["path", "sha256", "bytes"] : [],
+  };
+}
+
+async function examplesFromFile(
+  filePath: string,
+  workspaceDir: string,
+  sourceReads?: DatasetSourceRead[],
+): Promise<DistillExample[]> {
+  const bytes = await fs.readFile(filePath);
+  sourceReads?.push({
+    path: filePath,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  });
+  const raw = bytes.toString("utf8");
   const relativePath = path.relative(workspaceDir, filePath).split(path.sep).join("/");
   const parsed = safeJsonParse(raw);
   if (parsed && typeof parsed === "object") {
@@ -1349,10 +1389,11 @@ async function examplesFromFile(filePath: string, workspaceDir: string): Promise
 async function collectExamplesFromFiles(
   files: string[],
   workspaceDir: string,
+  sourceReads?: DatasetSourceRead[],
 ): Promise<DistillExample[]> {
   const examples: DistillExample[] = [];
   for (const filePath of files) {
-    examples.push(...(await examplesFromFile(filePath, workspaceDir)));
+    examples.push(...(await examplesFromFile(filePath, workspaceDir, sourceReads)));
   }
   return examples;
 }
@@ -2707,7 +2748,8 @@ async function main(): Promise<void> {
           options.generatedHoldoutFraction,
         )
       : [];
-  const examples = (await collectExamplesFromFiles(files, options.workspaceDir))
+  const sourceReads: DatasetSourceRead[] = [];
+  const examples = (await collectExamplesFromFiles(files, options.workspaceDir, sourceReads))
     .concat(buildSeedExamples())
     .concat(generatedExamples);
 
@@ -2748,6 +2790,7 @@ async function main(): Promise<void> {
     },
     sourceKinds: allSourceKinds,
     trainSourceKinds: sourceKindCounts(splits.train),
+    sourceReads: boundedDatasetSourceReads(sourceReads),
     blindMix: {
       boundary: "assisted_to_blind_twin_only",
       enabled: options.includeBlind,

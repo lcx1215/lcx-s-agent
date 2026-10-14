@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -38,6 +39,12 @@ const SIDECAR_BUILD_TIMEOUT_MS = 600_000;
 
 type JsonRecord = Record<string, unknown>;
 
+type ExternalVisibleProofObservation = {
+  reported: true;
+  adoptedForCurrentBinding: false;
+  reason: "current_binding_probe_failed";
+};
+
 type BindingDecision = {
   status:
     | "blocked_missing_training_plan"
@@ -60,6 +67,7 @@ type BindingDecision = {
   heavyActive: boolean;
   activeProcessSummary: Array<{ pid?: number; role?: string; elapsed?: string }>;
   userVisibleObserved: boolean;
+  visibleProofObservation?: ExternalVisibleProofObservation;
   /** @deprecated Boundary projection for historical binding receipts. */
   liveUserSeen: boolean;
   liveTouched: boolean;
@@ -91,6 +99,7 @@ type ExternalChannelBindingSummary = {
     | "debug_external_channel_probe_before_claiming_user_visible";
   missingProof: string[];
   userVisibleObserved: boolean;
+  visibleProofObservation?: ExternalVisibleProofObservation;
   legacyLiveCompatibility: {
     legacyScript: "lcx-external-channel-binding";
     legacyDecisionStatus: BindingDecision["status"];
@@ -104,6 +113,10 @@ type CliOptions = {
   compatibilityOnly: boolean;
   snapshotPath: string;
   sidecarRoot: string;
+  localVerificationReceipt?: string;
+  localVerificationTestResultSha256?: string;
+  /** Independent host root, never selected by the receipt. */
+  localVerificationSourceRoot?: string;
 };
 
 function usage(): never {
@@ -141,6 +154,20 @@ export function parseExternalChannelBindingArgs(args: string[]): CliOptions {
         usage();
       }
       options.snapshotPath = path.resolve(value);
+      index += 1;
+    } else if (
+      arg === "--local-verification-receipt" ||
+      arg === "--local-verification-test-result-sha256"
+    ) {
+      const value = args[index + 1];
+      if (!value) {
+        usage();
+      }
+      if (arg === "--local-verification-receipt") {
+        options.localVerificationReceipt = path.resolve(value);
+      } else {
+        options.localVerificationTestResultSha256 = value;
+      }
       index += 1;
     } else if (arg === "--sidecar-root") {
       const value = args[index + 1];
@@ -414,15 +441,25 @@ export function buildExternalChannelBindingDecision(params: {
           ? "keep_waiting_for_real_external_user_seen_proof"
           : "debug_live_runtime_probe_before_claiming_bound",
     selectedCleanAdapter,
-    missingProof: userVisibleObserved
-      ? removeRuntimeProofNames(missingAfterUserVisibleProof)
-      : missingProof.filter((entry) => {
-          return !runtimeProbeOk || !RUNTIME_PROOF_NAMES.includes(entry);
-        }),
+    missingProof:
+      runtimeProbeOk && userVisibleObserved
+        ? removeRuntimeProofNames(missingAfterUserVisibleProof)
+        : missingProof.filter((entry) => {
+            return !runtimeProbeOk || !RUNTIME_PROOF_NAMES.includes(entry);
+          }),
     heavyActive,
     activeProcessSummary: active,
-    userVisibleObserved,
-    liveUserSeen: userVisibleObserved,
+    userVisibleObserved: runtimeProbeOk && userVisibleObserved,
+    liveUserSeen: runtimeProbeOk && userVisibleObserved,
+    ...(!runtimeProbeOk && userVisibleObserved
+      ? {
+          visibleProofObservation: {
+            reported: true as const,
+            adoptedForCurrentBinding: false as const,
+            reason: "current_binding_probe_failed" as const,
+          },
+        }
+      : {}),
     liveTouched: params.liveTouched,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -455,7 +492,7 @@ function externalProofName(name: string): string {
     );
 }
 
-function buildExternalChannelBindingSummary(
+export function buildExternalChannelBindingSummary(
   decision: BindingDecision,
 ): ExternalChannelBindingSummary {
   const statusMap: Record<BindingDecision["status"], ExternalChannelBindingSummary["status"]> = {
@@ -490,6 +527,9 @@ function buildExternalChannelBindingSummary(
     action: actionMap[decision.action],
     missingProof: decision.missingProof.map(externalProofName),
     userVisibleObserved: decision.userVisibleObserved,
+    ...(decision.visibleProofObservation
+      ? { visibleProofObservation: decision.visibleProofObservation }
+      : {}),
     legacyLiveCompatibility: {
       legacyScript: "lcx-external-channel-binding",
       legacyDecisionStatus: decision.status,
@@ -536,6 +576,275 @@ async function runCommand(
           : (details.message ?? String(error)),
     };
   }
+}
+
+const LOCAL_VERIFICATION_SCHEMA = "lcx_channel_local_verification_v1";
+const localSha = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+async function localVerificationHead(sourceRoot: string): Promise<string> {
+  const result = await runCommand("git", ["rev-parse", "HEAD"], sourceRoot);
+  if (!result.ok || !/^[a-f0-9]{40,64}$/u.test(result.stdout.trim())) {
+    throw new Error("local_verification_head_unavailable");
+  }
+  return result.stdout.trim();
+}
+
+async function localVerificationRead(file: string, maxBytes = 65536): Promise<Buffer> {
+  const stat = await fs.lstat(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) {
+    throw new Error("local_verification_file_unavailable_or_oversize");
+  }
+  const bytes = await fs.readFile(file);
+  if (bytes.length > maxBytes) {
+    throw new Error("local_verification_file_oversize");
+  }
+  return bytes;
+}
+
+async function localChangedFiles(sourceRoot: string, files: readonly string[]) {
+  if (!files.length || files.length > 32 || new Set(files).size !== files.length) {
+    throw new Error("local_verification_changed_files_invalid");
+  }
+  const root = await fs.realpath(sourceRoot);
+  return Promise.all(
+    files.map(async (relative) => {
+      if (
+        !relative ||
+        path.isAbsolute(relative) ||
+        relative.includes("\\") ||
+        path.posix.normalize(relative) !== relative ||
+        relative.split("/").includes("..") ||
+        /^(?:state|memory|node_modules|\.git)(?:\/|$)|(?:^|\/)\.env(?:[./]|$)/u.test(relative)
+      ) {
+        throw new Error("local_verification_changed_path_invalid");
+      }
+      const file = path.join(root, relative);
+      if ((await fs.realpath(file)) !== file) {
+        throw new Error("local_verification_changed_path_alias");
+      }
+      const bytes = await localVerificationRead(file, 1024 * 1024);
+      return { path: relative, sha256: localSha(bytes), bytes: bytes.length };
+    }),
+  );
+}
+
+/** Explicit operator/test producer only; the binding CLI never calls this executor. */
+export async function runExternalChannelLocalVerificationTest(options: {
+  sourceRoot?: string;
+  changedFiles: readonly string[];
+  command: string;
+  args: string[];
+  receiptPath: string;
+  timeoutMs?: number;
+}) {
+  const sourceRoot = await fs.realpath(options.sourceRoot ?? REPO_ROOT);
+  const head = await localVerificationHead(sourceRoot);
+  const changedFiles = await localChangedFiles(sourceRoot, options.changedFiles);
+  const runId = randomUUID();
+  const startedAt = new Date().toISOString();
+  let exitCode: number | null = 0;
+  let stdout = "";
+  let stderr = "";
+  let failure: string | undefined;
+  try {
+    const result = await execFileAsync(options.command, options.args, {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      maxBuffer: 16384,
+      timeout: options.timeoutMs ?? 30000,
+    });
+    stdout = result.stdout;
+    stderr = result.stderr;
+  } catch (error) {
+    const result = error as { code?: unknown; stdout?: string; stderr?: string; killed?: boolean };
+    exitCode = typeof result.code === "number" ? result.code : null;
+    stdout = result.stdout ?? "";
+    stderr = result.stderr ?? "";
+    failure = result.killed ? "local_verification_test_timeout" : "local_verification_test_failed";
+  }
+  const finishedAt = new Date().toISOString();
+  const resultBytes = Buffer.from(
+    JSON.stringify({
+      schemaVersion: LOCAL_VERIFICATION_SCHEMA,
+      runId,
+      sourceRoot,
+      head,
+      changedFiles,
+      command: options.command,
+      args: options.args,
+      startedAt,
+      finishedAt,
+      exitCode,
+      stdout,
+      stderr,
+      failure,
+    }) + "\n",
+  );
+  if (resultBytes.length > 65536) {
+    throw new Error("local_verification_result_oversize");
+  }
+  const receiptPath = path.resolve(options.receiptPath);
+  const resultPath = `${receiptPath}.test-result.json`;
+  await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+  await fs.writeFile(resultPath, resultBytes, { flag: "wx", mode: 0o600 });
+  const testResult = { path: resultPath, sha256: localSha(resultBytes), bytes: resultBytes.length };
+  const receipt = {
+    schemaVersion: LOCAL_VERIFICATION_SCHEMA,
+    runId,
+    sourceRoot,
+    head,
+    changedFiles,
+    testResult,
+  };
+  await fs.writeFile(receiptPath, JSON.stringify(receipt) + "\n", { flag: "wx", mode: 0o600 });
+  return { receiptPath, testResult, receipt, exitCode };
+}
+
+export async function readExternalChannelLocalVerification(
+  options: Pick<
+    CliOptions,
+    "localVerificationReceipt" | "localVerificationTestResultSha256" | "localVerificationSourceRoot"
+  >,
+): Promise<JsonRecord> {
+  if (!options.localVerificationReceipt) {
+    if (options.localVerificationTestResultSha256 !== undefined) {
+      return {
+        status: "blocked",
+        gaps: ["local_verification_receipt_unavailable"],
+        executionAuthority: false,
+      };
+    }
+    return {
+      status: "not_observed",
+      gaps: ["local_verification_receipt_not_provided"],
+      executionAuthority: false,
+    };
+  }
+  const reads: JsonRecord[] = [];
+  let reading = "source";
+  try {
+    if (!/^[a-f0-9]{64}$/u.test(options.localVerificationTestResultSha256 ?? "")) {
+      throw new Error("local_verification_independent_test_pin_unavailable");
+    }
+    const sourceRoot = await fs.realpath(options.localVerificationSourceRoot ?? REPO_ROOT);
+    const head = await localVerificationHead(sourceRoot);
+    const receiptPath = path.resolve(options.localVerificationReceipt);
+    reading = "receipt";
+    const receiptBytes = await localVerificationRead(receiptPath);
+    reads.push({ path: receiptPath, sha256: localSha(receiptBytes), bytes: receiptBytes.length });
+    const receipt = recordValue(JSON.parse(receiptBytes.toString("utf8")));
+    const pin = recordValue(receipt?.testResult);
+    if (
+      receipt?.schemaVersion !== LOCAL_VERIFICATION_SCHEMA ||
+      receipt.sourceRoot !== sourceRoot ||
+      receipt.head !== head ||
+      typeof receipt.runId !== "string" ||
+      !receipt.runId ||
+      !pin ||
+      pin.path !== `${receiptPath}.test-result.json`
+    ) {
+      throw new Error("local_verification_source_or_identity_conflict");
+    }
+    reading = "test_result";
+    const resultBytes = await localVerificationRead(String(pin.path));
+    const actualPin = { path: pin.path, sha256: localSha(resultBytes), bytes: resultBytes.length };
+    reads.push(actualPin);
+    if (
+      actualPin.sha256 !== options.localVerificationTestResultSha256 ||
+      actualPin.sha256 !== pin.sha256 ||
+      actualPin.bytes !== pin.bytes
+    ) {
+      throw new Error("local_verification_test_result_hash_conflict");
+    }
+    const result = recordValue(JSON.parse(resultBytes.toString("utf8")));
+    if (
+      !result ||
+      result.schemaVersion !== LOCAL_VERIFICATION_SCHEMA ||
+      result.runId !== receipt.runId ||
+      result.sourceRoot !== sourceRoot ||
+      result.head !== head ||
+      JSON.stringify(result.changedFiles) !== JSON.stringify(receipt.changedFiles) ||
+      typeof result.command !== "string" ||
+      !Array.isArray(result.args) ||
+      !Number.isFinite(Date.parse(String(result.startedAt))) ||
+      !Number.isFinite(Date.parse(String(result.finishedAt))) ||
+      Date.parse(String(result.finishedAt)) < Date.parse(String(result.startedAt)) ||
+      Date.parse(String(result.finishedAt)) > Date.now()
+    ) {
+      throw new Error("local_verification_execution_identity_conflict");
+    }
+    const declared = receipt.changedFiles;
+    if (
+      !Array.isArray(declared) ||
+      declared.some((file) => !recordValue(file) || typeof file.path !== "string")
+    ) {
+      throw new Error("local_verification_changed_files_invalid");
+    }
+    reading = "changed_file";
+    const actualFiles = await localChangedFiles(
+      sourceRoot,
+      declared.map((file) => String(file.path)),
+    );
+    if (JSON.stringify(actualFiles) !== JSON.stringify(declared)) {
+      throw new Error("local_verification_changed_file_hash_conflict");
+    }
+    reads.push(...actualFiles.map((file) => ({ ...file, path: path.join(sourceRoot, file.path) })));
+    if (result.exitCode !== 0 || result.failure !== undefined) {
+      throw new Error("local_verification_executed_test_not_passed");
+    }
+    return {
+      status: "verified",
+      boundary: "host_pinned_local_test_result_not_channel_authority",
+      sourceRoot,
+      head,
+      runId: receipt.runId,
+      testResult: actualPin,
+      changedFiles: actualFiles,
+      command: result.command,
+      args: result.args,
+      exitCode: result.exitCode,
+      reads,
+      gaps: [],
+      executionAuthority: false,
+    };
+  } catch (error) {
+    return {
+      status: "blocked",
+      gaps: [
+        (() => {
+          const message = stringValue(recordValue(error)?.message);
+          return message?.startsWith("local_verification_")
+            ? message
+            : `local_verification_${reading}_unavailable`;
+        })(),
+      ],
+      reads,
+      executionAuthority: false,
+    };
+  }
+}
+
+export function applyExternalChannelLocalVerification(
+  decision: BindingDecision,
+  verification: JsonRecord,
+): BindingDecision {
+  if (verification.status !== "blocked") {
+    return decision;
+  }
+  return {
+    ...decision,
+    status:
+      decision.status === "blocked_missing_training_plan"
+        ? decision.status
+        : "deferred_training_plan_not_ready",
+    action:
+      decision.status === "blocked_missing_training_plan"
+        ? "fix_training_plan_owner_first"
+        : "wait_for_training_plan_live_binding_ready",
+    missingProof: [...new Set([...decision.missingProof, ...stringArray(verification.gaps)])],
+    userVisibleObserved: false,
+    liveUserSeen: false,
+  };
 }
 
 async function readTrainingPlan(): Promise<JsonRecord | undefined> {
@@ -638,6 +947,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     await fs.writeFile(options.snapshotPath, `${JSON.stringify(payload, null, 2)}\n`);
     return payload;
   }
+  const localVerification = await readExternalChannelLocalVerification(options);
   const trainingPlan = await readTrainingPlan();
   const userVisibleObserved = await readUserVisibleObserved();
   let decision = buildExternalChannelBindingDecision({
@@ -646,6 +956,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     userVisibleObserved,
     liveTouched: false,
   });
+  decision = applyExternalChannelLocalVerification(decision, localVerification);
   const commands: JsonRecord[] = [];
   let liveSidecarDriftBefore: string | undefined;
   let liveSidecarDriftAfter: string | undefined;
@@ -719,6 +1030,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     });
   }
 
+  decision = applyExternalChannelLocalVerification(decision, localVerification);
   if (options.apply && decision.status === "ready_for_apply") {
     const syncApply = await runCommand(SYNC_DOCTOR, ["--apply"], REPO_ROOT);
     commands.push({ name: "live-sidecar-sync-doctor --apply", ok: syncApply.ok });
@@ -798,6 +1110,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     apply: options.apply,
     decision,
     externalChannelBinding: buildExternalChannelBindingSummary(decision),
+    localVerification,
     trainingPlanBoundary: trainingPlan?.boundary,
     liveExternalBrainBinding: recordValue(trainingPlan?.liveExternalBrainBinding),
     trainingPlanExternalChannelBinding: recordValue(trainingPlan?.externalChannelBinding),

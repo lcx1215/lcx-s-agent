@@ -17,6 +17,9 @@ type CliOptions = {
 
 type JsonRecord = Record<string, unknown>;
 type PromotionDecision = "safe" | "hold" | "ambiguous" | "rejected";
+type AdapterResolution =
+  | { ok: true; details: JsonRecord }
+  | { ok: false; error: string; failureReceipt?: JsonRecord; failureReceiptGap?: string };
 
 const PROMOTION_BLOCKING_DECISION_IDS = new Set([
   "overlapping_heavy_eval_detected",
@@ -138,7 +141,7 @@ async function resolveCurrentAdapter(params: {
   worktree: string;
   guardLogPath: string;
   model: string;
-}): Promise<{ ok: true; details: JsonRecord } | { ok: false; error: string }> {
+}): Promise<AdapterResolution> {
   try {
     const result = await execFileAsync(
       process.execPath,
@@ -159,13 +162,40 @@ async function resolveCurrentAdapter(params: {
     );
     return { ok: true, details: parseJsonObjectFromOutput(result.stdout) };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    const stdout = asRecord(error).stdout;
+    let failureReceipt: JsonRecord | undefined;
+    let failureReceiptGap = "failure_stdout_unavailable";
+    if (typeof stdout === "string" && Buffer.byteLength(stdout, "utf8") <= 12 * 1024) {
+      failureReceiptGap = "failure_receipt_unrecognized";
+      try {
+        const receipt = parseJsonObjectFromOutput(stdout);
+        if (
+          receipt.ok === false &&
+          receipt.status === "blocked" &&
+          receipt.reason === "adapter_resolution_failed" &&
+          receipt.boundary === "local_auxiliary_thought_flow_only"
+        ) {
+          failureReceipt = receipt;
+        }
+      } catch {
+        // Unreadable failure output never becomes a successful resolution.
+        failureReceiptGap = "failure_stdout_unreadable";
+      }
+    } else if (typeof stdout === "string") {
+      failureReceiptGap = "failure_stdout_exceeds_12kb";
+    }
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      failureReceipt,
+      failureReceiptGap: failureReceipt ? undefined : failureReceiptGap,
+    };
   }
 }
 
 export function buildPromotionAudit(params: {
   plan: JsonRecord;
-  resolver: { ok: true; details: JsonRecord } | { ok: false; error: string };
+  resolver: AdapterResolution;
 }): JsonRecord {
   const latestEval = asRecord(params.plan.latestEval);
   const latestPassingEval = asRecord(params.plan.latestPassingEval);
@@ -272,6 +302,8 @@ export function buildPromotionAudit(params: {
     latestPassingAdapter: selectedAdapter,
     resolverStatus: params.resolver.ok ? "ok" : "failed",
     resolverError: params.resolver.ok ? undefined : params.resolver.error,
+    resolverFailureReceipt: params.resolver.ok ? undefined : params.resolver.failureReceipt,
+    resolverFailureReceiptGap: params.resolver.ok ? undefined : params.resolver.failureReceiptGap,
     resolverSelectionMode: stringValue(resolverDetails.selectionMode),
     datasetPromotionRisk: {
       status: datasetPromotionRiskStatus,

@@ -115,6 +115,9 @@ function runCommand(params: {
   const startedAt = Date.now();
   return new Promise((resolve) => {
     let settled = false;
+    let deadlineExceeded = false;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    let cleanupDeadline: ReturnType<typeof setTimeout> | undefined;
     const child = spawn(params.command, params.args, {
       cwd: params.cwd ?? WORKTREE_CWD,
       env: process.env,
@@ -130,6 +133,32 @@ function runCommand(params: {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
+    const finishTimeout = (
+      cleanupStatus: "local_child_closed" | "cleanup_unconfirmed",
+      exitCode?: number | null,
+      signal?: NodeJS.Signals | null,
+    ) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      clearTimeout(escalation);
+      clearTimeout(cleanupDeadline);
+      resolve({
+        name: params.name,
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        summary: {
+          stdoutTail: stdout.slice(-500),
+          stderrTail: stderr.slice(-500),
+          timeoutMs: params.timeoutMs,
+          cleanupStatus,
+          ...(cleanupStatus === "local_child_closed" ? { exitCode, signal } : {}),
+        },
+        error: `${params.name} timed out after ${params.timeoutMs}ms`,
+      });
+    };
     const timeout =
       params.timeoutMs === undefined
         ? undefined
@@ -137,22 +166,22 @@ function runCommand(params: {
             if (settled) {
               return;
             }
-            settled = true;
+            deadlineExceeded = true;
             child.kill("SIGTERM");
-            resolve({
-              name: params.name,
-              ok: false,
-              durationMs: Date.now() - startedAt,
-              summary: {
-                stdoutTail: stdout.slice(-500),
-                stderrTail: stderr.slice(-500),
-                timeoutMs: params.timeoutMs,
-              },
-              error: `${params.name} timed out after ${params.timeoutMs}ms`,
-            });
+            // A sent signal is not cleanup evidence. Wait for native close, bounded separately.
+            escalation = setTimeout(() => {
+              if (!settled) {
+                child.kill("SIGKILL");
+              }
+            }, 250);
+            cleanupDeadline = setTimeout(() => finishTimeout("cleanup_unconfirmed"), 1000);
           }, params.timeoutMs);
     child.on("error", (error) => {
       if (settled) {
+        return;
+      }
+      if (deadlineExceeded) {
+        finishTimeout("cleanup_unconfirmed");
         return;
       }
       settled = true;
@@ -167,8 +196,12 @@ function runCommand(params: {
         error: error.message,
       });
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (settled) {
+        return;
+      }
+      if (deadlineExceeded) {
+        finishTimeout("local_child_closed", code, signal);
         return;
       }
       settled = true;
@@ -192,13 +225,37 @@ function runCommand(params: {
       }
       try {
         const payload = params.parseJson ? parseJsonObjectFromOutput(stdout) : undefined;
+        const ownerFailed = payload?.ok === false;
+        const escalation = payload?.escalation;
+        const ownerFailures = Array.isArray(payload?.actionableFailures)
+          ? payload.actionableFailures
+              .filter(
+                (reason): reason is string =>
+                  typeof reason === "string" && reason.trim().length > 0,
+              )
+              .join("; ")
+          : "";
+        const escalationReason =
+          escalation &&
+          typeof escalation === "object" &&
+          !Array.isArray(escalation) &&
+          "reason" in escalation &&
+          typeof escalation.reason === "string" &&
+          escalation.reason.trim()
+            ? escalation.reason
+            : "";
+        const ownerReason =
+          typeof payload?.reason === "string" && payload.reason.trim()
+            ? payload.reason
+            : ownerFailures || escalationReason || `${params.name} reported ok=false`;
         resolve({
           name: params.name,
-          ok: true,
+          ok: !ownerFailed,
           durationMs,
           summary: payload
             ? summarizeJson(params.name, payload)
             : summarizeText(params.name, stdout),
+          ...(ownerFailed ? { error: ownerReason } : {}),
         });
       } catch (error) {
         resolve({
@@ -1128,7 +1185,10 @@ function skipped(name: string, reason: string): CheckResult {
 function actionableFailures(checks: CheckResult[]): string[] {
   return checks
     .filter((check) => !check.ok)
-    .map((check) => `${check.name}: ${check.error ?? "failed"}`);
+    .map(
+      (check) =>
+        `${check.name}: ${check.error ?? "failed"}${check.summary.cleanupStatus === "cleanup_unconfirmed" ? "; local child cleanup unconfirmed" : ""}`,
+    );
 }
 
 const options = parseArgs(process.argv.slice(2));
@@ -1404,5 +1464,17 @@ process.stdout.write(
         .filter(Boolean)
         .join("\n") + "\n",
 );
+
+if (failures.length > 0) {
+  let digest = "";
+  for (const character of failures.join("\n")) {
+    if (Buffer.byteLength(digest + character, "utf8") > 1020) {
+      digest += "…";
+      break;
+    }
+    digest += character;
+  }
+  process.stderr.write(`${digest}\n`);
+}
 
 process.exitCode = result.ok ? 0 : 1;

@@ -247,6 +247,13 @@ function baseInputs(): HarnessInputs {
       ok: true,
       status: "provider_council_acceleration_receipt_written",
       action: "provider_council_run_completed",
+      councilRunEvidence: {
+        status: "verified",
+        messageId: "council-current-run",
+        sourceSha256: "a".repeat(64),
+        confirmedRoles: [{ role: "kimi" }, { role: "minimax" }, { role: "deepseek" }],
+        gaps: [],
+      },
       freshCompleteCouncil: false,
       dailyUse: {
         completeCouncilInWindow: true,
@@ -335,6 +342,192 @@ async function runJsonScript(script: string) {
 }
 
 describe("lcx-commercial-acceptance-harness", () => {
+  it("retains bounded parsed owner failure diagnostics and collector identity without making release ready", () => {
+    const inputs = baseInputs();
+    const actionableFailures = Array.from(
+      { length: 6 },
+      (_, index) => `${index}:source_failure_${"x".repeat(300)}`,
+    );
+    inputs.flowGraph = {
+      ...owner("lcx-flow-graph", {
+        ok: false,
+        summary: { passed: 999, failed: 0 },
+        actionableFailures,
+        checks: [
+          { id: "actual_source_contract", ok: false },
+          { id: "passed_check", ok: true },
+        ],
+      }),
+      ok: false,
+      collectionRunId: "actual-test-collection",
+      sourceFingerprint: "a".repeat(64),
+    };
+    const result = buildCommercialAcceptanceHarness(inputs);
+    const gate = result.gates.find((value) => value.id === "lcx-flow-graph_owner_unavailable")!;
+    expect(gate).toMatchObject({
+      status: "failed",
+      severity: "P1",
+      evidence: {
+        error: "owner_reported_failure",
+        collectionRunId: "actual-test-collection",
+        sourceFingerprint: "a".repeat(64),
+        failedCheckIds: ["actual_source_contract"],
+        omitted: { actionableFailures: 3 },
+        textClipped: true,
+      },
+    });
+    expect(gate.evidence.actionableFailures).toEqual(
+      actionableFailures.slice(0, 3).map((value) => value.slice(0, 192)),
+    );
+    expect(gate.nextAction).toContain("reported owner findings");
+    expect(result.readyForCommercialRelease).toBe(false);
+  });
+
+  it("reports parsed failed case decisions even when the owner aggregate summary looks successful", () => {
+    const inputs = baseInputs();
+    inputs.visibleAnswerQualityFuzzer = owner("lcx-visible-answer-quality-fuzzer", {
+      ok: false,
+      summary: { failed: 0, passed: 999 },
+      failedCases: [
+        {
+          caseId: "actual_case",
+          expectedDecision: "return_failed_reason",
+          actualDecision: "adopt_visible_answer",
+          answer: "do not duplicate this body",
+        },
+      ],
+    });
+    const result = buildCommercialAcceptanceHarness(inputs);
+    const gate = result.gates.find(
+      (value) => value.id === "lcx-visible-answer-quality-fuzzer_owner_unavailable",
+    )!;
+    expect(gate).toMatchObject({
+      status: "failed",
+      severity: "P1",
+      evidence: {
+        error: "owner_reported_failure",
+        failedCases: [
+          {
+            caseId: "actual_case",
+            expectedDecision: "return_failed_reason",
+            actualDecision: "adopt_visible_answer",
+          },
+        ],
+      },
+    });
+    expect(gate.evidence.failedCases).not.toContainEqual(
+      expect.objectContaining({ answer: expect.anything() }),
+    );
+    expect(result.readyForCommercialRelease).toBe(false);
+  });
+
+  it("keeps an absent owner payload a missing snapshot rather than a reported business failure", () => {
+    const inputs = baseInputs();
+    inputs.flowGraph = { ok: false, owner: "lcx-flow-graph", command: "lcx-flow-graph --json" };
+    const result = buildCommercialAcceptanceHarness(inputs);
+    const gate = result.gates.find((value) => value.id === "lcx-flow-graph_owner_unavailable")!;
+    expect(gate).toMatchObject({
+      status: "failed",
+      severity: "P1",
+      evidence: { error: "missing_owner_snapshot" },
+      nextAction: "Repair the owner command before trusting commercial acceptance.",
+    });
+    expect(result.readyForCommercialRelease).toBe(false);
+  });
+
+  it.each(["failed_command", "failed_payload", "missing_owner", "wrong_owner", "missing_state"])(
+    "does not call an unavailable training observation idle: %s",
+    (fault) => {
+      const inputs = baseInputs();
+      const snapshot = inputs.trainingPlan!;
+      if (fault === "failed_command") {
+        snapshot.ok = false;
+        snapshot.commandSucceeded = false;
+        snapshot.error = "training owner source read failed";
+      }
+      if (fault === "failed_payload") {
+        snapshot.payload!.ok = false;
+        snapshot.payload!.failedReason = "training_source_unavailable";
+      }
+      if (fault === "missing_owner") {
+        snapshot.owner = "";
+      }
+      if (fault === "wrong_owner") {
+        snapshot.owner = "lcx-mind-model";
+      }
+      if (fault === "missing_state") {
+        delete snapshot.payload!.overlappingHeavyEval;
+      }
+      const result = buildCommercialAcceptanceHarness(inputs);
+      expect(result.readyForCommercialRelease).toBe(false);
+      expect(result.failedGates).toContain("local-brain-training-plan_owner_unavailable");
+      expect(result.gates.some((gate) => gate.id === "training_idle")).toBe(false);
+      const failed = result.gates.find(
+        (gate) => gate.id === "local-brain-training-plan_owner_unavailable",
+      )!;
+      if (fault === "failed_command") {
+        expect(failed.evidence.error).toBe(snapshot.error);
+      }
+      if (fault === "failed_payload") {
+        expect(failed.evidence.payloadFailedReason).toBe("training_source_unavailable");
+      }
+    },
+  );
+
+  it.each(["missing_readback", "degraded_readback", "missing_role", "run_failed"])(
+    "does not call a written run receipt complete role evidence: %s",
+    (fault) => {
+      const inputs = baseInputs();
+      const snapshot = inputs.providerCouncilAcceleration!;
+      const payload = snapshot.payload!;
+      delete payload.councilRunEvidence;
+      payload.dailyUse = {
+        completeCouncilInWindow: false,
+        missingSuccessfulRoles: ["kimi"],
+        dueNow: true,
+      };
+      if (fault === "degraded_readback") {
+        payload.councilRunEvidence = {
+          status: "invalid",
+          gaps: ["provider_council_role_not_confirmed:kimi"],
+        };
+      }
+      if (fault === "missing_role") {
+        payload.councilRunEvidence = {
+          status: "verified",
+          confirmedRoles: [{ role: "deepseek" }],
+          gaps: [],
+        };
+      }
+      if (fault === "run_failed") {
+        payload.ok = false;
+        payload.status = "provider_council_acceleration_failed";
+        payload.providerRunError = "body timed out";
+      }
+      const result = buildCommercialAcceptanceHarness(inputs);
+      expect(result.readyForCommercialRelease).toBe(false);
+      expect(
+        result.gates.find((gate) => gate.id === "provider_council_three_role_evidence_present"),
+      ).toBeUndefined();
+    },
+  );
+  it("checks the configured required roles without reviving a disabled role", () => {
+    const inputs = baseInputs();
+    const payload = inputs.providerCouncilAcceleration!.payload!;
+    payload.requiredRoles = ["kimi", "deepseek"];
+    payload.councilRunEvidence = {
+      status: "verified",
+      messageId: "selected-run",
+      sourceSha256: "b".repeat(64),
+      confirmedRoles: [{ role: "kimi" }, { role: "deepseek" }],
+      gaps: [],
+    };
+    const result = buildCommercialAcceptanceHarness(inputs);
+    expect(
+      result.gates.find((gate) => gate.id === "provider_council_three_role_evidence_present")
+        ?.status,
+    ).toBe("passed");
+  });
   it("collects only acceptance-specific probes when shared owner snapshots are supplied", async () => {
     const calls: { owner: string; script: string; args: readonly string[] }[] = [];
     const exclusive = await collectCommercialAcceptanceExclusiveSnapshots(
@@ -375,13 +568,82 @@ describe("lcx-commercial-acceptance-harness", () => {
     expect(combined.commercialAnswerPipeline).toBe(exclusive.commercialAnswerPipeline);
   });
 
-  it("passes when commercial, architecture, radar, live, training, and provider gates are clean", () => {
+  it("binds skipped doctor collection identity without claiming doctor execution or changing legacy shape", async () => {
+    const unavailableOwner = async (ownerName: string) => ({
+      ok: false,
+      commandSucceeded: false,
+      owner: ownerName,
+      command: "unit_transport_not_started",
+      error: "unit owner unavailable",
+    });
+    const options = { withChannelProbe: false, skipDoctor: true };
+    const legacy = await collectCommercialAcceptanceExclusiveSnapshots(options, unavailableOwner);
+    expect(legacy.systemDoctor).toEqual({
+      ok: false,
+      owner: "lcx-system-doctor",
+      command: "skipped",
+      error: "doctor skipped by --skip-doctor",
+    });
+    const collected = await collectCommercialAcceptanceExclusiveSnapshots(
+      options,
+      unavailableOwner,
+      "unit-original-collector",
+    );
+    const doctor = collected.systemDoctor;
+    if (!doctor) {
+      throw new Error("Missing original skipped doctor snapshot");
+    }
+    expect(doctor).toMatchObject({
+      ok: false,
+      commandSucceeded: false,
+      command: "skipped",
+      error: "doctor skipped by --skip-doctor",
+      collectionRunId: "unit-original-collector",
+      sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const inspected = buildCommercialAcceptanceHarness({ systemDoctor: doctor });
+    expect(inspected.ownerConsumption.status).toBe("consistent");
+    expect(inspected.readyForCommercialRelease).toBe(false);
+    expect(inspected.gates.find((gate) => gate.id === "provider_council_not_checked")?.status).toBe(
+      "watch",
+    );
+  });
+
+  it("preserves a supplied doctor owner snapshot without rebinding its collection identity", async () => {
+    const doctor = {
+      ok: false,
+      commandSucceeded: false,
+      owner: "lcx-system-doctor",
+      command: "unit doctor transport unavailable",
+      error: "unit doctor unavailable",
+      collectionRunId: "unit-owner-original-collection",
+      sourceFingerprint: "original-unit-marker-not-an-acceptance-proof",
+    };
+    const collected = await collectCommercialAcceptanceExclusiveSnapshots(
+      { withChannelProbe: false, skipDoctor: false },
+      async (ownerName) =>
+        ownerName === "lcx-system-doctor"
+          ? doctor
+          : {
+              ok: false,
+              commandSucceeded: false,
+              owner: ownerName,
+              command: "unit_transport_not_started",
+              error: "unit owner unavailable",
+            },
+      "unit-other-host-collection",
+    );
+    expect(collected.systemDoctor).toBe(doctor);
+    expect(collected.systemDoctor?.collectionRunId).toBe("unit-owner-original-collection");
+  });
+
+  it("keeps release pending when other gates are clean but daily packet production is unobserved", () => {
     const result = buildCommercialAcceptanceHarness(baseInputs());
 
     expect(result).toEqual(
       expect.objectContaining({
-        ok: true,
-        readyForCommercialRelease: true,
+        ok: false,
+        readyForCommercialRelease: false,
         boundary: "local_commercial_acceptance_harness_only",
         liveTouched: false,
         providerConfigTouched: false,
@@ -389,7 +651,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       }),
     );
     expect(result.summary).toEqual(
-      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 13 }),
+      expect.objectContaining({ failed: 0, blocked: 1, watch: 0, total: 13 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
@@ -447,7 +709,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         "provider_council_three_role_evidence_present",
         "short_intent_family_fuzzer_clean",
         "visible_answer_quality_fuzzer_clean",
-        "directed_daily_research_brief_clean",
+        "directed_daily_research_packet_pending",
         "module_learning_closed_loop_clean",
         "finance_data_gateway_contract_clean",
       ]),
@@ -874,7 +1136,8 @@ describe("lcx-commercial-acceptance-harness", () => {
 
     const result = buildCommercialAcceptanceHarness(inputs);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toEqual(["directed_daily_research_packet_pending"]);
     expect(result.watchGates).toContain("external_candidate_capture_not_observed");
     expect(result.gates).toEqual(
       expect.arrayContaining([
@@ -897,7 +1160,8 @@ describe("lcx-commercial-acceptance-harness", () => {
 
     const result = buildCommercialAcceptanceHarness(inputs);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toEqual(["directed_daily_research_packet_pending"]);
     expect(result.watchGates).toContain("training_active_watch_only");
     expect(
       result.gates.find((gate) => gate.id === "training_active_watch_only")?.nextAction,
@@ -924,7 +1188,8 @@ describe("lcx-commercial-acceptance-harness", () => {
 
     const result = buildCommercialAcceptanceHarness(inputs);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toEqual(["directed_daily_research_packet_pending"]);
     expect(result.blockedGates).not.toContain("radar_blocked_problem_clusters");
     expect(result.watchGates).toContain("radar_blocked_problem_clusters");
     expect(result.gates.find((gate) => gate.id === "radar_blocked_problem_clusters")).toEqual(
@@ -935,28 +1200,34 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
-  it("runs against the current repo without sending External messages or touching external channel sender", async () => {
-    const { stdout } = await runJsonScript("scripts/operator/lcx-commercial-acceptance-harness.ts");
-    const payload = JSON.parse(stdout) as {
-      boundary: string;
-      liveTouched: boolean;
-      providerConfigTouched: boolean;
-      protectedMemoryTouched: boolean;
-      ownerCommands: string[];
-    };
+  it.skipIf(process.env.LCX_COMMERCIAL_ACCEPTANCE_LIVE_OWNER_STACK !== "1")(
+    "runs against the current repo without sending External messages or touching external channel sender",
+    async () => {
+      const { stdout } = await runJsonScript(
+        "scripts/operator/lcx-commercial-acceptance-harness.ts",
+      );
+      const payload = JSON.parse(stdout) as {
+        boundary: string;
+        liveTouched: boolean;
+        providerConfigTouched: boolean;
+        protectedMemoryTouched: boolean;
+        ownerCommands: string[];
+      };
 
-    expect(payload.boundary).toBe("local_commercial_acceptance_harness_only");
-    expect(payload.liveTouched).toBe(false);
-    expect(payload.providerConfigTouched).toBe(false);
-    expect(payload.protectedMemoryTouched).toBe(false);
-    expect(payload.ownerCommands).toEqual(
-      expect.arrayContaining([
-        "node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json",
-        "node --import tsx scripts/operator/lcx-external-short-intent-fuzzer.ts --json",
-        "node --import tsx scripts/operator/lcx-visible-answer-quality-fuzzer.ts --json",
-        "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
-        "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
-      ]),
-    );
-  }, 240_000);
+      expect(payload.boundary).toBe("local_commercial_acceptance_harness_only");
+      expect(payload.liveTouched).toBe(false);
+      expect(payload.providerConfigTouched).toBe(false);
+      expect(payload.protectedMemoryTouched).toBe(false);
+      expect(payload.ownerCommands).toEqual(
+        expect.arrayContaining([
+          "node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json",
+          "node --import tsx scripts/operator/lcx-external-short-intent-fuzzer.ts --json",
+          "node --import tsx scripts/operator/lcx-visible-answer-quality-fuzzer.ts --json",
+          "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
+          "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
+        ]),
+      );
+    },
+    240_000,
+  );
 });

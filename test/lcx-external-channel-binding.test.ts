@@ -4,9 +4,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildExternalChannelBindingDecision,
+  applyExternalChannelLocalVerification,
+  readExternalChannelLocalVerification,
+  buildExternalChannelBindingSummary,
   parseExternalChannelBindingArgs,
   runExternalChannelBinding,
 } from "../scripts/operator/lcx-external-channel-binding.js";
+import { resolveExternalChannelTruth } from "../scripts/operator/lcx-external-channel-status.js";
 
 describe("lcx-external-channel-binding", () => {
   it("keeps platform compatibility separate from runtime activation and model promotion", async () => {
@@ -69,6 +73,38 @@ describe("lcx-external-channel-binding", () => {
       ],
     },
   };
+
+  it("keeps missing optional local verification compatible but blocks an explicit bad host pin before apply", async () => {
+    const legacy = await readExternalChannelLocalVerification({});
+    expect(legacy).toMatchObject({ status: "not_observed", executionAuthority: false });
+    expect(
+      await readExternalChannelLocalVerification({
+        localVerificationTestResultSha256: "a".repeat(64),
+      }),
+    ).toMatchObject({ status: "blocked", gaps: ["local_verification_receipt_unavailable"] });
+    const ready = buildExternalChannelBindingDecision({
+      trainingPlan: readyTrainingPlan,
+      apply: false,
+      liveTouched: false,
+    });
+    expect(applyExternalChannelLocalVerification(ready, legacy)).toBe(ready);
+    const parsed = parseExternalChannelBindingArgs([
+      "--local-verification-receipt",
+      "/tmp/unread-local-verification",
+      "--local-verification-test-result-sha256",
+      "not-a-pin",
+    ]);
+    const invalid = await readExternalChannelLocalVerification(parsed);
+    expect(invalid).toMatchObject({
+      status: "blocked",
+      gaps: ["local_verification_independent_test_pin_unavailable"],
+    });
+    expect(applyExternalChannelLocalVerification(ready, invalid)).toMatchObject({
+      status: "deferred_training_plan_not_ready",
+      missingProof: expect.arrayContaining(["local_verification_independent_test_pin_unavailable"]),
+      liveTouched: false,
+    });
+  });
 
   it("defers external-channel binding while eval or MLX is active", () => {
     const decision = buildExternalChannelBindingDecision({
@@ -162,5 +198,58 @@ describe("lcx-external-channel-binding", () => {
         "live_sidecar_source_drift_zero_after_selected_adapter",
       ]),
     });
+  });
+  it("does not adopt independent visible evidence for a failed current binding probe", async () => {
+    const decision = buildExternalChannelBindingDecision({
+      apply: true,
+      liveTouched: false,
+      externalChannelStatusOk: false,
+      userVisibleObserved: true,
+      trainingPlan: readyTrainingPlan,
+    });
+    expect(decision).toMatchObject({
+      status: "applied_runtime_probe_failed",
+      userVisibleObserved: false,
+      liveUserSeen: false,
+      visibleProofObservation: {
+        reported: true,
+        adoptedForCurrentBinding: false,
+        reason: "current_binding_probe_failed",
+      },
+    });
+    expect(decision.missingProof).toEqual(readyTrainingPlan.externalChannelBinding.missingProof);
+    const summary = buildExternalChannelBindingSummary(decision);
+    const consumed = resolveExternalChannelTruth({
+      binding: summary,
+      bindingOwnerAvailable: true,
+      legacyExternalChannelStatus: { externalChannelBound: true, userVisibleObserved: true },
+      visibleProof: { status: "user_visible_observed", acceptanceMatched: true },
+    });
+    expect(summary.visibleProofObservation?.reported).toBe(true);
+    expect(consumed).toMatchObject({
+      externalChannelBound: false,
+      userVisibleObserved: false,
+      bindingStatus: "channel_runtime_probe_failed",
+      visibleProofObservation: { reported: true, adoptedForCurrentBinding: false },
+    });
+    const proofDir = process.env.LCX_WATERFLOW_PROOF_DIR;
+    if (proofDir) {
+      await fs.mkdir(proofDir, { recursive: true });
+      await fs.writeFile(
+        path.join(proofDir, "binding-failed-probe-visible-after.json"),
+        JSON.stringify(
+          {
+            boundary: "offline_original_pure_owners_no_runtime_mutation",
+            input: { externalChannelStatusOk: false, userVisibleObserved: true },
+            producerDecision: decision,
+            originalOwnerSummary: summary,
+            consumerTruth: consumed,
+            realExternalProofStillRequired: true,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    }
   });
 });

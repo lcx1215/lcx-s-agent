@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,10 @@ import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { resolveLearningCouncilDisabledRoles } from "../../src/agents/provider-learning-council.js";
 import { loadConfig } from "../../src/config/config.js";
+import {
+  recordTrainingCaller,
+  type TrainingCallerRef,
+} from "./minimax-brain-failure-curriculum.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -46,6 +51,7 @@ type CliOptions = {
   logPath: string;
   lockPath: string;
   lockEnabled: boolean;
+  trainingCaller?: TrainingCallerRef;
 };
 
 type CommandResult = {
@@ -56,6 +62,24 @@ type CommandResult = {
   durationMs: number;
   timedOut?: boolean;
   timeoutReason?: "total_timeout" | "idle_timeout";
+  cleanupStatus?: "local_child_closed" | "cleanup_unconfirmed";
+};
+
+type PromotionDecisionInput = {
+  adapterPath: string;
+  candidateEvalSha256?: string;
+  candidateEvalPromotionReady: boolean;
+  promotionBlockedByDatasetShrink: boolean;
+  outcome: "promoted" | "rejected";
+  reason: string;
+};
+
+type AdapterLogReadback = {
+  path: string;
+  status: "read" | "unavailable";
+  sha256?: string;
+  bytes?: number;
+  reason?: string;
 };
 
 type ActiveProcess = {
@@ -383,6 +407,9 @@ function runCommand(
     let settled = false;
     let totalTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
+    let escalation: NodeJS.Timeout | undefined;
+    let cleanupDeadline: NodeJS.Timeout | undefined;
+    let deadlineReason: "total_timeout" | "idle_timeout" | undefined;
     const child = spawn(command, args, {
       cwd: WORKTREE_CWD,
       // Local-brain python children always use the cached model/adapter; avoid
@@ -393,6 +420,8 @@ function runCommand(
     let stdout = "";
     let stderr = "";
     const clearTimers = () => {
+      clearTimeout(escalation);
+      clearTimeout(cleanupDeadline);
       if (totalTimer) {
         clearTimeout(totalTimer);
       }
@@ -421,59 +450,77 @@ function runCommand(
       timedOut: true,
       timeoutReason,
     });
-    const armIdleTimer = () => {
-      if (!options.idleTimeoutMs) {
+    const finishTimeout = (cleanupStatus: "local_child_closed" | "cleanup_unconfirmed") => {
+      const result = { ...timeoutResult(deadlineReason!), cleanupStatus };
+      if (options.allowFailure && cleanupStatus === "local_child_closed") {
+        settle("resolve", result);
+      } else {
+        settle(
+          "reject",
+          new Error(`training child timed out: ${deadlineReason}; cleanup=${cleanupStatus}`, {
+            cause: result,
+          }),
+        );
+      }
+    };
+    const requestTimeout = (reason: "total_timeout" | "idle_timeout") => {
+      if (settled || deadlineReason) {
         return;
       }
-      if (idleTimer) {
-        clearTimeout(idleTimer);
+      deadlineReason = reason;
+      clearTimers();
+      child.kill("SIGTERM");
+      if (settled) {
+        return;
       }
-      idleTimer = setTimeout(() => {
-        const result = timeoutResult("idle_timeout");
-        child.kill("SIGTERM");
-        if (options.allowFailure) {
-          settle("resolve", result);
-        } else {
-          settle(
-            "reject",
-            new Error(
-              `${command} ${args.join(" ")} idle timed out after ${options.idleTimeoutMs}ms`,
-            ),
-          );
+      escalation = setTimeout(() => {
+        if (!settled) {
+          child.kill("SIGKILL");
         }
-      }, options.idleTimeoutMs);
+      }, 250);
+      cleanupDeadline = setTimeout(() => finishTimeout("cleanup_unconfirmed"), 1000);
+    };
+    const armIdleTimer = () => {
+      if (settled || deadlineReason || !options.idleTimeoutMs) {
+        return;
+      }
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => requestTimeout("idle_timeout"), options.idleTimeoutMs);
     };
     if (options.timeoutMs) {
-      totalTimer = setTimeout(() => {
-        const result = timeoutResult("total_timeout");
-        child.kill("SIGTERM");
-        if (options.allowFailure) {
-          settle("resolve", result);
-        } else {
-          settle(
-            "reject",
-            new Error(`${command} ${args.join(" ")} timed out after ${options.timeoutMs}ms`),
-          );
-        }
-      }, options.timeoutMs);
+      totalTimer = setTimeout(() => requestTimeout("total_timeout"), options.timeoutMs);
     }
     armIdleTimer();
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      if (settled || deadlineReason) {
+        return;
+      }
       stdout += chunk;
       process.stdout.write(chunk);
       armIdleTimer();
     });
     child.stderr.on("data", (chunk) => {
+      if (settled || deadlineReason) {
+        return;
+      }
       stderr += chunk;
       process.stderr.write(chunk);
       armIdleTimer();
     });
     child.on("error", (error) => {
+      if (deadlineReason) {
+        finishTimeout("cleanup_unconfirmed");
+        return;
+      }
       settle("reject", error);
     });
     child.on("close", (code) => {
+      if (deadlineReason) {
+        finishTimeout("local_child_closed");
+        return;
+      }
       const result = { command, args, stdout, stderr, durationMs: Date.now() - started };
       if (code === 0 || options.allowFailure) {
         settle("resolve", result);
@@ -514,6 +561,7 @@ function timedOutStepResult(name: string, args: string[], result: CommandResult)
     },
     timedOut: true,
     timeoutReason: result.timeoutReason,
+    ...(result.cleanupStatus ? { cleanupStatus: result.cleanupStatus } : {}),
     timeoutMs: result.timeoutReason === "idle_timeout" ? undefined : result.durationMs,
     durationMs: result.durationMs,
     liveTouched: false,
@@ -1322,14 +1370,21 @@ async function resolveDatasetPromotionRisk(): Promise<DatasetPromotionRisk> {
   };
 }
 
-async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<string | undefined> {
+async function resolveLatestPassingAdapter(
+  adapterPrefix: string,
+  sourceReads?: AdapterLogReadback[],
+  explicitLogPath?: string,
+): Promise<string | undefined> {
   let logFiles: string[];
   try {
     logFiles = (await fs.readdir(DEFAULT_GUARD_LOG_DIR))
       .filter((entry) => /^minimax-brain-training-guard.*\.jsonl$/u.test(entry))
       .map((entry) => path.join(DEFAULT_GUARD_LOG_DIR, entry));
   } catch {
-    return undefined;
+    logFiles = [];
+  }
+  if (explicitLogPath) {
+    logFiles = [...new Set([...logFiles, path.resolve(explicitLogPath)])];
   }
   const rejected = new Set<string>();
   const latestEvalByAdapter = new Map<string, EvalVerdict>();
@@ -1337,7 +1392,19 @@ async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<strin
   const completed: Array<{ at: string; adapterPath: string }> = [];
   const stableFallback: Array<{ at: string; adapterPath: string }> = [];
   for (const logFile of logFiles.toSorted()) {
-    const raw = await fs.readFile(logFile, "utf8").catch(() => "");
+    let raw = "";
+    try {
+      const bytes = await fs.readFile(logFile);
+      sourceReads?.push({
+        path: logFile,
+        status: "read",
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+      raw = bytes.toString("utf8");
+    } catch (error) {
+      sourceReads?.push({ path: logFile, status: "unavailable", reason: String(error) });
+    }
     for (const line of raw.split(/\r?\n/u)) {
       if (!line.trim()) {
         continue;
@@ -1414,10 +1481,17 @@ async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<strin
   return undefined;
 }
 
-async function resolveCurrentAdapter(options: CliOptions): Promise<string | undefined> {
+async function resolveCurrentAdapter(
+  options: CliOptions,
+  sourceReads?: AdapterLogReadback[],
+): Promise<string | undefined> {
   if (options.currentAdapter !== "latest") {
     if (options.currentAdapter === "latest-passing") {
-      const latestPassing = await resolveLatestPassingAdapter(options.adapterPrefix);
+      const latestPassing = await resolveLatestPassingAdapter(
+        options.adapterPrefix,
+        sourceReads,
+        options.logPath,
+      );
       if (latestPassing) {
         return latestPassing;
       }
@@ -1445,6 +1519,13 @@ async function resolveCurrentAdapter(options: CliOptions): Promise<string | unde
   throw new Error(
     `no usable adapter found for latest prefix ${options.adapterPrefix}; pass --current-adapter DIR`,
   );
+}
+
+function trainingResultSha256(value: unknown): string | undefined {
+  const serialized = JSON.stringify(value);
+  return serialized === undefined
+    ? undefined
+    : createHash("sha256").update(serialized).digest("hex");
 }
 
 async function runJsonStep(
@@ -1480,6 +1561,7 @@ async function runJsonStep(
     durationMs: result.durationMs,
     timeoutReason: result.timeoutReason,
     result: parsed,
+    resultSha256: trainingResultSha256(parsed),
   });
   return parsed;
 }
@@ -1488,6 +1570,7 @@ async function runEvolutionCooldown(
   options: CliOptions,
   round: number,
   deadline: number,
+  upstreamDecision?: PromotionDecisionInput,
 ): Promise<void> {
   if (options.evolutionCooldownMinutes <= 0) {
     return;
@@ -1512,13 +1595,26 @@ async function runEvolutionCooldown(
       "live_binding_readiness",
     ],
     heavyWorkPaused: true,
+    ...(upstreamDecision ? { upstreamDecision } : {}),
     liveTouched: false,
     providerConfigTouched: false,
   });
   process.stdout.write(
     `[minimax-guard] round=${round} evolution_cooldown=${Math.round(durationMs / 1000)}s\n`,
   );
+  const startedAt = new Date().toISOString();
   await sleep(durationMs);
+  await appendLog(options.logPath, {
+    event: "evolution_cooldown_completed",
+    round,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    durationMs,
+    ...(options.trainingCaller ? { callerRef: options.trainingCaller } : {}),
+    ...(upstreamDecision ? { upstreamDecisionSha256: trainingResultSha256(upstreamDecision) } : {}),
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
 }
 
 function systemLoad1m(): number {
@@ -1608,6 +1704,11 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
       String(options.teacherConcurrency),
       "--min-concurrency",
       String(Math.min(4, options.teacherConcurrency)),
+      "--guard-log",
+      options.logPath,
+      ...(options.trainingCaller
+        ? ["--caller-receipt", JSON.stringify(options.trainingCaller)]
+        : []),
       "--workspace",
       options.workspaceDir,
       "--data-dir",
@@ -1620,6 +1721,8 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
     "--import",
     "tsx",
     "scripts/operator/minimax-brain-teacher-batch.ts",
+    "--workspace",
+    options.workspaceDir,
     "--limit",
     String(options.batchLimit),
     "--write",
@@ -1627,6 +1730,31 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
     "--concurrency",
     String(options.teacherConcurrency),
     ...(options.mock ? ["--mock"] : []),
+  ]);
+}
+
+async function runDatasetStep(options: CliOptions, round: number): Promise<unknown> {
+  return runJsonStep(options, round, "dataset", "node", [
+    "--import",
+    "tsx",
+    "scripts/operator/local-brain-distill-dataset.ts",
+    "--workspace",
+    options.workspaceDir,
+    "--out",
+    options.dataDir,
+    "--include-blind",
+    "--json",
+  ]);
+}
+
+async function runSmokeStep(options: CliOptions, round: number): Promise<unknown> {
+  return runJsonStep(options, round, "smoke", "node", [
+    "--import",
+    "tsx",
+    "scripts/operator/local-brain-distill-smoke.ts",
+    "--data",
+    options.dataDir,
+    "--json",
   ]);
 }
 
@@ -1808,8 +1936,22 @@ function stableEvalBackoff(result: unknown):
 type TeacherSidecar = {
   pid?: number;
   exitCode?: number | null;
+  stopReason?: "provider_payment_required";
   stop: () => Promise<void>;
 };
+
+function teacherPaymentBlocked(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  return (
+    result.owner === "minimax-quota-brain-saturator" &&
+    result.status === "blocked_provider_payment_required" &&
+    result.stopReason === "provider_payment_required" &&
+    result.ok === false
+  );
+}
 
 function shouldRunTeacherSidecar(options: CliOptions): boolean {
   return options.teacherSidecar && options.teacherProfile === "minimax-plus-brain";
@@ -1848,6 +1990,7 @@ async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar 
     "--failure-focus",
     "--guard-log",
     options.logPath,
+    ...(options.trainingCaller ? ["--caller-receipt", JSON.stringify(options.trainingCaller)] : []),
     "--workspace",
     options.workspaceDir,
     "--data-dir",
@@ -1867,10 +2010,14 @@ async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar 
     stdio: ["ignore", "pipe", "pipe"],
   });
   let settled = false;
+  let terminalExitCode: number | null = null;
+  let stdoutTail = "";
+  let stopReason: "provider_payment_required" | undefined;
   const exitPromise = new Promise<void>((resolve) => {
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      stdoutTail = (stdoutTail + chunk).slice(-128 * 1024);
       process.stdout.write(`[minimax-sidecar] ${chunk}`);
     });
     child.stderr.on("data", (chunk) => {
@@ -1878,6 +2025,7 @@ async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar 
     });
     child.on("error", async (error) => {
       settled = true;
+      terminalExitCode = child.exitCode;
       await appendLog(options.logPath, {
         event: "teacher_sidecar_error",
         error: String(error),
@@ -1888,10 +2036,19 @@ async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar 
     });
     child.on("close", async (code) => {
       settled = true;
+      try {
+        if (teacherPaymentBlocked(parseJsonFromStdout(stdoutTail))) {
+          stopReason = "provider_payment_required";
+        }
+      } catch {
+        /* An unparsed child body does not establish a payment verdict. */
+      }
+      terminalExitCode = code;
       await appendLog(options.logPath, {
         event: "teacher_sidecar_exit",
         pid: child.pid,
         exitCode: code,
+        ...(stopReason ? { stopReason } : {}),
         liveTouched: false,
         providerConfigTouched: false,
       });
@@ -1909,7 +2066,10 @@ async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar 
   return {
     pid: child.pid,
     get exitCode() {
-      return child.exitCode;
+      return terminalExitCode;
+    },
+    get stopReason() {
+      return stopReason;
     },
     stop: async () => {
       if (!settled) {
@@ -1931,61 +2091,73 @@ function adapterPathForRound(options: CliOptions, round: number): string {
 
 const options = parseArgs(process.argv.slice(2));
 if (options.resolveCurrentAdapterOnly) {
-  const selectedAdapter = await resolveCurrentAdapter(options);
-  const datasetPromotionRisk = await resolveDatasetPromotionRisk();
-  const catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
-    options.logPath,
-    options.adapterPrefix,
-  );
-  const selectedAdapterUsable =
-    Boolean(selectedAdapter) && !catastrophicTrainingSeedBackoffs.has(selectedAdapter as string);
-  const recoverySeed =
-    !options.noTrain && !selectedAdapterUsable
-      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-          excludedAdapters: catastrophicTrainingSeedBackoffs,
-        })
-      : undefined;
-  const localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
-    catastrophicTrainingSeedBackoffs,
-    selectedAdapterUsable || Boolean(recoverySeed),
-  );
-  const trainingSeed =
-    !selectedAdapter && !options.noTrain && !localTrainingPaused ? recoverySeed : undefined;
-  const trainingResumeSeed =
-    !localTrainingPaused && !options.noTrain && !selectedAdapterUsable ? recoverySeed : undefined;
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        ok: true,
-        boundary: "local_auxiliary_thought_flow_only",
-        selectedAdapter,
-        trainingSeedAdapter: trainingSeed?.adapterPath,
-        trainingSeed,
-        trainingResumeAdapter:
-          !localTrainingPaused &&
-          selectedAdapter &&
-          !catastrophicTrainingSeedBackoffs.has(selectedAdapter)
-            ? selectedAdapter
-            : trainingResumeSeed?.adapterPath,
-        trainingResumeSeed: localTrainingPaused ? undefined : trainingResumeSeed,
-        catastrophicTrainingSeedBackoffs: [...catastrophicTrainingSeedBackoffs],
-        localTrainingPaused,
-        localTrainingPauseReason: localTrainingPaused
-          ? "repeated_catastrophic_training_seed_backoff"
-          : undefined,
-        datasetPromotionRisk,
-        model: options.model,
-        adapterPrefix: options.adapterPrefix,
-        bootstrapIfMissing: options.bootstrapIfMissing,
-        selectionMode: options.currentAdapter,
-        liveTouched: false,
-        providerConfigTouched: false,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  process.exit(0);
+  const sourceReads: AdapterLogReadback[] = [];
+  try {
+    const selectedAdapter = await resolveCurrentAdapter(options, sourceReads);
+    const datasetPromotionRisk = await resolveDatasetPromotionRisk();
+    const catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
+      options.logPath,
+      options.adapterPrefix,
+    );
+    const selectedAdapterUsable =
+      Boolean(selectedAdapter) && !catastrophicTrainingSeedBackoffs.has(selectedAdapter as string);
+    const recoverySeed =
+      !options.noTrain && !selectedAdapterUsable
+        ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+            excludedAdapters: catastrophicTrainingSeedBackoffs,
+          })
+        : undefined;
+    const localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
+      catastrophicTrainingSeedBackoffs,
+      selectedAdapterUsable || Boolean(recoverySeed),
+    );
+    const trainingSeed =
+      !selectedAdapter && !options.noTrain && !localTrainingPaused ? recoverySeed : undefined;
+    const trainingResumeSeed =
+      !localTrainingPaused && !options.noTrain && !selectedAdapterUsable ? recoverySeed : undefined;
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          ok: true,
+          boundary: "local_auxiliary_thought_flow_only",
+          selectedAdapter,
+          trainingSeedAdapter: trainingSeed?.adapterPath,
+          trainingSeed,
+          trainingResumeAdapter:
+            !localTrainingPaused &&
+            selectedAdapter &&
+            !catastrophicTrainingSeedBackoffs.has(selectedAdapter)
+              ? selectedAdapter
+              : trainingResumeSeed?.adapterPath,
+          trainingResumeSeed: localTrainingPaused ? undefined : trainingResumeSeed,
+          catastrophicTrainingSeedBackoffs: [...catastrophicTrainingSeedBackoffs],
+          localTrainingPaused,
+          localTrainingPauseReason: localTrainingPaused
+            ? "repeated_catastrophic_training_seed_backoff"
+            : undefined,
+          datasetPromotionRisk,
+          model: options.model,
+          adapterPrefix: options.adapterPrefix,
+          bootstrapIfMissing: options.bootstrapIfMissing,
+          selectionMode: options.currentAdapter,
+          liveTouched: false,
+          providerConfigTouched: false,
+          sourceReads: {
+            reads: sourceReads.slice(0, 16),
+            omittedCount: Math.max(0, sourceReads.length - 16),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    process.exit(0);
+  } catch (error) {
+    const failureReceipt = `${JSON.stringify({ ok: false, status: "blocked", boundary: "local_auxiliary_thought_flow_only", reason: "adapter_resolution_failed", error: String(error), model: options.model, adapterPrefix: options.adapterPrefix, sourceReads: { reads: sourceReads.slice(0, 16), omittedCount: Math.max(0, sourceReads.length - 16) }, liveTouched: false, providerConfigTouched: false }, null, 2)}\n`;
+    process.stdout.write(failureReceipt);
+    process.stderr.write(`${String(error)}\n`);
+    process.exit(1);
+  }
 }
 
 const releaseRunLock = await acquireRunLock(options);
@@ -2037,6 +2209,11 @@ let teacherSidecar: TeacherSidecar | undefined;
 // failing the guard run before eval/training evidence can be refreshed.
 const minimaxTeacherRetired = !options.mock && !(await isMinimaxTeacherCredentialAvailable());
 
+options.trainingCaller = await recordTrainingCaller({
+  logPath: options.logPath,
+  workspaceDir: options.workspaceDir,
+  owner: "minimax-brain-training-guard",
+});
 await appendLog(options.logPath, {
   event: "guard_start",
   mode: "minimax_teacher_additive_only",
@@ -2120,6 +2297,7 @@ try {
   teacherSidecar = minimaxTeacherRetired ? undefined : await startTeacherSidecar(options);
   while (Date.now() < deadline) {
     round += 1;
+    let roundPromotionDecision: PromotionDecisionInput | undefined;
     if (
       await skipForHighLoad({
         options,
@@ -2131,6 +2309,20 @@ try {
       break;
     }
     if (teacherSidecar) {
+      if (teacherSidecar.stopReason === "provider_payment_required") {
+        await appendLog(options.logPath, {
+          event: "teacher_provider_payment_blocked",
+          status: "blocked_provider_payment_required",
+          reason: "provider_payment_required",
+          round,
+          sidecarPid: teacherSidecar.pid,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+        throw new Error(
+          "provider_payment_required: no serial teacher fallback after payment refusal",
+        );
+      }
       if (teacherSidecar.exitCode === null) {
         await appendLog(options.logPath, {
           event: "step_skipped",
@@ -2169,19 +2361,8 @@ try {
     } else {
       await runTeacherStepOrRetire(options, round, minimaxTeacherRetired);
     }
-    await runJsonStep(options, round, "dataset", "node", [
-      "--import",
-      "tsx",
-      "scripts/operator/local-brain-distill-dataset.ts",
-      "--include-blind",
-      "--json",
-    ]);
-    await runJsonStep(options, round, "smoke", "node", [
-      "--import",
-      "tsx",
-      "scripts/operator/local-brain-distill-smoke.ts",
-      "--json",
-    ]);
+    await runDatasetStep(options, round);
+    await runSmokeStep(options, round);
 
     const shouldRunRecoveryTrain =
       round === 1 &&
@@ -2416,10 +2597,20 @@ try {
         },
       );
       const datasetPromotionRisk = await resolveDatasetPromotionRisk();
+      const candidateEvalSha256 = trainingResultSha256(candidateEval);
+      const candidateEvalPromotionReady = promotionEvalPassed(candidateEval);
       const promotionBlockedByDatasetShrink =
-        promotionEvalPassed(candidateEval) &&
+        candidateEvalPromotionReady &&
         datasetPromotionRisk.status === "source_stable_dataset_shrink";
-      if (promotionEvalPassed(candidateEval) && !promotionBlockedByDatasetShrink) {
+      if (candidateEvalPromotionReady && !promotionBlockedByDatasetShrink) {
+        roundPromotionDecision = {
+          adapterPath: candidateAdapter,
+          candidateEvalSha256,
+          candidateEvalPromotionReady,
+          promotionBlockedByDatasetShrink,
+          outcome: "promoted",
+          reason: "candidate_eval_promotion_ready",
+        };
         currentAdapter = candidateAdapter;
         trainingSeedAdapter = candidateAdapter;
         trainingResumeAdapter = candidateAdapter;
@@ -2432,6 +2623,16 @@ try {
           liveTouched: false,
         });
       } else {
+        roundPromotionDecision = {
+          adapterPath: candidateAdapter,
+          candidateEvalSha256,
+          candidateEvalPromotionReady,
+          promotionBlockedByDatasetShrink,
+          outcome: "rejected",
+          reason: promotionBlockedByDatasetShrink
+            ? "source_stable_dataset_shrink"
+            : "candidate_eval_not_promotion_ready",
+        };
         if (promotionBlockedByDatasetShrink) {
           await appendLog(options.logPath, {
             event: "candidate_promotion_blocked_dataset_shrink",
@@ -2533,11 +2734,17 @@ try {
           event: "adapter_rejected_for_guard_session",
           round,
           adapterPath: candidateAdapter,
+          candidateEvalSha256,
+          candidateEvalPromotionReady,
+          promotionBlockedByDatasetShrink,
+          rejectionReason: promotionBlockedByDatasetShrink
+            ? "source_stable_dataset_shrink"
+            : "candidate_eval_not_promotion_ready",
           liveTouched: false,
         });
       }
     }
-    await runEvolutionCooldown(options, round, deadline);
+    await runEvolutionCooldown(options, round, deadline, roundPromotionDecision);
   }
   await appendLog(options.logPath, {
     event: "guard_complete",
