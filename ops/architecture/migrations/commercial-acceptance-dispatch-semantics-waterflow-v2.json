@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "commercial_acceptance_harness_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Original collector dispatch is control flow; joined snapshots are returned data consumed by the acceptance builder, not inputs sent to child owners.",
+  "authority": "src/shared/lcx-workflow-process-contracts.ts",
+  "sourceFacts": [
+    "collectOwnerSnapshots dispatches original shared and exclusive owner calls and binds the host collection identity to returned snapshots",
+    "runJsonOwner sends original script/argv to execFile; a missing subprocess produces an original unavailable snapshot without executing that owner body",
+    "combineCommercialAcceptanceSnapshots returns joined snapshots which main supplies to buildCommercialAcceptanceHarness",
+    "the original main serializes the builder result to stdout; failed owner snapshots retain readyForCommercialRelease=false"
+  ],
+  "changes": {
+    "controlDeclaration": "The optional controlEdges subset is authoritative only in the existing canonical workflow process registry; the graph reads that declaration instead of maintaining another inventory.",
+    "preservedRequiredNodeCount": 12,
+    "preservedEdgeCount": 16,
+    "preservedFilterCount": 9,
+    "preservedFeedbackEdges": [
+      ["acceptance_eval", "commercial_acceptance_harness"],
+      ["commercial_acceptance_harness", "training_plan"]
+    ],
+    "relationProjection": "Declared dispatch edges require descriptive dispatch policy, not the caller's joined output artifact. Child-to-harness data edges retain the original output/readback contract.",
+    "auditCompatibility": "Legacy data-reference evidence cannot prove control dispatch. Unwaived declared control edges report control_dispatch_not_observed; equal output/input values do not pass. No new control witness or dispatch authority is introduced."
+  },
+  "nonEffects": [
+    "no node, edge, filter or feedback removal",
+    "no waiver or normal-block acceptance relaxation",
+    "no new runner, automation, provider or channel call",
+    "no host collection UUID or debug PID promoted to child business identity",
+    "no failed callback promoted to owner-body execution",
+    "no business state or historical receipt rewrite"
+  ],
+  "verification": [
+    "test/lcx-flow-graph.test.ts: describes acceptance dispatch separately from child result consumption",
+    "test/lcx-flow-graph.test.ts: rejects equal data fields as proof of acceptance control dispatch"
+  ],
+  "acceptance": "This descriptive migration does not establish dispatch observation or whole-scene acceptance. Actual caller attribution and original child/result consumption remain separate obligations; narrow independent control proof is still needed for unwaived dispatch edges."
+}

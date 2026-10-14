@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "external_finance_research_waterflow",
+  "fromVersion": 2,
+  "toVersion": 3,
+  "reason": "The native research runner collects source batches before executing its selected modules. Quality consumes their evidence; the commercial gate separately creates the reply terminal summary.",
+  "authority": "src/agents/finance-research-runner.ts",
+  "sourceFacts": [
+    "runFinanceResearchBatch is awaited before executeFinanceModuleComposition",
+    "runFinanceResearchQualityReview consumes executed evidence and original module node receipts",
+    "The reply commercial gate consumes the actual Quality candidate and source snapshot; it is a separate reviewer"
+  ],
+  "changes": {
+    "removedEdges": [
+      ["local_brain_planner", "finance_research_modules"],
+      ["finance_research_modules", "source_registry"]
+    ],
+    "addedEdges": [
+      ["local_brain_planner", "source_registry"],
+      ["source_registry", "finance_research_modules"]
+    ],
+    "owners": "source_registry stays with research runner; finance_research_modules is owned by module executor; review_panel is original research Quality; control_room_summary stays with commercial gate",
+    "preserved": "All original nodes, required filters and review-to-research feedback remain.",
+    "receiptCompatibility": "Retained native receipts are not rewritten. New mappings must prove actual source-to-module and module-to-Quality consumption."
+  },
+  "nonEffects": [
+    "no source collection, model, trading or runtime behavior change",
+    "no canonical relation vocabulary or state transition change",
+    "no execution authority or mandatory new workflow"
+  ],
+  "verification": [
+    "test/lcx-flow-graph.test.ts",
+    "finance-module-reply-same-attempt/integration-verification.json retained same-attempt native evidence"
+  ],
+  "acceptance": "Correct sequencing alone does not prove traversal or feedback adoption; missing receipt consumers remain gaps."
+}

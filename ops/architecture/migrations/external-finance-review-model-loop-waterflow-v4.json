@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "external_finance_research_waterflow",
+  "fromVersion": 3,
+  "toVersion": 4,
+  "reason": "Original bounded review feedback is returned to the existing model/tool loop. Its next decision may retain successful evidence or stop; a review does not require re-executing modules.",
+  "authority": "src/agents/pi-embedded-runner/run.ts",
+  "changes": {
+    "addedNodes": ["model_tool_decision"],
+    "removedFeedbackEdges": [["review_panel", "finance_research_modules"]],
+    "addedFeedbackEdges": [["review_panel", "model_tool_decision"]],
+    "addedEdges": [["model_tool_decision", "control_room_summary"]],
+    "preserved": "All prior nodes, source and Quality gates, original module execution, custody identity and strict body-consumption checks.",
+    "receiptCompatibility": "Older receipts remain unchanged; absent next-decision readback is a gap, never inferred adoption."
+  },
+  "nonEffects": [
+    "No runtime sequence or model adapter change",
+    "No mandatory new calls or module retries",
+    "No permission, source, risk or trading threshold change",
+    "No separate business state store"
+  ],
+  "verification": [
+    "test/lcx-flow-graph.test.ts",
+    "Original queued caller offline feedback input, next decision, and Quality failure gate readbacks"
+  ],
+  "acceptance": "Only actual feedback content influencing the following decision proves this handoff locally; offline substitutes do not establish natural LLM adoption."
+}

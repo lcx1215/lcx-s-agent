@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "commercial_answer_pipeline_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "The existing planner feeds a Qwen requirement boolean to the local budget policy; the original candidate and provider evidence feed the local audit directly. Budget values are consumed by the diagnostic summary, not by candidate-body validation. The existing presentation suboperation supplies the normalized candidate to audit; it is represented explicitly without a new runtime.",
+  "authority": "scripts/operator/lcx-commercial-answer-pipeline.ts#buildPipelineResult",
+  "changes": {
+    "removedEdges": [
+      ["model_candidate_answer", "answer_audit_budget"],
+      ["answer_audit_budget", "local_contract_audit"]
+    ],
+    "addedEdges": [
+      ["local_brain_planner", "answer_audit_budget"],
+      ["model_candidate_answer", "display_text_normalizer"],
+      ["display_text_normalizer", "local_contract_audit"],
+      ["provider_evidence", "local_contract_audit"],
+      ["answer_audit_budget", "control_room_summary"]
+    ],
+    "preserved": "All existing nodes, filters, council/draft/review obligations and feedback edges remain. No missing caller or account/run identity is inferred.",
+    "receiptCompatibility": "Old receipts remain immutable. Removed serial ports are not valid v2 consumption evidence; actual direct field readback is required.",
+    "addedNodes": ["display_text_normalizer"]
+  },
+  "nonEffects": [
+    "No runtime call, budget or permission changes",
+    "No council, draft, review or model adoption inferred",
+    "No new business state store"
+  ],
+  "verification": [
+    "test/lcx-flow-graph.test.ts",
+    "Original retained commercial actor parameter readbacks"
+  ],
+  "acceptance": "Only matching actual producer and consumer fields within verified custody establish handoff; relation legality and diagnostic budgeting do not prove model adoption or trading quality."
+}

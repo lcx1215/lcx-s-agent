@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "automation_repair_lock_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Separate original repair admission and impact recommendations from the required but absent patch/check execution caller.",
+  "authority": "src/shared/lcx-workflow-process-contracts.ts",
+  "sourceFacts": [
+    "local-brain-training-plan emits a selected context in its acquire command without executing that command",
+    "lcx-automation-repair-lock dispatches acquire, status and release; the compatibility schedule_gate node represents context eligibility, worktree and lease-time checks, not an automation due caller",
+    "valid ineligible context is preserved as rejectedPlanningInput with its exact JSON hash and never becomes accepted planningInput or a lease",
+    "lcx-change-impact-plan maps changed paths to owners and recommended commands; it does not apply patches or execute those commands",
+    "ops/automation/repair-lock-protocol.md declares an external Codex/manual actor that acquires before mutation and releases after verification; no callable repository repair runner was found, but actual authorized external execution remains permitted",
+    "the existing host operator writer can publish doctor findings; sibling observations do not prove lease-to-check execution or doctor-to-next-planner feedback"
+  ],
+  "changes": {
+    "preservedNodes": [
+      "training_plan",
+      "schedule_gate",
+      "repair_lock",
+      "local_change",
+      "local_tests",
+      "system_doctor",
+      "operator_latest_receipt"
+    ],
+    "preservedEdges": [
+      ["training_plan", "schedule_gate"],
+      ["schedule_gate", "repair_lock"],
+      ["repair_lock", "local_change"],
+      ["local_change", "local_tests"],
+      ["local_tests", "system_doctor"],
+      ["system_doctor", "operator_latest_receipt"]
+    ],
+    "preservedFeedbackEdges": [["system_doctor", "training_plan"]],
+    "preservedFilters": [
+      "automation_schedule_gate",
+      "repair_lock_required",
+      "single_digest_only",
+      "training_overlap_guard",
+      "error_receipt_required"
+    ],
+    "implementationStatus": {
+      "training_plan": "existing_source",
+      "schedule_gate": "existing_source",
+      "repair_lock": "existing_source",
+      "local_change": "required_not_implemented",
+      "local_tests": "required_not_implemented",
+      "system_doctor": "required_unobserved",
+      "operator_latest_receipt": "required_unobserved"
+    },
+    "ownerMeaning": "The impact-plan owner remains the existing read-only evidence mapper for local_change/local_tests. required_not_implemented refers to repository patch/check execution implementation, not a prohibition or absence claim for actual external Codex/manual execution. Native lease, patch/check, doctor and release receipts from that authorized actor may satisfy the obligations without a new automation runner. Doctor implementation exists, while same-attempt repair publication remains unobserved.",
+    "receiptCompatibility": "No receipt, node, filter, edge, relation vocabulary or execution state changes; only descriptive implementation status and evidence responsibilities are corrected."
+  },
+  "nonEffects": [
+    "no repair runner or automation creation",
+    "no permission, provider, training or protected-memory change",
+    "no graph edge removal or feedback waiver",
+    "no recommendation promoted to executed check",
+    "no normal refusal promoted to acquired lease or repair completion",
+    "no persisted business state or historical receipt rewrite"
+  ],
+  "verification": [
+    "test/lcx-flow-graph.test.ts: keeps repair execution obligations separate from read-only impact recommendations"
+  ],
+  "acceptance": "This migration is descriptive only and cannot close the scene. Declared plans or observer-assembled receipts cannot replace actual authorized execution; the existing external Codex/manual actor may satisfy these obligations with native lease, patch/check, doctor and release receipts without a new automation runner. A blocked branch requires the unchanged auditor's actual source-bound refusal and descendant rules; none are waived by this manifest."
+}
