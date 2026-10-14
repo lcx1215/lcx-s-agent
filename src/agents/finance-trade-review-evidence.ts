@@ -46,6 +46,9 @@ export type FinanceTradeReviewFailureCode = z.infer<typeof FinanceTradeReviewFai
 export const FinanceTradeReviewContractStageSchema = z.enum([
   "output_object",
   "output_envelope",
+  "output_fields",
+  "schema_version",
+  "decisions_array",
   "candidate_count",
   "candidate_fields",
   "expectation_gap",

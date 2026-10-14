@@ -2200,7 +2200,7 @@ it.each(["provider_http", "local_cooldown"] as const)(
 );
 
 it.each([
-  { extra: true, stage: "output_envelope" },
+  { extra: true, stage: "output_fields" },
   { extra: false, stage: "candidate_fields" },
 ])(
   "reports bounded original contract stage without adopting rejected model output: $stage",
@@ -2260,4 +2260,30 @@ it("reports bounded original contract stage only on failure and preserves accept
   );
   expect(result?.[0].decision).toBe("veto");
   expect(diagnostic).not.toHaveBeenCalled();
+});
+
+it.each([
+  { output: { schemaVersion: "foreign", decisions: [] }, stage: "schema_version" },
+  { output: { schemaVersion: request.schemaVersion, decisions: {} }, stage: "decisions_array" },
+])("separates original envelope failure without accepting it: $stage", ({ output, stage }) => {
+  const diagnostic = vi.fn();
+  expect(parseFinanceTradeDecisionReviewOutput(output, request, diagnostic)).toBeUndefined();
+  expect(diagnostic).toHaveBeenCalledWith(stage);
+});
+
+it("clarifies the original exact final envelope in the host prompt without relaxing gates", () => {
+  let buildPrompt: ((payload: unknown) => string) | undefined;
+  createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: (_cfg, options) => {
+        buildPrompt = options?.buildPrompt;
+        return adapter(null);
+      },
+    },
+  );
+  const prompt = buildPrompt!(intradayRequest);
+  expect(prompt).toContain('exactly two root keys, "schemaVersion" and "decisions"');
+  expect(prompt).toContain(`Copy schemaVersion exactly as "${intradayRequest.schemaVersion}"`);
+  expect(prompt).toContain("required brokerExitResponse when supplied");
 });

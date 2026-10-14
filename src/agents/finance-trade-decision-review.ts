@@ -255,12 +255,14 @@ export function parseFinanceTradeDecisionReviewOutput(
   if (!isRecord(output)) {
     return reject("output_object");
   }
-  if (
-    Object.keys(output).toSorted().join(",") !== "decisions,schemaVersion" ||
-    output.schemaVersion !== request.schemaVersion ||
-    !Array.isArray(output.decisions)
-  ) {
-    return reject("output_envelope");
+  if (Object.keys(output).toSorted().join(",") !== "decisions,schemaVersion") {
+    return reject("output_fields");
+  }
+  if (output.schemaVersion !== request.schemaVersion) {
+    return reject("schema_version");
+  }
+  if (!Array.isArray(output.decisions)) {
+    return reject("decisions_array");
   }
   const expectedIds = new Set(request.candidates.map((candidate) => candidate.candidateId));
   if (
@@ -499,6 +501,7 @@ function reviewPrompt(payload: unknown): string {
     FINANCE_CONDITION_ORIGIN_GUIDANCE,
     FINANCE_EXPECTATION_GAP_GUIDANCE,
     "For a veto, the rationale must identify the candidate-specific risk or violated supplied condition and its supporting packet facts. If you cannot justify approval, explain exactly which decision-critical input is absent and why it matters. Do not claim a TypeScript gate failed unless that failure is supplied. Return exactly one decision for every candidate and no extra fields.",
+    `Final response envelope: exactly two root keys, "schemaVersion" and "decisions". Copy schemaVersion exactly as "${schemaVersion}". decisions must be an array even for one candidate. Do not add explanation, brokerExitResponse, expectationGap, candidateId or any other field at the root; candidate fields, including required brokerExitResponse when supplied, belong inside their matching decisions entry. Do not wrap this object in answer, result or output. The separate evidenceRequests envelope is permitted only while evidenceToolsAvailable is true and is never a final decision.`,
     `Return one JSON object with schemaVersion "${schemaVersion}" and decisions [{candidateId, decision: "approve"|"veto", rationale, expectationGap: {origin: "model_hypothesis", edgeKind: "fundamentals"|"valuation"|"interpretation"|"timing"|"flow"|"risk_rebalance"|"unknown", marketExpectation, variantView, catalyst, invalidation, costRiskAssessment}}]. Each hypothesis field is a concise string of at most 180 characters or null when unknown. Aim for under 120 characters per field; longer detail belongs in rationale (at most 800 characters). For unmeasured costs, a sufficient costRiskAssessment is "Fees/slippage unmeasured; spread does not measure them." Do not repeat the rationale in every hypothesis field.`,
     // Keep stage-specific guidance after the reusable instruction prefix.
     ...(isRecord(payload) && payload.evidenceToolsAvailable === true
