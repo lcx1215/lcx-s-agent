@@ -20,6 +20,7 @@
  */
 
 import { Agent, EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
+import { FinanceUncachedReadError } from "./finance-alpaca-safety-transport.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import {
   ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
@@ -94,11 +95,14 @@ export function createFinanceUncachedFetch(
       ...(options.directory ? { LCX_FINANCE_STATE_DIR: options.directory } : {}),
     });
     const raw = (env as { LCX_FINANCE_HTTP_PROXY?: unknown }).LCX_FINANCE_HTTP_PROXY;
+    const startedAt = performance.now();
     const response = await undiciFetch(url, {
       dispatcher: agentFor(typeof raw === "string" ? raw : undefined),
       method: "GET",
       headers: init.headers,
       ...(init.signal ? { signal: init.signal } : {}),
+    }).catch((cause: unknown) => {
+      throw new FinanceUncachedReadError(url, "request", performance.now() - startedAt, cause);
     });
     return {
       status: response.status,
@@ -106,6 +110,8 @@ export function createFinanceUncachedFetch(
         maxBytes: ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
         label: "finance uncached GET",
         signal: init.signal,
+      }).catch((cause: unknown) => {
+        throw new FinanceUncachedReadError(url, "body", performance.now() - startedAt, cause);
       }),
     };
   };

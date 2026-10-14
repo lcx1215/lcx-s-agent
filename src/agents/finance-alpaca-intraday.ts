@@ -86,6 +86,7 @@ export async function syncAlpacaIntradayBars(options: {
   const collected: AlpacaBar[] = [];
   let pageToken: string | undefined;
   let pages = 0;
+  let nativeSymbolVerified = true;
   do {
     signal.throwIfAborted();
     const url = new URL(
@@ -123,9 +124,14 @@ export async function syncAlpacaIntradayBars(options: {
       payload.symbol === instrument &&
       (payload.next_page_token === null ||
         (typeof payload.next_page_token === "string" && payload.next_page_token.length > 0));
-    if (!payload || (!Array.isArray(payload.bars) && !emptyNativePage)) {
+    if (
+      !payload ||
+      (payload.symbol !== undefined && payload.symbol !== instrument) ||
+      (!Array.isArray(payload.bars) && !emptyNativePage)
+    ) {
       throw new Error("Alpaca intraday bars response is malformed");
     }
+    nativeSymbolVerified &&= payload.symbol === instrument;
     if (Array.isArray(payload.bars)) {
       collected.push(...(payload.bars as AlpacaBar[]));
     }
@@ -178,6 +184,7 @@ export async function syncAlpacaIntradayBars(options: {
       unclosedBarsSkipped,
     });
   }
+  signal.throwIfAborted();
   const append = await appendFinanceIntradayBars(options.directory, {
     instrument,
     intervalSeconds: options.intervalSeconds,
@@ -188,6 +195,7 @@ export async function syncAlpacaIntradayBars(options: {
       feed: options.feed,
     },
     bars,
+    ...(nativeSymbolVerified ? { revisionPolicy: "alpaca_same_feed_cumulative_v1" as const } : {}),
   });
   return Object.freeze({
     boundary: "read_only_market_data_then_local_ledger_write" as const,

@@ -33,6 +33,10 @@ vi.mock("./finance-scheduler-process.js", () => ({
   runFinanceCycleProcess: mocks.cycle,
 }));
 import { runFinanceScheduler } from "../../scripts/operator/lcx-finance-scheduler.js";
+import {
+  FinanceAccountReadError,
+  FinanceUncachedReadError,
+} from "./finance-alpaca-safety-transport.js";
 
 let root: string;
 afterEach(() => {
@@ -45,6 +49,19 @@ afterEach(() => {
   }
 });
 it.each([
+  {
+    error: new FinanceAccountReadError(
+      "broker_reconciliation",
+      100,
+      new FinanceUncachedReadError(
+        "https://paper-api.alpaca.markets/v2/account?secret=DO_NOT_PERSIST",
+        "request",
+        90,
+        Object.assign(new Error("untrusted raw provider details"), { code: "ECONNRESET" }),
+      ),
+    ),
+    expected: "account_read_failed",
+  },
   {
     error: new FinanceExecutionSafetyFactsError("execution_recovery_incomplete"),
     expected: "execution_recovery_incomplete",
@@ -86,6 +103,14 @@ it.each([
     lastReadinessStatus: "unavailable",
     lastSucceededAt: null,
   });
+  if (expected === "account_read_failed") {
+    expect(observation.reconciliation.lastFailure).toMatchObject({
+      stage: "broker_reconciliation",
+      code: "ECONNRESET",
+      request: { endpoint: "account", phase: "request", code: "ECONNRESET" },
+    });
+  }
+  expect(JSON.stringify(observation)).not.toContain("DO_NOT_PERSIST");
   expect(JSON.stringify(observation)).not.toContain("untrusted raw provider details");
   expect(mocks.cycle).not.toHaveBeenCalled();
 });

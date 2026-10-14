@@ -33,6 +33,10 @@ import {
   createAlpacaPaperOrderStream,
   type AlpacaPaperOrderStreamStatus,
 } from "../../src/agents/finance-alpaca-order-stream.js";
+import {
+  FinanceAccountReadError,
+  financeReadFailureDiagnostic,
+} from "../../src/agents/finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import {
@@ -2861,7 +2865,7 @@ async function reconcileIdleAccountIfDue(context: CycleContext): Promise<void> {
     } catch (error) {
       if (!context.signal.aborted) {
         process.stderr.write(
-          `[${new Date().toISOString()}] idle broker reconciliation failed: ${error instanceof Error ? error.message : String(error)}\n`,
+          `[${new Date().toISOString()}] idle broker reconciliation failed: ${error instanceof FinanceAccountReadError ? JSON.stringify(error.diagnostic) : error instanceof FinanceExecutionSafetyFactsError ? error.category : JSON.stringify(financeReadFailureDiagnostic(error))}\n`,
         );
       }
     }
@@ -3331,6 +3335,10 @@ export async function runFinanceScheduler(
         lastSucceededAt: null as string | null,
         lastReadinessStatus: null as string | null,
         lastErrorCode: null as string | null,
+        lastFailure: null as
+          | FinanceAccountReadError["diagnostic"]
+          | ReturnType<typeof financeReadFailureDiagnostic>
+          | null,
       };
       const writeStreamStatus = () => {
         const filename = path.join(root.directory, "alpaca-order-stream-latest.json");
@@ -3378,6 +3386,7 @@ export async function runFinanceScheduler(
             reconciliation.lastSucceededAt = reconciliation.lastReadbackAt;
           }
           reconciliation.lastErrorCode = null;
+          reconciliation.lastFailure = null;
           writeStreamStatus();
         },
         onError: (error) => {
@@ -3386,7 +3395,13 @@ export async function runFinanceScheduler(
               ? "progress_observation_failed"
               : error instanceof FinanceExecutionSafetyFactsError
                 ? error.category
-                : "reconciliation_failed";
+                : error instanceof FinanceAccountReadError
+                  ? "account_read_failed"
+                  : "reconciliation_failed";
+          reconciliation.lastFailure =
+            error instanceof FinanceAccountReadError
+              ? error.diagnostic
+              : financeReadFailureDiagnostic(error);
           reconciliation.lastReadinessStatus = "unavailable";
           writeStreamStatus();
           process.stderr.write(

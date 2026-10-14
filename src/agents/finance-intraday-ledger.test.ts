@@ -176,3 +176,116 @@ it("preserves full append numbering and deduplication after a scoped proof read"
     /conflicting intraday bar/u,
   );
 });
+
+function nativeRevisionInput(): FinanceIntradayAppendInput {
+  return {
+    ...input(),
+    instrument: "HWM",
+    observedAt: "2026-10-14T14:40:00.640Z",
+    provenance: {
+      origin: "Alpaca Market Data API",
+      sourceUrlOrArtifact: "https://data.alpaca.markets/v2/stocks/{symbol}/bars",
+      feed: "iex",
+    },
+    revisionPolicy: "alpaca_same_feed_cumulative_v1",
+    bars: [
+      {
+        startAt: "2026-10-14T14:35:00.000Z",
+        open: 219.71,
+        high: 219.71,
+        low: 219.39,
+        close: 219.39,
+        volume: 1049,
+      },
+    ],
+  };
+}
+it("retains HWM native cumulative revisions and returns only the version visible at the cutoff", async () => {
+  const root = await directory();
+  const original = nativeRevisionInput();
+  const first = await appendFinanceIntradayBars(root, original);
+  const revised = {
+    ...original,
+    observedAt: "2026-10-14T14:43:00.000Z",
+    bars: [{ ...original.bars[0], close: 219.595, volume: 1162 }],
+  };
+  await appendFinanceIntradayBars(root, revised);
+  expect(
+    (
+      await readFinanceIntradayLedger(root, {
+        instrument: "HWM",
+        feed: "iex",
+        asOf: "2026-10-14T14:41:00.000Z",
+      })
+    ).bars,
+  ).toMatchObject([{ close: 219.39, volume: 1049 }]);
+  expect(
+    (await readFinanceIntradayLedger(root, { instrument: "HWM", feed: "iex" })).bars,
+  ).toMatchObject([{ close: 219.595, volume: 1162 }]);
+  expect(
+    (await readFinanceIntradayLedger(root, { instrument: "HWM", feed: "iex" })).bars,
+  ).toHaveLength(1);
+  expect(await appendFinanceIntradayBars(root, revised)).toMatchObject({
+    appended: false,
+    repeatsSkipped: 1,
+    recordCount: 2,
+  });
+  const db = new (requireNodeSqlite().DatabaseSync)(financeIntradayLedgerPath(root));
+  try {
+    const rows = db.prepare("SELECT body FROM finance_intraday_records ORDER BY sequence").all();
+    const body = JSON.parse(String(rows[1].body));
+    expect(body.body.revisions[0].previousRecordRef).toBe(first.headRef);
+    body.body.revisions[0].previousBarHash = "0".repeat(64);
+    db.prepare("UPDATE finance_intraday_records SET body=?, ref=? WHERE sequence=2").run(
+      JSON.stringify(body),
+      caseflowFingerprint(body),
+    );
+    await expect(readFinanceIntradayLedger(root, { instrument: "HWM" })).rejects.toThrow(
+      "revision integrity mismatch",
+    );
+  } finally {
+    db.close();
+  }
+});
+it.each([
+  "foreign_feed",
+  "foreign_source",
+  "backdated",
+  "volume_decrease",
+  "price_only",
+  "no_policy",
+  "shrunk_range",
+])("blocks unsupported native revision %s", async (kind) => {
+  const root = await directory();
+  const original = nativeRevisionInput();
+  await appendFinanceIntradayBars(root, original);
+  const next: FinanceIntradayAppendInput = {
+    ...original,
+    observedAt: "2026-10-14T14:43:00.000Z",
+    provenance: { ...original.provenance },
+    bars: [{ ...original.bars[0], close: 219.595, volume: 1162 }],
+  };
+  if (kind === "foreign_feed") {
+    next.provenance.feed = "sip";
+  }
+  if (kind === "foreign_source") {
+    next.provenance.origin = "other";
+  }
+  if (kind === "backdated") {
+    next.observedAt = original.observedAt;
+  }
+  if (kind === "volume_decrease") {
+    next.bars[0].volume = 1000;
+  }
+  if (kind === "price_only") {
+    next.bars[0].volume = 1049;
+  }
+  if (kind === "no_policy") {
+    delete next.revisionPolicy;
+  }
+  if (kind === "shrunk_range") {
+    next.bars[0].low = 219.5;
+  }
+  await expect(appendFinanceIntradayBars(root, next)).rejects.toThrow(/conflicting intraday bar/);
+  expect((await readFinanceIntradayLedger(root)).bars[0]?.close).toBe(219.39);
+});

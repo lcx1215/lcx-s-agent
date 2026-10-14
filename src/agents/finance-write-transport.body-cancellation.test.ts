@@ -94,3 +94,57 @@ it("propagates cancellation cleanup through the original controller account read
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+it("preserves bounded endpoint/cause/phase through resident reconciliation without leaking raw details or retrying", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "reconcile-read-cause-"));
+  try {
+    vi.stubEnv("ALPACA_API_KEY_ID", "PK_SYNTHETIC");
+    vi.stubEnv("ALPACA_API_SECRET_KEY", "SYNTHETIC");
+    http.mockRejectedValue(
+      new Error("headers=SECRET https://secret.invalid/raw", {
+        cause: Object.assign(new Error("private body"), { code: "ECONNRESET" }),
+      }),
+    );
+    const controller = createFinanceAlpacaCycleController({
+      directory: root,
+      instruments: ["SPY"],
+      feed: "iex",
+      maxAgeMs: 60000,
+      policy: {
+        schemaVersion: "lcx_alpaca_cycle_policy_v1",
+        accountId: "paper-account",
+        planId: "fixture",
+        revision: "1",
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        peakEquity: 1000,
+        peakScope: "fixture",
+        unhedged: true,
+        maxPortfolioDrawdownFraction: 0.2,
+        maxGrossExposure: 1000,
+      },
+    });
+    let failure: unknown;
+    try {
+      await controller.inspectReconciliation(AbortSignal.timeout(5000));
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      diagnostic: {
+        stage: "broker_reconciliation",
+        code: "ECONNRESET",
+        request: {
+          endpoint: "account",
+          phase: "request",
+          code: "ECONNRESET",
+          elapsedMs: expect.any(Number),
+        },
+      },
+    });
+    const diagnostic = JSON.stringify((failure as { diagnostic: unknown }).diagnostic);
+    expect(diagnostic).not.toMatch(/SECRET|secret.invalid|private body/);
+    expect(http).toHaveBeenCalledOnce();
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

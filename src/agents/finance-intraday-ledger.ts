@@ -41,6 +41,7 @@ export const FinanceIntradayAppendInput = z
     observedAt: Iso,
     provenance: Provenance,
     bars: z.array(IntradayBarInput).min(1),
+    revisionPolicy: z.literal("alpaca_same_feed_cumulative_v1").optional(),
   })
   .strict();
 export type FinanceIntradayAppendInput = z.infer<typeof FinanceIntradayAppendInput>;
@@ -51,6 +52,10 @@ export const FinanceIntradayBar = IntradayBarInput.extend({
   endAt: Iso,
 }).strict();
 export type FinanceIntradayBar = z.infer<typeof FinanceIntradayBar>;
+
+const Revision = z
+  .object({ startAt: Iso, previousRecordRef: Hash, previousBarHash: Hash })
+  .strict();
 
 const StoredRecord = z
   .object({
@@ -65,6 +70,7 @@ const StoredRecord = z
       observedAt: Iso,
       provenance: Provenance,
       bars: z.array(FinanceIntradayBar).min(1),
+      revisions: z.array(Revision).min(1).optional(),
     }),
   })
   .strict();
@@ -184,6 +190,31 @@ function signature(bar: FinanceIntradayBar): string {
   return caseflowFingerprint(bar);
 }
 
+function isCumulativeNativeRevision(
+  previous: FinanceIntradayBar,
+  next: FinanceIntradayBar,
+  prior: FinanceIntradayRecord,
+  input: Pick<FinanceIntradayAppendInput, "observedAt" | "provenance" | "revisionPolicy">,
+): boolean {
+  return (
+    input.revisionPolicy === "alpaca_same_feed_cumulative_v1" &&
+    input.provenance.origin === "Alpaca Market Data API" &&
+    input.provenance.sourceUrlOrArtifact ===
+      "https://data.alpaca.markets/v2/stocks/{symbol}/bars" &&
+    (input.provenance.feed === "iex" || input.provenance.feed === "sip") &&
+    caseflowFingerprint(input.provenance) === caseflowFingerprint(prior.body.provenance) &&
+    Date.parse(input.observedAt) > Date.parse(prior.body.observedAt) &&
+    previous.instrument === next.instrument &&
+    previous.intervalSeconds === next.intervalSeconds &&
+    previous.startAt === next.startAt &&
+    previous.endAt === next.endAt &&
+    next.open === previous.open &&
+    next.high >= previous.high &&
+    next.low <= previous.low &&
+    next.volume > previous.volume
+  );
+}
+
 function normalize(input: FinanceIntradayAppendInput): FinanceIntradayBar[] {
   const observedMs = Date.parse(input.observedAt);
   if (observedMs > Date.now()) {
@@ -244,21 +275,35 @@ export async function appendFinanceIntradayBars(
     db.exec("BEGIN IMMEDIATE");
     try {
       const { records, recordCount, headRef } = readRecords(db);
-      const byInterval = new Map<string, FinanceIntradayBar>();
+      const byInterval = new Map<
+        string,
+        { bar: FinanceIntradayBar; record: FinanceIntradayRecord }
+      >();
       for (const record of records) {
         for (const bar of record.body.bars) {
-          byInterval.set(`${bar.instrument}|${bar.intervalSeconds}|${bar.startAt}`, bar);
+          byInterval.set(`${bar.instrument}|${bar.intervalSeconds}|${bar.startAt}`, {
+            bar,
+            record,
+          });
         }
       }
       const fresh: FinanceIntradayBar[] = [];
+      const revisions: z.infer<typeof Revision>[] = [];
       let repeatsSkipped = 0;
       for (const bar of bars) {
         const key = `${bar.instrument}|${bar.intervalSeconds}|${bar.startAt}`;
         const existing = byInterval.get(key);
         if (!existing) {
           fresh.push(bar);
-        } else if (signature(existing) === signature(bar)) {
+        } else if (signature(existing.bar) === signature(bar)) {
           repeatsSkipped += 1;
+        } else if (isCumulativeNativeRevision(existing.bar, bar, existing.record, input)) {
+          fresh.push(bar);
+          revisions.push({
+            startAt: bar.startAt,
+            previousRecordRef: existing.record.ref,
+            previousBarHash: signature(existing.bar),
+          });
         } else {
           throw new Error(`conflicting intraday bar for ${key}`);
         }
@@ -278,6 +323,7 @@ export async function appendFinanceIntradayBars(
         observedAt: input.observedAt,
         provenance: input.provenance,
         bars: fresh,
+        ...(revisions.length ? { revisions } : {}),
       };
       const record = StoredRecord.parse({
         schemaVersion: FINANCE_INTRADAY_RECORD_SCHEMA,
@@ -319,8 +365,39 @@ export async function readFinanceIntradayLedger(
   const db = openDatabase(directory);
   try {
     const { records: visible, recordCount, headRef } = readRecords(db, options);
-    const bars = visible
-      .flatMap((record) => record.body.bars)
+    const selected = new Map<string, { bar: FinanceIntradayBar; record: FinanceIntradayRecord }>();
+    for (const record of visible) {
+      for (const bar of record.body.bars) {
+        const key = `${bar.instrument}|${bar.intervalSeconds}|${bar.startAt}`;
+        const previous = selected.get(key);
+        const revision = record.body.revisions?.find((item) => item.startAt === bar.startAt);
+        if (
+          revision &&
+          (!previous ||
+            revision.previousRecordRef !== previous.record.ref ||
+            revision.previousBarHash !== signature(previous.bar) ||
+            !isCumulativeNativeRevision(previous.bar, bar, previous.record, {
+              ...record.body,
+              revisionPolicy: "alpaca_same_feed_cumulative_v1",
+            }))
+        ) {
+          throw new Error("intraday source revision integrity mismatch");
+        }
+        if (previous && signature(previous.bar) !== signature(bar) && !revision) {
+          throw new Error("intraday source revision missing");
+        }
+        selected.set(key, { bar, record });
+      }
+      if (
+        record.body.revisions?.some(
+          (item) => !record.body.bars.some((bar) => bar.startAt === item.startAt),
+        )
+      ) {
+        throw new Error("intraday source revision has no bar");
+      }
+    }
+    const bars = [...selected.values()]
+      .map(({ bar }) => bar)
       .toSorted(
         (left, right) =>
           left.instrument.localeCompare(right.instrument) ||

@@ -169,3 +169,94 @@ describe("Alpaca intraday sync", () => {
     expect((await readFinanceIntradayLedger(directory)).recordCount).toBe(0);
   });
 });
+
+it("consumes cumulative HWM revision through the original native sync and cutoff reader", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "hwm-native-revision-"));
+  try {
+    const old = { t: "2026-10-14T14:35:00Z", o: 219.71, h: 219.71, l: 219.39, c: 219.39, v: 1049 };
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        body: JSON.stringify({ symbol: "HWM", bars: [old], next_page_token: null }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: JSON.stringify({
+          symbol: "HWM",
+          bars: [{ ...old, c: 219.595, v: 1162 }],
+          next_page_token: null,
+        }),
+      });
+    const opts = {
+      directory,
+      instrument: "HWM",
+      start: "2026-10-14T14:35:00Z",
+      end: "2026-10-14T14:40:00Z",
+      intervalSeconds: 300 as const,
+      feed: "iex" as const,
+      read,
+      credentials: { apiKeyId: "synthetic", apiSecretKey: "synthetic" },
+    };
+    await syncAlpacaIntradayBars({ ...opts, now: () => new Date("2026-10-14T14:40:00.640Z") });
+    await syncAlpacaIntradayBars({ ...opts, now: () => new Date("2026-10-14T14:43:00.000Z") });
+    expect(
+      (await readFinanceIntradayLedger(directory, { instrument: "HWM", feed: "iex" })).bars,
+    ).toMatchObject([{ close: 219.595, volume: 1162 }]);
+    expect(
+      (
+        await readFinanceIntradayLedger(directory, {
+          instrument: "HWM",
+          feed: "iex",
+          asOf: "2026-10-14T14:41:00Z",
+        })
+      ).bars,
+    ).toMatchObject([{ close: 219.39, volume: 1049 }]);
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each(["wrong_symbol", "cancelled"])(
+  "does not append a native revision from %s read",
+  async (kind) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "hwm-revision-boundary-"));
+    try {
+      const caller = new AbortController();
+      const read = vi.fn(async () => {
+        if (kind === "cancelled") {
+          caller.abort();
+        }
+        return {
+          status: 200,
+          body: JSON.stringify({
+            symbol: kind === "wrong_symbol" ? "SPY" : "HWM",
+            bars: [
+              { t: "2026-10-14T14:35:00Z", o: 219.71, h: 219.71, l: 219.39, c: 219.595, v: 1162 },
+            ],
+            next_page_token: null,
+          }),
+        };
+      });
+      await expect(
+        syncAlpacaIntradayBars({
+          directory,
+          instrument: "HWM",
+          start: "2026-10-14T14:35:00Z",
+          end: "2026-10-14T14:40:00Z",
+          intervalSeconds: 300,
+          feed: "iex",
+          read,
+          signal: caller.signal,
+          credentials: { apiKeyId: "synthetic", apiSecretKey: "synthetic" },
+          now: () => new Date("2026-10-14T14:43:00Z"),
+        }),
+      ).rejects.toThrow();
+      expect((await readFinanceIntradayLedger(directory)).recordCount).toBe(0);
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);

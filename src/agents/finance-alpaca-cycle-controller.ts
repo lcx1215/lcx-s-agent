@@ -499,8 +499,23 @@ export function createFinanceAlpacaCycleController(options: {
 
   return {
     inspectReconciliation: async (signal) => {
-      const { snapshot, readiness } = await reconcile(signal, { inspectOnly: true });
-      return { readiness, observedAt: snapshot.observedAt, protection: snapshot.protection };
+      let stage: FinanceAccountReadStage = "execution_recovery";
+      let startedAt = performance.now();
+      try {
+        const { snapshot, readiness } = await reconcile(signal, {
+          inspectOnly: true,
+          onStage: (next) => {
+            stage = next;
+            startedAt = performance.now();
+          },
+        });
+        return { readiness, observedAt: snapshot.observedAt, protection: snapshot.protection };
+      } catch (error) {
+        if (error instanceof FinanceExecutionSafetyFactsError) {
+          throw error;
+        }
+        throw new FinanceAccountReadError(stage, performance.now() - startedAt, error);
+      }
     },
     accountId: policy.accountId,
     executionPolicyExpiresAt: policyExpiresAt,

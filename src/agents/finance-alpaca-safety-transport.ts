@@ -34,6 +34,39 @@ export function safeTransportFailureCode(error: unknown): string {
   return [...codes].slice(0, 4).join(",") || "transport_cause_unavailable";
 }
 
+export class FinanceUncachedReadError extends Error {
+  readonly cleanupStatus?: "confirmed" | "unconfirmed";
+  readonly diagnostic: Readonly<{
+    endpoint: string;
+    phase: "request" | "body";
+    code: string;
+    elapsedMs: number;
+    cleanupStatus?: "confirmed" | "unconfirmed";
+  }>;
+  constructor(url: string, phase: "request" | "body", elapsedMs: number, cause: unknown) {
+    super("finance uncached read failed", { cause });
+    this.name = "FinanceUncachedReadError";
+    const path = new URL(url).pathname;
+    const endpoint =
+      path === "/v2/account"
+        ? "account"
+        : path === "/v2/positions"
+          ? "positions"
+          : path.startsWith("/v2/account/activities")
+            ? "activities"
+            : path.startsWith("/v2/orders")
+              ? "orders"
+              : "other";
+    this.diagnostic = {
+      endpoint,
+      phase,
+      elapsedMs: Math.max(0, Math.round(elapsedMs)),
+      ...financeReadFailureDiagnostic(cause),
+    };
+    this.cleanupStatus = this.diagnostic.cleanupStatus;
+  }
+}
+
 /** Dedicated uncached GET: no redirects, credential lookup, ambient proxy discovery, or writes. */
 export function createAlpacaSafetyReadTransport(): FinanceUncachedFetch {
   return async (url, init) => {
@@ -83,14 +116,15 @@ export class FinanceAccountReadError extends Error {
     code: string;
     elapsedMs: number;
     cleanupStatus?: "confirmed" | "unconfirmed";
+    request?: FinanceUncachedReadError["diagnostic"];
   };
   constructor(stage: FinanceAccountReadStage, elapsedMs: number, cause: unknown) {
     super("finance account read failed", { cause });
     this.diagnostic = {
       stage,
-      code: safeTransportFailureCode(cause),
       elapsedMs: Math.max(0, Math.round(elapsedMs)),
-      ...(cause instanceof FinanceHttpBodyAbortError ? { cleanupStatus: cause.cleanupStatus } : {}),
+      ...financeReadFailureDiagnostic(cause),
+      ...(cause instanceof FinanceUncachedReadError ? { request: cause.diagnostic } : {}),
     };
   }
 }
