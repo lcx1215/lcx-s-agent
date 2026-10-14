@@ -34,6 +34,7 @@ import {
   FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS,
   FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS,
   FinanceTradeReviewFailureCodeSchema,
+  FinanceTradeReviewContractStageSchema,
   FinanceTradeReviewModelCallEvidenceSchema,
   FinanceTradeReviewToolEvidenceSchema,
 } from "./finance-trade-review-evidence.js";
@@ -388,9 +389,19 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
       .optional(),
     decision: IntradayReviewDecisionSchema.optional(),
     failureCode: FinanceTradeReviewFailureCodeSchema.optional(),
+    outputContractStage: FinanceTradeReviewContractStageSchema.optional(),
   })
   .strict()
   .superRefine((receipt, context) => {
+    if (
+      receipt.outputContractStage !== undefined &&
+      (receipt.status !== "failed" || receipt.failureCode !== "output_contract")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "contract diagnostic requires output_contract failure",
+      });
+    }
     const candidateId = receipt.request.candidates[0]?.candidateId;
     const decision = receipt.decision;
     const feedback = receipt.request.strategyFeedback;

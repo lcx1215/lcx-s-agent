@@ -27,6 +27,8 @@ import {
   FINANCE_TRADE_REVIEW_MAX_TOOL_REQUESTS,
   FinanceTradeReviewEvidenceRequestSchema,
   FinanceTradeReviewFailureCodeSchema,
+  FinanceTradeReviewContractStageSchema,
+  type FinanceTradeReviewContractStage,
   FinanceTradeReviewModelCallEvidenceSchema,
   type FinanceTradeReviewModelCallEvidence,
   FinanceTradeReviewToolEvidenceSchema,
@@ -193,6 +195,7 @@ export type FinanceTradeDecisionReviewResult = Readonly<{
   decisions?: readonly FinanceTradeDecision[];
   quoteApprovalPolicy?: typeof FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY;
   failureCode?: FinanceTradeDecisionReviewFailureCode;
+  outputContractStage?: FinanceTradeReviewContractStage;
 }>;
 
 export type FinanceTradeDecisionReviewReceipt = Readonly<{
@@ -214,6 +217,7 @@ export type FinanceTradeDecisionReviewReceipt = Readonly<{
   modelCallEvidence?: readonly FinanceTradeReviewModelCallEvidence[];
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
+  outputContractStage?: FinanceTradeReviewContractStage;
 }>;
 
 export type FinanceTradeDecisionReviewHostOptions = Readonly<{
@@ -242,23 +246,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function parseFinanceTradeDecisionReviewOutput(
   output: unknown,
   request: FinanceTradeDecisionReviewRequest,
+  onFailure?: (stage: FinanceTradeReviewContractStage) => void,
 ): readonly FinanceTradeDecision[] | undefined {
-  if (!isRecord(output)) {
+  const reject = (stage: FinanceTradeReviewContractStage) => {
+    onFailure?.(stage);
     return undefined;
+  };
+  if (!isRecord(output)) {
+    return reject("output_object");
   }
   if (
     Object.keys(output).toSorted().join(",") !== "decisions,schemaVersion" ||
     output.schemaVersion !== request.schemaVersion ||
     !Array.isArray(output.decisions)
   ) {
-    return undefined;
+    return reject("output_envelope");
   }
   const expectedIds = new Set(request.candidates.map((candidate) => candidate.candidateId));
   if (
     expectedIds.size !== request.candidates.length ||
     output.decisions.length !== expectedIds.size
   ) {
-    return undefined;
+    return reject("candidate_count");
   }
   const seen = new Set<string>();
   const decisions: FinanceTradeDecision[] = [];
@@ -285,14 +294,14 @@ export function parseFinanceTradeDecisionReviewOutput(
       value.rationale.trim().length === 0 ||
       value.rationale.length > 800
     ) {
-      return undefined;
+      return reject("candidate_fields");
     }
     const expectationGap =
       value.expectationGap === undefined
         ? undefined
         : FinanceExpectationGapSchema.safeParse(value.expectationGap);
     if (expectationGap && !expectationGap.success) {
-      return undefined;
+      return reject("expectation_gap");
     }
     const reassessment = FinanceStrategyReassessmentSchema.optional().safeParse(
       value.strategyReassessment,
@@ -315,7 +324,7 @@ export function parseFinanceTradeDecisionReviewOutput(
         Date.parse(feedback.observedAt) > Date.parse(request.asOf) ||
         Date.parse(feedback.expiresAt) <= Date.parse(request.asOf))
     ) {
-      return undefined;
+      return reject("strategy_feedback_scope");
     }
     if (
       !reassessment.success ||
@@ -324,7 +333,7 @@ export function parseFinanceTradeDecisionReviewOutput(
       (feedback ? response.data?.signalId !== feedback.signalId : response.data !== undefined) ||
       (response.data?.disposition === "still_relevant" && !reassessment.data)
     ) {
-      return undefined;
+      return reject("strategy_feedback_response");
     }
     const exits =
       request.schemaVersion === FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA
@@ -337,11 +346,11 @@ export function parseFinanceTradeDecisionReviewOutput(
       .optional()
       .safeParse(value.brokerExitResponse);
     if (!exitResponse.success) {
-      return undefined;
+      return reject("broker_exit_response_schema");
     }
     if (exits) {
       if (request.schemaVersion !== FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA) {
-        return undefined;
+        return reject("broker_exit_feedback_scope");
       }
       if (
         !FinanceBrokerExitFeedbackSchema.safeParse(exits).success ||
@@ -355,7 +364,7 @@ export function parseFinanceTradeDecisionReviewOutput(
         ) ||
         exitResponse.data?.length !== exits.entries.length
       ) {
-        return undefined;
+        return reject("broker_exit_feedback_scope");
       }
       const replies = exitResponse.data;
       if (
@@ -372,10 +381,10 @@ export function parseFinanceTradeDecisionReviewOutput(
           );
         })
       ) {
-        return undefined;
+        return reject("broker_exit_response_facts");
       }
     } else if (exitResponse.data) {
-      return undefined;
+      return reject("unexpected_broker_exit_response");
     }
     seen.add(value.candidateId);
     decisions.push({
@@ -388,7 +397,7 @@ export function parseFinanceTradeDecisionReviewOutput(
       ...(exitResponse.data ? { brokerExitResponse: exitResponse.data } : {}),
     });
   }
-  return seen.size === expectedIds.size ? Object.freeze(decisions) : undefined;
+  return seen.size === expectedIds.size ? Object.freeze(decisions) : reject("candidate_coverage");
 }
 
 export function isValidFinanceTradeDecisionReviewResult(
@@ -406,6 +415,10 @@ export function isValidFinanceTradeDecisionReviewResult(
     value.latencyMs < 0 ||
     typeof value.providerCallObserved !== "boolean" ||
     typeof value.adapterAttested !== "boolean" ||
+    (value.outputContractStage !== undefined &&
+      (value.status !== "failed" ||
+        value.failureCode !== "output_contract" ||
+        !FinanceTradeReviewContractStageSchema.safeParse(value.outputContractStage).success)) ||
     (value.transport !== undefined &&
       !ConfiguredFinanceCallStateSchema.safeParse(value.transport).success) ||
     (value.quoteApprovalPolicy !== undefined &&
@@ -920,7 +933,10 @@ export function createFinanceTradeDecisionReviewer(
         }
         continue;
       }
-      const decisions = parseFinanceTradeDecisionReviewOutput(output, reviewRequest);
+      let outputContractStage: FinanceTradeReviewContractStage | undefined;
+      const decisions = parseFinanceTradeDecisionReviewOutput(output, reviewRequest, (stage) => {
+        outputContractStage = stage;
+      });
       if (!decisions) {
         return {
           ...objectiveMetadata,
@@ -935,6 +951,7 @@ export function createFinanceTradeDecisionReviewer(
           modelCalls,
           ...(requestIdSha256 ? { requestIdSha256 } : {}),
           failureCode: "output_contract",
+          ...(outputContractStage ? { outputContractStage } : {}),
           ...(modelCallEvidence.length ? { modelCallEvidence } : {}),
         };
       }

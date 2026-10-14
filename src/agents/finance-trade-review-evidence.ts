@@ -42,6 +42,23 @@ export const FinanceTradeReviewFailureCodeSchema = z.enum([
   "call_budget_exhausted",
 ]);
 export type FinanceTradeReviewFailureCode = z.infer<typeof FinanceTradeReviewFailureCodeSchema>;
+// Bounded parser branch only; never stores model text, candidate values or credentials.
+export const FinanceTradeReviewContractStageSchema = z.enum([
+  "output_object",
+  "output_envelope",
+  "candidate_count",
+  "candidate_fields",
+  "expectation_gap",
+  "strategy_feedback_scope",
+  "strategy_feedback_response",
+  "broker_exit_response_schema",
+  "broker_exit_feedback_scope",
+  "broker_exit_response_facts",
+  "unexpected_broker_exit_response",
+  "candidate_coverage",
+]);
+export type FinanceTradeReviewContractStage = z.infer<typeof FinanceTradeReviewContractStageSchema>;
+
 const KNOWLEDGE_FIELDS = [
   "capabilityName",
   "applicationBoundary",

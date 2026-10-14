@@ -2198,3 +2198,66 @@ it.each(["provider_http", "local_cooldown"] as const)(
     expect(model.invoke).toHaveBeenCalledTimes(1);
   },
 );
+
+it.each([
+  { extra: true, stage: "output_envelope" },
+  { extra: false, stage: "candidate_fields" },
+])(
+  "reports bounded original contract stage without adopting rejected model output: $stage",
+  async ({ extra, stage }) => {
+    const output = extra
+      ? {
+          schemaVersion: intradayRequest.schemaVersion,
+          decisions: [],
+          privateText: "not persisted",
+        }
+      : {
+          schemaVersion: intradayRequest.schemaVersion,
+          decisions: [{ candidateId: "foreign", decision: "approve", rationale: "not persisted" }],
+        };
+    const model = adapter(output);
+    const result = await createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model })(
+      intradayRequest,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      failureCode: "output_contract",
+      outputContractStage: stage,
+      modelCalls: 1,
+    });
+    expect(result.decisions).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("not persisted");
+    expect(
+      FinanceIntradayDecisionReviewReceiptSchema.safeParse({ request: intradayRequest, ...result })
+        .success,
+    ).toBe(true);
+    expect(
+      FinanceIntradayDecisionReviewReceiptSchema.safeParse({
+        request: intradayRequest,
+        ...result,
+        outputContractStage: "private text",
+      }).success,
+    ).toBe(false);
+  },
+);
+
+it("reports bounded original contract stage only on failure and preserves accepted decisions", () => {
+  const diagnostic = vi.fn();
+  const result = parseFinanceTradeDecisionReviewOutput(
+    {
+      schemaVersion: request.schemaVersion,
+      decisions: [
+        {
+          candidateId: request.candidates[0].candidateId,
+          decision: "veto",
+          rationale: "Insufficient evidence.",
+        },
+      ],
+    },
+    request,
+    diagnostic,
+  );
+  expect(result?.[0].decision).toBe("veto");
+  expect(diagnostic).not.toHaveBeenCalled();
+});

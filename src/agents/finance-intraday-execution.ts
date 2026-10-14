@@ -1073,6 +1073,9 @@ export async function executeFinanceIntradayDecision(params: {
             ? { requestIdSha256: reviewResult.requestIdSha256 }
             : {}),
           ...(reviewResult.toolEvidence ? { toolEvidence: reviewResult.toolEvidence } : {}),
+          ...(reviewResult.outputContractStage
+            ? { outputContractStage: reviewResult.outputContractStage }
+            : {}),
           ...(reviewResult.modelCallEvidence
             ? { modelCallEvidence: reviewResult.modelCallEvidence }
             : {}),
