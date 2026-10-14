@@ -307,12 +307,7 @@ export function createFinanceAlpacaCycleController(options: {
                   positionQuantity -
                     protectiveOrders.reduce((sum, order) => sum + order.quantity, 0))
             ) {
-              if (
-                !options.protectedReductionRecoveryTransport ||
-                protectiveOrders.length !== 1 ||
-                positionQuantity === undefined ||
-                !instruments.has(intent.instrument)
-              ) {
+              if (protectiveOrders.length !== 1 || positionQuantity === undefined) {
                 return undefined;
               }
               const remainingAuthorityMs = Date.parse(operationExpiresAt()) - Date.now();
@@ -323,6 +318,11 @@ export function createFinanceAlpacaCycleController(options: {
                 recoverySignal,
                 AbortSignal.timeout(Math.min(remainingAuthorityMs, 2_147_483_647)),
               ]);
+              // Entry-universe changes cannot hide a durable old order. Read its terminal
+              // identity and original protection; writes retain the current scoped authority.
+              const allowProtectionRestore =
+                instruments.has(intent.instrument) &&
+                options.protectedReductionRecoveryTransport !== undefined;
               return recoverAlpacaPaperProtectedReduction({
                 accountId: policy.accountId,
                 intent,
@@ -331,8 +331,13 @@ export function createFinanceAlpacaCycleController(options: {
                 credentials,
                 read,
                 signal,
-                postJson: (url, init) =>
-                  options.protectedReductionRecoveryTransport!({ url, ...init }),
+                allowProtectionRestore,
+                postJson: (url, init) => {
+                  if (!allowProtectionRestore || !options.protectedReductionRecoveryTransport) {
+                    throw new Error("protected recovery write authority unavailable");
+                  }
+                  return options.protectedReductionRecoveryTransport({ url, ...init });
+                },
               });
             }
             return readAlpacaPaperTerminalOrder({

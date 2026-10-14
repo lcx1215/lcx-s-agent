@@ -1849,3 +1849,46 @@ it("stops known reconciliation blocking before reading safety facts", async () =
   );
   expect(f.execute).not.toHaveBeenCalled();
 });
+
+it("recovers a verified fully closed protected position outside the new entry universe using reads only", async () => {
+  const f = await protectedTerminalFixture(2);
+  const controller = createFinanceAlpacaCycleController({ ...f.options, instruments: ["QQQ"] });
+  const result = await controller.inspectReconciliation(AbortSignal.timeout(5000));
+  expect(result.readiness.status).toBe("ready");
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims.at(-1)?.status).toBe("confirmed");
+  expect(f.transport).not.toHaveBeenCalled();
+  expect(f.execute).toHaveBeenCalledTimes(1);
+});
+
+it.each(["partial", "missing"])(
+  "reads the original protected order outside the entry universe but retains %s uncertainty without writes",
+  async (mode) => {
+    const f = await protectedTerminalFixture(1);
+    if (mode === "missing") {
+      f.orders.splice(0);
+    }
+    f.read.mockClear();
+    const controller = createFinanceAlpacaCycleController({
+      ...f.options,
+      instruments: ["QQQ"],
+      protectedReductionRecoveryTransport: f.transport,
+    });
+    await expect(controller.inspectReconciliation(AbortSignal.timeout(5000))).rejects.toThrow(
+      "execution_recovery_incomplete",
+    );
+    expect(f.read.mock.calls.some(([url]) => url.includes("orders:by_client_order_id"))).toBe(true);
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: f.directory,
+      accountId: f.accountId,
+      venue: "alpaca:paper",
+    });
+    expect(claims.at(-1)?.status).toBe("unknown");
+  },
+);

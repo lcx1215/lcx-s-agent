@@ -428,6 +428,8 @@ export async function recoverAlpacaPaperProtectedReduction(options: {
   read: FinanceUncachedFetch;
   signal: AbortSignal;
   postJson: NonNullable<AlpacaExecutionAdapterOptions["postJson"]>;
+  /** Read-only recovery may confirm a closed old position, but cannot restore protection. */
+  allowProtectionRestore?: boolean;
 }): Promise<FinanceExecutionFill | undefined> {
   const { intent, protection, positionQuantity, signal, read } = options;
   if (
@@ -514,6 +516,9 @@ export async function recoverAlpacaPaperProtectedReduction(options: {
     throw new Error("protected recovery has competing open orders");
   }
   if (remaining > 0) {
+    if (options.allowProtectionRestore === false) {
+      throw new Error("protected recovery restoration outside current controller authority");
+    }
     await restoreAlpacaPaperProtection({
       intent,
       quantity: remaining,
