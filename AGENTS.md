@@ -1,215 +1,72 @@
 # LCX Agent Repository Contract
 
-This file is the short, stable operating contract for
-`lcx1215/lcx-s-agent`. Keep volatile commands, historical incidents, model
-choices, provider details, and release procedures in the relevant runbook or
-Skill. Do not turn this file into a transcript or a second registry.
+LCX Agent is the standalone product at https://github.com/lcx1215/lcx-s-agent.
+Historical runtime identifiers are compatibility-only; upstream is lineage, not
+another source or release authority. Global collaboration rules apply; this file
+adds project contracts. Keep volatile commands, models and incidents in runbooks.
 
-## Precedence and working method
+## Finance authority and outcomes
 
-- Follow the user's current request, then this contract, then the nearest
-  project runbook, manifest, and tests.
-- Inspect current source, Git state, and runtime evidence before mutating.
-- Use the smallest reversible change that closes a verified failure or adds
-  directly useful behavior.
-- Preserve unrelated changes, processes, credentials, and external state.
-- If target, authority, permission, side effect, or evidence is unclear, stop
-  only that mutation and report the exact gap.
+- `research_only` is the compatibility default; `strategy_candidate` and
+  `conditional_trade_candidate` produce reviewable candidates. `live_execution`
+  requires a declared adapter and authorization for venue, instrument, size and
+  run. Autonomous Paper permits repeated instrument/side/size choices within its
+  authorized venue, never Live fallback or implied credential/wallet access.
+- All orders use the shared gate and existing source, account, venue, funding,
+  quote-freshness, risk, deduplication and reconciliation owners. Provider config,
+  authentication, training and protected memory have separate authority; code/Git
+  work does not authorize changing them.
+- Improve opportunity discovery, method composition and outcome feedback without
+  fixing one strategy or requiring all modules per trade. Evaluate the whole
+  selection process using net outcomes after fees/slippage, drawdown, an investable
+  benchmark and out-of-sample evidence, per
+  `ops/architecture/finance-automatic-lifecycle-owner-map.md`. Method changes preserve
+  execution gates; current gaps are improvement targets, not permanent limits.
 
-## Stable product boundaries
+## Architecture and evolution
 
-- LCX Agent is the standalone product and repository identity. Any historical
-  runtime identifier is compatibility-only and is not a product or repository
-  authority.
-- The repository is https://github.com/lcx1215/lcx-s-agent. Upstream LCX Agent remains the runtime lineage; it is not a second LCX source or release authority.
-- Finance behavior is source-gated and mode-aware: `research_only` remains the
-  compatibility default, while explicit `strategy_candidate` and
-  `conditional_trade_candidate` modes may produce reviewable strategy or
-  conditional buy/sell candidates. An explicit `live_execution` mode may place
-  real-money orders only through a declared execution adapter and within the
-  specific venue, instrument, size, and run the user authorizes. Explicit user
-  authorization for autonomous paper trading permits the controller to choose
-  instruments, sides, sizes, and repeated runs within that paper venue without
-  per-order confirmation. All orders still use the shared execution gate; paper
-  authorization never permits a live account or a fallback to live execution.
-  Evidence, funding, deduplication, and reconciliation checks remain mandatory.
-  Enabling a mode
-  never implies credentials, account funding, or wallet keys; those remain
-  separate authorities and are never read, stored, or moved as a side effect.
-  Current data still needs a source and timestamp, and missing evidence must be
-  stated plainly.
-- A local test, receipt, replay, or stored text does not prove model learning,
-  promotion, external-channel binding, deployment, or user-visible success.
-- Provider configuration, authentication, training, protected memory, and
-  external-channel sending are separate authorities. Do not modify them as a
-  side effect of ordinary code or Git work.
-- Runtime entry surfaces are explicit and equal: `gateway` is the long-lived
-  daemon (WebSocket control plane, channels, canvas host, node pairing), and
-  `serve` is the daemon-free single-process HTTP entry. Neither is the system's
-  brain and neither requires the other. Capability coverage differs by entry, so
-  state which entry an observation came from before generalizing it.
+- Treat architecture as an evolvable baseline. Keep adapters replaceable; compare
+  new model/harness methods on representative tasks, actual outcomes, tool-result
+  adoption, reliability, latency and cost. Allow valid alternative paths; preserve
+  invariants with scoped migration and recovery, without duplicating owners or
+  execution paths. Partial evidence retains provenance/gaps, not private reasoning.
+- Before changing an apparent failure, establish whether it is a defect, intended
+  gate/tradeoff, obsolete design or external condition. Consult owner rationale,
+  tests and focused history when intent is unclear; current requirements prevail.
+- Keep one canonical ontology; relation/state changes require a versioned migration
+  manifest. TypeScript owns routing, orchestration, governance, safety and recovery;
+  Python supplies engines and numerical/model tools, not a second workflow authority.
+- Central Agent Harness (`scripts/operator/lcx-central-agent.ts`,
+  `src/agents/central-harness/`) proposes over governance snapshots; TypeScript gates
+  approve/block. Each cycle appends `lcx-central-agent-log-latest.jsonl` and refreshes
+  `lcx-central-agent-latest.json`. It has no execution authority or permission to
+  touch live state, provider config, protected memory or external channels;
+  an unavailable brain remains unavailable.
+- `gateway` is the resident WebSocket/channel control plane; `serve` is independent
+  daemon-free HTTP. State the observed entry and coverage. Daemon-free capabilities
+  reuse existing handlers through generic process-local provider seams; missing
+  optional capabilities degrade instead of aborting otherwise valid runs.
+- Resident deployment requires detached execution and available supervision;
+  scheduled autonomy also needs self-scheduling. Signalling an existing process
+  does not prove permission to register a supervisor.
+- Authorized workers need scope, result responsibility, timeout/cancellation and
+  durable receipts.
 
-## Finance optimization direction
+## Project conventions
 
-- Develop finance as an adaptive, evidence-driven decision loop: observe market
-  conditions, select and combine suitable mathematical, statistical and research
-  methods, obtain evidence for specific uncertainties, then act within authorized
-  gates and use outcomes to reassess. Do not make one fixed strategy or mandatory
-  full-module workflow the permanent approach. Historical data and backtests
-  support hypotheses and boundary checks; they do not establish future returns.
-- The current implementation is the starting baseline for the next optimization
-  work. Continue improving opportunity discovery, method selection and composition,
-  actual use of tool results, and outcome feedback. Existing gaps are work to
-  resolve, not permanent capability limits; record planned improvements separately
-  from capabilities that have been verified.
-- Judge progress by useful decisions and repeatable economic results after fees
-  and slippage, alongside drawdown, an investable benchmark and out-of-sample
-  evidence for the whole selection process. Architecture, tool counts and passing
-  tests alone do not prove trading improvement. Follow the economic evidence
-  contract in `ops/architecture/finance-automatic-lifecycle-owner-map.md`.
-  Optimization preserves existing source, account, venue, funding, risk and
-  execution-authority gates; it does not promise a return or expand permission.
-
-## Architecture boundaries
-
-- Keep model decisions continuous in the existing tool loop. Use sufficient
-  supplied evidence first; select additional registered tools or Skills for a
-  concrete uncertainty, consume their results, then decide or stop. Full research
-  and specialist workflows are available capabilities, not mandatory steps for
-  every trade. Preserve each owner's required checks and execution gates.
-- Persist a concise reason, evidence references, actual outcome and unresolved
-  gaps for each meaningful decision. Retrieve precise supporting fields on demand;
-  do not duplicate whole research packets or store private model reasoning.
-- Keep one canonical ontology registry and its existing relation/state
-  contracts. Additive vocabulary is safe; relation/state changes require a
-  versioned migration manifest and focused verification.
-- TypeScript owns routing, orchestration, safety gates, governance, recovery,
-  and visible-flow control. Python is an engine for training, MLX/model
-  execution, numerical work, or isolated tools; it is not a new workflow
-  authority.
-- The Central Agent Harness (`scripts/operator/lcx-central-agent.ts` plus
-  `src/agents/central-harness/`) is the decision layer over the governance
-  owners. It perceives the governance and control-room snapshots, the model
-  brain proposes an action, the TypeScript gate approves or blocks it, and
-  every cycle appends one receipt to `lcx-central-agent-log-latest.jsonl` and
-  refreshes `lcx-central-agent-latest.json`. It holds no execution authority:
-  a cycle may not touch live state, provider configuration, protected memory,
-  or an external channel, and an unavailable brain is reported as an
-  unavailable brain rather than as an inferred success.
-- Optional implementations, providers, models, tools, plugins, and channels
-  are replaceable adapters. Do not hardcode one as the system's permanent
-  brain or authority.
-- Multi-Agent workers must have a declared role, scope, result responsibility,
-  timeout/cancellation behavior, and a durable receipt. A worktree is
-  isolation, not a second repository or truth owner.
-- Making a Gateway-bound capability work without a daemon means installing a
-  process-local provider at the existing call seam and reusing the Gateway's own
-  handlers and semantics. Do not fork behavior, and do not build a parallel
-  implementation that can drift. Keep the seam free of knowledge about specific
-  method families.
-- A daemon-free capability that cannot be assembled must degrade, not abort: a
-  missing optional capability is a stated limitation, never a reason to fail
-  startup or an otherwise valid run.
-- A resident entry point must be able to start and keep itself alive. A service
-  that only runs while a human holds a terminal open is not a deployment: pair
-  it with a detached-process mode and, where the platform allows it, a
-  login-scoped supervisor. Self-scheduling (cron) is a separate concern from
-  self-start, and both are needed before claiming the agent runs itself.
-- Process supervision and privilege are not the same capability. A tool session
-  that can signal an existing service may still be unable to register a new one;
-  report the exact failing operation and its platform error instead of
-  generalising "cannot install a service".
-
-## Multi-window Git delivery
-
-The repository-specific procedure is
-`ops/engineering/LCX-GIT-DELIVERY-STANDARD.md`; use it for worktrees, task
-forks, branches, commits, pull requests, review, CI, and cleanup.
-
-- `main`, or the resolved default branch, stays read-only while parallel work
-  is active. Each writable task uses its own worktree/branch; read-only tasks
-  do not need one.
-- One integration surface combines selected work. Classify candidates as
-  `merge`, `preserve`, `superseded`, or `unknown` before changing refs.
-- A Codex window/task, task fork, Git worktree, Git branch, GitHub fork, commit,
-  PR, CI result, review, and merge are different objects. UI colors are not
-  Git evidence.
-- An active writer blocks only an overlapping path, worktree, ref, or side
-  effect. Send one pause request and recheck once; do not wait indefinitely for
-  an invented owner. Unrelated work is preserved and does not block progress.
-- Stage only proven paths. Never use blanket staging, broad cleanup, reset,
-  force-push, or silent branch switching. Delete only an exact, preserved,
-  unused target with authorization.
-- Converge locally before pushing. Prefer one PR per coherent outcome and one
-  review per commit SHA. Re-review only after a new SHA or material risk
-  change.
-- Report local change, commit, push, PR, CI, review, merge, cleanup, and
-  external delivery as separate states.
-
-## Verification and speed
-
-Use the lowest sufficient gate; do not escalate by habit:
-
-- G0: read-only/docs/ref bookkeeping — status, path review, and diff check.
-- G1: localized code/test — G0 plus the touched test or package check.
-- G2: shared contract/runtime/workflow/security — G1 plus targeted regression,
-  type, or lint checks.
-- G3: merge conflict, release, destructive cleanup, or external effect — fresh
-  required CI/review and explicit authorization for the effect.
-
-Reuse fresh evidence for the same commit SHA. Do not run the full repository
-suite, live probes, or repeated full logs when the changed surface does not
-require them. Parallelize independent read-only checks; serialize mutations.
-Stop after the requested end-state predicates are proven.
-
-Two evidence traps worth naming:
-
-- CLI `--help` output is not proof that a subcommand is wired. Subcommands
-  register lazily behind placeholder commands, so `<subcli> --help` stays
-  minimal for every subcommand. Verify by executing the subcommand and observing
-  its runtime effect.
-- A file's path, `package.json` `main`/`bin`, or an entry filename does not
-  establish what an entry point is. Confirm from source (program construction
-  plus argument parsing) and then from execution.
-
-## Implementation and repository basics
-
-- Source is mainly TypeScript/ESM under `src/`; tests are colocated; extensions
-  live under `extensions/`; docs live under `docs/`.
-- Use the package manager and scripts declared by the current lockfile and
-  manifest. Typical checks are `pnpm tsgo`, focused Vitest tests, and
-  `pnpm check`; choose only what the risk tier needs.
-- Keep strict types, avoid `any` and `@ts-nocheck`, use existing formatting and
-  lint rules, and add concise comments only for non-obvious logic.
-- Do not edit `node_modules` or generated output by hand. Keep dependencies,
-  patches, version changes, and public API changes scoped and reviewable.
-- Documentation should be generic and free of personal paths, hostnames,
-  secrets, tokens, real phone numbers, or live configuration.
-
-## GitHub, security, and release
-
-- Resolve the current `origin` repository before any GitHub operation; qualify
-  `gh` commands with `--repo OWNER/REPO`.
-- Use the repository's commit helper when available and verify author/committer
-  identity. Do not publish a Codex identity or invented email.
-- Never commit credentials, tokens, private keys, live provider configuration,
-  or personal data. Read `SECURITY.md` before advisory work.
-- Read the current release documentation before tagging, packaging, publishing,
-  or changing versions. Publishing, deployment, service restarts, external
-  sends, and destructive cleanup require explicit scope and authorization.
-
-## Skills, agents, and continuity
-
-- Skills are instruction packages; Agents are role definitions; Plugins bundle
-  capabilities; Prompts are templates. Do not treat one as another or copy
-  stale provider/runtime instructions from a cache.
-- In Codex Desktop chat, repo file references use absolute local file links;
-  higher-priority app instructions require absolute local file links.
-- Delegation is allowed only when the active Codex/platform rules and the user have allowed delegation; explicit user authorization is required for consequential delegation.
-- Use the current context-recovery route for long tasks. Keep a short state
-  card with objective, scope, decisions, evidence, blockers, and one next
-  action; never store secrets or full transcripts.
-- Use `lcx-context-recovery-exam` to verify that a new window can recover
-  durable system state before making non-trivial changes.
-- Finish with a concise evidence-backed report: what changed, what was checked,
-  what remains unknown, and the next safe action.
+- Follow `ops/engineering/LCX-GIT-DELIVERY-STANDARD.md`: parallel writers use isolated
+  branches/worktrees; `main`/resolved default remains read-only. One integration
+  surface classifies candidates as `merge`, `preserve`, `superseded` or `unknown`.
+  No blanket staging, broad cleanup/reset, force-push or silent switching.
+- Use the commit helper when available and real author identity. Resolve current
+  `origin` and qualify `gh --repo OWNER/REPO`; read `SECURITY.md` for security work
+  and current release docs for release work. Project docs exclude live config,
+  personal identifiers and host paths.
+- Use manifest/lockfile commands and the delivery standard's G0–G3 tiers. Keep
+  strict types, avoid `any`/`@ts-nocheck`, follow formatting and do not hand-edit
+  generated output/node_modules. Source/tests: `src/`; extensions: `extensions/`;
+  docs: `docs/`.
+- Lazy CLI help and package entry names do not establish runtime wiring; inspect
+  registration/argument parsing and scoped execution when that behavior is at issue.
+- For a new window continuing complex LCX work, use `lcx-context-recovery-exam`
+  when durable-state recovery needs verification, not for every simple task.
