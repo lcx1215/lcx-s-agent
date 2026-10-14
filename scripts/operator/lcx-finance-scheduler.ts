@@ -41,6 +41,7 @@ import {
   FINANCE_TRADING_WEEKDAYS,
   financeEtClock,
   isFinanceCycleSlotDue,
+  latestCompletedWeekdaySessionDate,
 } from "../../src/agents/finance-cycle-schedule.js";
 import { FINANCE_RISK_BUDGET_ANY_INSTRUMENT } from "../../src/agents/finance-execution-adapter.js";
 import { FinanceExecutionSafetyFactsError } from "../../src/agents/finance-execution-safety.js";
@@ -1520,6 +1521,9 @@ async function refreshFinanceUniverseSelection(params: {
       signal: params.context.signal,
     });
     completedAt = new Date().toISOString();
+    if (params.context.signal.aborted) {
+      throw new Error("selector cancelled before snapshot acceptance");
+    }
     const payload = JSON.parse(processResult.stdout) as Record<string, unknown>;
     if (!processResult.ok || payload.snapshotPersisted !== true) {
       throw new Error("selector did not confirm atomic snapshot persistence");
@@ -1619,6 +1623,70 @@ async function refreshFinanceUniverseSelection(params: {
     );
   }
   return receipt;
+}
+
+/** Recover free source data independently of account settlement; never replay execution. */
+export async function recoverFinanceUniverseIfNeeded(
+  context: CycleContext,
+): Promise<UniverseSelectionReceipt | undefined> {
+  if (context.signal.aborted || context.options.intraday?.instrumentSource !== "system_universe") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  try {
+    const snapshot = readFinanceResearchEquityUniverseSnapshot(context.root.directory, now);
+    assertUniverseSnapshotNotSupersededByFailure(context.root.directory, snapshot);
+    return undefined;
+  } catch {
+    // Freshness/source validation remains authoritative. Selection supplies new facts,
+    // not permission to reuse stale facts or approve a trade.
+  }
+  try {
+    const lastLine = fs
+      .readFileSync(path.join(context.root.directory, UNIVERSE_SELECTION_RUNS_LOG), "utf8")
+      .trim()
+      .split("\n")
+      .at(-1);
+    if (lastLine) {
+      const last: unknown = JSON.parse(lastLine);
+      if (
+        !isObjectRecord(last) ||
+        last.schemaVersion !== "lcx_finance_universe_selection_attempt_v1" ||
+        typeof last.attemptedAt !== "string" ||
+        !Number.isFinite(Date.parse(last.attemptedAt)) ||
+        !["started", "selected", "failed"].includes(String(last.status))
+      ) {
+        throw new Error("latest universe recovery attempt receipt is invalid");
+      }
+      // An interrupted child requires reconciliation; a failed selection is not a
+      // license for a per-minute retry storm. Reuse the existing durable attempt log.
+      if (
+        last.status === "started" ||
+        Date.parse(last.attemptedAt) > Date.parse(now) ||
+        latestCompletedWeekdaySessionDate(last.attemptedAt) ===
+          latestCompletedWeekdaySessionDate(now)
+      ) {
+        return undefined;
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        "universe recovery blocked: latest selection attempt cannot be verified\n",
+      );
+      return undefined;
+    }
+  }
+  try {
+    return await refreshFinanceUniverseSelection({
+      context,
+      attempt: { runId: randomUUID(), firedAt: now },
+    });
+  } finally {
+    if (!context.signal.aborted) {
+      writeSchedulerProgress(context, "idle");
+    }
+  }
 }
 
 /**
@@ -2228,9 +2296,10 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
         signal: context.signal,
       })
     : undefined;
-  const universeSelection = settlement
-    ? await refreshFinanceUniverseSelection({ context, attempt })
-    : undefined;
+  const universeSelection =
+    mode === "night" && !context.signal.aborted
+      ? await refreshFinanceUniverseSelection({ context, attempt })
+      : undefined;
   const tuningLifecycle = settlement
     ? runNightTuning({ directory, firedAt: attempt.firedAt, settlement })
     : undefined;
@@ -2972,6 +3041,7 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
 
 async function tick(context: CycleContext): Promise<void> {
   await runTradingTick(context);
+  await recoverFinanceUniverseIfNeeded(context);
   for (const slot of DEFAULT_FINANCE_CYCLE_SLOTS) {
     if (context.signal.aborted) {
       break;

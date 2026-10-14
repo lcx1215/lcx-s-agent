@@ -22,6 +22,7 @@ import {
   resolveActiveIntradayRule,
   runFinanceRetiredIntradayExitTick,
   runFinanceScheduler,
+  recoverFinanceUniverseIfNeeded,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
 import * as configuredAdapter from "../../src/agents/configured-finance-model-adapter.js";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
@@ -5553,3 +5554,160 @@ it.each([false, true])(
     expect(mocks.historicalMaintenance).not.toHaveBeenCalled();
   },
 );
+
+it("recovers a stale universe through the original free selector after failed night settlement", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T14:30:00.000Z"));
+  const old = { generatedAt: "2026-09-21T14:00:00.000Z", selected: ["OLD"] };
+  seedSelectedUniverse(old);
+  const fresh = { generatedAt: new Date().toISOString(), selected: ["NEW"] };
+  mocks.readUniverse.mockImplementation(() => {
+    throw new Error("stale session");
+  });
+  mocks.runCycle.mockImplementationOnce(async ({ argv }) => {
+    expect(argv.join(" ")).toContain("lcx-finance-universe-select.ts");
+    expect(argv).not.toContain("--place");
+    writeUniverseSnapshot(fresh);
+    mocks.readUniverse.mockReturnValue(fresh);
+    return { ...success, stdout: JSON.stringify({ snapshotPersisted: true, ...fresh }) };
+  });
+  const context = {
+    root: { directory, source: "explicit" as const },
+    options: parseFinanceSchedulerArgs(["--loop", "--intraday-monitor", "--dir", directory]),
+    signal: new AbortController().signal,
+  };
+  fs.mkdirSync(path.join(directory, FINANCE_SCHEDULER_LOCK));
+  const receipt = await recoverFinanceUniverseIfNeeded(context);
+  expect(receipt).toMatchObject({ status: "selected", selectedCount: 1 });
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  await recoverFinanceUniverseIfNeeded(context);
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+});
+
+it.each(["failed", "started"])(
+  "does not repeat universe recovery for a %s attempt in this session",
+  async (status) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T14:30:00.000Z"));
+    mocks.readUniverse.mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+    appendStartedUniverseReceipt("blocked-selection", "2026-09-22T14:00:00.000Z");
+    const filename = path.join(directory, "finance-universe-selection-runs.jsonl");
+    fs.writeFileSync(
+      filename,
+      fs.readFileSync(filename, "utf8").replace('"status":"started"', `"status":"${status}"`),
+    );
+    await recoverFinanceUniverseIfNeeded({
+      root: { directory, source: "explicit" },
+      options: parseFinanceSchedulerArgs(["--loop", "--intraday-monitor", "--dir", directory]),
+      signal: new AbortController().signal,
+    });
+    expect(mocks.runCycle).not.toHaveBeenCalled();
+  },
+);
+
+it("refreshes the free universe after night history failure without declaring settlement success", async () => {
+  mocks.runCycle.mockResolvedValueOnce({
+    ...success,
+    ok: false,
+    status: "failed",
+    exitCode: 1,
+    stdout: JSON.stringify({ ok: false, error: "Alpaca history sync failed; cycle not started" }),
+  });
+  await expect(runFinanceScheduler(["--once", "night", "--dir", directory])).resolves.toBe(1);
+  const calls = mocks.runCycle.mock.calls.map(([call]) => call.argv.join(" "));
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toContain("lcx-finance-universe-select.ts");
+  const run = JSON.parse(
+    fs.readFileSync(path.join(directory, "daily-cycle-runs.jsonl"), "utf8").trim(),
+  );
+  expect(run).toMatchObject({
+    ok: false,
+    status: "failed",
+    universeSelection: { status: "failed" },
+  });
+  expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBeUndefined();
+});
+
+it("loads the recovered universe on the next original resident tick without replaying a failed cycle", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T14:30:00.000Z"));
+  await activateIntradayRule();
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22", night: "2026-09-21" },
+    lastSucceeded: {},
+    lastStatus: { day: "failed", night: "failed" },
+  });
+  const fresh = { generatedAt: new Date().toISOString(), selected: ["AAA", "BBB"] };
+  mocks.readUniverse.mockImplementation(() => {
+    throw new Error("stale session");
+  });
+  mocks.runCycle.mockImplementationOnce(async () => {
+    writeUniverseSnapshot(fresh);
+    mocks.readUniverse.mockReturnValue(fresh);
+    return { ...success, stdout: JSON.stringify({ snapshotPersisted: true, ...fresh }) };
+  });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => emitSchedulerSignal("SIGTERM"));
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "AAA",
+    "BBB",
+  ]);
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBeUndefined();
+});
+
+it("does not start universe recovery after cancellation", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await recoverFinanceUniverseIfNeeded({
+    root: { directory, source: "explicit" },
+    options: parseFinanceSchedulerArgs(["--loop", "--intraday-monitor", "--dir", directory]),
+    signal: controller.signal,
+  });
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+});
+
+it("rejects a late selector result after cancellation and does not bind its snapshot", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T14:30:00.000Z"));
+  fs.mkdirSync(path.join(directory, FINANCE_SCHEDULER_LOCK));
+  const controller = new AbortController();
+  const fresh = { generatedAt: new Date().toISOString(), selected: ["LATE"] };
+  mocks.readUniverse.mockImplementation(() => {
+    throw new Error("missing source");
+  });
+  mocks.runCycle.mockImplementationOnce(async () => {
+    writeUniverseSnapshot(fresh);
+    mocks.readUniverse.mockReturnValue(fresh);
+    controller.abort();
+    return { ...success, stdout: JSON.stringify({ snapshotPersisted: true, ...fresh }) };
+  });
+  const receipt = await recoverFinanceUniverseIfNeeded({
+    root: { directory, source: "explicit" },
+    options: parseFinanceSchedulerArgs(["--loop", "--intraday-monitor", "--dir", directory]),
+    signal: controller.signal,
+  });
+  expect(receipt).toMatchObject({
+    status: "failed",
+    error: "selector cancelled before snapshot acceptance",
+  });
+  expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
+    false,
+  );
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});
