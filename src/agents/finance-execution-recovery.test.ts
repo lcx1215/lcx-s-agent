@@ -18,6 +18,7 @@ import {
 } from "./finance-execution-safety.js";
 import {
   appendFinanceExecutionReceipt,
+  appendFinancePositionMark,
   readFinanceAccountPositionLedger,
   readFinancePositionRecords,
 } from "./finance-position-ledger.js";
@@ -499,4 +500,36 @@ it("cancellation preserves an unknown claim even if its resolver ignores the sig
   });
   expect(result.failures).toEqual([{ claimId: "pending", reason: "recovery_cancelled" }]);
   expect(await fs.readFile(f.journal, "utf8")).toBe(before);
+});
+
+it("recovers the original post-fill mark when the receipt was already delivered without replaying a trade", async () => {
+  const f = await runConfirmed();
+  await appendFinanceExecutionReceipt(f.params.ledgerDir, f.receipt);
+  const before = await readFinancePositionRecords(f.params.ledgerDir);
+  expect(before.receipts).toEqual([f.receipt]);
+  expect(before.marks).toEqual([]);
+  const first = await recoverConfirmedFinanceExecutions(f.params);
+  const second = await recoverConfirmedFinanceExecutions(f.params);
+  expect(first.failures).toEqual([]);
+  expect(second.failures).toEqual([]);
+  const after = await readFinancePositionRecords(f.params.ledgerDir);
+  expect(after.receipts).toEqual([f.receipt]);
+  expect(after.marks).toEqual([
+    {
+      instrument: f.receipt.instrument,
+      price: f.receipt.fill.fillPrice,
+      at: f.receipt.fill.filledAt,
+    },
+  ]);
+});
+
+it("keeps a newer original mark when restoring an older confirmed receipt", async () => {
+  const f = await runConfirmed();
+  const mark = { instrument: f.receipt.instrument, price: 123, at: new Date().toISOString() };
+  await appendFinancePositionMark(f.params.ledgerDir, mark);
+  const result = await recoverConfirmedFinanceExecutions(f.params);
+  expect(result.failures).toEqual([]);
+  const after = await readFinancePositionRecords(f.params.ledgerDir);
+  expect(after.receipts).toEqual([f.receipt]);
+  expect(after.marks).toEqual([mark]);
 });

@@ -3,7 +3,12 @@ import {
   readFinanceExecutionSafetyClaims,
   reconcileFinanceExecutionClaims,
 } from "./finance-execution-safety.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceExecutionReceipt,
+  appendFinancePositionMark,
+  readFinancePositionRecords,
+  type FinancePositionMark,
+} from "./finance-position-ledger.js";
 import { stableStringify } from "./stable-stringify.js";
 
 /** Replay durable terminal receipts into the existing SQLite ledger, never replay an order.
@@ -61,6 +66,7 @@ export async function recoverConfirmedFinanceExecutions(params: {
     result.failures.push({ claimId: "snapshot", reason: "journal_snapshot_unavailable" });
     return result;
   }
+  let marks: FinancePositionMark[] | undefined;
   for (const claim of claims) {
     if (params.signal?.aborted) {
       result.failures.push({ claimId: claim.id, reason: "recovery_cancelled" });
@@ -115,6 +121,27 @@ export async function recoverConfirmedFinanceExecutions(params: {
       }
       const appended = await appendFinanceExecutionReceipt(params.ledgerDir, expected);
       (appended.appended ? result.replayed : result.alreadyRecorded).push(claim.id);
+      if (fill.filledQuantity > 0) {
+        // Receipt delivery is incomplete without the original fill-price projection.
+        // A delayed old fill must never supersede an already newer market/fill mark.
+        marks ??= [...(await readFinancePositionRecords(params.ledgerDir)).marks];
+        const covered = marks.some(
+          (mark) =>
+            mark.instrument === expected.instrument &&
+            Date.parse(mark.at) >= Date.parse(fill.filledAt) &&
+            Date.parse(mark.at) <= Date.now(),
+        );
+        if (!covered) {
+          params.signal?.throwIfAborted();
+          const mark = {
+            instrument: expected.instrument,
+            price: fill.fillPrice,
+            at: fill.filledAt,
+          };
+          await appendFinancePositionMark(params.ledgerDir, mark);
+          marks.push(mark);
+        }
+      }
     } catch {
       result.failures.push({ claimId: claim.id, reason: "confirmed_receipt_delivery_pending" });
     }
