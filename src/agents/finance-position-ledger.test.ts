@@ -1079,7 +1079,7 @@ it("preserves bounded prefix proofs when an append-only chain outgrows the cache
     const insert = db.prepare(
       "INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)",
     );
-    for (let sequence = 2; sequence <= 50_001; sequence += 1) {
+    for (let sequence = 2; sequence <= 100_001; sequence += 1) {
       const row = { sequence, previousRef, body };
       previousRef = freshCaseflow.caseflowFingerprint(row);
       insert.run(sequence, previousRef, JSON.stringify(row));
@@ -1097,7 +1097,7 @@ it("preserves bounded prefix proofs when an append-only chain outgrows the cache
       (sum, record) => sum + record.sequence,
     );
   const cold = await read();
-  expect(cold).toEqual({ value: 1_250_075_001, recordCount: 50_001, headRef: previousRef });
+  expect(cold).toEqual({ value: 5_000_150_001, recordCount: 100_001, headRef: previousRef });
   const fingerprint = vi.spyOn(freshCaseflow, "caseflowFingerprint");
   try {
     expect(await read()).toEqual(cold);

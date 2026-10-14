@@ -902,9 +902,10 @@ export type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { 
 const BrokerHistoryHeaderSchema = BrokerHistoryRecordSchema.extend({
   body: BrokerHistoryBodySchema.extend({ payload: z.unknown() }),
 });
-const BROKER_HISTORY_HASH_PROOF_LIMIT = 50_000;
-// The current 50k-row proof bound needs about 14 MiB of normalized headers.
-// Keep a finite 16 MiB envelope; payloads remain uncached and every byte rehashed.
+const BROKER_HISTORY_HASH_PROOF_LIMIT = 100_000;
+// The resident history exceeded the old 50k proof cap and repeatedly decoded its tail.
+// Keep 100k finite hash proofs and the same 16 MiB header envelope; payloads remain
+// uncached and every current byte and full chain are still checked on every read.
 const BROKER_HISTORY_HEADER_PROOF_BYTES = 16 * 1024 * 1024;
 const BROKER_HISTORY_HEADER_PROOF_MAX_BYTES = 2048;
 type BrokerHistoryProofHeader = Readonly<{

@@ -2287,3 +2287,28 @@ it("clarifies the original exact final envelope in the host prompt without relax
   expect(prompt).toContain(`Copy schemaVersion exactly as "${intradayRequest.schemaVersion}"`);
   expect(prompt).toContain("required brokerExitResponse when supplied");
 });
+
+it("spells out exact broker response fields from the original facts without inventing an outcome", () => {
+  let buildPrompt: ((payload: unknown) => string) | undefined;
+  createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: (_cfg, options) => {
+        buildPrompt = options?.buildPrompt;
+        return adapter(null);
+      },
+    },
+  );
+  const facts = { feedbackId: "a".repeat(64), exitQuantity: 2, grossPnl: -1.57 };
+  const prompt = buildPrompt!({ ...intradayRequest, brokerExitFeedback: { entries: [facts] } });
+  expect(prompt).toContain("exactly feedbackId (64-character lowercase hex string)");
+  expect(prompt).toContain(
+    JSON.stringify([
+      { feedbackId: facts.feedbackId, observedExitQuantity: 2, observedGrossPnl: -1.57 },
+    ]),
+  );
+  expect(prompt).toContain("Do not add netPnl, fees");
+  expect(buildPrompt!(intradayRequest)).not.toContain(
+    "Broker exit response identity and numeric fields:",
+  );
+});
