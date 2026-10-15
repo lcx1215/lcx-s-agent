@@ -17,7 +17,7 @@ existing chat channel.
 ## Beginner quick path (VPS)
 
 1. Install Node 22+
-2. `npm i -g openclaw@latest`
+2. `npm i -g lcx-agent@latest`
 3. `lcx onboard --install-daemon`
 4. From your laptop: `ssh -N -L 18789:127.0.0.1:18789 <user>@<host>`
 5. Open `http://127.0.0.1:18789/` and paste your token

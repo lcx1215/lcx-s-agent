@@ -911,7 +911,7 @@ lcx gateway restart
 From git → npm:
 
 ```bash
-npm install -g openclaw@latest
+npm install -g lcx-agent@latest
 lcx doctor
 lcx gateway restart
 ```

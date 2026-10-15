@@ -96,7 +96,7 @@ The Gateway is the single source of truth for sessions, routing, and channel con
 <Steps>
   <Step title="Install LCX Agent">
     ```bash
-    npm install -g openclaw@latest
+    npm install -g lcx-agent@latest
     ```
   </Step>
   <Step title="Onboard and install the service">
