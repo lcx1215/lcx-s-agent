@@ -59,6 +59,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           if [[ -n "$BASE_SHA" ]]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
             git diff --name-only "$BASE_SHA" HEAD -- Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
           else
             printf '%s\n' Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
