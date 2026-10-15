@@ -1,3 +1,4 @@
+import { readFinanceAccountEconomicFeedback } from "./finance-account-economic-feedback.js";
 import { financeAlpacaMarketSessionIssue } from "./finance-alpaca-market-calendar.js";
 import {
   compileFinanceAlpacaOrderIntent,
@@ -796,6 +797,16 @@ export async function executeFinanceIntradayDecision(params: {
             }),
           )
         : undefined;
+    // Economic history is read before obtaining the live quote, preserving its original lease.
+    const accountEconomics = !protectiveExit
+      ? await waitForPreparation(signal, () =>
+          readFinanceAccountEconomicFeedback(
+            params.directory,
+            params.controller.accountId,
+            new Date(now()).toISOString(),
+          ),
+        )
+      : undefined;
     setStage("initial_quote");
     let quote = {
       ...(await waitForPreparation(signal, (signal) =>
@@ -1013,6 +1024,7 @@ export async function executeFinanceIntradayDecision(params: {
         accountId: params.controller.accountId,
         ...(strategyFeedback ? { strategyFeedback } : {}),
         ...(brokerExitFeedback ? { brokerExitFeedback } : {}),
+        ...(accountEconomics ? { accountEconomics } : {}),
         asOf: new Date(reviewAtMs).toISOString(),
         signalAnchor: input.signalId,
         ruleIds: [input.strategyRule],

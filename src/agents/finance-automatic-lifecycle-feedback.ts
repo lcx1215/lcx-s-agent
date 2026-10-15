@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { readFinanceAccountEconomicFeedback } from "./finance-account-economic-feedback.js";
 import { isSafeFinanceReadFailure } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
 import { FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES } from "./finance-execution-safety.js";
@@ -612,6 +613,24 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       positionObservation,
       reconciliationObservation,
     });
+    const accountEconomics = new Map(
+      await Promise.all(
+        (profitFeedback.accounts ?? [])
+          .filter((a) => a.venue === "alpaca:paper")
+          .slice(0, 2)
+          .map(
+            async (account) =>
+              [
+                account.accountId,
+                await readFinanceAccountEconomicFeedback(
+                  state.directory,
+                  account.accountId,
+                  observedAt,
+                ),
+              ] as const,
+          ),
+      ),
+    );
     const economicFeedback =
       profitFeedback.accounts !== undefined
         ? {
@@ -619,13 +638,13 @@ export async function buildFinanceAutomaticLifecycleFeedback(
             asOf: observedAt,
             executionAuthority: "none",
             boundary:
-              "FIFO closed-lot diagnostic; methodPerformance is exact entry-rule cohort attribution, not account return or alpha; accounts are never aggregated",
+              "accountEconomics: marked account attribution; methodPerformance: exact entry-rule FIFO cohort, not alpha; accounts never aggregated",
             accounts: profitFeedback.accounts.slice(0, 2).map((account) => {
               if (!("basis" in account)) {
-                return account;
+                return { ...account, accountEconomics: accountEconomics.get(account.accountId) };
               }
               const { instruments, strategyAttribution, issues } = account;
-              return {
+              const summary = {
                 accountId: account.accountId,
                 venue: account.venue,
                 snapshotRef: account.snapshotRef,
@@ -633,6 +652,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                 freshness: account.freshness,
                 status: account.status,
                 basis: account.basis,
+                accountEconomics: accountEconomics.get(account.accountId),
                 grossMatchedPnl: account.grossMatchedPnl,
                 netMatchedPnl: account.netMatchedPnl,
                 matchedLotCount: account.matchedLotCount,
@@ -673,6 +693,22 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                   omittedStrategies: Math.max(0, strategyAttribution.strategies.length - 3),
                 },
               };
+              if (summary.accountEconomics && summary.accountEconomics.status !== "unavailable") {
+                // Keep current account consequences and one exact method cohort in the same 2KB budget.
+                return {
+                  accountId: summary.accountId,
+                  venue: summary.venue,
+                  status: summary.status,
+                  accountEconomics: summary.accountEconomics,
+                  netMatchedPnl: summary.netMatchedPnl,
+                  methodPerformance: {
+                    methods: summary.methodPerformance.methods,
+                    omittedMethods: summary.methodPerformance.omittedMethods,
+                  },
+                  omittedAccountDetails: true,
+                };
+              }
+              return summary;
             }),
             omittedAccounts:
               (profitFeedback.omittedAccounts ?? 0) +

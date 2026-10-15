@@ -4,6 +4,7 @@ import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { ConfiguredFinanceCallStateSchema } from "./configured-finance-model-adapter.js";
+import { FinanceAccountEconomicFeedbackSchema } from "./finance-account-economic-feedback.js";
 import {
   ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS,
   ALPACA_SAFETY_DIAGNOSTIC_STAGES,
@@ -310,6 +311,7 @@ const IntradayReviewRequestSchema = z
     accountId: Text.optional(),
     strategyFeedback: FinanceStrategyReviewFeedbackSchema.optional(),
     brokerExitFeedback: FinanceBrokerExitFeedbackSchema.optional(),
+    accountEconomics: FinanceAccountEconomicFeedbackSchema.optional(),
     asOf: Iso,
     signalAnchor: Text,
     ruleIds: z.array(Text).min(1),

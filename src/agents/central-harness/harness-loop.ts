@@ -1554,6 +1554,39 @@ function projectFinanceBudgetFacts(
               ),
             );
         }
+        if (
+          section === "economicFeedback" &&
+          isPlainRecord(account) &&
+          isPlainRecord(account.accountEconomics)
+        ) {
+          selected.accountEconomics = pick(
+            account.accountEconomics,
+            [
+              "accountId",
+              "venue",
+              "asOf",
+              "status",
+              "sourceRef",
+              "openingRef",
+              "closingRef",
+              "from",
+              "through",
+              "accountEquityChange",
+              "inheritedGrossPnl",
+              "newDecisionGrossPnl",
+              "unlinkedGrossPnl",
+              "unallocatedPnl",
+              "historicalCashFees",
+              "historicalAssetFeeValue",
+              "periodConfirmedCashFees",
+              "periodFeeTimingUnknownCount",
+              "pendingFees",
+              "modelBill",
+              "reason",
+            ],
+            "economicFeedback.accounts.accountEconomics.",
+          );
+        }
         return selected;
       });
       omitted.add(`${section}.accounts.details_or_additional_accounts`);
@@ -1609,7 +1642,20 @@ function projectFinanceBudgetFacts(
       break;
     }
     const details = result[section];
-    if (isPlainRecord(details) && Object.hasOwn(details, "accounts")) {
+    if (
+      section === "economicFeedback" &&
+      isPlainRecord(details) &&
+      Array.isArray(details.accounts) &&
+      details.accounts.some((a) => isPlainRecord(a) && isPlainRecord(a.accountEconomics))
+    ) {
+      result[section] = {
+        status: details.status,
+        accounts: details.accounts
+          .slice(0, 1)
+          .map((a) => (isPlainRecord(a) ? { accountEconomics: a.accountEconomics } : a)),
+      };
+      omitted.add("economicFeedback.accounts.other_details");
+    } else if (isPlainRecord(details) && Object.hasOwn(details, "accounts")) {
       result[section] = Object.fromEntries(
         Object.entries(details).filter(([key]) => key !== "accounts"),
       );
@@ -1705,6 +1751,14 @@ function projectFinanceBudgetFacts(
       ...minimal.intradayExecution,
       strategyReassessments: result.intradayExecution.strategyReassessments,
     };
+  }
+  if (isPlainRecord(result.economicFeedback) && Array.isArray(result.economicFeedback.accounts)) {
+    const account = result.economicFeedback.accounts.find(
+      (a) => isPlainRecord(a) && isPlainRecord(a.accountEconomics),
+    );
+    if (isPlainRecord(account)) {
+      minimal.economicFeedback = { accounts: [{ accountEconomics: account.accountEconomics }] };
+    }
   }
   for (const key of Object.keys(source)) {
     if (!Object.hasOwn(minimal, key)) {

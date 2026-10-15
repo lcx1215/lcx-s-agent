@@ -204,6 +204,19 @@ boundary have unknown timing. Vendor pending-fee balances do not prove a final b
 Aggregates cover every eligible lot before evidence examples are bounded for the
 original research consumer. This projection introduces no new execution authority.
 
+The same account-bound projection also feeds `accountEconomics` in the original
+daily and intraday trade-review requests and their recorded inputs. Historical
+reads precede live-quote acquisition. The existing rationale/cost assessment must
+explain a specific retain/change/veto consequence or missing evidence; no extra
+model call, output permission or execution gate is introduced. Protective exits
+continue to bypass discretionary model review.
+
+The central lifecycle uses the same reader. Its existing 2KB economic packet and
+shared perception budget prioritize the compact account attribution, distinct fee
+bases, unknown bills and one exact method cohort over older detail. Input/prompt
+retention is separately testable; semantic adoption still requires an original
+natural judgment that actually reasons from these facts.
+
 ## Soft and hard responsibilities
 
 Models may select analytical lenses, interpret sourced evidence, build causal

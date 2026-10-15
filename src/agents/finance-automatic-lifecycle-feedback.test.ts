@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import * as accountEconomicsReader from "./finance-account-economic-feedback.js";
 import { buildFinanceAutomaticLifecycleFeedback } from "./finance-automatic-lifecycle-feedback.js";
+import * as brokerProfitReader from "./finance-broker-profit-feedback.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
@@ -812,3 +814,68 @@ it.each(["failure", "pending", "recovered", "unsafe_failure"])(
     }
   },
 );
+
+it("keeps new account attribution in the original two-kilobyte lifecycle economic packet", async () => {
+  const observedAt = "2026-10-15T07:00:00.000Z";
+  const economics = {
+    accountId: "paper-account",
+    venue: "alpaca:paper" as const,
+    asOf: observedAt,
+    status: "observed" as const,
+    sourceRef: "a".repeat(64),
+    openingRef: "b".repeat(64),
+    closingRef: "c".repeat(64),
+    from: "2026-10-15T05:18:54.810Z",
+    through: observedAt,
+    accountEquityChange: 61.25,
+    inheritedGrossPnl: 61.25,
+    newDecisionGrossPnl: 0,
+    unlinkedGrossPnl: 0,
+    unallocatedPnl: 0,
+    historicalCashFees: 4.05,
+    historicalAssetFeeValue: 0.08052845,
+    periodConfirmedCashFees: 0,
+    pendingFees: "unknown" as const,
+    modelBill: null,
+  };
+  const read = vi
+    .spyOn(accountEconomicsReader, "readFinanceAccountEconomicFeedback")
+    .mockResolvedValue(economics);
+  const originalProfitRead = brokerProfitReader.readFinanceBrokerProfitFeedback;
+  vi.spyOn(brokerProfitReader, "readFinanceBrokerProfitFeedback").mockImplementation(
+    async (...args) => {
+      const result = await originalProfitRead(...args);
+      for (const account of result.accounts ?? []) {
+        if ("basis" in account) {
+          account.strategyAttribution.strategies = Array.from({ length: 3 }, (_, i) => ({
+            strategyRule: `historical-detail-${i}-`.repeat(40),
+            fillCount: 1,
+          }));
+        }
+      }
+      return result;
+    },
+  );
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "paper-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${observedAt}`,
+    cursor: "",
+    payload: [
+      { status: "reconciled", feesInterpreted: true, observedAt, positions: [], openOrders: [] },
+    ],
+  });
+  const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(read).toHaveBeenCalledWith(directory, "paper-account", observedAt);
+  expect(feedback).toMatchObject({
+    economicFeedback: {
+      accounts: [{ accountEconomics: economics, methodPerformance: { methods: [] } }],
+      omittedAccounts: 0,
+    },
+  });
+  if (!("economicFeedback" in feedback)) {
+    throw new Error("lifecycle unavailable");
+  }
+  expect(Buffer.byteLength(JSON.stringify(feedback.economicFeedback))).toBeLessThanOrEqual(2000);
+});

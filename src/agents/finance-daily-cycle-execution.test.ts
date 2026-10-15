@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as accountEconomicsReader from "./finance-account-economic-feedback.js";
 import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
 import { FinanceExecutionSafetyUncertainError } from "./finance-execution-safety.js";
 import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
@@ -737,4 +738,32 @@ it("keeps quarantined targets out of dispatch and sizes other targets after the 
   expect(mocks.order).toHaveBeenCalledWith(
     expect.objectContaining({ conclusion: expect.objectContaining({ instrument: "MSFT" }) }),
   );
+});
+
+it("delivers account attribution through the daily judgment and its durable report", async () => {
+  const economics = {
+    accountId: "paper-account",
+    venue: "alpaca:paper" as const,
+    asOf,
+    status: "observed" as const,
+    inheritedGrossPnl: 61.25,
+    newDecisionGrossPnl: 0,
+    historicalCashFees: 4.05,
+    pendingFees: "unknown" as const,
+    modelBill: null,
+  };
+  const read = vi
+    .spyOn(accountEconomicsReader, "readFinanceAccountEconomicFeedback")
+    .mockResolvedValue(economics);
+  const reviewer = vi.fn(params.tradeDecisionReviewer);
+  const report = await runFinanceDailyCycle({
+    ...params,
+    accountId: "paper-account",
+    executionQuotes: quotes(),
+    tradeDecisionReviewer: reviewer,
+  });
+  expect(read).toHaveBeenCalledWith(params.directory, "paper-account", asOf);
+  expect(reviewer).toHaveBeenCalledOnce();
+  expect(reviewer.mock.calls[0][0].accountEconomics).toEqual(economics);
+  expect(report.tradeDecisionReview.accountEconomics).toEqual(economics);
 });

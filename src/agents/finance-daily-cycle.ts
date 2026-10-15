@@ -1,4 +1,5 @@
 import { withTimeout } from "../utils/with-timeout.js";
+import { readFinanceAccountEconomicFeedback } from "./finance-account-economic-feedback.js";
 import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
 import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
 import {
@@ -1283,6 +1284,10 @@ export async function runFinanceDailyCycle(
           ];
         })
       : [];
+  const accountEconomics =
+    params.accountId && params.venue === "alpaca" && potentialReviewCandidates.length > 0
+      ? await readFinanceAccountEconomicFeedback(directory, params.accountId, asOf)
+      : undefined;
   const executionQuotesByInstrument = new Map<
     string,
     FinanceDailyCycleExecutionQuote | undefined
@@ -1374,6 +1379,7 @@ export async function runFinanceDailyCycle(
     });
     const reviewRequest = {
       schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      ...(accountEconomics ? { accountEconomics } : {}),
       venue: "alpaca:paper",
       asOf,
       signalAnchor,
@@ -1451,6 +1457,7 @@ export async function runFinanceDailyCycle(
       modelCalls: result.modelCalls ?? (result.attempted ? 1 : 0),
       candidateInputs: reviewCandidates,
       decisionContext,
+      ...(accountEconomics ? { accountEconomics } : {}),
       ...(result.status === "failed" ? { failureCode: result.failureCode } : {}),
       provider: result.provider,
       modelId: result.modelId,

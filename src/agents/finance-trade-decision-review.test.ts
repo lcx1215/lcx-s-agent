@@ -2328,3 +2328,55 @@ it("spells out exact broker response fields from the original facts without inve
     "Broker exit response identity and numeric fields:",
   );
 });
+
+it.each(["daily", "intraday"])(
+  "retains economic attribution in the actual %s reviewer payload and rendered prompt",
+  async (kind) => {
+    const economic = {
+      accountId: "paper",
+      venue: "alpaca:paper" as const,
+      asOf: request.asOf,
+      status: "observed" as const,
+      sourceRef: "a".repeat(64),
+      closingRef: "c".repeat(64),
+      inheritedGrossPnl: 61.25,
+      newDecisionGrossPnl: 0,
+      historicalCashFees: 4.05,
+      historicalAssetFeeValue: 0.08052845,
+      pendingFees: "unknown" as const,
+      modelBill: null,
+    };
+    const packet = {
+      ...(kind === "daily" ? request : intradayRequest),
+      accountEconomics: economic,
+    };
+    let prompt = "";
+    const review = createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: (_cfg, options) => ({
+          ...adapter(null),
+          invoke: async (call) => {
+            expect(call.payload).toHaveProperty("accountEconomics", economic);
+            prompt = options!.buildPrompt!(call.payload);
+            return {
+              schemaVersion: packet.schemaVersion,
+              decisions: packet.candidates.map((c) => ({
+                candidateId: c.candidateId,
+                decision: "veto",
+                rationale: "Offline fixture, not natural adoption.",
+              })),
+            };
+          },
+        }),
+      },
+    );
+    await review(packet, AbortSignal.timeout(1000));
+    expect(prompt).toContain('"inheritedGrossPnl":61.25');
+    expect(prompt).toContain('"historicalCashFees":4.05');
+    expect(prompt).toContain('"modelBill":null');
+    expect(prompt).toContain("inherited gains do not prove the new method works");
+    expect(prompt).toContain("never deduct them twice");
+    expect(prompt).toContain("existing rationale and costRiskAssessment");
+  },
+);

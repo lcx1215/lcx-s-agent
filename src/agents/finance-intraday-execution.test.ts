@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as accountEconomicsReader from "./finance-account-economic-feedback.js";
 import {
   FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
   FINANCE_ALPACA_MARKET_CALENDAR_URL,
@@ -4126,3 +4127,80 @@ it.each(["zero", "foreign", "expired", "bounded", "changed"] as const)(
     }
   },
 );
+
+it("delivers account attribution before the fresh quote and preserves it in the original intraday outcome", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "account-economic-wiring-"));
+  temporary.push(directory);
+  const at = "2026-09-18T15:00:02.000Z";
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(at);
+  const binding = await activeRuleBinding(directory);
+  const economics = {
+    accountId: "paper-account",
+    venue: "alpaca:paper" as const,
+    asOf: at,
+    status: "observed" as const,
+    inheritedGrossPnl: 61.25,
+    newDecisionGrossPnl: 0,
+    historicalCashFees: 4.05,
+    historicalAssetFeeValue: 0.08052845,
+    pendingFees: "unknown" as const,
+    modelBill: null,
+  };
+  const read = vi
+    .spyOn(accountEconomicsReader, "readFinanceAccountEconomicFeedback")
+    .mockResolvedValue(economics);
+  const decision = (
+    await appendFinanceIntradayDecision(directory, {
+      signalId: "intraday-economic-next",
+      instrument: "SPY",
+      sessionDate: "2026-09-18",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: "2026-09-18T15:00:01.000Z",
+      stopPrice: 99,
+      targetPrice: 102,
+      datasetHeadRef: "c".repeat(64),
+      strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+      strategyBinding: binding,
+    })
+  ).record;
+  const reviewer = approvingReviewer();
+  const runOrder = vi.fn(async () => ({ ok: false as const, refusals: ["isolated final gate"] }));
+  await executeFinanceIntradayDecision({
+    directory,
+    decision,
+    controller: {
+      accountId: "paper-account",
+      accountBookProvider: async () => ({
+        accountId: "paper-account",
+        venue: "alpaca:paper" as const,
+        observedAt: at,
+        expiresAt: "2026-09-18T15:01:02.000Z",
+        equity: 100000,
+        positions: [],
+      }),
+      executionQuoteProvider: async () => {
+        expect(read).toHaveBeenCalledOnce();
+        return {
+          referencePrice: 100,
+          referencePriceAt: at,
+          bidPrice: 99.9,
+          askPrice: 100,
+          sourceUrlOrArtifact: "fixture://quote",
+          maxAgeMs: 30000,
+        };
+      },
+      createSafetyContext: vi.fn(),
+    },
+    caps: { maxOrderNotional: 5000, maxInstrumentNotional: 10000, maxOrdersPerRun: 1 },
+    tradeDecisionReviewer: reviewer,
+    now: () => Date.parse(at),
+    runOrder: runOrder as never,
+  });
+  expect(reviewer).toHaveBeenCalledOnce();
+  expect(reviewer.mock.calls[0][0].accountEconomics).toEqual(economics);
+  const outcome = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+  expect(outcome?.tradeDecisionReview?.request.accountEconomics).toEqual(economics);
+});
