@@ -45,9 +45,7 @@ describe("legacy plugin-sdk root compatibility", () => {
   it("loads a legacy plugin importing the monolithic plugin-sdk root", () => {
     // Exercise the shipped SDK; source alias selection has separate resolver coverage.
     const sdk = path.resolve(import.meta.dirname, "../../dist/plugin-sdk/index.js");
-    expect(fs.existsSync(sdk), "build this checkout before the package compatibility test").toBe(
-      true,
-    );
+    expect(fs.existsSync(sdk), "run pnpm build before pnpm test:plugin-sdk:compat").toBe(true);
     vi.stubEnv("NODE_ENV", "production");
     try {
       expect(
