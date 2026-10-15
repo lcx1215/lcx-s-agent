@@ -781,7 +781,7 @@ describe("one snapshot per cycle, and a pointer that never moves backwards", () 
 
   it("names exactly one snapshot file per runId", () => {
     expect(runSnapshotPath("/state/lcx-central-agent-runs", "central-0-1")).toBe(
-      "/state/lcx-central-agent-runs/central-0-1.json",
+      path.join("/state/lcx-central-agent-runs", "central-0-1.json"),
     );
   });
 });

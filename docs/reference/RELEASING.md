@@ -44,6 +44,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 4. **Validation**
 
 - [ ] `pnpm build`
+- [ ] `pnpm test:plugin-sdk:compat` (checks the built LCX SDK; the regular unit command remains build-independent)
 - [ ] `pnpm check`
 - [ ] `pnpm test` (or `pnpm test:coverage` if you need coverage output)
 - [ ] `pnpm release:check` (verifies npm pack contents)

@@ -411,10 +411,12 @@ run_with_spinner() {
     if [[ -n "$GUM" ]] && gum_is_tty && ! is_shell_function "${1:-}"; then
         local gum_err
         gum_err="$(mktempfile)"
+        local gum_status
         if "$GUM" spin --spinner dot --title "$title" -- "$@" 2>"$gum_err"; then
             return 0
+        else
+            gum_status=$?
         fi
-        local gum_status=$?
         if is_gum_raw_mode_failure "$gum_err"; then
             GUM=""
             GUM_STATUS="skipped"
@@ -1022,6 +1024,7 @@ Options:
 
 Environment variables:
   OPENCLAW_INSTALL_METHOD=git|npm
+  LCX_INSTALL_TARBALL=/absolute/path/lcx-agent.tgz  Install a locally built LCX archive
   OPENCLAW_VERSION=latest|next|<semver>
   OPENCLAW_BETA=0|1
   OPENCLAW_GIT_DIR=...
@@ -2011,7 +2014,7 @@ resolve_beta_version() {
 
 install_openclaw() {
     local package_name="lcx-agent"
-    if [[ "$USE_BETA" == "1" ]]; then
+    if [[ "$USE_BETA" == "1" && -z "${LCX_INSTALL_TARBALL:-}" ]]; then
         local beta_version=""
         beta_version="$(resolve_beta_version || true)"
         if [[ -n "$beta_version" ]]; then
@@ -2029,16 +2032,25 @@ install_openclaw() {
     fi
 
     local resolved_version=""
-    resolved_version="$(npm view "${package_name}@${OPENCLAW_VERSION}" version 2>/dev/null || true)"
-    if [[ -n "$resolved_version" ]]; then
-        ui_info "Installing LCX Agent v${resolved_version}"
-    else
-        ui_info "Installing LCX Agent (${OPENCLAW_VERSION})"
-    fi
     local install_spec=""
-    if [[ "${OPENCLAW_VERSION}" == "latest" ]]; then
-        install_spec="${package_name}@latest"
+    if [[ -n "${LCX_INSTALL_TARBALL:-}" ]]; then
+        if [[ ! -f "$LCX_INSTALL_TARBALL" ]]; then
+            ui_error "LCX_INSTALL_TARBALL must name an existing local package archive"
+            return 1
+        fi
+        resolved_version="$(tar -xOf "$LCX_INSTALL_TARBALL" package/package.json | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const p = JSON.parse(input);
+  if (p.name !== "lcx-agent" || typeof p.version !== "string" || !p.bin?.lcx) process.exit(1);
+  process.stdout.write(p.version);
+});')" || return 1
+        install_spec="$LCX_INSTALL_TARBALL"
+        ui_info "Installing local LCX Agent v${resolved_version}"
     else
+        resolved_version="$(npm view "${package_name}@${OPENCLAW_VERSION}" version 2>/dev/null || true)"
+        ui_info "Installing LCX Agent (${resolved_version:-$OPENCLAW_VERSION})"
         install_spec="${package_name}@${OPENCLAW_VERSION}"
     fi
 
@@ -2048,7 +2060,7 @@ install_openclaw() {
         install_openclaw_npm "${install_spec}"
     fi
 
-    if [[ "${OPENCLAW_VERSION}" == "latest" && "${package_name}" == "lcx-agent" ]]; then
+    if [[ -z "${LCX_INSTALL_TARBALL:-}" && "${OPENCLAW_VERSION}" == "latest" && "${package_name}" == "lcx-agent" ]]; then
         if ! resolve_lcx_bin &> /dev/null; then
             ui_warn "npm install lcx-agent@latest failed; retrying lcx-agent@next"
             cleanup_npm_openclaw_paths

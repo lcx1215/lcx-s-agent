@@ -55,12 +55,16 @@ jobs:
       - name: Run root Dockerfile CLI smoke
         run: |
           docker build -t openclaw-dockerfile-smoke:local -f Dockerfile .
-          docker run --rm --entrypoint sh openclaw-dockerfile-smoke:local -lc 'which openclaw && openclaw --version'
+          docker run --rm --entrypoint sh openclaw-dockerfile-smoke:local -lc 'which lcx && lcx --version'
 
-      - name: Run installer docker tests
+      - name: Pack this LCX build for installer verification
+        run: |
+          mkdir -p "$RUNNER_TEMP/lcx-install-artifact"
+          docker run --rm --user root --entrypoint sh -v "$RUNNER_TEMP/lcx-install-artifact:/out" openclaw-dockerfile-smoke:local -lc 'cd /app && npm pack --ignore-scripts --pack-destination /out'
+          echo "LCX_INSTALL_TARBALL=$(find "$RUNNER_TEMP/lcx-install-artifact" -name 'lcx-agent-*.tgz' -print -quit)" >> "$GITHUB_ENV"
+
+      - name: Run installer docker tests against this commit
         env:
-          CLAWDBOT_INSTALL_URL: https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh
-          CLAWDBOT_INSTALL_CLI_URL: https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh
           CLAWDBOT_NO_ONBOARD: "1"
           CLAWDBOT_INSTALL_SMOKE_SKIP_CLI: "1"
           CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT: ${{ github.event_name == 'pull_request' && '1' || '0' }}

@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import vm from "node:vm";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -114,6 +116,33 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
 }
 
 describe("LCX universe index", () => {
+  it("normalizes Windows inventory paths before governance classification", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-universe-index.ts"),
+      "utf8",
+    );
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    const declaration = ast.statements.find(
+      (node) => ts.isFunctionDeclaration(node) && node.name?.text === "normalizeRepoPaths",
+    );
+    if (!declaration) {
+      throw new Error("normalization owner missing");
+    }
+    const code = ts.transpileModule(declaration.getText(ast), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const normalize = vm.runInNewContext(code + "\nnormalizeRepoPaths") as (
+      files: string[],
+    ) => string[];
+    expect(
+      normalize([
+        "src\\cli\\serve-cli.ts",
+        "scripts/operator/lcx-universe-index.ts",
+        "unowned\\file",
+      ]),
+    ).toEqual(["src/cli/serve-cli.ts", "scripts/operator/lcx-universe-index.ts", "unowned/file"]);
+  });
+
   it("builds one read-only index for repo files, runtime artifacts, live sidecar, and owner coverage", async () => {
     const payload = await runUniverseIndex();
 
@@ -166,6 +195,12 @@ describe("LCX universe index", () => {
       payload.summary.workspaceArtifactFiles + payload.summary.liveSidecarFiles,
     );
     expect(payload.ownerCoverage.governanceCoverage.unknownComponents).toEqual([]);
+    expect(payload.ownerCoverage.governanceCoverage.components).toContainEqual(
+      expect.objectContaining({
+        path: "dist/protocol.schema.json",
+        routeOwner: "scripts/protocol-gen.ts",
+      }),
+    );
     expect(payload.ownerCoverage.governanceCoverage.components).toHaveLength(
       payload.summary.trackedAndVisibleFiles,
     );

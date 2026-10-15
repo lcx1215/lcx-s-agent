@@ -99,6 +99,7 @@ export default defineConfig({
     ],
     setupFiles: ["test/setup.ts"],
     exclude: [
+      "src/plugins/loader-legacy-root.test.ts",
       "dist/**",
       "**/node_modules/**",
       "**/vendor/**",

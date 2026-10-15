@@ -61,7 +61,7 @@ jobs:
   # Build dist once for Node-relevant changes and share it with downstream jobs.
   build-artifacts:
     needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true' || needs.changed-scope.outputs.run_windows == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -113,8 +113,10 @@ jobs:
         run: pnpm release:check
 
   checks:
-    needs: [docs-scope, changed-scope]
+    needs: [docs-scope, changed-scope, build-artifacts]
     if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    env:
+      LCX_TEST_BUILT_SDK: "1"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -128,7 +130,7 @@ jobs:
             command: pnpm protocol:check
           - runtime: bun
             task: test
-            command: pnpm canvas:a2ui:bundle && bunx vitest run --config vitest.unit.config.ts
+            command: pnpm canvas:a2ui:bundle && bunx vitest run --config vitest.unit.config.ts && bunx vitest run --config vitest.plugin-sdk.config.ts
     steps:
       - name: Skip bun lane on push
         if: github.event_name == 'push' && matrix.runtime == 'bun'
@@ -139,6 +141,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
+
+      - name: Download this commit's LCX build for compatibility tests
+        if: matrix.runtime != 'bun' || github.event_name != 'push'
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist
 
       - name: Setup Node environment
         if: matrix.runtime != 'bun' || github.event_name != 'push'
@@ -334,11 +343,12 @@ jobs:
         run: pre-commit run --all-files pnpm-audit-prod
 
   checks-windows:
-    needs: [docs-scope, changed-scope]
+    needs: [docs-scope, changed-scope, build-artifacts]
     if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_windows == 'true')
     runs-on: windows-latest
     timeout-minutes: 45
     env:
+      LCX_TEST_BUILT_SDK: "1"
       NODE_OPTIONS: --max-old-space-size=6144
       # Keep total concurrency predictable on the 32 vCPU runner.
       # Windows shard 2 has shown intermittent instability at 2 workers.
@@ -385,6 +395,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
+
+      - name: Download this commit's LCX build for compatibility tests
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist
 
       - name: Try to exclude workspace from Windows Defender (best-effort)
         shell: pwsh

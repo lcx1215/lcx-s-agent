@@ -31,7 +31,8 @@
     "test/**/*",
     "scripts/**/*",
     "*.ts",
-    "packages/**/*"
+    "packages/**/*",
+    "ops/probes/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
