@@ -229,6 +229,10 @@ function Install-OpenClawNpm {
         }
     }
     Write-Host "Installing LCX Agent..." -Level info
+    $backupDir = ""
+    $restoreRequired = $false
+    $retainBackup = $false
+    $legacyBins = @()
     try {
         $globalRoot = npm root -g 2>$null
         if ($LASTEXITCODE -ne 0 -or !$globalRoot) { throw "Cannot identify global package directory" }
@@ -241,16 +245,53 @@ function Install-OpenClawNpm {
                 npm view $target version --json 2>&1 | Out-Null
                 if ($LASTEXITCODE -ne 0) { throw "LCX release unavailable" }
             }
+            $legacyPackageDir = Split-Path -Parent $legacyManifest
+            $globalBinDir = Split-Path -Parent ($globalRoot -join "")
+            $backupDir = Join-Path ([IO.Path]::GetTempPath()) ("lcx-upgrade-" + [guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path "$backupDir/package", "$backupDir/shims" -Force | Out-Null
+            Copy-Item -LiteralPath $legacyPackageDir -Destination "$backupDir/package" -Recurse -Force
+            $binNames = @("openclaw")
+            if ($legacy.bin -and $legacy.bin -isnot [string]) { $binNames = @($legacy.bin.PSObject.Properties.Name) }
+            foreach ($name in $binNames) {
+                if ($name -notmatch '^[a-zA-Z0-9._-]+$') { throw "Invalid legacy executable name" }
+                foreach ($suffix in @("", ".cmd", ".ps1")) {
+                    $bin = Join-Path $globalBinDir "$name$suffix"
+                    if (Test-Path -LiteralPath $bin -PathType Leaf) {
+                        Copy-Item -LiteralPath $bin -Destination "$backupDir/shims" -Force
+                        $legacyBins += $bin
+                    }
+                }
+            }
+            $restoreRequired = $true
             npm uninstall -g openclaw --no-fund --no-audit 2>&1 | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "Legacy package removal failed" }
         }
         npm install -g $target --no-fund --no-audit 2>&1 | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "npm returned a nonzero exit code" }
+        $restoreRequired = $false
         Write-Host "LCX Agent installed" -Level success
         return $true
     } catch {
+        if ($restoreRequired) {
+            try {
+                Copy-Item -LiteralPath "$backupDir/package/openclaw" -Destination ($globalRoot -join "") -Recurse -Force
+                foreach ($bin in $legacyBins) {
+                    Copy-Item -LiteralPath (Join-Path "$backupDir/shims" (Split-Path -Leaf $bin)) -Destination $bin -Force
+                }
+                Write-Host "Legacy package and command files restored" -Level warn
+            } catch {
+                $retainBackup = $true
+                Write-Host "Legacy restoration failed; retained backup: $backupDir" -Level error
+            }
+        }
         Write-Host "LCX npm installation failed" -Level error
         return $false
+    } finally {
+        if ($backupDir -and !$retainBackup) {
+            try { Remove-Item -LiteralPath $backupDir -Recurse -Force } catch {
+                Write-Host "Upgrade backup retained: $backupDir" -Level warn
+            }
+        }
     }
 }
 

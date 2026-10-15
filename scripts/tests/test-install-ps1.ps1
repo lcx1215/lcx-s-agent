@@ -19,7 +19,15 @@ function npm {
     $script:targets += ($args -join ' ')
     if ($args[0] -eq 'root') { $global:LASTEXITCODE = 0; return $script:npmRoot }
     if ($args[0] -eq 'view') { $global:LASTEXITCODE = $script:viewExit; return }
-    if ($args[0] -eq 'uninstall') { $global:LASTEXITCODE = $script:uninstallExit; return }
+    if ($args[0] -eq 'uninstall') {
+        if ($script:uninstallExit -eq 0) {
+            Remove-Item -LiteralPath "$script:npmRoot/openclaw" -Recurse -Force
+            $shim = Join-Path (Split-Path -Parent $script:npmRoot) 'openclaw.cmd'
+            if (Test-Path -LiteralPath $shim) { Remove-Item -LiteralPath $shim -Force }
+        }
+        $global:LASTEXITCODE = $script:uninstallExit
+        return
+    }
     $global:LASTEXITCODE = $script:npmExit
 }
 function Assert($Condition, $Message) { if (!$Condition) { throw $Message } }
@@ -42,7 +50,10 @@ try {
     Assert ($script:targets.Count -eq $count) 'Invalid archive reached npm'
     Assert (!(Install-OpenClawNpm -Tarball "$fixture/missing.tgz")) 'Missing archive accepted'
     New-Item -ItemType Directory -Path "$script:npmRoot/openclaw" -Force | Out-Null
-    '{"name":"openclaw","version":"2026.3.2"}' | Set-Content "$script:npmRoot/openclaw/package.json"
+    '{"name":"openclaw","version":"2026.3.2","bin":{"openclaw":"cli.js"}}' | Set-Content "$script:npmRoot/openclaw/package.json"
+    'process.exit(0);' | Set-Content "$script:npmRoot/openclaw/cli.js"
+    'legacy shim bytes' | Set-Content "$fixture/openclaw.cmd"
+    $originalShim = Get-Content "$fixture/openclaw.cmd" -Raw
     $script:viewExit = 1
     $count = $script:targets.Count
     Assert (!(Install-OpenClawNpm)) 'Unavailable replacement must preserve legacy install'
@@ -53,6 +64,13 @@ try {
     Assert (!(Install-OpenClawNpm -Tarball "$fixture/lcx.tgz")) 'Legacy uninstall failure ignored'
     Assert (@($script:targets[$count..($script:targets.Count - 1)] | Where-Object { $_ -like 'install -g *' }).Count -eq 0) 'Install continued after failed removal'
     $script:uninstallExit = 0
+    $script:npmExit = 19
+    Assert (!(Install-OpenClawNpm -Tarball "$fixture/lcx.tgz")) 'Failed replacement reported success'
+    Assert (Test-Path "$script:npmRoot/openclaw/package.json") 'Legacy package not restored'
+    Assert ((Get-Content "$fixture/openclaw.cmd" -Raw) -eq $originalShim) 'Legacy shim bytes not restored'
+    & node "$script:npmRoot/openclaw/cli.js"
+    Assert ($LASTEXITCODE -eq 0) 'Restored legacy CLI cannot execute'
+    $script:npmExit = 0
     Assert (Install-OpenClawNpm -Tarball "$fixture/lcx.tgz") 'Legacy package migration failed'
     Assert ($script:targets[-2] -eq 'uninstall -g openclaw --no-fund --no-audit') 'Wrong legacy removal target'
     Assert ($script:targets[-1].Contains('lcx.tgz')) 'Migration did not install own archive'
