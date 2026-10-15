@@ -13,6 +13,7 @@ import {
   readFinanceIntradayOutcomes,
   type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
+import { readFinancePaperEconomicWindow } from "./finance-paper-economic-window.js";
 import {
   projectFinancePositions,
   readFinanceLatestBrokerReconciliations,
@@ -1012,6 +1013,7 @@ function projectFinanceBrokerAccountResearchSummary(params: {
   brokerProfit: BrokerProfitFeedback;
   brokerReconciliations: BrokerReconciliationRead;
   includeAccountFields?: boolean;
+  accountPerformance?: readonly Awaited<ReturnType<typeof readFinancePaperEconomicWindow>>[];
 }) {
   return {
     ...(params.includeAccountFields
@@ -1021,6 +1023,7 @@ function projectFinanceBrokerAccountResearchSummary(params: {
           missingFields: params.brokerReconciliations.records.length ? [] : ["positionSnapshots"],
         }
       : {}),
+    ...(params.accountPerformance ? { accountPerformance: params.accountPerformance } : {}),
     attributionScope: "account_totals_not_instrument_or_strategy_totals",
     instrumentAttribution:
       "not_provided; do not assign account fill counts or fees to the requested instrument",
@@ -1266,11 +1269,25 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
     }),
     reconciliationRead,
   ]);
+  const accountPerformance = await Promise.all(
+    [
+      ...new Set(
+        brokerReconciliations.records
+          .filter(
+            (r) => r.venue === "alpaca:paper" && (!scoped || r.accountId === params.accountId),
+          )
+          .map((r) => r.accountId),
+      ),
+    ]
+      .slice(0, 2)
+      .map((accountId) => readFinancePaperEconomicWindow(params.directory, accountId, params.asOf)),
+  );
   const projected = projectFinanceBrokerAccountResearchSummary({
     asOf: params.asOf,
     brokerProfit,
     brokerReconciliations,
     includeAccountFields: true,
+    accountPerformance,
   });
   const accountProfit =
     projected.accounts?.filter(
@@ -1462,6 +1479,17 @@ export async function buildFinanceNightReviewEvidence(params: {
     )
     .slice(-100)
     .map(compactReceipt);
+  const accountPerformance = await Promise.all(
+    [
+      ...new Set(
+        brokerReconciliations.records
+          .filter((r) => r.venue === "alpaca:paper")
+          .map((r) => r.accountId),
+      ),
+    ]
+      .slice(0, 2)
+      .map((accountId) => readFinancePaperEconomicWindow(params.directory, accountId, params.asOf)),
+  );
   const brokerSummary: FinanceCommitteeEvidence = {
     id: `finance-night:broker-profit:${params.etDate}`,
     source: "finance-broker-profit-summary",
@@ -1471,6 +1499,7 @@ export async function buildFinanceNightReviewEvidence(params: {
         asOf: params.asOf,
         brokerProfit,
         brokerReconciliations,
+        accountPerformance,
       }),
     ),
   };
@@ -1486,6 +1515,7 @@ export async function buildFinanceNightReviewEvidence(params: {
           objective:
             "Improve net wealth growth after costs over the declared horizon and capital scope within the existing strategy and risk budget. Report realized and unrealized results separately; internal evaluation checks decision quality, not achieved profit.",
           questions: [
+            "Use accountPerformance for whole-account close returns, SPY/QQQ dividend-adjusted comparisons and cash. Separate inherited holdings from new decisions; never subtract posted fees twice. Unknown costs or attribution remain unknown. Explain a concrete retain/change/research consequence now, without waiting twenty sessions.",
             "Which reconciled account holdings lack an active strategy or protective coverage? Review their management autonomously from current evidence; historical ownership gaps must not remove an instrument from research or be fabricated as an LCX entry.",
             "Which executed opportunities made or lost money after costs? Separate gross gains, net gains and unrealized marks.",
             "Use methodPerformance to review the exact entry rule declaration and activation cohort. Distinguish partial matched lots from fully closed entries and explain which mechanism supports retaining, reducing or researching an alternative within existing authority. A different symbol alone does not answer adverse evidence for the same rule version; neither one loss nor one win establishes method validity. Missing fees or attribution remain explicit gaps.",

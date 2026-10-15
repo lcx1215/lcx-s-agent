@@ -74,6 +74,7 @@ import {
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
+import { captureFinancePaperEconomicWindow } from "../../src/agents/finance-paper-economic-window.js";
 import { FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME } from "../../src/agents/finance-portfolio-composition.js";
 import { readFinancePositionRecords } from "../../src/agents/finance-position-ledger.js";
 import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance-research-evidence.js";
@@ -734,8 +735,22 @@ async function runNightResearchReview(params: {
   attempt: { firedAt: string; etDate: string };
   settlement: FinanceNightSettlementSummary;
 }): Promise<FinanceCycleProcessResult & { acceptance: NightResearchAcceptance }> {
-  const reviewAsOf = new Date().toISOString();
+  let reviewAsOf = new Date().toISOString();
   try {
+    const accountId = params.context.intradayController?.accountId;
+    if (accountId) {
+      const economics = await captureFinancePaperEconomicWindow({
+        directory: params.context.root.directory,
+        accountId,
+        sessionDate: params.attempt.etDate,
+        signal: params.context.signal,
+      });
+      process.stderr.write(
+        `[${new Date().toISOString()}] night account economics=${economics.status}\n`,
+      );
+      params.context.signal.throwIfAborted();
+      reviewAsOf = new Date().toISOString();
+    }
     const evidencePath = path.join(
       params.context.root.directory,
       `night-review-evidence-${params.attempt.etDate}.json`,

@@ -169,6 +169,23 @@ history to calculate those corrections.
 | Central Harness finance feedback               | `src/agents/finance-automatic-lifecycle-feedback.ts`                                                                                 |
 | Structural wrong-flow detection                | `scripts/operator/lcx-flow-graph.ts`                                                                                                 |
 
+## Whole-account economic evaluation
+
+The existing night scheduler captures account close observations through the original
+read-only Alpaca transport and seals them in the existing broker-history ledger.
+`finance-paper-economic-window.ts` evaluates actual calendar-close equity alongside
+primary-market SPY/QQQ closing auctions and vendor dividend/split adjustment factors.
+The normal account-research and night-review evidence readers consume those sealed
+observations at their own cutoff. This adds no trading authority or separate state store.
+
+Keep verified initial funding distinct from an unverified opening-day close. External
+cashflows without before/after valuations make returns unknown. Posted charges already
+included in account equity are not deducted twice; pending fees and model currency bills
+remain separate unknowns. Retain the repair boundary and inherited-position attribution
+gaps rather than assigning all subsequent account performance to new decisions. Vendor
+adjustment factors are a total-return proxy, not exact dividend reinvestment executions.
+The twenty-session comparison window never blocks immediate evidence-led adaptation.
+
 ## Soft and hard responsibilities
 
 Models may select analytical lenses, interpret sourced evidence, build causal
@@ -232,7 +249,10 @@ JSON/JSONL receipts own scheduler attempts, research samples/scores, proposals,
 and bounded latest views. No owner may silently introduce another finance state
 root.
 
-## Current handoff status (2026-09-24 source)
+## Historical handoff snapshot (2026-09-24 source)
+
+This snapshot predates the method/version attribution and whole-account evaluation
+described above; its historical gaps are not a current repair checklist.
 
 1. Night settlement may dispatch the canonical tuning lifecycle after newly
    appended scored outcomes. Its input is binary forecast-direction accuracy;
