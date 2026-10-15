@@ -52,4 +52,6 @@ try {
         Assert ($LASTEXITCODE -eq 17) 'Legacy wrapper failed to delegate'
     } finally { $env:USERPROFILE = $oldProfile }
 } finally { Remove-Item -LiteralPath $fixture -Recurse -Force }
+# Expected nonzero native exits were asserted above; leave the CI shell successful.
+$global:LASTEXITCODE = 0
 Microsoft.PowerShell.Utility\Write-Output 'LCX Windows installer: own target/archive/native failure/invalid artifact checks passed'
