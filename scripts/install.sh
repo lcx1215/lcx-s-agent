@@ -411,10 +411,12 @@ run_with_spinner() {
     if [[ -n "$GUM" ]] && gum_is_tty && ! is_shell_function "${1:-}"; then
         local gum_err
         gum_err="$(mktempfile)"
+        local gum_status
         if "$GUM" spin --spinner dot --title "$title" -- "$@" 2>"$gum_err"; then
             return 0
+        else
+            gum_status=$?
         fi
-        local gum_status=$?
         if is_gum_raw_mode_failure "$gum_err"; then
             GUM=""
             GUM_STATUS="skipped"

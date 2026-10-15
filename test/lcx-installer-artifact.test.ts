@@ -11,6 +11,41 @@ const bashPath = (file: string) =>
     : file;
 
 describe("LCX installer build artifact", () => {
+  it.each([false, true])("preserves spinner failure status, raw-mode fallback: %s", (rawMode) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-spinner-test-"));
+    try {
+      const source = fs.readFileSync(path.join(root, "scripts/install.sh"), "utf8");
+      const start = source.indexOf("is_gum_raw_mode_failure() {");
+      const end = source.indexOf("run_quiet_step() {", start);
+      const marker = path.join(dir, "executed");
+      const script = `set -euo pipefail
+GUM=fake_gum
+fake_gum() { echo '${rawMode ? "setrawmode failure" : "ui failure"}' >&2; return 19; }
+gum_is_tty() { return 0; }
+is_shell_function() { return 1; }
+mktempfile() { mktemp "$TEMP_BASE/gum.XXXXXX"; }
+ui_warn() { :; }
+${source.slice(start, end)}
+run_with_spinner install bash -c 'printf once >> "$MARKER"; exit 7'`;
+      let status = 0;
+      try {
+        execFileSync("bash", ["-c", script], {
+          env: { ...process.env, TEMP_BASE: bashPath(dir), MARKER: bashPath(marker) },
+          stdio: "pipe",
+        });
+      } catch (error) {
+        status = (error as { status: number }).status;
+      }
+      expect(status).toBe(rawMode ? 7 : 19);
+      expect(fs.existsSync(marker)).toBe(rawMode);
+      if (rawMode) {
+        expect(fs.readFileSync(marker, "utf8")).toBe("once");
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["2026.3.3", ["2026.4.0", "2026.3.2", "2026.3.1"], "2026.3.2"],
     ["2026.3.3", ["2026.3.3-rc.2", "2026.3.3-rc.10", "2026.4.0"], "2026.3.3-rc.10"],
@@ -65,6 +100,7 @@ describe("LCX installer build artifact", () => {
         bashPath(path.join(root, "scripts/install.sh")) + ":/lcx-install.sh:ro",
       );
       expect(calls).toContain("LCX_INSTALL_TARBALL=/lcx-agent.tgz");
+      expect(calls).toContain("OPENCLAW_NO_PROMPT=1");
       expect(calls).not.toContain("raw.githubusercontent.com");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

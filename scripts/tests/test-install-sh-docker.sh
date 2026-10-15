@@ -27,7 +27,7 @@ docker build \
   "$ROOT_DIR/scripts/docker"
 
 echo "==> Run installer smoke test (root): current LCX build"
-docker run --rm -t \
+docker run --rm \
   -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
   -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
   -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
@@ -37,6 +37,7 @@ docker run --rm -t \
   -e OPENCLAW_INSTALL_SMOKE_PREVIOUS="${OPENCLAW_INSTALL_SMOKE_PREVIOUS:-${CLAWDBOT_INSTALL_SMOKE_PREVIOUS:-}}" \
   -e OPENCLAW_INSTALL_SMOKE_SKIP_PREVIOUS="${OPENCLAW_INSTALL_SMOKE_SKIP_PREVIOUS:-${CLAWDBOT_INSTALL_SMOKE_SKIP_PREVIOUS:-0}}" \
   -e OPENCLAW_NO_ONBOARD=1 \
+  -e OPENCLAW_NO_PROMPT=1 \
   -e DEBIAN_FRONTEND=noninteractive \
   "$SMOKE_IMAGE"
 
@@ -55,13 +56,14 @@ else
     "$ROOT_DIR/scripts/docker"
 
   echo "==> Run installer non-root test: current LCX build"
-  docker run --rm -t \
+  docker run --rm \
   -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
   -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
   -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
     -e OPENCLAW_INSTALL_METHOD=npm \
     -e OPENCLAW_INSTALL_EXPECT_VERSION="$LATEST_VERSION" \
     -e OPENCLAW_NO_ONBOARD=1 \
+  -e OPENCLAW_NO_PROMPT=1 \
     -e DEBIAN_FRONTEND=noninteractive \
     "$NONROOT_IMAGE"
 fi
@@ -77,11 +79,12 @@ if [[ "$SKIP_NONROOT" == "1" ]]; then
 fi
 
 echo "==> Run CLI installer non-root test (same image)"
-docker run --rm -t \
+docker run --rm \
   -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
   -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
   -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
   --entrypoint /bin/bash \
   -e OPENCLAW_NO_ONBOARD=1 \
+  -e OPENCLAW_NO_PROMPT=1 \
   -e DEBIAN_FRONTEND=noninteractive \
   "$NONROOT_IMAGE" -lc "bash /lcx-install.sh --set-npm-prefix --no-onboard"
