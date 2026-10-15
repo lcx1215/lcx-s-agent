@@ -52,3 +52,32 @@ vendor/
 !vendor/a2ui/renderers/lit/
 !vendor/a2ui/renderers/lit/**
 # Keeps local builds focused on source/runtime inputs instead of generated state.
+
+# npm pack inside the build image must retain declared package assets.
+!README-header.png
+!assets/
+!assets/**
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.jpeg
+!docs/**/*.webp
+!docs/**/*.gif
+!extensions/**/*.png
+!extensions/**/*.jpg
+!extensions/**/*.jpeg
+!extensions/**/*.webp
+!extensions/**/*.gif
+!skills/**/*.png
+!skills/**/*.jpg
+!skills/**/*.jpeg
+!skills/**/*.webp
+!skills/**/*.gif
+# Local/private runtime state never belongs in an LCX image or build context.
+state/
+.env
+.env.*
+**/.env
+**/.env.*
+**/auth-profiles.json
+**/credentials.json
+**/node_modules

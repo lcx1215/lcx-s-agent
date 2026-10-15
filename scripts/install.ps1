@@ -5,7 +5,8 @@
 param(
     [string]$InstallMethod = "npm",
     [string]$Tag = "latest",
-    [string]$GitDir = "$env:USERPROFILE\openclaw",
+    [string]$Artifact = $env:LCX_INSTALL_TARBALL,
+    [string]$GitDir = "",
     [switch]$NoOnboard,
     [switch]$NoGitUpdate,
     [switch]$DryRun
@@ -199,19 +200,98 @@ function Ensure-Git {
     return Install-Git
 }
 
+function Resolve-LcxGitDir {
+    param([string]$Requested = "", [string]$ProfileRoot = $env:USERPROFILE)
+    if ($Requested) { return $Requested }
+    $current = Join-Path $ProfileRoot "lcx-agent"
+    $legacy = Join-Path $ProfileRoot "openclaw"
+    if (Test-Path -LiteralPath $current) { return $current }
+    if (Test-Path -LiteralPath $legacy) { return $legacy }
+    return $current
+}
+
 function Install-OpenClawNpm {
-    param([string]$Version = "latest")
-    
-    Write-Host "Installing LCX Agent (openclaw@$Version)..." -Level info
-    
+    param([string]$Version = "latest", [string]$Tarball = "")
+
+    $target = "lcx-agent@$Version"
+    if ($Tarball) {
+        try {
+            $target = (Resolve-Path -LiteralPath $Tarball -ErrorAction Stop).Path
+            $manifestText = tar -xOf $target package/package.json 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "Cannot read archive manifest" }
+            $manifest = ($manifestText -join "`n") | ConvertFrom-Json
+            if ($manifest.name -ne "lcx-agent" -or !$manifest.bin.lcx -or !$manifest.version) {
+                throw "Archive is not an LCX Agent package"
+            }
+        } catch {
+            Write-Host "Invalid LCX build archive" -Level error
+            return $false
+        }
+    }
+    Write-Host "Installing LCX Agent..." -Level info
+    $backupDir = ""
+    $restoreRequired = $false
+    $retainBackup = $false
+    $legacyBins = @()
     try {
-        # Use -ExecutionPolicy Bypass to handle restricted execution policy
-        npm install -g openclaw@$Version --no-fund --no-audit 2>&1
+        $globalRoot = npm root -g 2>$null
+        if ($LASTEXITCODE -ne 0 -or !$globalRoot) { throw "Cannot identify global package directory" }
+        $legacyManifest = Join-Path ($globalRoot -join "") "openclaw/package.json"
+        if (Test-Path -LiteralPath $legacyManifest) {
+            $legacy = Get-Content -LiteralPath $legacyManifest -Raw | ConvertFrom-Json
+            if ($legacy.name -ne "openclaw") { throw "Unrecognized legacy package" }
+            # Do not remove a working legacy install before the replacement is available.
+            if (!$Tarball) {
+                npm view $target version --json 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "LCX release unavailable" }
+            }
+            $legacyPackageDir = Split-Path -Parent $legacyManifest
+            $globalBinDir = Split-Path -Parent ($globalRoot -join "")
+            $backupDir = Join-Path ([IO.Path]::GetTempPath()) ("lcx-upgrade-" + [guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path "$backupDir/package", "$backupDir/shims" -Force | Out-Null
+            Copy-Item -LiteralPath $legacyPackageDir -Destination "$backupDir/package" -Recurse -Force
+            $binNames = @("openclaw")
+            if ($legacy.bin -and $legacy.bin -isnot [string]) { $binNames = @($legacy.bin.PSObject.Properties.Name) }
+            foreach ($name in $binNames) {
+                if ($name -notmatch '^[a-zA-Z0-9._-]+$') { throw "Invalid legacy executable name" }
+                foreach ($suffix in @("", ".cmd", ".ps1")) {
+                    $bin = Join-Path $globalBinDir "$name$suffix"
+                    if (Test-Path -LiteralPath $bin -PathType Leaf) {
+                        Copy-Item -LiteralPath $bin -Destination "$backupDir/shims" -Force
+                        $legacyBins += $bin
+                    }
+                }
+            }
+            $restoreRequired = $true
+            npm uninstall -g openclaw --no-fund --no-audit 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Legacy package removal failed" }
+        }
+        npm install -g $target --no-fund --no-audit 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "npm returned a nonzero exit code" }
+        $restoreRequired = $false
         Write-Host "LCX Agent installed" -Level success
         return $true
     } catch {
-        Write-Host "npm install failed: $_" -Level error
+        if ($restoreRequired) {
+            try {
+                Copy-Item -LiteralPath "$backupDir/package/openclaw" -Destination ($globalRoot -join "") -Recurse -Force
+                foreach ($bin in $legacyBins) {
+                    Copy-Item -LiteralPath (Join-Path "$backupDir/shims" (Split-Path -Leaf $bin)) -Destination $bin -Force
+                }
+                Write-Host "Legacy package and command files restored" -Level warn
+            } catch {
+                $retainBackup = $true
+                Write-Host "Legacy restoration failed; retained backup: $backupDir" -Level error
+            }
+        }
+        Write-Host "LCX npm installation failed" -Level error
         return $false
+    } finally {
+        if ($backupDir -and !$retainBackup) {
+            try { Remove-Item -LiteralPath $backupDir -Recurse -Force } catch {
+                Write-Host "Upgrade backup retained: $backupDir" -Level warn
+            }
+        }
     }
 }
 
@@ -222,25 +302,30 @@ function Install-OpenClawGit {
     
     if (!(Test-Path $RepoDir)) {
         Write-Host "  Cloning repository..." -Level info
-        git clone https://github.com/lcx1215/lcx-s-agent.git $RepoDir 2>&1
+        git clone https://github.com/lcx1215/lcx-s-agent.git $RepoDir 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { return $false }
     } elseif ($Update) {
         Write-Host "  Updating repository..." -Level info
-        git -C $RepoDir pull --rebase 2>&1
+        git -C $RepoDir pull --ff-only 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { return $false }
     }
     
     # Install pnpm if not present
     if (!(Get-Command pnpm -ErrorAction SilentlyContinue)) {
         Write-Host "  Installing pnpm..." -Level info
-        npm install -g pnpm 2>&1
+        npm install -g pnpm 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { return $false }
     }
     
     # Install dependencies
     Write-Host "  Installing dependencies..." -Level info
-    pnpm install --dir $RepoDir 2>&1
+    pnpm install --dir $RepoDir --frozen-lockfile 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { return $false }
     
     # Build
     Write-Host "  Building..." -Level info
-    pnpm --dir $RepoDir build 2>&1
+    pnpm --dir $RepoDir build 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { return $false }
     
     # Create wrapper
     $wrapperDir = "$env:USERPROFILE\.local\bin"
@@ -248,10 +333,24 @@ function Install-OpenClawGit {
         New-Item -ItemType Directory -Path $wrapperDir -Force | Out-Null
     }
     
-    @"
+    $entry = Join-Path (Resolve-Path -LiteralPath $RepoDir).Path "lcx.mjs"
+    $entryJson = ConvertTo-Json -InputObject $entry -Compress
+    $launcher = @"
+const { spawnSync } = require('node:child_process');
+const result = spawnSync(process.execPath, [$entryJson, ...process.argv.slice(2)], { stdio: 'inherit' });
+if (result.error) console.error('LCX launcher could not start Node');
+process.exit(result.status ?? 1);
+"@
+    [IO.File]::WriteAllText((Join-Path $wrapperDir "lcx-launcher.cjs"), $launcher, [Text.UTF8Encoding]::new($false))
+    @'
 @echo off
-node "%~dp0..\openclaw\dist\entry.js" %*
-"@ | Out-File -FilePath "$wrapperDir\openclaw.cmd" -Encoding ASCII -Force
+node "%~dp0lcx-launcher.cjs" %*
+'@ | Out-File -FilePath "$wrapperDir\lcx.cmd" -Encoding ASCII -Force
+    @'
+@echo off
+call "%~dp0lcx.cmd" %*
+'@ | Out-File -FilePath "$wrapperDir\openclaw.cmd" -Encoding ASCII -Force
+    Add-ToPath -Path $wrapperDir
     
     Write-Host "LCX Agent installed" -Level success
     return $true
@@ -285,6 +384,7 @@ function Main {
     }
     
     if ($InstallMethod -eq "git") {
+        $GitDir = Resolve-LcxGitDir -Requested $GitDir
         if (!(Ensure-Git)) {
             exit 1
         }
@@ -292,7 +392,7 @@ function Main {
         if ($DryRun) {
             Write-Host "[DRY RUN] Would install LCX Agent from git to $GitDir" -Level info
         } else {
-            Install-OpenClawGit -RepoDir $GitDir -Update:(-not $NoGitUpdate)
+            if (!(Install-OpenClawGit -RepoDir $GitDir -Update:(-not $NoGitUpdate))) { exit 1 }
         }
     } else {
         # npm method
@@ -303,7 +403,7 @@ function Main {
         if ($DryRun) {
             Write-Host "[DRY RUN] Would install LCX Agent via npm (tag: $Tag)" -Level info
         } else {
-            if (!(Install-OpenClawNpm -Version $Tag)) {
+            if (!(Install-OpenClawNpm -Version $Tag -Tarball $Artifact)) {
                 exit 1
             }
         }

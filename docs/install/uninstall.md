@@ -25,7 +25,7 @@ Non-interactive (automation / npx):
 
 ```bash
 lcx uninstall --all --yes --non-interactive
-npx -y lcx uninstall --all --yes --non-interactive
+npx -y --package lcx-agent lcx uninstall --all --yes --non-interactive
 ```
 
 Manual steps (same result):
@@ -59,10 +59,15 @@ rm -rf ~/.openclaw/workspace
 5. Remove the CLI install (pick the one you used):
 
 ```bash
-npm rm -g openclaw
-pnpm remove -g openclaw
-bun remove -g openclaw
+npm rm -g lcx-agent
+pnpm remove -g lcx-agent
+bun remove -g lcx-agent
 ```
+
+For a historical global installation whose package name is `openclaw`, remove
+that package instead with `npm rm -g openclaw`, `pnpm remove -g openclaw`, or
+`bun remove -g openclaw`, using the original package manager. This removes a
+legacy installation; it does not install an upstream replacement.
 
 Notes:
 
@@ -110,8 +115,8 @@ If you used a profile, delete the matching task name and `~\.openclaw-<profile>\
 
 ### Normal install (install.sh / npm / pnpm / bun)
 
-If you used `https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh` or `install.ps1`, the CLI was installed with `npm install -g openclaw@latest`.
-Remove it with `npm rm -g openclaw` (or `pnpm remove -g` / `bun remove -g` if you installed that way).
+If you used `https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh` or `install.ps1`, the CLI was installed with `npm install -g lcx-agent@latest`.
+Remove it with `npm rm -g lcx-agent` (or `pnpm remove -g` / `bun remove -g` if you installed that way).
 
 ### Source checkout (git clone)
 

@@ -402,6 +402,11 @@ jobs:
           name: dist-build
           path: dist
 
+      - name: Validate LCX Windows installer failure paths
+        if: matrix.shard_index == 1
+        shell: pwsh
+        run: ./scripts/tests/test-install-ps1.ps1
+
       - name: Try to exclude workspace from Windows Defender (best-effort)
         shell: pwsh
         run: |
