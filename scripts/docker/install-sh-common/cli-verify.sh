@@ -52,6 +52,7 @@ verify_installed_cli() {
   local package_name="$1"
   local expected_version="$2"
   local cli_name="$package_name"
+  if [[ "$package_name" == "lcx-agent" ]]; then cli_name="lcx"; fi
   local cmd_path=""
   local entry_path=""
   local resolved_cmd_path=""
@@ -64,8 +65,8 @@ verify_installed_cli() {
   local cli_path="${PATH:-}"
 
   cmd_path="$(command -v "$cli_name" || true)"
-  if [[ -z "$cmd_path" && -x "$HOME/.npm-global/bin/$package_name" ]]; then
-    cmd_path="$HOME/.npm-global/bin/$package_name"
+  if [[ -z "$cmd_path" && -x "$HOME/.npm-global/bin/$cli_name" ]]; then
+    cmd_path="$HOME/.npm-global/bin/$cli_name"
   fi
 
   if [[ -z "$cmd_path" ]]; then

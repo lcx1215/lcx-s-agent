@@ -4,10 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_IMAGE="${OPENCLAW_INSTALL_SMOKE_IMAGE:-${CLAWDBOT_INSTALL_SMOKE_IMAGE:-openclaw-install-smoke:local}}"
 NONROOT_IMAGE="${OPENCLAW_INSTALL_NONROOT_IMAGE:-${CLAWDBOT_INSTALL_NONROOT_IMAGE:-openclaw-install-nonroot:local}}"
-INSTALL_URL="${OPENCLAW_INSTALL_URL:-${CLAWDBOT_INSTALL_URL:-https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh}}"
-CLI_INSTALL_URL="${OPENCLAW_INSTALL_CLI_URL:-${CLAWDBOT_INSTALL_CLI_URL:-https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh}}"
 SKIP_NONROOT="${OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT:-${CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT:-0}}"
+if [[ ! -f "${LCX_INSTALL_TARBALL:-}" ]]; then
+  echo "ERROR: set LCX_INSTALL_TARBALL to the package built from this checkout" >&2
+  exit 1
+fi
+LCX_INSTALL_TARBALL="$(cd "$(dirname "$LCX_INSTALL_TARBALL")" && pwd)/$(basename "$LCX_INSTALL_TARBALL")"
 LATEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$LATEST_DIR"' EXIT
 LATEST_FILE="${LATEST_DIR}/latest"
 
 echo "==> Build smoke image (upgrade, root): $SMOKE_IMAGE"
@@ -16,10 +20,12 @@ docker build \
   -f "$ROOT_DIR/scripts/docker/install-sh-smoke/Dockerfile" \
   "$ROOT_DIR/scripts/docker"
 
-echo "==> Run installer smoke test (root): $INSTALL_URL"
+echo "==> Run installer smoke test (root): current LCX build"
 docker run --rm -t \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
   -v "${LATEST_DIR}:/out" \
-  -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
   -e OPENCLAW_INSTALL_METHOD=npm \
   -e OPENCLAW_INSTALL_LATEST_OUT="/out/latest" \
   -e OPENCLAW_INSTALL_SMOKE_PREVIOUS="${OPENCLAW_INSTALL_SMOKE_PREVIOUS:-${CLAWDBOT_INSTALL_SMOKE_PREVIOUS:-}}" \
@@ -42,9 +48,11 @@ else
     -f "$ROOT_DIR/scripts/docker/install-sh-nonroot/Dockerfile" \
     "$ROOT_DIR/scripts/docker"
 
-  echo "==> Run installer non-root test: $INSTALL_URL"
+  echo "==> Run installer non-root test: current LCX build"
   docker run --rm -t \
-    -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
     -e OPENCLAW_INSTALL_METHOD=npm \
     -e OPENCLAW_INSTALL_EXPECT_VERSION="$LATEST_VERSION" \
     -e OPENCLAW_NO_ONBOARD=1 \
@@ -64,9 +72,10 @@ fi
 
 echo "==> Run CLI installer non-root test (same image)"
 docker run --rm -t \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
   --entrypoint /bin/bash \
-  -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
-  -e OPENCLAW_INSTALL_CLI_URL="$CLI_INSTALL_URL" \
   -e OPENCLAW_NO_ONBOARD=1 \
   -e DEBIAN_FRONTEND=noninteractive \
-  "$NONROOT_IMAGE" -lc "curl -fsSL \"$CLI_INSTALL_URL\" | bash -s -- --set-npm-prefix --no-onboard"
+  "$NONROOT_IMAGE" -lc "bash /lcx-install.sh --set-npm-prefix --no-onboard"

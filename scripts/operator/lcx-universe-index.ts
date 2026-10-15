@@ -127,6 +127,10 @@ async function execLinesWithStatus(
   }
 }
 
+function normalizeRepoPaths(files: readonly string[]): string[] {
+  return files.map((file) => file.replaceAll("\\", "/"));
+}
+
 function topLevel(file: string): string {
   return file.split("/")[0] || ".";
 }
@@ -213,6 +217,15 @@ type GovernanceInventoryArea = {
  * existing lane that is responsible for change/proof decisions.
  */
 const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
+  {
+    id: "generated_protocol_schema",
+    patterns: [/^dist\/protocol\.schema\.json$/u],
+    category: "generated_protocol_contract",
+    routeOwner: "scripts/protocol-gen.ts",
+    proofSurface: "pnpm protocol:check verifies generated schema against the protocol owner",
+    boundary: "tracked schema is generated output; other dist files remain unclassified",
+    disposition: "governed_source",
+  },
   {
     id: "deployment_configuration_surface",
     patterns: [/^deploy\//u],
@@ -761,8 +774,8 @@ async function main() {
       false,
     ),
   ]);
-  const trackedFiles = trackedInventory.lines;
-  const rgFiles = rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles;
+  const trackedFiles = normalizeRepoPaths(trackedInventory.lines);
+  const rgFiles = normalizeRepoPaths(rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles);
   const repoComponentFiles = [...new Set([...trackedFiles, ...rgFiles])].toSorted();
   const gitStatus = parseGitStatus(gitStatusInventory.lines);
   const [
