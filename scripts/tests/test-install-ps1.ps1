@@ -35,5 +35,21 @@ try {
     Assert (!(Install-OpenClawNpm -Tarball "$fixture/upstream.tgz")) 'Upstream archive accepted'
     Assert ($script:targets.Count -eq $count) 'Invalid archive reached npm'
     Assert (!(Install-OpenClawNpm -Tarball "$fixture/missing.tgz")) 'Missing archive accepted'
+    # Git wrappers must preserve Unicode checkout paths and the legacy command.
+    $oldProfile = $env:USERPROFILE
+    try {
+        $env:USERPROFILE = $fixture
+        $repo = Join-Path $fixture 'LCX 中文 checkout'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        'process.exit(17);' | Set-Content (Join-Path $repo 'lcx.mjs')
+        function pnpm { $global:LASTEXITCODE = 0 }
+        function Add-ToPath { param($Path) }
+        Assert (Install-OpenClawGit -RepoDir $repo) 'Git install wrapper generation failed'
+        $PSNativeCommandUseErrorActionPreference = $false
+        & "$fixture/.local/bin/lcx.cmd" --version
+        Assert ($LASTEXITCODE -eq 17) 'Canonical wrapper lost Unicode path or exit code'
+        & "$fixture/.local/bin/openclaw.cmd" --version
+        Assert ($LASTEXITCODE -eq 17) 'Legacy wrapper failed to delegate'
+    } finally { $env:USERPROFILE = $oldProfile }
 } finally { Remove-Item -LiteralPath $fixture -Recurse -Force }
 Microsoft.PowerShell.Utility\Write-Output 'LCX Windows installer: own target/archive/native failure/invalid artifact checks passed'

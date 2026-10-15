@@ -269,10 +269,22 @@ function Install-OpenClawGit {
     }
     
     $entry = Join-Path (Resolve-Path -LiteralPath $RepoDir).Path "lcx.mjs"
-    @"
+    $entryJson = ConvertTo-Json -InputObject $entry -Compress
+    $launcher = @"
+const { spawnSync } = require('node:child_process');
+const result = spawnSync(process.execPath, [$entryJson, ...process.argv.slice(2)], { stdio: 'inherit' });
+if (result.error) console.error('LCX launcher could not start Node');
+process.exit(result.status ?? 1);
+"@
+    [IO.File]::WriteAllText((Join-Path $wrapperDir "lcx-launcher.cjs"), $launcher, [Text.UTF8Encoding]::new($false))
+    @'
 @echo off
-node "$entry" %*
-"@ | Out-File -FilePath "$wrapperDir\lcx.cmd" -Encoding ASCII -Force
+node "%~dp0lcx-launcher.cjs" %*
+'@ | Out-File -FilePath "$wrapperDir\lcx.cmd" -Encoding ASCII -Force
+    @'
+@echo off
+call "%~dp0lcx.cmd" %*
+'@ | Out-File -FilePath "$wrapperDir\openclaw.cmd" -Encoding ASCII -Force
     Add-ToPath -Path $wrapperDir
     
     Write-Host "LCX Agent installed" -Level success

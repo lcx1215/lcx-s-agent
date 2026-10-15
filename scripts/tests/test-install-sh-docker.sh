@@ -10,7 +10,7 @@ trap 'rm -rf "$LATEST_DIR"' EXIT
 if [[ -z "${LCX_INSTALL_TARBALL:-}" ]]; then
   BUILD_IMAGE="${LCX_INSTALL_BUILD_IMAGE:-lcx-install-build:local}"
   docker build -t "$BUILD_IMAGE" -f "$ROOT_DIR/Dockerfile" "$ROOT_DIR"
-  docker run --rm --user root --entrypoint sh -v "$LATEST_DIR:/out" "$BUILD_IMAGE" -lc 'cd /app && npm pack --ignore-scripts --pack-destination /out'
+  docker run --rm --user root --entrypoint sh -v "$LATEST_DIR:/out" "$BUILD_IMAGE" -lc 'cd /app && test -f assets/chrome-extension/manifest.json && test -f assets/chrome-extension/icons/icon128.png && npm pack --ignore-scripts --pack-destination /out'
   LCX_INSTALL_TARBALL="$(find "$LATEST_DIR" -name 'lcx-agent-*.tgz' -print -quit)"
 fi
 if [[ ! -f "$LCX_INSTALL_TARBALL" ]]; then

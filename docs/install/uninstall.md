@@ -25,7 +25,7 @@ Non-interactive (automation / npx):
 
 ```bash
 lcx uninstall --all --yes --non-interactive
-npx -y lcx-agent uninstall --all --yes --non-interactive
+npx -y --package lcx-agent lcx uninstall --all --yes --non-interactive
 ```
 
 Manual steps (same result):

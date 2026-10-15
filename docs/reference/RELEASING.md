@@ -63,7 +63,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - [ ] `npm login` (verify 2FA) if needed.
 - [ ] `npm publish --access public` (use `--tag beta` for pre-releases).
 - [ ] Do not publish `packages/openclaw` to the upstream namespace. Its name is retained for local compatibility only; publication requires separate package ownership and authorization.
-- [ ] Verify the registry: `npm view lcx-agent version`, `npm view lcx-agent dist-tags`, and `npx -y lcx-agent@X.Y.Z --version` (or `--help`).
+- [ ] Verify the registry: `npm view lcx-agent version`, `npm view lcx-agent dist-tags`, and `npx -y --package lcx-agent@X.Y.Z lcx --version` (or `--help`).
 
 ### Troubleshooting (notes from 2.0.0-beta2 release)
 
@@ -71,7 +71,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - **npm auth web loop for dist-tags**: use legacy auth to get an OTP prompt:
   - `NPM_CONFIG_AUTH_TYPE=legacy npm dist-tag add lcx-agent@X.Y.Z latest`
 - **`npx` verification fails with `ECOMPROMISED: Lock compromised`**: retry with a fresh cache:
-  - `NPM_CONFIG_CACHE=/tmp/npm-cache-$(date +%s) npx -y lcx-agent@X.Y.Z --version`
+  - `NPM_CONFIG_CACHE=/tmp/npm-cache-$(date +%s) npx -y --package lcx-agent@X.Y.Z lcx --version`
 - **Tag needs repointing after a late fix**: force-update and push the tag, then ensure the GitHub release assets still match:
   - `git tag -f vX.Y.Z && git push -f origin vX.Y.Z`
 
@@ -80,7 +80,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - [ ] Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (or `git push --tags`).
 - [ ] Create/refresh the GitHub release for `vX.Y.Z` with **title `LCX Agent X.Y.Z`** (not just the tag); body should include the **full** changelog section for that version (Highlights + Changes + Fixes), inline (no bare links), and **must not repeat the title inside the body**.
 - [ ] Attach the `npm pack` tarball (optional).
-- [ ] From a clean temp directory (no `package.json`), run `npx -y lcx-agent@X.Y.Z send --help` to confirm install/CLI entrypoints work.
+- [ ] From a clean temp directory (no `package.json`), run `npx -y --package lcx-agent@X.Y.Z lcx send --help` to confirm install/CLI entrypoints work.
 - [ ] Announce/share release notes.
 
 ## Plugin publish scope (npm)
