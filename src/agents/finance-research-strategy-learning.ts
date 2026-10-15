@@ -40,10 +40,12 @@ export async function persistFinanceResearchStrategyLearning(params: {
   observedAt: string;
   receiptReference: string;
   runId: string;
+  onStage?: (stage: "proposal_validation" | "draft_persistence") => void;
 }) {
   if (!params.eligible) {
     return { status: "not_eligible", results: [] };
   }
+  params.onStage?.("proposal_validation");
   z.string().datetime().parse(params.observedAt);
   const proposals = z
     .array(FinanceResearchStrategyProposalSchema)
@@ -118,6 +120,7 @@ export async function persistFinanceResearchStrategyLearning(params: {
   if (new Set(inputs.map((input) => input.ruleId)).size !== inputs.length) {
     throw new Error("duplicate method proposals");
   }
+  params.onStage?.("draft_persistence");
   const prior = await readFinanceStrategyRuleLedger(params.directory);
   const results = [];
   for (const input of inputs) {
@@ -172,3 +175,12 @@ export async function persistFinanceResearchStrategyLearning(params: {
       "original_form_implementation_validation_then_independent_activation_and_original_execution_gates",
   };
 }
+
+export type FinanceResearchStrategyLearningResult =
+  | Awaited<ReturnType<typeof persistFinanceResearchStrategyLearning>>
+  | Readonly<{
+      status: "refused";
+      stage: "proposal_validation" | "draft_persistence";
+      reason: "method_draft_source_or_schema_invalid" | "method_draft_ledger_failed";
+      results: readonly [];
+    }>;

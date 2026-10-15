@@ -180,13 +180,19 @@ it.each(["failed_quality", "foreign", "future", "unsupported_claim"])(
 
 it("rejects conflicting original evidence identities before creating a method", async () => {
   const params = await input();
+  const stages: string[] = [];
   params.evidence.push({
     ...params.evidence[0],
     text: "Contradictory bytes under the same original identity",
   });
-  await expect(persistFinanceResearchStrategyLearning(params)).rejects.toThrow(
-    "ambiguous method source",
-  );
+  await expect(
+    persistFinanceResearchStrategyLearning({
+      ...params,
+      onStage: (stage) => {
+        stages.push(stage);
+      },
+    }),
+  ).rejects.toThrow("ambiguous method source");
   expect((await readFinanceStrategyRuleLedger(params.directory)).recordCount).toBe(0);
 });
 

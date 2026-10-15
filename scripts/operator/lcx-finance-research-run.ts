@@ -46,7 +46,10 @@ import {
   type FinanceResearchRunInput,
   type FinanceResearchRunReceipt,
 } from "../../src/agents/finance-research-runner.ts";
-import { persistFinanceResearchStrategyLearning } from "../../src/agents/finance-research-strategy-learning.js";
+import {
+  persistFinanceResearchStrategyLearning,
+  type FinanceResearchStrategyLearningResult,
+} from "../../src/agents/finance-research-strategy-learning.js";
 import {
   persistFinanceResearchThesisLearning,
   validateFinanceResearchThesisProposals,
@@ -1104,7 +1107,7 @@ export async function run(options: Options): Promise<{
   portfolioPlanWritten?: string;
   portfolioPlanWrite?: FinancePortfolioPlanWrite;
   thesisLearning?: FinanceResearchThesisLearningResult;
-  strategyLearning?: Awaited<ReturnType<typeof persistFinanceResearchStrategyLearning>>;
+  strategyLearning?: FinanceResearchStrategyLearningResult;
 }> {
   const ask = assertResearchAsk(options.ask);
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
@@ -1336,9 +1339,7 @@ export async function run(options: Options): Promise<{
   );
   const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
   let thesisLearning: FinanceResearchThesisLearningResult | undefined;
-  let strategyLearning:
-    | Awaited<ReturnType<typeof persistFinanceResearchStrategyLearning>>
-    | undefined;
+  let strategyLearning: FinanceResearchStrategyLearningResult | undefined;
   if (options.persistTheses && written && options.financeStateDir) {
     const state = resolveFinanceStateDir({ directory: options.financeStateDir });
     const artifact = receipt.quality?.finalArtifact;
@@ -1375,8 +1376,12 @@ export async function run(options: Options): Promise<{
   }
   if (options.persistTheses && written && options.financeStateDir) {
     const artifact = receipt.quality?.finalArtifact;
+    let stage: "proposal_validation" | "draft_persistence" = "proposal_validation";
     try {
       strategyLearning = await persistFinanceResearchStrategyLearning({
+        onStage: (next) => {
+          stage = next;
+        },
         directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
         eligible:
           receipt.status === "candidate" &&
@@ -1396,7 +1401,15 @@ export async function run(options: Options): Promise<{
         runId: receipt.quality?.runId ?? "",
       });
     } catch {
-      strategyLearning = { status: "refused", results: [] };
+      strategyLearning = {
+        status: "refused",
+        stage,
+        reason:
+          stage === "proposal_validation"
+            ? "method_draft_source_or_schema_invalid"
+            : "method_draft_ledger_failed",
+        results: [],
+      };
     }
   }
   const portfolioPlanWrite =
