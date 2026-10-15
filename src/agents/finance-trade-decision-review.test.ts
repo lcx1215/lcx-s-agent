@@ -849,13 +849,12 @@ describe("configured finance trade decision reviewer", () => {
     expect(context).toEqual(buildFinanceOpportunityContext(packet));
     expect(context[0].conditionalUpsideFraction).toBeCloseTo(56 / 501, 12);
     expect(context[0].plannedHoldingHorizonMinutes).toBeNull();
-    expect(prompt).toContain("session close alone does not declare a holding deadline");
-    expect(prompt).toContain("opening_range_breakout_long_pre_close_v2");
+    expect(prompt).toContain("Use candidate.ruleContract");
     expect(prompt).toContain(
-      "opening_range_breakout_long_dynamic_universe_v3 require a pre_close exit",
+      "preCloseExitEnabled requires exit from exitEligibleAt before marketCloseAt",
     );
-    expect(prompt).toContain("do not assume overnight holding for them");
-    expect(prompt).not.toContain("session close is not a declared holding deadline");
+    expect(prompt).toContain("Hypotheses may compete, but cannot override these constraints");
+    expect(prompt).not.toContain("opening_range_breakout_long_dynamic_universe_v3 require");
     expect(prompt).toContain("frame a testable question");
     expect(prompt).toContain("Daily history can describe historical scale");
     expect(prompt).toContain("if the packet already suffices, decide directly");

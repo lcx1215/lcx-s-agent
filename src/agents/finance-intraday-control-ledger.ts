@@ -27,6 +27,7 @@ import {
   FinanceBrokerExitFeedbackSchema,
   FinanceBrokerExitResponseSchema,
 } from "./finance-expectation-gap.js";
+import { FinanceIntradayRuleSummarySchema } from "./finance-intraday-paper.js";
 import { FINANCE_PROTECTED_REDUCTION_STAGES } from "./finance-protection-coordination.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
@@ -283,6 +284,7 @@ const IntradayReviewCandidateSchema = z
       })
       .strict()
       .optional(),
+    ruleContract: FinanceIntradayRuleSummarySchema.optional(),
     plannedQuantity: z.number().finite().positive().optional(),
     plannedNotional: z.number().finite().positive().optional(),
     intradayOwnedQuantity: z.number().finite(),

@@ -36,6 +36,7 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
   type FinanceIntradayActiveRuleContract,
   resolveFinanceIntradayActiveRuleContract,
+  summarizeFinanceIntradayRule,
 } from "./finance-intraday-paper.js";
 import {
   readFinanceIntradayOwnedPositions,
@@ -365,7 +366,7 @@ async function strategyBindingIssue(
   decision: FinanceIntradayDecisionRecord,
   asOf: string,
   accountId: string,
-): Promise<string | null> {
+): Promise<string | FinanceIntradayActiveRuleContract> {
   const binding = decision.input.strategyBinding;
   if (!binding) {
     return "legacy intraday decision has no active-strategy provenance";
@@ -493,7 +494,7 @@ async function strategyBindingIssue(
     }
     // Retirement removes entry authority, not the obligation to close proven inventory.
     // The original declaration, session, quote, broker holding and execution gates still apply.
-    return null;
+    return contract;
   }
   if (binding.scope === "strategy_universe" && binding.universeSnapshotRef !== undefined) {
     return "strategy-universe decision unexpectedly carries a system snapshot reference";
@@ -515,7 +516,7 @@ async function strategyBindingIssue(
       return "system-universe snapshot is missing, stale, or invalid";
     }
   }
-  return null;
+  return contract;
 }
 
 export async function executeFinanceIntradayDecision(params: {
@@ -636,7 +637,7 @@ export async function executeFinanceIntradayDecision(params: {
         params.controller.accountId,
       ),
     );
-    if (strategyIssue) {
+    if (typeof strategyIssue === "string") {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
         status: "refused",
@@ -965,6 +966,10 @@ export async function executeFinanceIntradayDecision(params: {
             ...(input.targetPrice === undefined ? {} : { targetPrice: input.targetPrice }),
             datasetHeadRef: input.datasetHeadRef,
             marketSession: input.strategyBinding!.marketSession!,
+            ruleContract: summarizeFinanceIntradayRule(
+              strategyIssue,
+              input.strategyBinding!.marketSession!,
+            ),
             intradayOwnedQuantity: owned,
             brokerPositionQuantity: brokerHeld,
             plannedQuantity: preflight.intent.quantity,
@@ -1357,7 +1362,7 @@ export async function executeFinanceIntradayDecision(params: {
         ),
       remainingReviewMs,
     );
-    if (finalCalendarIssue) {
+    if (typeof finalCalendarIssue === "string") {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
         status: "refused",

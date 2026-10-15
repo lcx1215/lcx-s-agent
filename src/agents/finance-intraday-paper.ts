@@ -54,6 +54,51 @@ export type FinanceIntradayActiveRuleContract = Readonly<{
   eligibility: FinanceIntradayPaperExecutionEligibility;
 }>;
 
+/** A projection of the validated rule, never another execution policy. */
+export const FinanceIntradayRuleSummarySchema = z
+  .object({
+    ruleId: z.string().min(1),
+    declarationRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    activationRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    intervalSeconds: z.union([z.literal(60), z.literal(300), z.literal(900)]),
+    feed: z.enum(["iex", "sip"]),
+    openingRangeBars: z.number().int().min(2).max(12),
+    rewardRisk: z.number().finite().positive(),
+    preCloseExitEnabled: z.boolean(),
+    exitEligibleAt: z.string().datetime().nullable(),
+    marketCloseAt: z.string().datetime(),
+    paperUniverseScope: z.enum(["static", "fresh_us_equity_selection_v1"]),
+  })
+  .strict();
+export type FinanceIntradayRuleSummary = z.infer<typeof FinanceIntradayRuleSummarySchema>;
+
+export function summarizeFinanceIntradayRule(
+  contract: FinanceIntradayActiveRuleContract,
+  session: FinanceAlpacaMarketSession,
+): FinanceIntradayRuleSummary {
+  const issue = financeAlpacaMarketSessionIssue(session);
+  if (issue) {
+    throw new Error(issue);
+  }
+  return FinanceIntradayRuleSummarySchema.parse({
+    ruleId: contract.ruleId,
+    declarationRef: contract.declarationRef,
+    activationRef: contract.activationRef,
+    intervalSeconds: contract.intervalSeconds,
+    feed: contract.feed,
+    openingRangeBars: contract.openingRangeBars,
+    rewardRisk: contract.rewardRisk,
+    preCloseExitEnabled: contract.preCloseExitEnabled,
+    // The existing pre-close signal bar starts two intervals before close and
+    // becomes actionable only when it closes, one interval before close.
+    exitEligibleAt: contract.preCloseExitEnabled
+      ? new Date(Date.parse(session.closeAt) - contract.intervalSeconds * 1_000).toISOString()
+      : null,
+    marketCloseAt: session.closeAt,
+    paperUniverseScope: contract.paperUniverseScope,
+  });
+}
+
 export type FinanceIntradayOpeningRangeRuleId =
   | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
   | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2

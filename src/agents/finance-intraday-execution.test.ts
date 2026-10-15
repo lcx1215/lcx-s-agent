@@ -42,6 +42,7 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
   resolveFinanceIntradayActiveRuleContract,
+  summarizeFinanceIntradayRule,
 } from "./finance-intraday-paper.js";
 import { readFinanceIntradayOwnedPositions } from "./finance-intraday-position.js";
 import {
@@ -129,6 +130,16 @@ it.each(["still_relevant", "resolved", "unavailable"] as const)(
         alternativeHypothesis: "Inspect range reversion through the existing research owner.",
       };
       const reviewer = vi.fn(async (packet: FinanceTradeDecisionReviewRequest) => {
+        if (packet.schemaVersion === "lcx_finance_intraday_trade_decision_review_v1") {
+          expect(packet.candidates[0].ruleContract).toMatchObject({
+            declarationRef: strategyBinding.declarationRef,
+            activationRef: strategyBinding.activationRef,
+            preCloseExitEnabled: false,
+            exitEligibleAt: null,
+            marketCloseAt: strategyBinding.marketSession!.closeAt,
+          });
+        }
+
         if (packet.schemaVersion !== "lcx_finance_intraday_trade_decision_review_v1") {
           throw new Error("expected intraday packet");
         }
@@ -3954,5 +3965,48 @@ it.each(["retain", "change", "unavailable"] as const)(
         consequence: mode === "change" ? "need_more_evidence" : "retain_candidate",
       });
     }
+  },
+);
+
+it.each([
+  { dynamic: false, closeMinute: 960, closeAt: "2026-09-18T20:00:00.000Z", expected: null },
+  {
+    dynamic: true,
+    closeMinute: 960,
+    closeAt: "2026-09-18T20:00:00.000Z",
+    expected: "2026-09-18T19:55:00.000Z",
+  },
+  {
+    dynamic: true,
+    closeMinute: 780,
+    closeAt: "2026-09-18T17:00:00.000Z",
+    expected: "2026-09-18T16:55:00.000Z",
+  },
+])(
+  "projects the native rule and calendar into review without inventing deadlines $dynamic $closeMinute",
+  async ({ dynamic, closeMinute, closeAt, expected }) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "rule-summary-"));
+    temporary.push(directory);
+    const binding = await activeRuleBinding(directory, "paper_execution_eligible", dynamic);
+    const { ledger } = await readFinanceStrategyRuleLedger(directory);
+    const contract = resolveFinanceIntradayActiveRuleContract(ledger.rules[0]);
+    const session = { ...binding.marketSession!, closeMinute, closeAt };
+    session.calendarRef = caseflowFingerprint({
+      source: FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+      sourceUrlOrArtifact: session.sourceUrlOrArtifact,
+      date: session.date,
+      openAt: session.openAt,
+      closeAt: session.closeAt,
+    });
+    const summary = summarizeFinanceIntradayRule(contract, session);
+    expect(summary).toMatchObject({
+      ruleId: contract.ruleId,
+      declarationRef: binding.declarationRef,
+      activationRef: binding.activationRef,
+      preCloseExitEnabled: dynamic,
+      exitEligibleAt: expected,
+      marketCloseAt: closeAt,
+      intervalSeconds: 300,
+    });
   },
 );
