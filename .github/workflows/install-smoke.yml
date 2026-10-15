@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout CLI
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -51,6 +53,26 @@ jobs:
 
       - name: Set up Docker Builder
         uses: docker/setup-buildx-action@v3
+
+      - name: Build changed sandbox images
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" ]]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --name-only "$BASE_SHA" HEAD -- Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+          else
+            printf '%s\n' Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+          fi
+          while IFS= read -r dockerfile; do
+            [[ -n "$dockerfile" ]] || continue
+            image="lcx-sandbox-validation:${dockerfile#Dockerfile.}"
+            docker build -t "$image" -f "$dockerfile" .
+            docker run --rm --entrypoint /bin/bash "$image" -lc 'python3 --version && curl --version'
+            if [[ "$dockerfile" == "Dockerfile.sandbox-browser" ]]; then
+              docker run --rm --entrypoint chromium "$image" --version
+            fi
+          done < "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
 
       - name: Run root Dockerfile CLI smoke
         run: |
