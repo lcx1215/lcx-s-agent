@@ -1,4 +1,7 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   isReadyFinanceValueAssessment,
   type FinanceValueAssessment,
@@ -99,6 +102,78 @@ export function validateFinancePortfolioPlan(
   ) {
     throw new Error("portfolio budgets must be unique and cannot exceed account equity");
   }
+}
+
+export const FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME = "research-portfolio-plan-latest.json";
+
+/** Read the original research owner output; absence preserves legacy configuration. */
+export async function readFinanceResearchPortfolioPlan(
+  directory: string,
+): Promise<FinancePortfolioPlan | undefined> {
+  let text: string;
+  try {
+    text = await fs.readFile(
+      path.join(directory, FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME),
+      "utf8",
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw new Error("finance portfolio plan unreadable", { cause: error });
+  }
+  return financePortfolioPlanSchema.parse(JSON.parse(text));
+}
+
+export const FinanceStrategyCapitalBudgetSchema = z
+  .object({
+    planRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    strategyId: z.string().min(1),
+    asOf: z.string().datetime(),
+    validUntil: z.string().datetime(),
+    budgetFraction: z.number().finite().min(0).max(1),
+    allocatedNotional: z.number().finite().nonnegative(),
+    committedNotional: z.number().finite().nonnegative(),
+    availableNotional: z.number().finite().nonnegative(),
+  })
+  .strict();
+export type FinanceStrategyCapitalBudget = z.infer<typeof FinanceStrategyCapitalBudgetSchema>;
+
+/** Research allocations constrain existing entry caps; they never enlarge authority. */
+export function financeStrategyCapitalBudget(params: {
+  plan: FinancePortfolioPlan;
+  asOf: string;
+  accountId: string;
+  venue: string;
+  strategyId: string;
+  equity: number;
+  committedNotional: number;
+}): FinanceStrategyCapitalBudget {
+  validateFinancePortfolioPlan(params.plan, params.asOf, params.venue);
+  if (
+    params.plan.accountId !== params.accountId ||
+    !Number.isFinite(params.equity) ||
+    params.equity <= 0 ||
+    !Number.isFinite(params.committedNotional) ||
+    params.committedNotional < 0
+  ) {
+    throw new Error("strategy capital account or valuation invalid");
+  }
+  const allocation = params.plan.allocations.find((a) => a.strategyId === params.strategyId);
+  if (!allocation) {
+    throw new Error("strategy capital allocation missing");
+  }
+  const allocatedNotional = params.equity * allocation.budgetFraction;
+  return FinanceStrategyCapitalBudgetSchema.parse({
+    planRef: caseflowFingerprint(params.plan),
+    strategyId: params.strategyId,
+    asOf: params.plan.asOf,
+    validUntil: params.plan.validUntil,
+    budgetFraction: allocation.budgetFraction,
+    allocatedNotional,
+    committedNotional: params.committedNotional,
+    availableNotional: Math.max(0, allocatedNotional - params.committedNotional),
+  });
 }
 
 /** Each strategy owns a fraction of equity; unused cash stays cash, never renormalized. */

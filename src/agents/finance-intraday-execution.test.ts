@@ -4010,3 +4010,119 @@ it.each([
     });
   },
 );
+
+it.each(["zero", "foreign", "expired", "bounded", "changed"] as const)(
+  "original intraday entry consumes research capital allocation %s",
+  async (mode) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-allocation-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const at = "2026-09-18T15:00:02.000Z";
+    const planPath = path.join(directory, "research-portfolio-plan-latest.json");
+    const plan = {
+      asOf: "2026-09-18T14:59:00.000Z",
+      validUntil: mode === "expired" ? "2026-09-18T15:00:00.000Z" : "2026-09-18T16:00:00.000Z",
+      venue: "alpaca",
+      accountId: mode === "foreign" ? "other-account" : "paper-account",
+      conflictPolicy: "block",
+      allocations: [
+        {
+          strategyId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+          budgetFraction: mode === "zero" ? 0 : 0.02,
+        },
+      ],
+      candidates: [],
+    };
+    await fs.writeFile(planPath, JSON.stringify(plan));
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: `allocation-${mode}`,
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T15:00:01.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "c".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    const runOrder = vi.fn();
+    const reviewer = vi.fn<FinanceTradeDecisionReviewer>(async (packet) => {
+      if (packet.schemaVersion === "lcx_finance_intraday_trade_decision_review_v1") {
+        expect(packet.candidates[0].plannedNotional).toBe(2000);
+        expect(packet.candidates[0].capitalBudget).toMatchObject({
+          budgetFraction: 0.02,
+          availableNotional: 2000,
+        });
+      }
+      if (mode === "changed") {
+        await fs.writeFile(
+          planPath,
+          JSON.stringify({
+            ...plan,
+            allocations: [{ strategyId: FINANCE_INTRADAY_OPENING_RANGE_RULE, budgetFraction: 0 }],
+          }),
+        );
+      }
+      const approved = await approvingReviewer()(packet);
+      return mode === "bounded"
+        ? {
+            ...approved,
+            decisions: approved.decisions?.map((d) => ({ ...d, decision: "veto" as const })),
+          }
+        : approved;
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at);
+    try {
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: async () => ({
+            accountId: "paper-account",
+            venue: "alpaca:paper",
+            observedAt: "2026-09-18T15:00:01.000Z",
+            expiresAt: "2026-09-18T15:01:01.000Z",
+            equity: 100000,
+            positions: [],
+          }),
+          executionQuoteProvider: async () => ({
+            referencePrice: 100,
+            referencePriceAt: "2026-09-18T15:00:01.000Z",
+            bidPrice: 99.9,
+            askPrice: 100,
+            maxAgeMs: 30000,
+            sourceUrlOrArtifact: "fixture://quote",
+          }),
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 5000, maxInstrumentNotional: 10000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        runOrder: runOrder as never,
+        now: () => Date.parse(at),
+      });
+      expect(result.status).toBe("refused");
+      expect(runOrder).not.toHaveBeenCalled();
+      if (mode === "zero" || mode === "foreign" || mode === "expired") {
+        expect(reviewer).not.toHaveBeenCalled();
+      } else {
+        expect(reviewer).toHaveBeenCalledOnce();
+      }
+      const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+      if (mode === "changed") {
+        expect(stored?.reasons).toContain("strategy_capital_budget_changed_or_unavailable");
+      }
+      if (mode === "zero") {
+        expect(stored?.reasons).toContain("strategy_capital_budget_exhausted");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

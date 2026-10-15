@@ -74,6 +74,7 @@ import {
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
+import { FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME } from "../../src/agents/finance-portfolio-composition.js";
 import { readFinancePositionRecords } from "../../src/agents/finance-position-ledger.js";
 import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance-research-evidence.js";
 import {
@@ -2169,7 +2170,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     }
     dayPreflightProgressFailure = { error };
   }
-  const portfolioPlanPath = path.join(directory, "research-portfolio-plan-latest.json");
+  const portfolioPlanPath = path.join(directory, FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME);
   const research =
     mode === "day" && context.options.researchPlan
       ? dayPreflightProgressFailure

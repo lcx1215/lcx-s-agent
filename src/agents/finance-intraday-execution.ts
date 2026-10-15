@@ -42,6 +42,12 @@ import {
   readFinanceIntradayOwnedPositions,
   receiptsForIntradayStrategy,
 } from "./finance-intraday-position.js";
+import {
+  readFinanceResearchPortfolioPlan,
+  financeStrategyCapitalBudget,
+  validateFinancePortfolioPlan,
+  type FinanceStrategyCapitalBudget,
+} from "./finance-portfolio-composition.js";
 import { readFinancePositionRecords } from "./finance-position-ledger.js";
 import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
@@ -707,6 +713,77 @@ export async function executeFinanceIntradayDecision(params: {
     const protectiveExit =
       input.action === "sell" &&
       ["opening_range_stop", "reward_target", "pre_close"].includes(input.reason);
+    let capitalBudget: FinanceStrategyCapitalBudget | undefined;
+    let portfolioPlanRef: string | undefined;
+    let capitalBudgetFailure = "plan_read";
+    if (input.action === "buy") {
+      try {
+        const plan = await waitForPreparation(signal, () =>
+          readFinanceResearchPortfolioPlan(params.directory),
+        );
+        if (plan) {
+          capitalBudgetFailure = "open_lot_attribution";
+          const decisions = await waitForPreparation(signal, () =>
+            readFinanceIntradayDecisions(params.directory),
+          );
+          let committedNotional = 0;
+          for (const lot of ownedBook.openLots) {
+            const entry = decisions.find(
+              (d) =>
+                `intent:${d.input.signalId}` === lot.intentId &&
+                d.input.action === "buy" &&
+                d.input.instrument === lot.instrument,
+            );
+            if (!entry) {
+              throw new Error("open strategy lot attribution unavailable");
+            }
+            if (entry.input.strategyRule !== input.strategyRule) {
+              continue;
+            }
+            const holding = account.positions.find((p) => p.instrument === lot.instrument);
+            if (
+              !holding ||
+              holding.quantity < lot.quantity ||
+              holding.quantity <= 0 ||
+              !Number.isFinite(holding.marketValue)
+            ) {
+              throw new Error("open strategy lot broker valuation unavailable");
+            }
+            committedNotional += lot.quantity * Math.abs(holding.marketValue / holding.quantity);
+          }
+          capitalBudgetFailure = "allocation_validation";
+          capitalBudget = financeStrategyCapitalBudget({
+            plan,
+            asOf: new Date(now()).toISOString(),
+            accountId: params.controller.accountId,
+            venue: "alpaca",
+            strategyId: input.strategyRule,
+            equity: account.equity,
+            committedNotional,
+          });
+          portfolioPlanRef = capitalBudget.planRef;
+          if (capitalBudget.availableNotional <= 0) {
+            const outcome = await appendFinanceIntradayOutcome(params.directory, {
+              signalId: input.signalId,
+              status: "refused",
+              reasons: ["strategy_capital_budget_exhausted", `planRef=${capitalBudget.planRef}`],
+            });
+            return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+          }
+        }
+      } catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof PreparationDeadlineError) {
+          throw error;
+        }
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: ["strategy_capital_budget_unavailable", capitalBudgetFailure],
+        });
+        return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+      }
+    }
     const brokerExitFeedback =
       !protectiveExit && input.strategyBinding
         ? await waitForPreparation(signal, () =>
@@ -759,13 +836,14 @@ export async function executeFinanceIntradayDecision(params: {
       : undefined;
     // Size before review from trusted remaining funds. The final locked gate still
     // rereads broker facts; a reviewed discretionary candidate is not resized.
-    const orderCaps =
-      entryHeadroom !== undefined && entryHeadroom > 0
-        ? {
-            ...params.caps,
-            maxOrderNotional: Math.min(params.caps.maxOrderNotional, entryHeadroom),
-          }
-        : params.caps;
+    const orderCaps = {
+      ...params.caps,
+      maxOrderNotional: Math.min(
+        params.caps.maxOrderNotional,
+        entryHeadroom !== undefined && entryHeadroom > 0 ? entryHeadroom : Number.POSITIVE_INFINITY,
+        capitalBudget?.availableNotional ?? Number.POSITIVE_INFINITY,
+      ),
+    };
     const exitNotionalCap = Math.min(orderCaps.maxOrderNotional, orderCaps.maxInstrumentNotional);
     const boundedExitQuantity = (price: number): number => {
       if (
@@ -966,6 +1044,7 @@ export async function executeFinanceIntradayDecision(params: {
             ...(input.targetPrice === undefined ? {} : { targetPrice: input.targetPrice }),
             datasetHeadRef: input.datasetHeadRef,
             marketSession: input.strategyBinding!.marketSession!,
+            ...(capitalBudget ? { capitalBudget } : {}),
             ruleContract: summarizeFinanceIntradayRule(
               strategyIssue,
               input.strategyBinding!.marketSession!,
@@ -1380,6 +1459,41 @@ export async function executeFinanceIntradayDecision(params: {
     signal.throwIfAborted();
     if (remainingReviewMs !== undefined && now() >= reviewDeadlineAt) {
       throw new PreparationDeadlineError();
+    }
+    if (input.action === "buy") {
+      let planIssue = false;
+      try {
+        const plan = await waitForPreparation(
+          signal,
+          () => readFinanceResearchPortfolioPlan(params.directory),
+          remainingReviewMs,
+        );
+        if (plan) {
+          validateFinancePortfolioPlan(plan, new Date(now()).toISOString(), "alpaca");
+        }
+        planIssue = (plan ? caseflowFingerprint(plan) : undefined) !== portfolioPlanRef;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof PreparationDeadlineError) {
+          throw error;
+        }
+        planIssue = true;
+      }
+      if (planIssue) {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: ["strategy_capital_budget_changed_or_unavailable"],
+          tradeDecisionReview,
+          ...reviewHistory(),
+        });
+        return Object.freeze({
+          status: "refused" as const,
+          outcome: outcome.input,
+          tradeDecisionReview,
+          ...reviewHistory(),
+        });
+      }
     }
     setStage("order_dispatch");
     const result = await (params.runOrder ?? runFinanceAlpacaOrder)(orderRequest(referencePrice));

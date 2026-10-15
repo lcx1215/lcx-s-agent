@@ -21,6 +21,7 @@ import {
   FinanceBrokerExitResponseSchema,
 } from "./finance-expectation-gap.js";
 import type { FinanceIntradayRuleSummary } from "./finance-intraday-paper.js";
+import type { FinanceStrategyCapitalBudget } from "./finance-portfolio-composition.js";
 import type { FinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_TRADE_REVIEW_MAX_MODEL_CALLS,
@@ -114,6 +115,7 @@ export type FinanceIntradayTradeDecisionCandidate = Readonly<{
   datasetHeadRef: string;
   marketSession?: FinanceAlpacaMarketSession;
   ruleContract?: FinanceIntradayRuleSummary;
+  capitalBudget?: FinanceStrategyCapitalBudget;
   /** Host preflight values are disclosed for review, never model sizing authority. */
   plannedQuantity?: number;
   plannedNotional?: number;
