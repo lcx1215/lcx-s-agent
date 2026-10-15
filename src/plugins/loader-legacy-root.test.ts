@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { loadOpenClawPlugins } from "./loader.js";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { __testing, loadOpenClawPlugins } from "./loader.js";
 
 const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-plugin-legacy-root-"));
 const pluginDir = path.join(fixtureRoot, "legacy-root-import");
@@ -43,18 +43,31 @@ afterAll(() => {
 
 describe("legacy plugin-sdk root compatibility", () => {
   it("loads a legacy plugin importing the monolithic plugin-sdk root", () => {
-    const registry = loadOpenClawPlugins({
-      cache: false,
-      workspaceDir: pluginDir,
-      config: {
-        plugins: {
-          load: { paths: [pluginFile] },
-          allow: ["legacy-root-import"],
+    // Exercise the shipped SDK; source alias selection has separate resolver coverage.
+    const sdk = path.resolve(import.meta.dirname, "../../dist/plugin-sdk/index.js");
+    expect(fs.existsSync(sdk), "build this checkout before the package compatibility test").toBe(
+      true,
+    );
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      expect(
+        __testing.resolvePluginSdkAliasFile({ srcFile: "index.ts", distFile: "index.js" }),
+      ).toBe(sdk);
+      const registry = loadOpenClawPlugins({
+        cache: false,
+        workspaceDir: pluginDir,
+        config: {
+          plugins: {
+            load: { paths: [pluginFile] },
+            allow: ["legacy-root-import"],
+          },
         },
-      },
-    });
+      });
 
-    const record = registry.plugins.find((entry) => entry.id === "legacy-root-import");
-    expect(record?.status).toBe("loaded");
+      const record = registry.plugins.find((entry) => entry.id === "legacy-root-import");
+      expect(record?.status).toBe("loaded");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   }, 300_000);
 });
