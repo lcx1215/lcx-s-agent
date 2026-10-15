@@ -5,6 +5,10 @@ read_when:
 title: "LCX Agent"
 ---
 
+> Registry commands below require a published `lcx-agent` release. Until one is
+> available, use the [LCX source installation](/install) and install the local
+> build archive with `LCX_INSTALL_TARBALL`; do not substitute upstream packages.
+
 # LCX Agent 🦞
 
 <p align="center">
@@ -96,7 +100,7 @@ The Gateway is the single source of truth for sessions, routing, and channel con
 <Steps>
   <Step title="Install LCX Agent">
     ```bash
-    npm install -g openclaw@latest
+    npm install -g lcx-agent@latest
     ```
   </Step>
   <Step title="Onboard and install the service">

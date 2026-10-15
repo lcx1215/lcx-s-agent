@@ -6,6 +6,10 @@ read_when:
 title: "Linux"
 ---
 
+> Registry commands below require a published `lcx-agent` release. Until one is
+> available, use the [LCX source installation](/install) and install the local
+> build archive with `LCX_INSTALL_TARBALL`; do not substitute upstream packages.
+
 # Linux
 
 The Gateway is fully supported on Linux. **Node is the recommended runtime**.
@@ -17,7 +21,7 @@ existing chat channel.
 ## Beginner quick path (VPS)
 
 1. Install Node 22+
-2. `npm i -g openclaw@latest`
+2. `npm i -g lcx-agent@latest`
 3. `lcx onboard --install-daemon`
 4. From your laptop: `ssh -N -L 18789:127.0.0.1:18789 <user>@<host>`
 5. Open `http://127.0.0.1:18789/` and paste your token
