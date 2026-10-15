@@ -46,6 +46,7 @@ import {
   type FinanceResearchRunInput,
   type FinanceResearchRunReceipt,
 } from "../../src/agents/finance-research-runner.ts";
+import { persistFinanceResearchStrategyLearning } from "../../src/agents/finance-research-strategy-learning.js";
 import {
   persistFinanceResearchThesisLearning,
   validateFinanceResearchThesisProposals,
@@ -1103,6 +1104,7 @@ export async function run(options: Options): Promise<{
   portfolioPlanWritten?: string;
   portfolioPlanWrite?: FinancePortfolioPlanWrite;
   thesisLearning?: FinanceResearchThesisLearningResult;
+  strategyLearning?: Awaited<ReturnType<typeof persistFinanceResearchStrategyLearning>>;
 }> {
   const ask = assertResearchAsk(options.ask);
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
@@ -1334,6 +1336,9 @@ export async function run(options: Options): Promise<{
   );
   const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
   let thesisLearning: FinanceResearchThesisLearningResult | undefined;
+  let strategyLearning:
+    | Awaited<ReturnType<typeof persistFinanceResearchStrategyLearning>>
+    | undefined;
   if (options.persistTheses && written && options.financeStateDir) {
     const state = resolveFinanceStateDir({ directory: options.financeStateDir });
     const artifact = receipt.quality?.finalArtifact;
@@ -1368,6 +1373,32 @@ export async function run(options: Options): Promise<{
       });
     }
   }
+  if (options.persistTheses && written && options.financeStateDir) {
+    const artifact = receipt.quality?.finalArtifact;
+    try {
+      strategyLearning = await persistFinanceResearchStrategyLearning({
+        directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
+        eligible:
+          receipt.status === "candidate" &&
+          receipt.gates.every((gate) => gate.passed) &&
+          receipt.quality?.status === "verified" &&
+          receipt.quality.quality.passed,
+        value: artifact?.supportingAnalysis?.financeStrategyRuleProposals,
+        claims: artifact?.claims ?? [],
+        evidence: (receipt.batch?.committeeEvidence ?? []).slice(
+          0,
+          QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
+        ),
+        instruments: receipt.plan.targets.map((target) => target.instrument),
+        asOf,
+        observedAt: new Date().toISOString(),
+        receiptReference: written.datedPath,
+        runId: receipt.quality?.runId ?? "",
+      });
+    } catch {
+      strategyLearning = { status: "refused", results: [] };
+    }
+  }
   const portfolioPlanWrite =
     options.portfolioPlanOut && receipt.portfolioPlan
       ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
@@ -1379,6 +1410,7 @@ export async function run(options: Options): Promise<{
       ? {}
       : { portfolioPlanWritten: portfolioPlanWrite.path, portfolioPlanWrite }),
     ...(thesisLearning === undefined ? {} : { thesisLearning }),
+    ...(strategyLearning === undefined ? {} : { strategyLearning }),
   };
 }
 
@@ -1444,6 +1476,7 @@ async function main(): Promise<number> {
           portfolioPlanWrite: result.portfolioPlanWrite,
         }),
     ...(result.thesisLearning === undefined ? {} : { thesisLearning: result.thesisLearning }),
+    ...(result.strategyLearning === undefined ? {} : { strategyLearning: result.strategyLearning }),
   };
   if (options.json) {
     process.stdout.write(

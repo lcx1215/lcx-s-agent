@@ -37,6 +37,36 @@ An arrow exists only when the downstream owner consumes an upstream durable
 receipt. A Flow Graph edge, imported module, configured connector, tool name,
 or successful model call is not proof of that handoff.
 
+## Open method development and immediate adaptation
+
+Research may retain, revise or propose competing mechanisms whenever relevant evidence
+changes. The 20-session economic review is a comparison window, never a waiting period
+or a fixed strategy list. A loss alone does not invalidate a method; a win alone cannot
+qualify it or expand account authority.
+
+The original research operator's existing `--persist-theses` path also consumes optional
+quality-supported `financeStrategyRuleProposals`. It verifies the original claim, basis,
+instrument, evidence content and cutoff before declaring a content-addressed **draft**
+in the existing strategy-rule ledger. Repeated proposals cannot overwrite, reopen or
+activate earlier declarations. Arbitrary form names remain admissible as drafts.
+Lifecycle feedback validates these drafts with the actual native form owners and exposes
+missing implementation/contract work to existing strategy-applicability inspection; the
+continued presence of a draft does not itself schedule another model request.
+
+The original rule operator validates a declaration's implemented form/body/timing before
+its separate `--activate` event. Unknown forms require an implementation and scoped
+validation; they cannot silently execute trend or ORB logic. Native contract validation
+is not a backtest, observed profit, economic promotion or permission to place orders.
+Existing execution and risk owners still decide every Paper order. ORB identities are
+open within its implemented versions; legacy identity/version bindings and exit semantics
+remain pinned, and new identities retain original intraday ownership and deduplication.
+
+Original trade review receives the same-account/rule/activation aggregate of observed
+protective exits before the two detailed examples are selected. This can challenge the
+next judgment immediately across symbols; it omits ordinary exits and open gains and
+must not be called whole-method net performance. Whole-method FIFO attribution remains
+in original research/lifecycle feedback, with unverified fees explicit.
+
 ## Decision loop and selective research
 
 The lifecycle diagram names available owners; it is not a checklist requiring

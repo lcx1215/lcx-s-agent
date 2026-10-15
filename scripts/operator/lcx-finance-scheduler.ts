@@ -1724,12 +1724,7 @@ export async function resolveActiveIntradayRule(
     );
   }
   const contract = resolveFinanceIntradayActiveRuleContract(activeIntradayRules[0]);
-  if (
-    contract.openingRangeBars !== config.openingRangeBars ||
-    contract.rewardRisk !== config.rewardRisk ||
-    contract.intervalSeconds !== config.intervalSeconds ||
-    contract.feed !== config.feed
-  ) {
+  if (contract.intervalSeconds !== config.intervalSeconds || contract.feed !== config.feed) {
     throw new Error(
       `active intraday strategy ${contract.ruleId} has parameters incompatible with scheduler settings`,
     );
@@ -2634,6 +2629,10 @@ async function resolveIntradayRuntimeOptions(
         ...options,
         intraday: {
           ...options.intraday,
+          // Analytical parameters belong to the validated active declaration. Feed and
+          // interval stay bound to the original scheduler/data contract above.
+          openingRangeBars: strategyContract.openingRangeBars,
+          rewardRisk: strategyContract.rewardRisk,
           instruments,
           executionInstruments: place ? executionInstruments : [],
           place,

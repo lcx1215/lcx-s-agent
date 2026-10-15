@@ -200,10 +200,7 @@ async function activeContract(
     measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
   },
   requestedRule: {
-    ruleId:
-      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
-      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
+    ruleId: string;
     formVersion:
       | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION
       | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
@@ -1145,16 +1142,21 @@ describe("resident intraday monitor tick", () => {
     expect(await readFinanceIntradayDecisions(directory)).toHaveLength(0);
   });
 
-  it.each([false, true])(
-    "restores inventory across sessions and retirement, pre-close and retry (retired=%s)",
-    async (retired) => {
+  it.each([
+    { retired: false, ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 },
+    { retired: true, ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 },
+    { retired: false, ruleId: "research_new_timing_identity" },
+    { retired: true, ruleId: "research_new_timing_identity" },
+  ])(
+    "restores inventory across sessions and retirement, pre-close and retry ($ruleId retired=$retired)",
+    async ({ retired, ruleId }) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-monitor-v2-recovery-"));
       temporary.push(directory);
       const contract = await activeContract(
         directory,
         { paperExecutionEligibility: "paper_execution_eligible" },
         {
-          ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+          ruleId,
           formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
         },
       );
@@ -1182,7 +1184,7 @@ describe("resident intraday monitor tick", () => {
         stopPrice: 99,
         targetPrice: 110,
         datasetHeadRef: "a".repeat(64),
-        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+        strategyRule: ruleId,
         strategyBinding,
       });
       const entryReceipt = buildFinanceExecutionReceipt({
@@ -1266,7 +1268,7 @@ describe("resident intraday monitor tick", () => {
       expect(first).toMatchObject({
         status: "decision_recorded",
         signal: { action: "sell", reason: "pre_close" },
-        decision: { input: { strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 } },
+        decision: { input: { strategyRule: ruleId } },
       });
       if (!("decision" in first)) {
         throw new Error("expected the pre-close decision to be recorded");

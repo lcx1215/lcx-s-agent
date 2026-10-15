@@ -33,10 +33,7 @@ export type FinanceIntradayPaperExecutionEligibility = Readonly<{
 }>;
 
 export type FinanceIntradayActiveRuleContract = Readonly<{
-  ruleId:
-    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
-    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
+  ruleId: string;
   formVersion:
     | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION
     | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
@@ -144,32 +141,25 @@ export function resolveFinanceIntradayPaperExecutionEligibility(
  * Validates the active ledger declaration against the one ORB implementation shipped here.
  * Research prose is ignored; only the versioned envelope and recognized machine fields bind.
  */
-export function resolveFinanceIntradayActiveRuleContract(
+export function validateFinanceIntradayRuleDeclaration(
   rule: FinanceStrategyRule,
-  options: { allowRetiredExit?: boolean } = {},
-): FinanceIntradayActiveRuleContract {
+): Omit<FinanceIntradayActiveRuleContract, "declarationRef" | "activationRef"> {
+  const legacyVersion = new Map<string, string>([
+    [FINANCE_INTRADAY_OPENING_RANGE_RULE, FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION],
+    [FINANCE_INTRADAY_OPENING_RANGE_RULE_V2, FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2],
+    [FINANCE_INTRADAY_OPENING_RANGE_RULE_V3, FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3],
+  ]).get(rule.ruleId);
   const supportedVersion =
-    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE &&
-      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION) ||
-    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 &&
-      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2) ||
-    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 &&
-      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3);
+    (rule.formVersion === "1" || rule.formVersion === "2" || rule.formVersion === "3") &&
+    (legacyVersion === undefined || legacyVersion === rule.formVersion);
   if (
     !supportedVersion ||
-    (rule.state !== "active" && !(options.allowRetiredExit && rule.state === "retired")) ||
     rule.form !== FINANCE_INTRADAY_OPENING_RANGE_FORM ||
     rule.emits !== FINANCE_INTRADAY_OPENING_RANGE_EMITS ||
     rule.schedule.kind !== "intraday"
   ) {
     throw new Error(`active intraday strategy ${rule.ruleId} has an incompatible contract`);
   }
-  const declarations = rule.transitions.filter((record) => record.body.kind === "declared");
-  const activations = rule.transitions.filter((record) => record.body.kind === "activated");
-  if (declarations.length !== 1 || activations.length !== 1) {
-    throw new Error(`active intraday strategy ${rule.ruleId} has ambiguous lifecycle events`);
-  }
-
   const instruments = rule.instruments.map((instrument) => instrument.toUpperCase());
   if (
     instruments.length === 0 ||
@@ -228,31 +218,19 @@ export function resolveFinanceIntradayActiveRuleContract(
     );
   }
   if (
-    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 &&
+    (rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3 &&
       paperUniverseScope !== "fresh_us_equity_selection_v1") ||
-    (rule.ruleId !== FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 && paperUniverseScope !== undefined)
+    (rule.formVersion !== FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3 &&
+      paperUniverseScope !== undefined)
   ) {
     throw new Error(`active intraday strategy ${rule.ruleId} has a version/scope mismatch`);
   }
 
-  const resolvedRuleId: FinanceIntradayOpeningRangeRuleId =
-    rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
-      ? FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
-      : rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-        ? FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-        : FINANCE_INTRADAY_OPENING_RANGE_RULE;
-  const resolvedFormVersion =
-    resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
-      ? FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3
-      : resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-        ? FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
-        : FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION;
+  const resolvedFormVersion = rule.formVersion === "3" ? "3" : rule.formVersion === "2" ? "2" : "1";
   return Object.freeze({
-    ruleId: resolvedRuleId,
+    ruleId: rule.ruleId,
     formVersion: resolvedFormVersion,
-    preCloseExitEnabled: resolvedRuleId !== FINANCE_INTRADAY_OPENING_RANGE_RULE,
-    declarationRef: declarations[0].ref,
-    activationRef: activations[0].ref,
+    preCloseExitEnabled: resolvedFormVersion !== "1",
     instruments: Object.freeze(instruments),
     paperUniverseScope: paperUniverseScope ?? "static",
     openingRangeBars: frozenRule.openingRangeBars,
@@ -261,6 +239,47 @@ export function resolveFinanceIntradayActiveRuleContract(
     feed: data.feed,
     eligibility,
   });
+}
+
+export function resolveFinanceIntradayActiveRuleContract(
+  rule: FinanceStrategyRule,
+  options: { allowRetiredExit?: boolean } = {},
+): FinanceIntradayActiveRuleContract {
+  if (rule.state !== "active" && !(options.allowRetiredExit && rule.state === "retired")) {
+    throw new Error(`active intraday strategy ${rule.ruleId} has an incompatible contract`);
+  }
+  const declarations = rule.transitions.filter((record) => record.body.kind === "declared");
+  const activations = rule.transitions.filter((record) => record.body.kind === "activated");
+  if (declarations.length !== 1 || activations.length !== 1) {
+    throw new Error(`active intraday strategy ${rule.ruleId} has ambiguous lifecycle events`);
+  }
+  return Object.freeze({
+    ...validateFinanceIntradayRuleDeclaration(rule),
+    declarationRef: declarations[0].ref,
+    activationRef: activations[0].ref,
+  });
+}
+
+/** Preserve legacy dedup IDs; new method identities cannot consume another activation's signal. */
+export function financeIntradayBoundSignalId(
+  signalId: string,
+  contract: FinanceIntradayActiveRuleContract,
+): string {
+  if (
+    [
+      FINANCE_INTRADAY_OPENING_RANGE_RULE,
+      FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+    ].some((id) => id === contract.ruleId)
+  ) {
+    return signalId;
+  }
+  return `intraday-${caseflowFingerprint({
+    signalId,
+    ruleId: contract.ruleId,
+    declarationRef: contract.declarationRef,
+    activationRef: contract.activationRef,
+  })}`;
 }
 
 /** Dynamic Paper opt-in uses only the current selected snapshot; legacy rules stay intersected. */

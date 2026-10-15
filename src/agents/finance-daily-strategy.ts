@@ -16,6 +16,16 @@ export function bindFinanceDailyStrategy(
     );
   }
   const rule = active[0];
+  return validateFinanceDailyStrategyDeclaration(rule);
+}
+
+/** Native form/body/timing validation; inspecting a draft does not activate it. */
+export function validateFinanceDailyStrategyDeclaration(
+  rule: Pick<
+    FinanceStrategyRule,
+    "ruleId" | "form" | "formVersion" | "emits" | "schedule" | "body" | "instruments"
+  >,
+) {
   if (
     rule.form !== "cross_asset_trend" ||
     rule.formVersion !== "1" ||

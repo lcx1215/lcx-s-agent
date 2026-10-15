@@ -233,11 +233,7 @@ export const FinanceIntradayDecisionInput = z
     stopPrice: z.number().finite().positive().optional(),
     targetPrice: z.number().finite().positive().optional(),
     datasetHeadRef: Hash,
-    strategyRule: z.enum([
-      "opening_range_breakout_long_next_bar_v1",
-      "opening_range_breakout_long_pre_close_v2",
-      "opening_range_breakout_long_dynamic_universe_v3",
-    ]),
+    strategyRule: Text.regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$/u),
     /** Optional only for backward reading; the execution owner rejects legacy unbound signals. */
     strategyBinding: StrategyBinding.optional(),
   })

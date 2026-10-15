@@ -2533,6 +2533,13 @@ export async function runFinanceResearchQualityReview(
             },
           }
         : {}),
+      financeStrategyProposalContract: {
+        outputPath: "artifact.supportingAnalysis.financeStrategyRuleProposals",
+        declaredInstruments: plan.targets.map((target) => target.instrument),
+        boundary: "optional_original_rule_drafts_only_not_activation_or_orders",
+        adaptation:
+          "Use actual method results to retain, revise or propose a competing mechanism now; no 20-session waiting requirement. Losses alone do not invalidate a method and wins alone do not qualify it. New forms are open; disclose missing implementation, validation and costs.",
+      },
       financeThesisProposalContract: {
         outputPath: "artifact.supportingAnalysis.financeThesisProposals",
         declaredInstruments: plan.targets.map((target) => target.instrument),

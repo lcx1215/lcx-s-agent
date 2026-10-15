@@ -20,8 +20,8 @@ import {
   readFinanceRuleReadinessState,
 } from "../../src/agents/finance-rule-readiness-state.js";
 import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.js";
+import { activateImplementedFinanceStrategyRule } from "../../src/agents/finance-strategy-implementation.js";
 import {
-  activateFinanceStrategyRule,
   declareFinanceStrategyRule,
   readFinanceStrategyRuleLedger,
   retireFinanceStrategyRule,
@@ -226,7 +226,7 @@ export async function runStrategyRuleLedger(
       return payload;
     }
     if (options.activate !== undefined) {
-      const append = await activateFinanceStrategyRule(
+      const append = await activateImplementedFinanceStrategyRule(
         location.directory,
         await readJsonFile(options.activate),
       );

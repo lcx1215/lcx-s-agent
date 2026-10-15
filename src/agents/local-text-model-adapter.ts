@@ -600,6 +600,12 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
           "Draft and format must include artifact.supportingAnalysis matching this contract. Formatting must preserve required structured analysis; prose mentioning scenarios is not a substitute. Review stages must check the declared contract against the artifact when present.",
         ]
       : []),
+    ...(request.sharedContext.financeStrategyProposalContract
+      ? [
+          `method_proposal_contract=${JSON.stringify(request.sharedContext.financeStrategyProposalContract)}`,
+          "For draft/format only, optionally include artifact.supportingAnalysis.financeStrategyRuleProposals as an array (max8) of {claimId,form,formVersion?,instruments:string[],emits,schedule:{kind,at?,timezone?},body:object,invalidationConditions:string[]}. Propose a concrete mechanism or composable method when relevant supplied results justify investigating it; do not force a proposal or invent performance. Form is an open name, body is a nonempty bounded machine-readable definition, not a claim of implementation. Reference a supported claim with explicit epistemicClass, basis where required, and evidenceRelations for all cited evidence; every named instrument needs source support. Separate known execution constraints, competing hypotheses and unresolved facts. Existing original drafts record these proposals without activating them; existing form implementations, validation, independent activation and all execution gates remain required. Never put credentials, arbitrary file or shell commands in proposals. Formatting preserves valid structured proposals or removes those whose claim support was removed.",
+        ]
+      : []),
     ...(thesisContractText
       ? [
           `thesis_proposal_contract=${thesisContractText}`,

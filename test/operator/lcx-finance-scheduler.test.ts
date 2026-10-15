@@ -5711,3 +5711,44 @@ it("rejects a late selector result after cancellation and does not bind its snap
   );
   expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
 });
+
+it("loads a newly identified method's native parameters into the original resident monitor", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
+  await activateIntradayRule(
+    { frozenRule: { openingRangeBars: 8, rewardRisk: 3 } },
+    "research_native_variant",
+  );
+  const snapshot = { generatedAt: "2026-09-21T14:00:00.000Z", selected: ["AAA"] };
+  seedSelectedUniverse(snapshot);
+  mocks.readUniverse.mockReturnValue(snapshot);
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay.mockImplementationOnce(async () => {
+    emitSchedulerSignal("SIGTERM");
+  });
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledWith(
+    expect.objectContaining({
+      openingRangeBars: 8,
+      rewardRisk: 3,
+      strategyContract: expect.objectContaining({ ruleId: "research_native_variant" }),
+    }),
+  );
+  await expect(
+    resolveActiveIntradayRule(directory, {
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      intervalSeconds: 300,
+      feed: "sip",
+    }),
+  ).rejects.toThrow("incompatible");
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});

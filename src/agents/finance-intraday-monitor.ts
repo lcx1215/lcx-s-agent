@@ -21,9 +21,8 @@ import {
 import { readFinanceIntradayLedger } from "./finance-intraday-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
-  FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
-  FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
   financeIntradayPreCloseExitBarMinute,
+  financeIntradayBoundSignalId,
   resolveFinanceIntradayActiveRuleContract,
   type FinanceIntradayActiveRuleContract,
   type FinanceIntradayMonitorScope,
@@ -554,9 +553,27 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   const preCloseBarEndAtMs = preCloseBarStartAtMs + options.intervalSeconds * 1_000;
   const entryCutoffDue =
     activeContract.preCloseExitEnabled && now.getTime() >= preCloseBarStartAtMs;
-  const positionUsesPreCloseExit =
-    entryDecision?.input.strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 ||
-    entryDecision?.input.strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
+  const positionUsesPreCloseExit = (() => {
+    if (!entryDecision?.input.strategyBinding) {
+      return false;
+    }
+    const entryRule = strategyRead.ledger.rules.find(
+      (rule) => rule.ruleId === entryDecision.input.strategyRule,
+    );
+    if (!entryRule) {
+      return false;
+    }
+    try {
+      const bound = resolveFinanceIntradayActiveRuleContract(entryRule, { allowRetiredExit: true });
+      return (
+        bound.declarationRef === entryDecision.input.strategyBinding.declarationRef &&
+        bound.activationRef === entryDecision.input.strategyBinding.activationRef &&
+        bound.preCloseExitEnabled
+      );
+    } catch {
+      return false;
+    }
+  })();
   const positionPreCloseDue = positionUsesPreCloseExit && now.getTime() >= preCloseBarStartAtMs;
   const preCloseBarAvailable =
     positionPreCloseDue &&
@@ -582,6 +599,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       : {}),
     preCloseExit: positionPreCloseDue && preCloseBarAvailable,
   });
+  signal = { ...signal, signalId: financeIntradayBoundSignalId(signal.signalId, activeContract) };
   let priceNormalization: UsEquityPriceNormalizationProvenance | undefined;
   if (signal.action === "buy" && signal.stopPrice !== undefined) {
     const normalized = normalizeUsEquityProtectionPrices({

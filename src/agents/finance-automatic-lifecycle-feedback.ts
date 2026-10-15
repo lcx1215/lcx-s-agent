@@ -23,6 +23,7 @@ import {
   readFinanceSchedulerState,
 } from "./finance-scheduler-state.js";
 import { FINANCE_DAILY_CYCLE_RUNS_FILENAME, resolveFinanceStateDir } from "./finance-state-dir.js";
+import { validateFinanceStrategyImplementation } from "./finance-strategy-implementation.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import {
   readFinanceScoredFloorSamplesWithSource,
@@ -729,6 +730,40 @@ export async function buildFinanceAutomaticLifecycleFeedback(
               (runtimeEffectivePolicyStatus !== "current" &&
                 runtimeEffectivePolicyStatus !== "until_revoked"))
         : schedulerHasHistory);
+    const methodDevelopment = rules.ledger.rules
+      .filter(
+        (rule) => rule.state === "draft" && rule.provenance?.origin === "verified_finance_research",
+      )
+      .toSorted((a, b) => b.startObservedAt.localeCompare(a.startObservedAt))
+      .slice(0, 3)
+      .map((rule) => {
+        let implementation: { status: string; owner?: string; reason?: string };
+        try {
+          const validated = validateFinanceStrategyImplementation(rule);
+          implementation = { status: "native_contract_validated", owner: validated.owner };
+        } catch (error) {
+          implementation = {
+            status: "implementation_or_contract_missing",
+            reason:
+              error instanceof Error
+                ? error.message.slice(0, 240)
+                : "native_contract_validation_failed",
+          };
+        }
+        return {
+          ruleId: rule.ruleId,
+          form: rule.form,
+          formVersion: rule.formVersion,
+          declarationRef: rule.transitions.find((record) => record.body.kind === "declared")?.ref,
+          implementation,
+          nextStep:
+            implementation.status === "native_contract_validated"
+              ? "original_operator_activation_then_original_execution_gates"
+              : "implement_or_repair_original_form_owner_and_run_scoped_validation",
+          executionAuthority: "none",
+        };
+      });
+
     const nextTask = positionManagement.needsInspection
       ? "inspect_finance_position_management"
       : failedCycleModes.length > 0 || scheduler.lastRun?.ok === false
@@ -766,6 +801,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       intradayExecution,
       positionManagement,
       economicFeedback,
+      methodDevelopment,
       scoredOutcomeCount: scored.samples.length,
       tuning: {
         sourceRead: scored.sourceRead,
