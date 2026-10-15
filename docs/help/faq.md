@@ -6,6 +6,10 @@ read_when:
 title: "FAQ"
 ---
 
+> Registry commands below require a published `lcx-agent` release. Until one is
+> available, use the [LCX source installation](/install) and install the local
+> build archive with `LCX_INSTALL_TARBALL`; do not substitute upstream packages.
+
 # FAQ
 
 Quick answers plus deeper troubleshooting for real-world setups (local dev, VPS, multi-agent, OAuth/API keys, model failover). For runtime diagnostics, see [Troubleshooting](/gateway/troubleshooting). For the full config reference, see [Configuration](/gateway/configuration).

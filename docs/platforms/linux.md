@@ -6,6 +6,10 @@ read_when:
 title: "Linux"
 ---
 
+> Registry commands below require a published `lcx-agent` release. Until one is
+> available, use the [LCX source installation](/install) and install the local
+> build archive with `LCX_INSTALL_TARBALL`; do not substitute upstream packages.
+
 # Linux
 
 The Gateway is fully supported on Linux. **Node is the recommended runtime**.
