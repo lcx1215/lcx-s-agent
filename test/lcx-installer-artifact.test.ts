@@ -11,6 +11,28 @@ const bashPath = (file: string) =>
     : file;
 
 describe("LCX installer build artifact", () => {
+  it.each([
+    ["2026.3.3", ["2026.4.0", "2026.3.2", "2026.3.1"], "2026.3.2"],
+    ["2026.3.3", ["2026.3.3-rc.2", "2026.3.3-rc.10", "2026.4.0"], "2026.3.3-rc.10"],
+    ["2026.3.3-rc.2", ["2026.3.3", "2026.3.3-rc.1", "2026.3.2"], "2026.3.3-rc.1"],
+  ])("selects the semantic predecessor of %s", (candidate, versions, expected) => {
+    const result = execFileSync(
+      process.execPath,
+      [path.join(root, "scripts/docker/install-sh-common/previous-version.cjs"), candidate],
+      { input: JSON.stringify(versions), encoding: "utf8" },
+    );
+    expect(result).toBe(expected);
+  });
+  it("refuses an upgrade test with no LCX predecessor", () => {
+    expect(() =>
+      execFileSync(
+        process.execPath,
+        [path.join(root, "scripts/docker/install-sh-common/previous-version.cjs"), "2026.3.3"],
+        { input: '["2026.3.3","2026.4.0"]', stdio: ["pipe", "pipe", "pipe"] },
+      ),
+    ).toThrow();
+  });
+
   it.each([true, false])("routes the current checkout with a supplied archive: %s", (supplied) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-smoke-routing-"));
     try {

@@ -18,6 +18,7 @@ RUN set -eux; \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 
+COPY install-sh-common/previous-version.cjs /usr/local/install-sh-common/previous-version.cjs
 COPY install-sh-common/cli-verify.sh /usr/local/install-sh-common/cli-verify.sh
 COPY install-sh-common/version-parse.sh /usr/local/install-sh-common/version-parse.sh
 COPY install-sh-smoke/run.sh /usr/local/bin/openclaw-install-smoke
