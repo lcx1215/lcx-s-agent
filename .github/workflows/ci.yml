@@ -32,7 +32,7 @@ jobs:
   # Push to main keeps broad coverage.
   changed-scope:
     needs: [docs-scope]
-    if: github.event_name == 'pull_request' && needs.docs-scope.outputs.docs_only != 'true'
+    if: needs.docs-scope.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     outputs:
       run_node: ${{ steps.scope.outputs.run_node }}
@@ -80,7 +80,7 @@ jobs:
         run: pnpm build
 
       - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-build
           path: dist/
@@ -104,7 +104,7 @@ jobs:
           use-sticky-disk: "false"
 
       - name: Download dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-build
           path: dist/
@@ -144,7 +144,7 @@ jobs:
 
       - name: Download this commit's LCX build for compatibility tests
         if: matrix.runtime != 'bun' || github.event_name != 'push'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-build
           path: dist
@@ -235,7 +235,7 @@ jobs:
         run: ${{ matrix.command }}
 
       - name: Upload dead-code results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dead-code-${{ matrix.tool }}-${{ github.run_id }}
           path: .artifacts/deadcode
@@ -397,7 +397,7 @@ jobs:
           submodules: false
 
       - name: Download this commit's LCX build for compatibility tests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-build
           path: dist
@@ -422,7 +422,7 @@ jobs:
           }
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
           check-latest: false
