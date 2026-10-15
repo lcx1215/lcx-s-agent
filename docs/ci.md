@@ -16,13 +16,13 @@ The CI runs on every push to `main` and every pull request. It uses smart scopin
 | Job               | Purpose                                                | When it runs                                      |
 | ----------------- | ------------------------------------------------------ | ------------------------------------------------- |
 | `docs-scope`      | Detect docs-only changes                               | Always                                            |
-| `changed-scope`   | Detect which areas changed (node/windows)              | Non-docs PRs                                      |
+| `changed-scope`   | Detect which areas changed (node/windows)              | Non-docs PRs and pushes                           |
 | `check`           | TypeScript types, lint, format, and strict TS smoke    | Push to `main`, or PRs with Node-relevant changes |
 | `check-docs`      | Docs format, lint, and broken link check               | Docs changed                                      |
 | `deadcode`        | Dead-code scan (knip / ts-prune / ts-unused-exports)   | Gated on `OPENCLAW_ENABLE_DEADCODE=true`          |
 | `secrets`         | Secret scan, workflow audit, and prod dependency audit | Always                                            |
 | `build-artifacts` | Build dist once, share with other jobs                 | Non-docs, node changes                            |
-| `release-check`   | Validate npm pack contents                             | Push to `main` only                               |
+| `release-check`   | Validate npm pack contents                             | Non-docs PRs and pushes after a shared build      |
 | `checks`          | Node/Bun tests + protocol check                        | Non-docs, node changes                            |
 | `checks-windows`  | Windows-specific tests                                 | Non-docs, windows-relevant changes                |
 | `skills-python`   | Ruff lint + pytest for `skills/`                       | Non-docs, node changes                            |
