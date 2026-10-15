@@ -86,10 +86,10 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # Validate npm pack contents after build (only on push to main, not PRs).
+  # Validate the shared LCX package artifact before and after integration.
   release-check:
     needs: [docs-scope, build-artifacts]
-    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
+    if: needs.docs-scope.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

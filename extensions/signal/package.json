@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/signal",
-  "version": "2026.3.2",
+  "version": "2026.3.3",
   "private": true,
   "description": "LCX Agent Signal channel plugin",
   "type": "module",

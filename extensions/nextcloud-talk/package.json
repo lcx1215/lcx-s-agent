@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/nextcloud-talk",
-  "version": "2026.3.2",
+  "version": "2026.3.3",
   "description": "LCX Agent Nextcloud Talk channel plugin",
   "type": "module",
   "dependencies": {
