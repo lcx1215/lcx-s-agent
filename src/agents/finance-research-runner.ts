@@ -1674,6 +1674,61 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
         }
       }
     }
+    // Producer preparation builds provisional module inputs, not a source-quality
+    // verdict. Large retained module/model/portfolio bodies may be represented by
+    // explicit partial projections; immutable source evidence and final review stay whole.
+    if (
+      shared.userConstraints.financeProducerPreparationOnly === true &&
+      Buffer.byteLength(JSON.stringify(payload), "utf8") > 256_000
+    ) {
+      const eligible = payload.evidence
+        .map((item, index) => ({ item, index }))
+        .filter(
+          ({ item }) =>
+            (item.source === "finance-module-execution" && item.id.startsWith("finance-module:")) ||
+            (item.source === "finance-research-batch-runner" &&
+              item.id.startsWith("finance-model:")) ||
+            (item.source === "finance-position-ledger" &&
+              item.id.startsWith("finance-night:portfolio:")),
+        )
+        .toSorted(
+          (a, b) => Buffer.byteLength(b.item.text, "utf8") - Buffer.byteLength(a.item.text, "utf8"),
+        );
+      for (const { item, index } of eligible) {
+        if (Buffer.byteLength(JSON.stringify(payload), "utf8") <= 256_000) {
+          break;
+        }
+        if (Buffer.byteLength(item.text, "utf8") <= 4_096) {
+          continue;
+        }
+        let retainedPrefix = "";
+        for (const { segment } of new Intl.Segmenter(undefined, {
+          granularity: "grapheme",
+        }).segment(item.text)) {
+          if (retainedPrefix.length + segment.length > 1_024) {
+            break;
+          }
+          retainedPrefix += segment;
+        }
+        const text = JSON.stringify({
+          schemaVersion: "finance_producer_evidence_projection_v1",
+          originalEvidenceId: item.id,
+          originalTextSha256: createHash("sha256").update(item.text, "utf8").digest("hex"),
+          originalBytes: Buffer.byteLength(item.text, "utf8"),
+          sourcePointer: `/evidence/${index}/text`,
+          fullSourceReadClaimed: false,
+          omitted:
+            "Body after retainedPrefix omitted from producer preparation; use original evidence for source and quality review.",
+          retainedPrefix,
+        });
+        payload = {
+          ...payload,
+          evidence: payload.evidence.map((entry, position) =>
+            position === index ? { ...entry, text } : entry,
+          ),
+        };
+      }
+    }
     const output = parseStageOutput(stage, await context.modelSlot.invoke(payload, context.signal));
     if (
       output.kind === "review" &&
@@ -3176,11 +3231,17 @@ export async function runFinanceResearchRun(
     const portfolioPrerequisitesPassed =
       !plan.portfolioContext ||
       (committeeGateResult.passed && moduleExecution.requiredNodesSucceeded !== false);
+    // A failed provisional producer cannot be repaired by reviewing downstream
+    // output. Retain partial evidence, but do not spend a full paid quality cycle
+    // on a candidate already blocked by that mandatory upstream stage.
+    const producerPrerequisitesPassed =
+      committeePurpose !== "producer_preparation" || committeeGateResult.passed;
     const qualityRequested = options.qualityEnabled !== false;
     let quality: FinanceResearchQualityReceipt | undefined;
     if (
       qualityRequested &&
       portfolioPrerequisitesPassed &&
+      producerPrerequisitesPassed &&
       (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
     ) {
       quality = await runFinanceResearchQualityReview({
@@ -3197,9 +3258,15 @@ export async function runFinanceResearchRun(
       });
     }
     const source = sourceGate(batch, plan);
-    const qualityGateResult = portfolioPrerequisitesPassed
-      ? qualityGate(quality)
-      : { id: "quality" as const, passed: false, reason: "not_run:portfolio_prerequisites_failed" };
+    const qualityGateResult = !portfolioPrerequisitesPassed
+      ? { id: "quality" as const, passed: false, reason: "not_run:portfolio_prerequisites_failed" }
+      : !producerPrerequisitesPassed
+        ? {
+            id: "quality" as const,
+            passed: false,
+            reason: "not_run:module_producer_prerequisites_failed",
+          }
+        : qualityGate(quality);
     moduleExecution = finalizeModuleExecution(
       moduleExecution,
       evidence,

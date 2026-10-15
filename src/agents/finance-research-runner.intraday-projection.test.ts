@@ -185,3 +185,40 @@ describe("producer-preparation intraday request projection", () => {
     ).toThrow("assigned byte budget");
   });
 });
+
+it.each(["data_cleaning", "research_draft"] as const)(
+  "narrows oversized retained module bodies only for provisional producer input %s",
+  async (role) => {
+    const base = input(sourceSummary(), true, 100_000);
+    const originalBody = JSON.stringify({ methods: "方法".repeat(60_000), quality: "unverified" });
+    const request = {
+      ...base,
+      evidence: [
+        ...base.evidence,
+        {
+          id: "finance-module:technical_timing",
+          source: "finance-module-execution",
+          timestamp: AS_OF,
+          text: originalBody,
+        },
+      ],
+    };
+    const before = JSON.stringify(request);
+    const result = await capture(request, role);
+    expect(result.error).toBe("capture_only");
+    expect(result.bytes).toBeLessThanOrEqual(256_000);
+    const projection = JSON.parse(
+      result.payload.evidence.find((e) => e.id === "finance-module:technical_timing")!.text,
+    );
+    expect(projection).toMatchObject({
+      originalEvidenceId: "finance-module:technical_timing",
+      originalTextSha256: hash(originalBody),
+      originalBytes: Buffer.byteLength(originalBody, "utf8"),
+      fullSourceReadClaimed: false,
+      sourcePointer: "/evidence/2/text",
+    });
+    expect(result.payload.evidence[0]).toEqual(request.evidence[0]);
+    expect(JSON.stringify(request)).toBe(before);
+    expect(projection.retainedPrefix).toBe(originalBody.slice(0, 1024));
+  },
+);

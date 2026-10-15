@@ -3016,6 +3016,47 @@ describe("research module composition reaches actual model request boundaries", 
     }
   });
 
+  it("does not spend downstream quality calls after a failed provisional producer", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-upstream-producer-"));
+    try {
+      const qualityModel = vi.fn(modelInvoker);
+      const result = await runFinanceResearchRun({
+        input: {
+          ask: "Review technical timing",
+          asOf: AS_OF,
+          targets,
+          executeModules: true,
+          moduleSelection,
+        },
+        workspaceDir: directory,
+        liveFetch: true,
+        batchOptions: BATCH_OPTIONS,
+        qualityModelInvoker: qualityModel,
+        modelInvoker: async (request) => {
+          if ((request as { stage?: string }).stage === "draft") {
+            throw new Error("diagnostic draft failed");
+          }
+          return modelInvoker(request);
+        },
+      });
+      expect(result.missingEvidence).toContain(
+        "module_producer_input:upstream_research_draft_failed",
+      );
+      expect(result.missingEvidence).not.toContain(
+        "module_producer_input:financeFrameworkProducerInputs must be an object",
+      );
+      expect(result.status).not.toBe("candidate");
+      expect(qualityModel).not.toHaveBeenCalled();
+      expect(result.gates).toContainEqual({
+        id: "quality",
+        passed: false,
+        reason: "not_run:module_producer_prerequisites_failed",
+      });
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(["schema_fields", "unknown_evidence", "unselected_module"] as const)(
     "keeps bounded producer diagnostics without echoing model-authored material: %s",
     async (defect) => {
