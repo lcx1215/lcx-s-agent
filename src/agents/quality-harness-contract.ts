@@ -27,6 +27,9 @@ import {
   type QualityFindingReceipt,
 } from "./quality-harness-findings.js";
 
+/** Existing finance workflow route ceiling, shared with rendered cloud prompt checks. */
+export const FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES = 256_000;
+
 export const QUALITY_HARNESS_SCHEMA_VERSION = 1 as const;
 
 export type QualityHarnessStage =

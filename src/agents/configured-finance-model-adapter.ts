@@ -26,7 +26,10 @@ import {
   type ModelRequestSource,
 } from "./model-request-trajectory.js";
 import { buildInlineProviderModels } from "./pi-embedded-runner/model.js";
-import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
+import {
+  FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES,
+  type QualityHarnessModelRequest,
+} from "./quality-harness-contract.js";
 
 export const FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS = 15 * 60_000;
 const paymentCooldowns = new Map<string, number>();
@@ -319,9 +322,13 @@ export function createConfiguredFinanceModelAdapter(
         } else {
           const built = buildQualityHarnessModelPromptWithCoverage(
             request.payload as QualityHarnessModelRequest,
+            { maxPromptBytes: FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES },
           );
           promptText = built.prompt;
           evidenceCoverage = built.evidenceCoverage;
+        }
+        if (Buffer.byteLength(promptText, "utf8") > FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES) {
+          throw new Error("rendered finance input exceeds prompt budget");
         }
       } catch (error) {
         // Request assembly is local: preserve a safe category without charging a

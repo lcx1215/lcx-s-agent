@@ -21,7 +21,11 @@ import {
   type LogicalAgentRoleModelPolicy,
 } from "./logical-agent-model-router.js";
 import type { LogicalAgentId } from "./logical-agent-pool.js";
-import { parseStageOutput, type QualityHarnessModelRequest } from "./quality-harness-contract.js";
+import {
+  FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES,
+  parseStageOutput,
+  type QualityHarnessModelRequest,
+} from "./quality-harness-contract.js";
 
 export type FinanceWorkflowSlotModels = Readonly<{
   fast: string;
@@ -538,7 +542,7 @@ export function createFinanceModelWorkflow(
         fallback: fallback.map((adapter) => adapter.id),
         ...financeRoleExecutionContract(role, options.timeoutMs),
         requiredCapabilities: ["quality_harness"],
-        maxInputBytes: 256_000,
+        maxInputBytes: FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES,
         workload: contract.slot,
         ...(["research_draft", "formatting", "final_precheck", "evidence_integrity"].includes(role)
           ? { retryOutputContractOnce: true }

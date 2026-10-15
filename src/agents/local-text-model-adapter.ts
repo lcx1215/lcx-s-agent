@@ -20,6 +20,7 @@ import type {
   QualityHarnessModelRequest,
 } from "./quality-harness-contract.js";
 import {
+  FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES,
   QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT,
   QUALITY_HARNESS_MAX_EVIDENCE_BATCHES,
   QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
@@ -487,10 +488,22 @@ function qualityStageContract(stage: QualityHarnessModelRequest["stage"]): strin
   return 'kind="review"; review={verdict:"pass"|"revise"|"reject",criticalFindings:string[],evidenceGaps:string[],notes:string[]}. criticalFindings contains actual errors or unsafe claims, not ordinary market risks or extracted facts. evidenceGaps contains evidence required by a proposed claim, not a wish list of future data. Put disclosed limitations, extracted facts and market risks in notes with evidence IDs. Do not merely announce a pass. If an error or required gap exists, use revise or reject; never hide it to obtain pass.';
 }
 
-export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarnessModelRequest): {
+export function buildQualityHarnessModelPromptWithCoverage(
+  request: QualityHarnessModelRequest,
+  options: { maxPromptBytes?: number } = {},
+): {
   prompt: string;
   evidenceCoverage: NonNullable<ModelCallObservation["evidenceCoverage"]>;
 } {
+  const maxPromptBytes = options.maxPromptBytes;
+  if (
+    maxPromptBytes !== undefined &&
+    (!Number.isSafeInteger(maxPromptBytes) ||
+      maxPromptBytes < 1 ||
+      maxPromptBytes > FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES)
+  ) {
+    throw new Error("invalid quality prompt budget");
+  }
   const hasFindings = (request.findingPacket?.findings.length ?? 0) > 0;
   const contractExample =
     qualityStageContract(request.stage) +
@@ -518,16 +531,18 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
     selectedBatchDependencyEntries,
     batchDependencyEntries,
   );
-  const batchDependencyLimit =
-    request.stage === "precheck" || request.evidenceBatchMode === "final_artifact_audit"
-      ? 44_000
-      : request.stage === "draft" && hasBatchDependencies
-        ? batchDependencyEntries.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES - 1
-          ? 44_000
-          : 20_000
-        : 16_000;
   const completeHandoffRequired =
     request.stage === "precheck" || (request.stage === "draft" && hasBatchDependencies);
+  const batchDependencyLimit =
+    maxPromptBytes !== undefined && completeHandoffRequired
+      ? maxPromptBytes
+      : request.stage === "precheck" || request.evidenceBatchMode === "final_artifact_audit"
+        ? 44_000
+        : request.stage === "draft" && hasBatchDependencies
+          ? batchDependencyEntries.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES - 1
+            ? 44_000
+            : 20_000
+          : 16_000;
   if (
     (completeHandoffRequired || request.evidenceBatchMode === "final_artifact_audit") &&
     (batchDependencyValuesMayBeClipped ||
@@ -655,7 +670,7 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
           'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and artifactClaimId naming the exact current final claim; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
         ]
       : []),
-    `previous=${clipPromptText(dependencyJson, batchDependencyLimit) || "none"}`,
+    `previous=${(completeHandoffRequired ? dependencyJson : clipPromptText(dependencyJson, batchDependencyLimit)) || "none"}`,
     ...(repairFeedback.length > 0
       ? [`repair=${clipPromptText(formatPromptSectionValue(repairFeedback), 600)}`]
       : []),
@@ -673,6 +688,12 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
       : []),
   ];
   const prompt = sections.join("\n");
+  // The qualified cloud path shares its existing whole-request ceiling rather than
+  // rejecting a complete review merely because one legacy section exceeded 44K chars.
+  // Count every rendered section (including contracts, findings and UTF-8 expansion).
+  if (maxPromptBytes !== undefined && Buffer.byteLength(prompt, "utf8") > maxPromptBytes) {
+    throw new Error("complete quality input exceeds the review prompt budget");
+  }
   const suppliedEvidenceIds = request.evidence.map((entry) => entry.id);
   const includedEvidenceIds = includedEvidence.map((entry) => entry.id);
   const includedIds = new Set(includedEvidenceIds);
