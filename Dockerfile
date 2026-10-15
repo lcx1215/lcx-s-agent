@@ -114,8 +114,9 @@ RUN pnpm ui:build
 
 # Expose the CLI binary without requiring npm global writes as non-root.
 USER root
-RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
- && chmod 755 /app/openclaw.mjs
+RUN ln -sf /app/lcx.mjs /usr/local/bin/lcx \
+ && ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
+ && chmod 755 /app/lcx.mjs /app/openclaw.mjs
 
 ENV NODE_ENV=production
 
@@ -137,4 +138,4 @@ USER node
 #   docker run <image> node openclaw.mjs gateway --allow-unconfigured
 HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8788/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "openclaw.mjs", "serve"]
+CMD ["node", "lcx.mjs", "serve"]
