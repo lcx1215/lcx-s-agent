@@ -13,7 +13,7 @@ Already followed [Getting Started](/start/getting-started)? You're all set — t
 
 > LCX registry installation requires an authorized, published `lcx-agent` release.
 > Until one is available, build this repository and install its local package:
-> `pnpm install --frozen-lockfile && pnpm build && npm pack --ignore-scripts`.
+> `pnpm install --frozen-lockfile && pnpm build && pnpm ui:build && npm pack --ignore-scripts`.
 > Pass the resulting archive via `LCX_INSTALL_TARBALL` to this checkout’s installer.
 > Do not substitute an upstream package when the LCX release is unavailable.
 

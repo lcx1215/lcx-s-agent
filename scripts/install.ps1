@@ -6,7 +6,7 @@ param(
     [string]$InstallMethod = "npm",
     [string]$Tag = "latest",
     [string]$Artifact = $env:LCX_INSTALL_TARBALL,
-    [string]$GitDir = "$env:USERPROFILE\lcx-agent",
+    [string]$GitDir = "",
     [switch]$NoOnboard,
     [switch]$NoGitUpdate,
     [switch]$DryRun
@@ -200,6 +200,16 @@ function Ensure-Git {
     return Install-Git
 }
 
+function Resolve-LcxGitDir {
+    param([string]$Requested = "", [string]$ProfileRoot = $env:USERPROFILE)
+    if ($Requested) { return $Requested }
+    $current = Join-Path $ProfileRoot "lcx-agent"
+    $legacy = Join-Path $ProfileRoot "openclaw"
+    if (Test-Path -LiteralPath $current) { return $current }
+    if (Test-Path -LiteralPath $legacy) { return $legacy }
+    return $current
+}
+
 function Install-OpenClawNpm {
     param([string]$Version = "latest", [string]$Tarball = "")
 
@@ -220,6 +230,20 @@ function Install-OpenClawNpm {
     }
     Write-Host "Installing LCX Agent..." -Level info
     try {
+        $globalRoot = npm root -g 2>$null
+        if ($LASTEXITCODE -ne 0 -or !$globalRoot) { throw "Cannot identify global package directory" }
+        $legacyManifest = Join-Path ($globalRoot -join "") "openclaw/package.json"
+        if (Test-Path -LiteralPath $legacyManifest) {
+            $legacy = Get-Content -LiteralPath $legacyManifest -Raw | ConvertFrom-Json
+            if ($legacy.name -ne "openclaw") { throw "Unrecognized legacy package" }
+            # Do not remove a working legacy install before the replacement is available.
+            if (!$Tarball) {
+                npm view $target version --json 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "LCX release unavailable" }
+            }
+            npm uninstall -g openclaw --no-fund --no-audit 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Legacy package removal failed" }
+        }
         npm install -g $target --no-fund --no-audit 2>&1 | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "npm returned a nonzero exit code" }
         Write-Host "LCX Agent installed" -Level success
@@ -319,6 +343,7 @@ function Main {
     }
     
     if ($InstallMethod -eq "git") {
+        $GitDir = Resolve-LcxGitDir -Requested $GitDir
         if (!(Ensure-Git)) {
             exit 1
         }

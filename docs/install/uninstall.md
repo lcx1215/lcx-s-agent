@@ -64,6 +64,11 @@ pnpm remove -g lcx-agent
 bun remove -g lcx-agent
 ```
 
+For a historical global installation whose package name is `openclaw`, remove
+that package instead with `npm rm -g openclaw`, `pnpm remove -g openclaw`, or
+`bun remove -g openclaw`, using the original package manager. This removes a
+legacy installation; it does not install an upstream replacement.
+
 Notes:
 
 - If you used profiles (`--profile` / `OPENCLAW_PROFILE`), repeat step 3 for each state dir (defaults are `~/.openclaw-<profile>`).
