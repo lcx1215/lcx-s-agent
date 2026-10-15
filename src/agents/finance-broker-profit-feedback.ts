@@ -127,14 +127,39 @@ function reportedAssetFeeValuation(activities: readonly Record<string, unknown>[
     : null;
 }
 
+export type FinanceBrokerMatchedLot = {
+  instrument: string;
+  entryActivityId: string;
+  exitActivityId: string;
+  entryOrderId: string;
+  exitOrderId: string;
+  entryAt: string;
+  exitAt: string;
+  quantity: number;
+  grossPnl: number;
+  allocatedCashFees: number;
+};
+
 /** FIFO accounting diagnostic; never a strategy attribution or an execution gate. */
 export function summarizeFinanceBrokerFills(
   activities: readonly Record<string, unknown>[],
   costsVerified: boolean,
+  options: { includeMatchedLots?: boolean } = {},
 ) {
+  const matchedLots: FinanceBrokerMatchedLot[] = [];
   const unique = uniqueBrokerActivities(activities);
   const orderScopes = brokerFillOrderScopes(unique);
-  const lots = new Map<string, { quantity: number; price: number; feePerUnit: number }[]>();
+  const lots = new Map<
+    string,
+    {
+      quantity: number;
+      price: number;
+      feePerUnit: number;
+      activityId: string;
+      orderId: string;
+      at: string;
+    }[]
+  >();
   let buys = 0,
     sells = 0,
     matches = 0,
@@ -245,7 +270,14 @@ export function summarizeFinanceBrokerFills(
     lots.set(instrument, book);
     if (row.side === "buy") {
       buys++;
-      book.push({ quantity, price, feePerUnit });
+      book.push({
+        quantity,
+        price,
+        feePerUnit,
+        activityId: String(row.id),
+        orderId: order,
+        at: String(row.transaction_time),
+      });
       continue;
     }
     sells++;
@@ -253,6 +285,20 @@ export function summarizeFinanceBrokerFills(
     while (remaining > 1e-10 && book.length) {
       const lot = book[0],
         matched = Math.min(remaining, lot.quantity);
+      if (options.includeMatchedLots) {
+        matchedLots.push({
+          instrument,
+          entryActivityId: lot.activityId,
+          exitActivityId: String(row.id),
+          entryOrderId: lot.orderId,
+          exitOrderId: order,
+          entryAt: lot.at,
+          exitAt: String(row.transaction_time),
+          quantity: matched,
+          grossPnl: matched * (price - lot.price),
+          allocatedCashFees: matched * (lot.feePerUnit + feePerUnit),
+        });
+      }
       gross += matched * (price - lot.price);
       allocatedFees += matched * (lot.feePerUnit + feePerUnit);
       matches++;
@@ -286,6 +332,7 @@ export function summarizeFinanceBrokerFills(
       : null;
   return {
     basis: "broker_fill_fifo_usd_not_strategy_attribution",
+    ...(options.includeMatchedLots ? { matchedLots } : {}),
     buyFills: buys,
     sellFills: sells,
     matchedLotCount: matches,
@@ -305,6 +352,166 @@ export function summarizeFinanceBrokerFills(
     status: matches === 0 ? "no_closed_matches" : issues.size ? "net_profit_unverified" : "matched",
     issues: [...issues],
     costScope: "broker_reported_activities_only_excludes_tax_fx_and_external_costs",
+  };
+}
+
+/** Attribute original FIFO matches by the actual entry order, never by ticker or a model label. */
+export function attributeFinanceBrokerMatchedLots(params: {
+  lots: readonly FinanceBrokerMatchedLot[];
+  receipts: readonly FinanceExecutionReceipt[];
+  decisions: readonly {
+    ref: string;
+    recordedAt: string;
+    input: {
+      signalId: string;
+      instrument: string;
+      action: string;
+      strategyRule: string;
+      strategyBinding?: { declarationRef: string; activationRef: string };
+    };
+  }[];
+  accountId: string;
+  asOf: string;
+  costsVerified: boolean;
+}) {
+  const methods = new Map<
+    string,
+    {
+      ruleId: string;
+      declarationRef: string;
+      activationRef: string;
+      matchedLotCount: number;
+      matchedQuantity: number;
+      grossMatchedPnl: number;
+      allocatedCashFees: number;
+      firstEntryAt: string;
+      lastExitAt: string;
+      entries: Map<string, { quantity: number; filledQuantity: number; decisionRef: string }>;
+    }
+  >();
+  let attributed = 0;
+  const cutoff = Date.parse(params.asOf);
+  if (!Number.isFinite(cutoff)) {
+    throw new Error("invalid method performance cutoff");
+  }
+  const inScope = params.lots.filter(
+    (lot) =>
+      Number.isFinite(Date.parse(lot.entryAt)) &&
+      Number.isFinite(Date.parse(lot.exitAt)) &&
+      Date.parse(lot.exitAt) <= cutoff &&
+      Date.parse(lot.entryAt) <= Date.parse(lot.exitAt),
+  );
+  const matchedByOrder = new Map<string, number>();
+  for (const lot of inScope) {
+    matchedByOrder.set(
+      lot.entryOrderId,
+      (matchedByOrder.get(lot.entryOrderId) ?? 0) + lot.quantity,
+    );
+  }
+  for (const lot of inScope) {
+    const receipts = params.receipts.filter(
+      (r) =>
+        r.accountId === params.accountId &&
+        r.venue === "alpaca:paper" &&
+        r.adapterKind === "venue" &&
+        r.side === "buy" &&
+        r.instrument === lot.instrument &&
+        r.fill.venueRef === `alpaca:paper:${lot.entryOrderId}` &&
+        r.fill.filledQuantity + 1e-6 >=
+          (matchedByOrder.get(lot.entryOrderId) ?? Number.POSITIVE_INFINITY) &&
+        r.fill.terminalOrderIdentity?.terminal === true &&
+        r.fill.terminalOrderIdentity.orderId === lot.entryOrderId &&
+        Date.parse(r.recordedAt) <= cutoff,
+    );
+    if (receipts.length !== 1) {
+      continue;
+    }
+    const receipt = receipts[0];
+    const decisions = params.decisions.filter(
+      (d) =>
+        d.input.action === "buy" &&
+        d.input.instrument === lot.instrument &&
+        receipt.intentId === `intent:${d.input.signalId}` &&
+        receipt.decisionRef?.source === "intraday_signal" &&
+        receipt.decisionRef.id === d.input.signalId &&
+        Date.parse(d.recordedAt) <= Date.parse(lot.entryAt) &&
+        d.input.strategyBinding,
+    );
+    if (decisions.length !== 1) {
+      continue;
+    }
+    const decision = decisions[0],
+      binding = decision.input.strategyBinding;
+    if (
+      !binding ||
+      !/^[a-f0-9]{64}$/u.test(binding.declarationRef) ||
+      !/^[a-f0-9]{64}$/u.test(binding.activationRef)
+    ) {
+      continue;
+    }
+    const key = JSON.stringify([
+      decision.input.strategyRule,
+      binding.declarationRef,
+      binding.activationRef,
+    ]);
+    const method = methods.get(key) ?? {
+      ruleId: decision.input.strategyRule,
+      declarationRef: binding.declarationRef,
+      activationRef: binding.activationRef,
+      matchedLotCount: 0,
+      matchedQuantity: 0,
+      grossMatchedPnl: 0,
+      allocatedCashFees: 0,
+      firstEntryAt: lot.entryAt,
+      lastExitAt: lot.exitAt,
+      entries: new Map<string, { quantity: number; filledQuantity: number; decisionRef: string }>(),
+    };
+    method.matchedLotCount++;
+    method.matchedQuantity += lot.quantity;
+    method.grossMatchedPnl += lot.grossPnl;
+    method.allocatedCashFees += lot.allocatedCashFees;
+    if (Date.parse(lot.entryAt) < Date.parse(method.firstEntryAt)) {
+      method.firstEntryAt = lot.entryAt;
+    }
+    if (Date.parse(lot.exitAt) > Date.parse(method.lastExitAt)) {
+      method.lastExitAt = lot.exitAt;
+    }
+    const entry = method.entries.get(receipt.receiptId) ?? {
+      quantity: 0,
+      filledQuantity: receipt.fill.filledQuantity,
+      decisionRef: decision.ref,
+    };
+    entry.quantity += lot.quantity;
+    method.entries.set(receipt.receiptId, entry);
+    methods.set(key, method);
+    attributed++;
+  }
+  return {
+    boundary: "entry_rule_attributed_broker_fifo_matches_not_alpha_or_account_return",
+    asOf: params.asOf,
+    matchedLotCount: inScope.length,
+    omittedOutsideCutoffOrInvalidLots: params.lots.length - inScope.length,
+    attributedMatchedLotCount: attributed,
+    unattributedMatchedLotCount: inScope.length - attributed,
+    methods: [...methods.values()].map(({ entries, ...method }) => ({
+      ...method,
+      entryCount: entries.size,
+      fullyClosedEntryCount: [...entries.values()].filter(
+        (e) => Math.abs(e.quantity - e.filledQuantity) <= 1e-6,
+      ).length,
+      entryDecisionRefs: [...new Set([...entries.values()].map((e) => e.decisionRef))].slice(0, 4),
+      omittedEntryDecisionRefs: Math.max(
+        0,
+        new Set([...entries.values()].map((e) => e.decisionRef)).size - 4,
+      ),
+      netMatchedPnl: params.costsVerified
+        ? method.grossMatchedPnl - method.allocatedCashFees
+        : null,
+      costStatus: params.costsVerified ? "broker_reported_costs_only" : "net_unverified",
+      costScope: "broker_reported_cash_fees_only_excludes_external_llm_tax_fx_costs",
+      sampleBoundary:
+        "partial FIFO matches are not independent trades or evidence of predictive skill",
+    })),
   };
 }
 
@@ -449,6 +656,20 @@ export async function readFinanceBrokerProfitFeedback(
           record.sequence,
         );
         const activities = history.activities;
+        const fifo = summarizeFinanceBrokerFills(
+          activities,
+          snapshot.status === "reconciled" && snapshot.feesInterpreted === true,
+          { includeMatchedLots: true },
+        );
+        const { matchedLots, ...fifoSummary } = fifo;
+        const methodPerformance = attributeFinanceBrokerMatchedLots({
+          lots: matchedLots ?? [],
+          receipts: positions.receipts,
+          decisions,
+          accountId: record.accountId,
+          asOf,
+          costsVerified: fifo.netMatchedPnl !== null,
+        });
         return {
           accountId: record.accountId,
           venue: record.venue,
@@ -465,10 +686,8 @@ export async function readFinanceBrokerProfitFeedback(
             activities,
             snapshot.status === "reconciled" && snapshot.feesInterpreted === true,
           ),
-          ...summarizeFinanceBrokerFills(
-            activities,
-            snapshot.status === "reconciled" && snapshot.feesInterpreted === true,
-          ),
+          ...fifoSummary,
+          methodPerformance,
         };
       }),
     );

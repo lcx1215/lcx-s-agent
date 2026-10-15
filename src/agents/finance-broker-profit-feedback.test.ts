@@ -9,6 +9,7 @@ import {
   summarizeFinanceBrokerFills,
   summarizeFinanceBrokerFillsByInstrument,
   attributeFinanceBrokerFills,
+  attributeFinanceBrokerMatchedLots,
 } from "./finance-broker-profit-feedback.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { appendFinanceIntradayDecision } from "./finance-intraday-control-ledger.js";
@@ -939,5 +940,81 @@ it.each([
   } finally {
     vi.useRealTimers();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  "bound",
+  "partial",
+  "foreign",
+  "unverified_cost",
+  "quantity_conflict",
+  "late_decision",
+] as const)("attributes original FIFO outcomes to exact entry rule version %s", (mode) => {
+  const rows = [
+    { ...fill("1", "buy", "2", "100"), order_id: "entry" },
+    { ...fill("2", "sell", "1", "110"), order_id: "exit-a" },
+    ...(mode === "partial" ? [] : [{ ...fill("3", "sell", "1", "95"), order_id: "exit-b" }]),
+  ];
+  const fifo = summarizeFinanceBrokerFills(rows, true, { includeMatchedLots: true });
+  const receipt: FinanceExecutionReceipt = {
+    schemaVersion: "lcx_finance_execution_receipt_v1",
+    receiptId: "entry-receipt",
+    accountId: mode === "foreign" ? "other" : "paper",
+    intentId: "intent:entry-signal",
+    decisionRef: { source: "intraday_signal", id: "entry-signal" },
+    runAuthorizationId: "fixture",
+    adapterId: "alpaca",
+    adapterKind: "venue",
+    venue: "alpaca:paper",
+    instrument: "SPY",
+    side: "buy",
+    orderType: "market",
+    quantity: 2,
+    referencePrice: 100,
+    referencePriceAt: "2026-09-20T10:00:00Z",
+    notional: 200,
+    fill: {
+      filledQuantity: mode === "quantity_conflict" ? 1 : 2,
+      fillPrice: 100,
+      filledAt: "2026-09-20T10:01:00Z",
+      venueRef: "alpaca:paper:entry",
+      terminalOrderIdentity: { orderId: "entry", terminal: true },
+    },
+    executionAuthority: "declared_execution_adapter_required",
+    recordedAt: "2026-09-20T10:01:01Z",
+  };
+  const result = attributeFinanceBrokerMatchedLots({
+    lots: fifo.matchedLots ?? [],
+    receipts: [receipt],
+    accountId: "paper",
+    asOf: "2026-09-20T11:00:00Z",
+    costsVerified: mode !== "unverified_cost",
+    decisions: [
+      {
+        ref: "d".repeat(64),
+        recordedAt: mode === "late_decision" ? "2026-09-20T10:04:00Z" : "2026-09-20T10:00:00Z",
+        input: {
+          signalId: "entry-signal",
+          instrument: "SPY",
+          action: "buy",
+          strategyRule: "orb",
+          strategyBinding: { declarationRef: "a".repeat(64), activationRef: "b".repeat(64) },
+        },
+      },
+    ],
+  });
+  if (["foreign", "quantity_conflict", "late_decision"].includes(mode)) {
+    expect(result.attributedMatchedLotCount).toBe(0);
+    expect(result.methods).toEqual([]);
+  } else {
+    expect(result.methods[0]).toMatchObject({
+      ruleId: "orb",
+      declarationRef: "a".repeat(64),
+      activationRef: "b".repeat(64),
+      grossMatchedPnl: mode === "partial" ? 10 : 5,
+      fullyClosedEntryCount: mode === "partial" ? 0 : 1,
+      netMatchedPnl: mode === "unverified_cost" ? null : mode === "partial" ? 10 : 5,
+    });
   }
 });

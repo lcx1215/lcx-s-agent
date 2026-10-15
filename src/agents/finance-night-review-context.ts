@@ -1206,6 +1206,11 @@ function projectFinanceBrokerAccountResearchSummary(params: {
             ...("netMatchedPnl" in account
               ? {
                   netMatchedPnl: account.netMatchedPnl,
+                  methodPerformance: {
+                    ...account.methodPerformance,
+                    methods: account.methodPerformance.methods.slice(0, 3),
+                    omittedMethods: Math.max(0, account.methodPerformance.methods.length - 3),
+                  },
                   buyFills: account.buyFills,
                   sellFills: account.sellFills,
                   matchedLotCount: account.matchedLotCount,
@@ -1483,6 +1488,7 @@ export async function buildFinanceNightReviewEvidence(params: {
           questions: [
             "Which reconciled account holdings lack an active strategy or protective coverage? Review their management autonomously from current evidence; historical ownership gaps must not remove an instrument from research or be fabricated as an LCX entry.",
             "Which executed opportunities made or lost money after costs? Separate gross gains, net gains and unrealized marks.",
+            "Use methodPerformance to review the exact entry rule declaration and activation cohort. Distinguish partial matched lots from fully closed entries and explain which mechanism supports retaining, reducing or researching an alternative within existing authority. A different symbol alone does not answer adverse evidence for the same rule version; neither one loss nor one win establishes method validity. Missing fees or attribution remain explicit gaps.",
             "Were profitable opportunities refused or delayed? Use subsequent market data and the original executable constraints; a refusal alone proves no missed profit.",
             "Did exits truncate winners? Compare the declared exit with a pre-specified alternative over the same horizon, including adverse excursion and costs.",
             "When could holding or adding to a winner improve net returns within the total position loss budget? Do not infer an edge from a recent win alone.",

@@ -602,8 +602,8 @@ it("keeps two broker accounts, costs unknown and ownership diagnostics separate 
     economic.accounts !== undefined
       ? economic.accounts.map((account) => account.accountId).toSorted()
       : [],
-  ).toEqual(["account-b"]);
-  expect(economic).toMatchObject({ omittedAccounts: 1 });
+  ).toEqual(["account-a", "account-b"]);
+  expect(economic).toMatchObject({ omittedAccounts: 0 });
   expect(Buffer.byteLength(JSON.stringify(economic), "utf8")).toBeLessThanOrEqual(2000);
 });
 

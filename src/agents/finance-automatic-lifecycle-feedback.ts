@@ -618,14 +618,44 @@ export async function buildFinanceAutomaticLifecycleFeedback(
             asOf: observedAt,
             executionAuthority: "none",
             boundary:
-              "FIFO closed-lot diagnostic, not account return, unrealized wealth or strategy PnL; accounts are never aggregated",
+              "FIFO closed-lot diagnostic; methodPerformance is exact entry-rule cohort attribution, not account return or alpha; accounts are never aggregated",
             accounts: profitFeedback.accounts.slice(0, 2).map((account) => {
               if (!("basis" in account)) {
                 return account;
               }
-              const { instruments, strategyAttribution, issues, ...summary } = account;
+              const { instruments, strategyAttribution, issues } = account;
               return {
-                ...summary,
+                accountId: account.accountId,
+                venue: account.venue,
+                snapshotRef: account.snapshotRef,
+                observedAt: account.observedAt,
+                freshness: account.freshness,
+                status: account.status,
+                basis: account.basis,
+                grossMatchedPnl: account.grossMatchedPnl,
+                netMatchedPnl: account.netMatchedPnl,
+                matchedLotCount: account.matchedLotCount,
+                openLotCount: account.openLotCount,
+                omittedAccountDetails: true,
+                methodPerformance: {
+                  matchedLotCount: account.methodPerformance.matchedLotCount,
+                  unattributedMatchedLotCount:
+                    account.methodPerformance.unattributedMatchedLotCount,
+                  methods: account.methodPerformance.methods
+                    .toSorted((a, b) => b.lastExitAt.localeCompare(a.lastExitAt))
+                    .slice(0, 1)
+                    .map((method) => ({
+                      ruleId: method.ruleId,
+                      declarationRef: method.declarationRef,
+                      activationRef: method.activationRef,
+                      matchedLotCount: method.matchedLotCount,
+                      fullyClosedEntryCount: method.fullyClosedEntryCount,
+                      grossMatchedPnl: method.grossMatchedPnl,
+                      netMatchedPnl: method.netMatchedPnl,
+                      costStatus: method.costStatus,
+                    })),
+                  omittedMethods: Math.max(0, account.methodPerformance.methods.length - 1),
+                },
                 positionManagementMatched: (positionManagement.accounts ?? []).some(
                   (position) =>
                     position.accountId === account.accountId &&
@@ -636,7 +666,8 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                 omittedIssues: Math.max(0, issues.length - 4),
                 omittedInstruments: instruments.length,
                 strategyAttribution: {
-                  ...strategyAttribution,
+                  attributedFillCount: strategyAttribution.attributedFillCount,
+                  unattributedFillCount: strategyAttribution.unattributedFillCount,
                   strategies: strategyAttribution.strategies.slice(0, 3),
                   omittedStrategies: Math.max(0, strategyAttribution.strategies.length - 3),
                 },
