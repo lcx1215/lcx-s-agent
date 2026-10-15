@@ -65,7 +65,12 @@ jobs:
           fi
           while IFS= read -r dockerfile; do
             [[ -n "$dockerfile" ]] || continue
-            docker build -t "lcx-sandbox-validation:${dockerfile#Dockerfile.}" -f "$dockerfile" .
+            image="lcx-sandbox-validation:${dockerfile#Dockerfile.}"
+            docker build -t "$image" -f "$dockerfile" .
+            docker run --rm --entrypoint /bin/bash "$image" -lc 'python3 --version && curl --version'
+            if [[ "$dockerfile" == "Dockerfile.sandbox-browser" ]]; then
+              docker run --rm --entrypoint chromium "$image" --version
+            fi
           done < "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
 
       - name: Run root Dockerfile CLI smoke
