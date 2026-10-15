@@ -8,7 +8,7 @@
  *
  * Following the repository rule, **events are stored, derived state is not**. So:
  *
- * - The two record kinds are `opened` and `transition`. There is no `state` column and no
+ * - Records are `opened`, `evidence_appended`, or `transition`. There is no `state` column and no
  *   `from` field: the current state is whatever replaying the stream produces, and `from` is
  *   always available by replay. Storing either would create a second source of truth that can
  *   drift from the events it claims to summarise.
@@ -26,6 +26,17 @@ import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-mi
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES } from "../shared/lcx-ontology.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import {
+  FinanceExpectationGapSchema,
+  type FinanceExpectationGap,
+} from "./finance-expectation-gap.js";
+import {
+  FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
+  FINANCE_RESEARCH_EVIDENCE_RELATIONS,
+  financeResearchClaimRequiresBasis,
+  type FinanceResearchClaimEpistemicClass,
+  type FinanceResearchEvidenceRelation,
+} from "./finance-research-provenance.js";
 import { financeThesisLedgerPath } from "./finance-state-dir.js";
 
 const Text = z.string().trim().min(1);
@@ -33,7 +44,14 @@ const Iso = z.string().datetime();
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const ThesisId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$/u);
 
-export const FINANCE_THESIS_RECORD_SCHEMA = "lcx_finance_thesis_record_v1" as const;
+const FINANCE_THESIS_RECORD_SCHEMA_V1 = "lcx_finance_thesis_record_v1" as const;
+const FINANCE_THESIS_RECORD_SCHEMA_V2 = "lcx_finance_thesis_record_v2" as const;
+export const FINANCE_THESIS_RECORD_SCHEMA = "lcx_finance_thesis_record_v3" as const;
+
+export const FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES = FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES;
+export type FinanceThesisClaimEpistemicClass = FinanceResearchClaimEpistemicClass;
+export const FINANCE_THESIS_EVIDENCE_RELATIONS = FINANCE_RESEARCH_EVIDENCE_RELATIONS;
+export type FinanceThesisEvidenceRelation = FinanceResearchEvidenceRelation;
 
 /** A thesis is opened into `active` and leaves it exactly once. */
 export const FINANCE_THESIS_STATES = ["active", "invalidated", "realised"] as const;
@@ -51,15 +69,49 @@ const EvidenceLink = z
     summary: Text.optional(),
   })
   .strict();
-export type FinanceThesisEvidence = z.infer<typeof EvidenceLink>;
+const EvidenceLinkV3 = z
+  .object({
+    id: Text,
+    source: Text,
+    reference: Text,
+    summary: Text.optional(),
+    relation: z.enum(FINANCE_THESIS_EVIDENCE_RELATIONS),
+    /** Research packet as-of; not the underlying source publication timestamp. */
+    evidenceAsOf: Iso.optional(),
+  })
+  .strict();
+const EvidenceLinkInput = z
+  .object({
+    id: Text,
+    source: Text,
+    reference: Text,
+    summary: Text.optional(),
+    relation: z.enum(FINANCE_THESIS_EVIDENCE_RELATIONS).optional(),
+    evidenceAsOf: Iso.optional(),
+  })
+  .strict();
+export type FinanceThesisEvidence = z.infer<typeof EvidenceLinkV3>;
+export type FinanceThesisEvidenceInput = z.infer<typeof EvidenceLinkInput>;
+
+export const FinanceThesisApplicabilitySchema = z
+  .object({
+    horizon: z.enum(["intraday", "swing", "long_term"]),
+    validUntil: Iso,
+  })
+  .strict();
+export type FinanceThesisApplicability = z.infer<typeof FinanceThesisApplicabilitySchema>;
 
 export const FinanceThesisOpenInput = z
   .object({
     thesisId: ThesisId,
     instrument: Text,
     claim: Text,
+    claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES).optional(),
+    claimBasis: Text.max(2_000).optional(),
+    applicability: FinanceThesisApplicabilitySchema.optional(),
+    expectationGap: FinanceExpectationGapSchema.optional(),
     rationale: Text.optional(),
-    evidence: z.array(EvidenceLink).min(1),
+    evidence: z.array(EvidenceLinkInput).min(1),
     invalidationConditions: z.array(Text).min(1),
     observedAt: Iso,
   })
@@ -71,13 +123,22 @@ export const FinanceThesisTransitionInput = z
     thesisId: ThesisId,
     to: z.enum(FINANCE_THESIS_TRANSITIONS),
     reason: Text,
-    evidence: z.array(EvidenceLink).optional(),
+    evidence: z.array(EvidenceLinkInput).optional(),
     observedAt: Iso,
   })
   .strict();
 export type FinanceThesisTransitionInput = z.infer<typeof FinanceThesisTransitionInput>;
 
-const OpenedBody = z
+export const FinanceThesisEvidenceAppendInput = z
+  .object({
+    thesisId: ThesisId,
+    evidence: z.array(EvidenceLinkInput).min(1),
+    observedAt: Iso,
+  })
+  .strict();
+export type FinanceThesisEvidenceAppendInput = z.infer<typeof FinanceThesisEvidenceAppendInput>;
+
+const OpenedBodyV2 = z
   .object({
     kind: z.literal("opened"),
     thesisId: ThesisId,
@@ -90,7 +151,24 @@ const OpenedBody = z
   })
   .strict();
 
-const TransitionBody = z
+const OpenedBodyV3 = z
+  .object({
+    kind: z.literal("opened"),
+    thesisId: ThesisId,
+    instrument: Text,
+    claim: Text,
+    claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES),
+    claimBasis: Text.nullable(),
+    applicability: FinanceThesisApplicabilitySchema.optional(),
+    expectationGap: FinanceExpectationGapSchema.optional(),
+    rationale: Text.optional(),
+    evidence: z.array(EvidenceLinkV3).min(1),
+    invalidationConditions: z.array(Text).min(1),
+    observedAt: Iso,
+  })
+  .strict();
+
+const TransitionBodyV2 = z
   .object({
     kind: z.literal("transition"),
     thesisId: ThesisId,
@@ -101,10 +179,72 @@ const TransitionBody = z
   })
   .strict();
 
-const RecordBody = z.discriminatedUnion("kind", [OpenedBody, TransitionBody]);
-export type FinanceThesisRecordBody = z.infer<typeof RecordBody>;
+const TransitionBodyV3 = z
+  .object({
+    kind: z.literal("transition"),
+    thesisId: ThesisId,
+    to: z.enum(FINANCE_THESIS_TRANSITIONS),
+    reason: Text,
+    evidence: z.array(EvidenceLinkV3).optional(),
+    observedAt: Iso,
+  })
+  .strict();
 
-const StoredRecordSchema = z
+const EvidenceAppendedBodyV2 = z
+  .object({
+    kind: z.literal("evidence_appended"),
+    thesisId: ThesisId,
+    evidence: z.array(EvidenceLink).min(1),
+    observedAt: Iso,
+  })
+  .strict();
+
+const EvidenceAppendedBodyV3 = z
+  .object({
+    kind: z.literal("evidence_appended"),
+    thesisId: ThesisId,
+    evidence: z.array(EvidenceLinkV3).min(1),
+    observedAt: Iso,
+  })
+  .strict();
+
+const LegacyRecordBody = z.discriminatedUnion("kind", [OpenedBodyV2, TransitionBodyV2]);
+const RecordBodyV2 = z.discriminatedUnion("kind", [
+  OpenedBodyV2,
+  TransitionBodyV2,
+  EvidenceAppendedBodyV2,
+]);
+const RecordBodyV3 = z.discriminatedUnion("kind", [
+  OpenedBodyV3,
+  TransitionBodyV3,
+  EvidenceAppendedBodyV3,
+]);
+const StoredRecordV1 = z
+  .object({
+    schemaVersion: z.literal(FINANCE_THESIS_RECORD_SCHEMA_V1),
+    recordKey: Text,
+    sequence: z.number().int().positive(),
+    previousRef: Hash.nullable(),
+    recordedAt: Iso,
+    executionAuthority: z.enum(LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES),
+    body: LegacyRecordBody,
+  })
+  .strict();
+const StoredRecordV2 = z
+  .object({
+    schemaVersion: z.literal(FINANCE_THESIS_RECORD_SCHEMA_V2),
+    recordKey: Text,
+    sequence: z.number().int().positive(),
+    previousRef: Hash.nullable(),
+    recordedAt: Iso,
+    executionAuthority: z.enum(LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES),
+    body: RecordBodyV2,
+  })
+  .strict();
+
+export type FinanceThesisRecordBody = z.infer<typeof RecordBodyV3>;
+
+const StoredRecordV3 = z
   .object({
     schemaVersion: z.literal(FINANCE_THESIS_RECORD_SCHEMA),
     recordKey: Text,
@@ -112,10 +252,13 @@ const StoredRecordSchema = z
     previousRef: Hash.nullable(),
     recordedAt: Iso,
     executionAuthority: z.enum(LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES),
-    body: RecordBody,
+    body: RecordBodyV3,
   })
   .strict();
-export type FinanceThesisRecord = z.infer<typeof StoredRecordSchema> & { ref: string };
+export type FinanceThesisRecord =
+  | (z.infer<typeof StoredRecordV1> & { ref: string })
+  | (z.infer<typeof StoredRecordV2> & { ref: string })
+  | (z.infer<typeof StoredRecordV3> & { ref: string });
 
 /**
  * The ledger file is generation-suffixed (`thesis-ledger_1.sqlite`). `finance-state-dir.ts`
@@ -157,13 +300,97 @@ function readStoredRecords(db: ThesisDatabase): FinanceThesisRecord[] {
     if (caseflowFingerprint(raw) !== row.ref) {
       throw new Error("thesis record integrity mismatch");
     }
-    const record = StoredRecordSchema.parse(raw);
+    const legacyRecord = StoredRecordV1.safeParse(raw);
+    const versionTwoRecord = legacyRecord.success ? undefined : StoredRecordV2.safeParse(raw);
+    const record = legacyRecord.success
+      ? legacyRecord.data
+      : versionTwoRecord?.success
+        ? versionTwoRecord.data
+        : StoredRecordV3.parse(raw);
     if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
       throw new Error("thesis record chain mismatch");
     }
     previousRef = row.ref;
     return { ...record, ref: row.ref };
   });
+}
+
+function normalizeStoredEvidence(
+  item: FinanceThesisEvidenceInput | FinanceThesisEvidence,
+): FinanceThesisEvidence {
+  const { id, source, reference, summary } = item;
+  const relation = item.relation ?? "unknown";
+  const evidenceAsOf = "evidenceAsOf" in item ? item.evidenceAsOf : undefined;
+  return {
+    id,
+    source,
+    reference,
+    ...(summary === undefined ? {} : { summary }),
+    relation,
+    ...(evidenceAsOf === undefined ? {} : { evidenceAsOf }),
+  };
+}
+
+function projectLegacyBody(
+  body: FinanceThesisRecordBody,
+): z.infer<typeof RecordBodyV2> | undefined {
+  const legacyEvidence = (items: readonly FinanceThesisEvidence[]) => {
+    if (items.some((item) => item.relation !== "unknown" || item.evidenceAsOf !== undefined)) {
+      return undefined;
+    }
+    return items.map(({ id, source, reference, summary }) => ({
+      id,
+      source,
+      reference,
+      ...(summary === undefined ? {} : { summary }),
+    }));
+  };
+
+  if (body.kind === "opened") {
+    if (
+      body.claimEpistemicClass !== "unclassified" ||
+      body.claimBasis !== null ||
+      body.expectationGap !== undefined
+    ) {
+      return undefined;
+    }
+    const evidence = legacyEvidence(body.evidence);
+    if (!evidence) {
+      return undefined;
+    }
+    return {
+      kind: body.kind,
+      thesisId: body.thesisId,
+      instrument: body.instrument,
+      claim: body.claim,
+      ...(body.rationale === undefined ? {} : { rationale: body.rationale }),
+      evidence,
+      invalidationConditions: body.invalidationConditions,
+      observedAt: body.observedAt,
+    };
+  }
+
+  const evidence = body.evidence === undefined ? undefined : legacyEvidence(body.evidence);
+  if (body.evidence !== undefined && !evidence) {
+    return undefined;
+  }
+  return body.kind === "transition"
+    ? {
+        kind: body.kind,
+        thesisId: body.thesisId,
+        to: body.to,
+        reason: body.reason,
+        ...(evidence === undefined ? {} : { evidence }),
+        observedAt: body.observedAt,
+      }
+    : evidence === undefined
+      ? undefined
+      : {
+          kind: body.kind,
+          thesisId: body.thesisId,
+          evidence,
+          observedAt: body.observedAt,
+        };
 }
 
 export type FinanceThesisTransition = Readonly<{
@@ -178,6 +405,10 @@ export type FinanceThesis = Readonly<{
   thesisId: string;
   instrument: string;
   claim: string;
+  claimEpistemicClass: FinanceThesisClaimEpistemicClass;
+  claimBasis: string | null;
+  applicability?: FinanceThesisApplicability;
+  expectationGap?: FinanceExpectationGap;
   rationale: string | null;
   /** Derived by replay, never stored. */
   state: FinanceThesisState;
@@ -194,14 +425,15 @@ export type FinanceThesisLedger = Readonly<{
   recordCount: number;
   openedRecordCount: number;
   transitionRecordCount: number;
+  evidenceAppendRecordCount: number;
   headRef: string | null;
 }>;
 
 /**
  * Project the recorded events into the current state of each thesis.
  *
- * Opening produces `active`; each later transition replaces it. Because nothing is stored but
- * the events, an `asOf` view is just a shorter prefix of the same stream — there is no
+ * Opening produces `active`; evidence appends preserve it; a terminal transition closes it.
+ * Because nothing is stored but the events, an `asOf` view is a filtered history — there is no
  * historical state column to disagree with it.
  */
 export function projectFinanceTheses(
@@ -212,10 +444,14 @@ export function projectFinanceTheses(
     {
       instrument: string;
       claim: string;
+      claimEpistemicClass: FinanceThesisClaimEpistemicClass;
+      claimBasis: string | null;
+      applicability?: FinanceThesisApplicability;
+      expectationGap?: FinanceExpectationGap;
       rationale: string | null;
       openedAt: string;
       invalidationConditions: readonly string[];
-      evidence: readonly FinanceThesisEvidence[];
+      evidence: FinanceThesisEvidence[];
       transitions: FinanceThesisTransition[];
       closedAt: string | null;
     }
@@ -231,10 +467,19 @@ export function projectFinanceTheses(
       drafts.set(body.thesisId, {
         instrument: body.instrument,
         claim: body.claim,
+        claimEpistemicClass:
+          "claimEpistemicClass" in body ? body.claimEpistemicClass : "unclassified",
+        claimBasis: "claimBasis" in body ? body.claimBasis : null,
+        ...("applicability" in body && body.applicability
+          ? { applicability: body.applicability }
+          : {}),
+        ...("expectationGap" in body && body.expectationGap
+          ? { expectationGap: body.expectationGap }
+          : {}),
         rationale: body.rationale ?? null,
         openedAt: body.observedAt,
         invalidationConditions: body.invalidationConditions,
-        evidence: body.evidence,
+        evidence: body.evidence.map(normalizeStoredEvidence),
         transitions: [],
         closedAt: null,
       });
@@ -248,10 +493,18 @@ export function projectFinanceTheses(
         `thesis ${body.thesisId} was already closed at ${existing.closedAt}; a closed thesis is history`,
       );
     }
+    if (body.kind === "evidence_appended") {
+      const existingEvidenceIds = new Set(existing.evidence.map((item) => item.id));
+      if (body.evidence.some((item) => existingEvidenceIds.has(item.id))) {
+        throw new Error(`thesis ${body.thesisId} contains duplicate evidence ids`);
+      }
+      existing.evidence.push(...body.evidence.map(normalizeStoredEvidence));
+      continue;
+    }
     existing.transitions.push({
       to: body.to,
       reason: body.reason,
-      evidence: body.evidence ?? [],
+      evidence: (body.evidence ?? []).map(normalizeStoredEvidence),
       observedAt: body.observedAt,
       recordedAt: record.recordedAt,
     });
@@ -263,6 +516,10 @@ export function projectFinanceTheses(
       thesisId,
       instrument: draft.instrument,
       claim: draft.claim,
+      claimEpistemicClass: draft.claimEpistemicClass,
+      claimBasis: draft.claimBasis,
+      ...(draft.applicability ? { applicability: draft.applicability } : {}),
+      ...(draft.expectationGap ? { expectationGap: draft.expectationGap } : {}),
       rationale: draft.rationale,
       state: draft.transitions.at(-1)?.to ?? "active",
       openedAt: draft.openedAt,
@@ -323,7 +580,11 @@ async function appendRecord(
         (item) => item.body.kind === body.kind && item.recordKey === recordKey,
       );
       if (existing) {
-        if (caseflowFingerprint(existing.body) !== caseflowFingerprint(body)) {
+        const legacyBody = projectLegacyBody(body);
+        if (
+          caseflowFingerprint(existing.body) !== caseflowFingerprint(body) &&
+          (!legacyBody || caseflowFingerprint(existing.body) !== caseflowFingerprint(legacyBody))
+        ) {
           throw new Error(
             `thesis record ${recordKey} already recorded with different content; ` +
               "the ledger is append-only and has no correction path",
@@ -341,7 +602,7 @@ async function appendRecord(
       // Reject against the recorded events, not against a stored state column: the state to
       // transition *from* is whatever replaying the stream says, so there is nothing for a
       // stored column to disagree with.
-      if (body.kind === "transition") {
+      if (body.kind === "transition" || body.kind === "evidence_appended") {
         const opened = records.find(
           (item) => item.body.kind === "opened" && item.body.thesisId === body.thesisId,
         );
@@ -354,11 +615,27 @@ async function appendRecord(
         if (closed) {
           throw new Error(`thesis ${body.thesisId} is already closed; a closed thesis is history`);
         }
+        if (body.kind === "evidence_appended") {
+          const priorEvidenceIds = new Set(
+            records.flatMap(({ body: prior }) => {
+              if (
+                prior.thesisId !== body.thesisId ||
+                (prior.kind !== "opened" && prior.kind !== "evidence_appended")
+              ) {
+                return [];
+              }
+              return prior.evidence.map((entry) => entry.id);
+            }),
+          );
+          if (body.evidence.some((item) => priorEvidenceIds.has(item.id))) {
+            throw new Error(`thesis ${body.thesisId} already contains an evidence id`);
+          }
+        }
       } else if (records.some((item) => item.body.thesisId === body.thesisId)) {
         throw new Error(`thesis ${body.thesisId} is already open`);
       }
 
-      const record = StoredRecordSchema.parse({
+      const record = StoredRecordV3.parse({
         schemaVersion: FINANCE_THESIS_RECORD_SCHEMA,
         recordKey,
         sequence: records.length + 1,
@@ -393,11 +670,31 @@ export async function openFinanceThesis(
   input: unknown,
 ): Promise<FinanceThesisAppend> {
   const data = FinanceThesisOpenInput.parse(input);
+  if (
+    data.applicability &&
+    Date.parse(data.applicability.validUntil) <= Date.parse(data.observedAt)
+  ) {
+    throw new Error("thesis applicability must expire after its observation");
+  }
+  const claimEpistemicClass = data.claimEpistemicClass ?? "unclassified";
+  if (financeResearchClaimRequiresBasis(claimEpistemicClass) && !data.claimBasis?.trim()) {
+    throw new Error("derived, estimated, inferred, or hypothesized thesis claims require a basis");
+  }
   const evidenceIds = new Set(data.evidence.map((item) => item.id));
   if (evidenceIds.size !== data.evidence.length) {
     throw new Error("duplicate thesis evidence id");
   }
-  return appendRecord(directory, { kind: "opened", ...data }, `opened:${data.thesisId}`);
+  return appendRecord(
+    directory,
+    {
+      kind: "opened",
+      ...data,
+      claimEpistemicClass,
+      claimBasis: data.claimBasis ?? null,
+      evidence: data.evidence.map(normalizeStoredEvidence),
+    },
+    `opened:${data.thesisId}`,
+  );
 }
 
 /**
@@ -416,8 +713,34 @@ export async function transitionFinanceThesis(
   }
   return appendRecord(
     directory,
-    { kind: "transition", ...data },
+    {
+      kind: "transition",
+      thesisId: data.thesisId,
+      to: data.to,
+      reason: data.reason,
+      ...(data.evidence === undefined
+        ? {}
+        : { evidence: data.evidence.map(normalizeStoredEvidence) }),
+      observedAt: data.observedAt,
+    },
     `transition:${data.thesisId}@${data.observedAt}`,
+  );
+}
+
+/** Add new evidence to an active thesis without changing its claim or invalidation conditions. */
+export async function appendFinanceThesisEvidence(
+  directory: string,
+  input: unknown,
+): Promise<FinanceThesisAppend> {
+  const data = FinanceThesisEvidenceAppendInput.parse(input);
+  const evidenceIds = new Set(data.evidence.map((item) => item.id));
+  if (evidenceIds.size !== data.evidence.length) {
+    throw new Error("duplicate thesis evidence id");
+  }
+  return appendRecord(
+    directory,
+    { kind: "evidence_appended", ...data, evidence: data.evidence.map(normalizeStoredEvidence) },
+    `evidence:${data.thesisId}@${data.observedAt}`,
   );
 }
 
@@ -446,6 +769,7 @@ export async function readFinanceThesisLedger(
         recordCount: 0,
         openedRecordCount: 0,
         transitionRecordCount: 0,
+        evidenceAppendRecordCount: 0,
         headRef: null,
       });
     }
@@ -460,6 +784,7 @@ export async function readFinanceThesisLedger(
         recordCount: 0,
         openedRecordCount: 0,
         transitionRecordCount: 0,
+        evidenceAppendRecordCount: 0,
         headRef: null,
       });
     }
@@ -474,6 +799,9 @@ export async function readFinanceThesisLedger(
       recordCount: records.length,
       openedRecordCount: records.filter((record) => record.body.kind === "opened").length,
       transitionRecordCount: records.filter((record) => record.body.kind === "transition").length,
+      evidenceAppendRecordCount: records.filter(
+        (record) => record.body.kind === "evidence_appended",
+      ).length,
       headRef: records.at(-1)?.ref ?? null,
     });
   } finally {

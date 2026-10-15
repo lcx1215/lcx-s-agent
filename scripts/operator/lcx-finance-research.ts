@@ -32,10 +32,6 @@ import {
 import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 import { runFinanceSourceRecovery } from "../../src/agents/finance-source-recovery.ts";
-import {
-  createLocalQualityHarnessAdapter,
-  resolveLocalTextModelRuntimeConfig,
-} from "../../src/agents/local-text-model-adapter.ts";
 import { loadConfig } from "../../src/config/config.ts";
 import type { OpenClawConfig } from "../../src/config/config.ts";
 import type { CronJob } from "../../src/cron/types.ts";
@@ -334,9 +330,9 @@ export async function runFinanceResearchCli(
     values["max-model-tokens"] === undefined ? undefined : Number(values["max-model-tokens"]);
   if (
     maxModelTokens !== undefined &&
-    (!Number.isSafeInteger(maxModelTokens) || maxModelTokens < 1 || maxModelTokens > 16_384)
+    (!Number.isSafeInteger(maxModelTokens) || maxModelTokens < 1)
   ) {
-    throw new Error("--max-model-tokens must be an integer from 1 to 16384");
+    throw new Error("--max-model-tokens must be a positive safe integer");
   }
   const maxApiCalls = Number(values["max-api-calls"]);
   if (!Number.isSafeInteger(maxApiCalls) || maxApiCalls <= 0) {
@@ -345,10 +341,11 @@ export async function runFinanceResearchCli(
   if (
     values.live &&
     !values["sources-only"] &&
-    !(values["configured-model"] || values["workflow-models"]) &&
-    (!values.model?.trim() || !values.adapter?.trim())
+    !(values["configured-model"] || values["workflow-models"])
   ) {
-    throw new Error("--live requires an explicit --model and --adapter before any collection");
+    throw new Error(
+      "--live requires --workflow-models or --configured-model before any collection; local research/review roles retired; use --sources-only for collection only",
+    );
   }
   const execution = {
     model: values.model ?? "none",
@@ -385,6 +382,9 @@ export async function runFinanceResearchCli(
               "../../src/agents/finance-model-workflow.ts",
               "../../src/agents/configured-finance-model-adapter.ts",
               "../../src/agents/quality-harness.ts",
+              "../../src/agents/quality-harness-quality.ts",
+              "../../src/agents/quality-harness-findings.ts",
+              "../../src/agents/evidence-source-identity.ts",
               "./lcx-finance-research.ts",
             ].map(async (file) => [
               file,
@@ -465,26 +465,15 @@ export async function runFinanceResearchCli(
         maxTokens: maxModelTokens,
       })
     : undefined;
-  const runtime =
-    values["configured-model"] || workflow
-      ? { timeoutMs: 120_000, maxTokens: maxModelTokens ?? 8_192 }
-      : resolveLocalTextModelRuntimeConfig({
-          modelId: values.model,
-          adapterPath: values.adapter!,
-          pythonPath: values.python,
-          allowNetwork: false,
-          maxTokens: maxModelTokens,
-        });
+  const runtime = { timeoutMs: 120_000, maxTokens: maxModelTokens };
   execution.runtime = { ...runtime };
   const role =
     workflow?.routing.adapters[1] ??
-    ("adapterPath" in runtime
-      ? createLocalQualityHarnessAdapter(runtime)
-      : createConfiguredFinanceModelAdapter(context?.config ?? loadConfig(), {
-          maxCalls: maxModelCalls,
-          timeoutMs: runtime.timeoutMs,
-          maxTokens: runtime.maxTokens,
-        }));
+    createConfiguredFinanceModelAdapter(context?.config ?? loadConfig(), {
+      maxCalls: maxModelCalls,
+      timeoutMs: runtime.timeoutMs,
+      maxTokens: runtime.maxTokens,
+    });
   const quality = role;
   execution.model = role.modelId;
   execution.runtime = { ...execution.runtime, provider: role.provider };

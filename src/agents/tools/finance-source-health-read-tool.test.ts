@@ -75,6 +75,10 @@ type Payload = {
   routeCount: number;
   configuredRouteCount: number;
   recentSuccessCount: number;
+  heartbeat: {
+    boundary: string;
+    records: Record<string, unknown>;
+  };
   reported: number;
   filtered: boolean;
   routes: {
@@ -105,6 +109,9 @@ describe("finance source health read tool", () => {
 
     expect(payload.noNetworkCalled).toBe(true);
     expect(payload.boundary).toBe("inventory_and_recent_call_evidence_not_continuous_uptime");
+    expect(payload.heartbeat.boundary).toBe(
+      "durable_provider_level_observation_no_network_on_read",
+    );
     const route = payload.routes.find((entry: { id: string }) => entry.id === "gdelt_public_news");
     expect(route?.callState).toBe("recent_success");
     expect(route?.lastObservation?.status).toBe("succeeded");
@@ -162,6 +169,13 @@ describe("finance source health read tool", () => {
     const payload = await read(createFinanceSourceHealthReadTool({ workspaceDir: workspace }), {});
 
     expect(payload.recentSuccessCount).toBe(0);
+    expect(payload).toMatchObject({
+      evidenceScope: {
+        assessed: "stored_route_call_receipts_only",
+        systemWideFreshDataAvailability: "not_assessed",
+        sourceIndependence: "not_assessed",
+      },
+    });
     // Without credentials every route is `not_configured_or_disabled`, which is a credentials gap,
     // not an outage. The action text has to say so rather than let the empty count speak.
     expect(payload.action).toContain("not_configured_or_disabled needs credentials");

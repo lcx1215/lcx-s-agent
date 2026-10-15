@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "external_finance_research_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "The original module executor treats learning as an independent evidence lane. Its missing-capability receipt enters Quality without blocking the selected causal module.",
+  "authority": "src/agents/finance-module-execution.ts",
+  "sourceFacts": [
+    "finance-module-composition.ts excludes finance_learning_memory from causal_map dependencies",
+    "finance-research-runner.ts passes executed module evidence and full financeModuleExecution into Quality",
+    "Existing native receipt observes learning blocked_missing_evidence and causal succeeded in the same attempt; Quality consumes both actual results"
+  ],
+  "changes": {
+    "removedEdge": ["finance_learning_memory", "causal_map"],
+    "addedEdge": ["finance_learning_memory", "review_panel"],
+    "preservedNodes": "All original ten nodes, source requirements, reply boundary and review feedback remain.",
+    "receiptCompatibility": "Old receipt bytes remain untouched. A historical learning-to-causal witness is not evidence for the corrected learning-to-review handoff."
+  },
+  "nonEffects": [
+    "no production execution change",
+    "no canonical relation vocabulary or state transition change",
+    "no authority or risk expansion",
+    "no second model loop"
+  ],
+  "verification": [
+    "test/lcx-flow-handoff-finance-module-main.test.ts existing retained proof",
+    "test/lcx-flow-handoff-finance-reply.test.ts same-attempt module cases",
+    "scripts/operator/lcx-flow-graph.ts --json"
+  ],
+  "acceptance": "Structure alone does not close the scene. Original same-attempt producer and Quality consumer readbacks must prove the corrected edge."
+}

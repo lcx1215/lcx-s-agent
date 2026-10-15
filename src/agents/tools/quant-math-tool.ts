@@ -1,9 +1,47 @@
 import { Type } from "@sinclair/typebox";
+import { calculateFinancePositionSize } from "../finance-position-sizing.js";
+import {
+  evaluateFinanceTradeEconomics,
+  FinanceTradeEconomicsObservationSchema,
+  FinanceTradeEconomicsPolicySchema,
+} from "../finance-trade-economics.js";
 import type { AnyAgentTool } from "./common.js";
 import { ToolInputError, jsonResult, readNumberParam, readStringParam } from "./common.js";
 
 const QuantMathSchema = Type.Object({
   action: Type.String(),
+  observations: Type.Optional(
+    Type.Array(
+      Type.Object({
+        id: Type.String({ maxLength: 120 }),
+        entryAt: Type.String(),
+        exitAt: Type.String(),
+        grossReturn: Type.Number(),
+        costFraction: Type.Number(),
+      }),
+      { minItems: 1, maxItems: 500 },
+    ),
+  ),
+  policy: Type.Optional(
+    Type.Object({
+      minObservations: Type.Number(),
+      priorWins: Type.Number(),
+      priorLosses: Type.Number(),
+      kellyFraction: Type.Number(),
+      maxAllocationFraction: Type.Number(),
+      maxLossBudgetFraction: Type.Number(),
+      uncertaintyPenalty: Type.Number(),
+    }),
+  ),
+  additionalCostFraction: Type.Optional(Type.Number()),
+  assumedRoundTripCostFraction: Type.Optional(Type.Number()),
+  side: Type.Optional(Type.String()),
+  entryPrice: Type.Optional(Type.Number()),
+  stopPrice: Type.Optional(Type.Number()),
+  riskBudget: Type.Optional(Type.Number()),
+  maxNotional: Type.Optional(Type.Number()),
+  roundTripCostPerUnit: Type.Optional(Type.Number()),
+  fixedCosts: Type.Optional(Type.Number()),
   series: Type.Optional(Type.Array(Type.Number())),
   benchmark: Type.Optional(Type.Array(Type.Number())),
   seriesMatrix: Type.Optional(Type.Array(Type.Array(Type.Number()))),
@@ -31,6 +69,8 @@ const QuantMathSchema = Type.Object({
 });
 
 type QuantAction =
+  | "trade_economics_eval"
+  | "position_size"
   | "beta"
   | "correlation"
   | "returns_from_levels"
@@ -886,12 +926,110 @@ export function createQuantMathTool(): AnyAgentTool {
     label: "Quant Math",
     name: "quant_math",
     description:
-      "Compute bounded quantitative metrics such as returns, covariance/correlation matrix, regression alpha/beta, rolling beta/correlation, Sharpe, Sortino, tracking error, information ratio, max drawdown/duration, portfolio return/volatility/risk contribution, risk-budget deviation, CAGR/Calmar, z-score, historical VaR/expected shortfall, Black-Scholes European option price/Greeks, and plain-vanilla bond duration/DV01 from explicit inputs. Use this instead of guessing portfolio math in prose.",
+      "Compute bounded quantitative metrics such as returns, covariance/correlation matrix, regression alpha/beta, rolling beta/correlation, Sharpe, Sortino, tracking error, information ratio, max drawdown/duration, portfolio return/volatility/risk contribution, risk-budget deviation, CAGR/Calmar, z-score, historical VaR/expected shortfall, Black-Scholes European option price/Greeks, and plain-vanilla bond duration/DV01 from explicit inputs. For position_size, supply side, entryPrice, stopPrice and riskBudget, with optional maxNotional, roundTripCostPerUnit and fixedCosts. For trade_economics_eval, supply 1-500 closed observations (id, entryAt, exitAt, grossReturn, costFraction), an explicit policy, additionalCostFraction and assumedRoundTripCostFraction. It calls the existing walk-forward evaluator and returns net results plus correction questions; caller inputs are not verified broker facts and no strategy promotion is granted. Call separately for each entry scenario; returned plannedLoss is not a guaranteed maximum loss. Use this instead of guessing portfolio math in prose.",
     parameters: QuantMathSchema,
     execute: async (_toolCallId, params) => {
       const action = readStringParam(params, "action", { required: true }) as QuantAction;
 
       switch (action) {
+        case "trade_economics_eval": {
+          const observations = FinanceTradeEconomicsObservationSchema.extend({
+            id: FinanceTradeEconomicsObservationSchema.shape.id.max(120),
+          })
+            .array()
+            .min(1)
+            .max(500)
+            .parse(params.observations);
+          if (new Set(observations.map((row) => row.id)).size !== observations.length) {
+            throw new ToolInputError("observations must have unique trade ids");
+          }
+          const policy = FinanceTradeEconomicsPolicySchema.parse(params.policy);
+          const evaluation = evaluateFinanceTradeEconomics({
+            observations,
+            policy,
+            additionalCostFraction: readNumberParam(params, "additionalCostFraction", {
+              required: true,
+            })!,
+            assumedRoundTripCostFraction: readNumberParam(params, "assumedRoundTripCostFraction", {
+              required: true,
+            })!,
+          });
+          const { decisions, ...summary } = evaluation;
+          // Questions refer to this task's measured results, never activate or retune a rule.
+          const corrections = [
+            ...(evaluation.scoredPredictions === 0
+              ? [
+                  "insufficient_scored_predictions: collect closed observations before assessing calibration",
+                ]
+              : []),
+            ...(evaluation.brierScore !== null &&
+            evaluation.constantHalfBrier !== null &&
+            evaluation.brierScore > evaluation.constantHalfBrier
+              ? [
+                  "calibration_worse_than_half_baseline: review predictions on independent evidence; do not fit this sample",
+                ]
+              : []),
+            ...(evaluation.netEconomics.allOpportunities.meanNetReturn !== null &&
+            evaluation.netEconomics.allOpportunities.meanNetReturn <= 0
+              ? ["nonpositive_sample_net_return: inspect mechanism and declared costs before reuse"]
+              : []),
+            ...(evaluation.netEconomics.grossWinnersLostAfterCosts > 0
+              ? ["costs_erase_gross_winners: inspect turnover, fees and slippage assumptions"]
+              : []),
+            ...(evaluation.sizedTrades === 0
+              ? [
+                  "no_selected_trades: zero strategy return is abstention, not demonstrated profitability",
+                ]
+              : []),
+            "independent_selection_process_evidence_required: this is retrospective, not an untouched holdout",
+          ];
+          return jsonResult({
+            action,
+            ...summary,
+            lastDecision: decisions.at(-1),
+            feedback: {
+              datasetRef: evaluation.datasetRef,
+              policyRef: evaluation.policyRef,
+              corrections,
+              inputAuthority: "caller_supplied_observations_and_cost_assumptions",
+              sourceMethodAdoption: "not_proven_by_arithmetic",
+              executionAuthority: "none",
+              promotionAllowed: false,
+            },
+          });
+        }
+        case "position_size": {
+          for (const key of [
+            "entryPrice",
+            "stopPrice",
+            "riskBudget",
+            "maxNotional",
+            "roundTripCostPerUnit",
+            "fixedCosts",
+          ]) {
+            if (
+              params[key] !== undefined &&
+              (typeof params[key] !== "number" || !Number.isFinite(params[key]))
+            ) {
+              throw new ToolInputError(`${key} must be a finite number`);
+            }
+          }
+          const side = readStringParam(params, "side", { required: true });
+          if (side !== "buy" && side !== "sell") {
+            throw new ToolInputError("side must be buy or sell");
+          }
+          return jsonResult(
+            calculateFinancePositionSize({
+              side,
+              entryPrice: readNumberParam(params, "entryPrice", { required: true })!,
+              stopPrice: readNumberParam(params, "stopPrice", { required: true })!,
+              riskBudget: readNumberParam(params, "riskBudget", { required: true })!,
+              maxNotional: readNumberParam(params, "maxNotional"),
+              roundTripCostPerUnit: readNumberParam(params, "roundTripCostPerUnit"),
+              fixedCosts: readNumberParam(params, "fixedCosts"),
+            }),
+          );
+        }
         case "beta":
           return jsonResult(
             calculateBeta(readNumberArray(params, "series"), readNumberArray(params, "benchmark")),

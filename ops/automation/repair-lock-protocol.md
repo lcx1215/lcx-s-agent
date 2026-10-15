@@ -10,7 +10,7 @@ must acquire the repo-local repair lock:
 node --import tsx scripts/operator/lcx-automation-repair-lock.ts \
   --mode acquire \
   --lane <automation-id> \
-  --worktree /Users/liuchengxu/Desktop/lcx-s-openclaw \
+  --worktree "<repo-worktree>" \
   --json
 ```
 
@@ -23,6 +23,12 @@ CODEX_REPAIR_LOCKED
 Include the returned `status`, `reason`, current lock owner if present, and dirty files if present.
 Do not use `--allow-dirty` unless the user explicitly asks for an emergency manual repair.
 
+`blocked_worktree_status_unavailable` means Git could not confirm the requested worktree;
+`blocked_lock_status_unavailable` means existing lock ownership could not be read. Neither
+means clean or unlocked. `--allow-dirty` only permits known dirty Git state; it does not waive
+unavailable worktree or lock evidence. An empty or malformed existing lock stays blocked and
+must not be overwritten or released as though it were absent.
+
 If the command returns `"acquired": true`, keep the returned `token`. After the repair and
 verification, release the lock:
 
@@ -31,7 +37,7 @@ node --import tsx scripts/operator/lcx-automation-repair-lock.ts \
   --mode release \
   --lane <automation-id> \
   --token <token> \
-  --worktree /Users/liuchengxu/Desktop/lcx-s-openclaw \
+  --worktree "<repo-worktree>" \
   --json
 ```
 

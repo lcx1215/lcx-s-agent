@@ -20,9 +20,77 @@ const GENERIC_EVIDENCE_PATTERNS = [
   /^article references\b/iu,
 ] as const;
 
-function includesAny(haystack: Set<string>, needles: readonly string[]) {
-  return needles.some((needle) => haystack.has(needle));
-}
+export type FinanceDomainEvidenceCategoryRequirements = Readonly<{
+  requiredAllCategories: readonly FinanceEvidenceCategory[];
+  requiredAnyCategoryGroups: readonly (readonly FinanceEvidenceCategory[])[];
+  failureMessage: string;
+}>;
+
+/** One source of truth for producer evidence gates and their model-facing contract. */
+export const FINANCE_DOMAIN_EVIDENCE_CATEGORY_REQUIREMENTS = {
+  macro_rates_inflation: {
+    requiredAllCategories: ["macro_rates_evidence", "inflation_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage: "macro_rates_inflation requires macro_rates_evidence and inflation_evidence",
+  },
+  etf_regime: {
+    requiredAllCategories: ["equity_market_evidence"],
+    requiredAnyCategoryGroups: [
+      ["etf_regime_evidence"],
+      ["macro_rates_evidence"],
+      ["liquidity_evidence"],
+    ],
+    failureMessage:
+      "etf_regime requires equity_market_evidence plus etf_regime_evidence, macro_rates_evidence, or liquidity_evidence",
+  },
+  options_volatility: {
+    requiredAllCategories: ["options_volatility_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage: "options_volatility requires options_volatility_evidence",
+  },
+  company_fundamentals_value: {
+    requiredAllCategories: ["fundamentals_evidence", "valuation_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage:
+      "company_fundamentals_value requires fundamentals_evidence and valuation_evidence",
+  },
+  commodities_oil_gold: {
+    requiredAllCategories: [],
+    requiredAnyCategoryGroups: [
+      ["commodity_evidence"],
+      ["macro_rates_evidence", "inflation_evidence"],
+    ],
+    failureMessage:
+      "commodities_oil_gold requires commodity_evidence or combined macro_rates_evidence and inflation_evidence",
+  },
+  fx_dollar: {
+    requiredAllCategories: ["fx_dollar_evidence"],
+    requiredAnyCategoryGroups: [["macro_rates_evidence"], ["liquidity_evidence"]],
+    failureMessage:
+      "fx_dollar requires fx_dollar_evidence plus macro_rates_evidence or liquidity_evidence",
+  },
+  credit_liquidity: {
+    requiredAllCategories: ["credit_evidence", "liquidity_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage: "credit_liquidity requires credit_evidence and liquidity_evidence",
+  },
+  event_driven: {
+    requiredAllCategories: ["event_catalyst_evidence", "portfolio_risk_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage: "event_driven requires event_catalyst_evidence and portfolio_risk_evidence",
+  },
+  portfolio_risk_gates: {
+    requiredAllCategories: ["portfolio_risk_evidence", "implementation_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage:
+      "portfolio_risk_gates requires portfolio_risk_evidence and implementation_evidence",
+  },
+  causal_map: {
+    requiredAllCategories: ["causal_chain_evidence"],
+    requiredAnyCategoryGroups: [],
+    failureMessage: "causal_map requires causal_chain_evidence",
+  },
+} satisfies Record<FinanceFrameworkCoreDomain, FinanceDomainEvidenceCategoryRequirements>;
 
 function ensureCategoriesSupported(categories: string[], label: string): FinanceEvidenceCategory[] {
   if (categories.length === 0) {
@@ -48,6 +116,27 @@ export function ensureNonGenericEvidenceSummary(summary: string, label: string) 
   }
 }
 
+export function validateFinanceDomainEvidenceCategories(params: {
+  domain: FinanceFrameworkCoreDomain;
+  evidenceCategories: string[];
+}) {
+  const categories = ensureCategoriesSupported(params.evidenceCategories, "evidenceCategories");
+  const available = new Set<string>(categories);
+  const requirements = FINANCE_DOMAIN_EVIDENCE_CATEGORY_REQUIREMENTS[params.domain];
+  const missingRequired = requirements.requiredAllCategories.some(
+    (category) => !available.has(category),
+  );
+  const missingAlternative =
+    requirements.requiredAnyCategoryGroups.length > 0 &&
+    !requirements.requiredAnyCategoryGroups.some((group) =>
+      group.every((category) => available.has(category)),
+    );
+  if (missingRequired || missingAlternative) {
+    throw new ToolInputError(requirements.failureMessage);
+  }
+  return categories;
+}
+
 export function validateFinanceDomainEvidenceGate(params: {
   domain: FinanceFrameworkCoreDomain;
   evidenceCategories: string[];
@@ -57,104 +146,17 @@ export function validateFinanceDomainEvidenceGate(params: {
   downstreamAssetImpacts?: string[];
   causalSupportText?: string;
 }) {
-  const evidenceCategories = ensureCategoriesSupported(
-    params.evidenceCategories,
-    "evidenceCategories",
-  );
+  const evidenceCategories = validateFinanceDomainEvidenceCategories(params);
   ensureNonGenericEvidenceSummary(params.evidenceSummary, "evidenceSummary");
-  const categorySet = new Set<string>(evidenceCategories);
 
   switch (params.domain) {
-    case "macro_rates_inflation":
-      if (!categorySet.has("macro_rates_evidence") || !categorySet.has("inflation_evidence")) {
-        throw new ToolInputError(
-          "macro_rates_inflation requires macro_rates_evidence and inflation_evidence",
-        );
-      }
-      break;
-    case "etf_regime":
-      if (
-        !categorySet.has("equity_market_evidence") ||
-        !includesAny(categorySet, [
-          "etf_regime_evidence",
-          "macro_rates_evidence",
-          "liquidity_evidence",
-        ])
-      ) {
-        throw new ToolInputError(
-          "etf_regime requires equity_market_evidence plus etf_regime_evidence, macro_rates_evidence, or liquidity_evidence",
-        );
-      }
-      break;
-    case "options_volatility":
-      if (!categorySet.has("options_volatility_evidence")) {
-        throw new ToolInputError("options_volatility requires options_volatility_evidence");
-      }
-      break;
-    case "company_fundamentals_value":
-      if (!categorySet.has("fundamentals_evidence") || !categorySet.has("valuation_evidence")) {
-        throw new ToolInputError(
-          "company_fundamentals_value requires fundamentals_evidence and valuation_evidence",
-        );
-      }
-      break;
-    case "commodities_oil_gold":
-      if (
-        !categorySet.has("commodity_evidence") &&
-        !(categorySet.has("macro_rates_evidence") && categorySet.has("inflation_evidence"))
-      ) {
-        throw new ToolInputError(
-          "commodities_oil_gold requires commodity_evidence or combined macro_rates_evidence and inflation_evidence",
-        );
-      }
-      break;
-    case "fx_dollar":
-      if (
-        !categorySet.has("fx_dollar_evidence") ||
-        !includesAny(categorySet, ["macro_rates_evidence", "liquidity_evidence"])
-      ) {
-        throw new ToolInputError(
-          "fx_dollar requires fx_dollar_evidence plus macro_rates_evidence or liquidity_evidence",
-        );
-      }
-      break;
-    case "credit_liquidity":
-      if (!categorySet.has("credit_evidence") || !categorySet.has("liquidity_evidence")) {
-        throw new ToolInputError(
-          "credit_liquidity requires credit_evidence and liquidity_evidence",
-        );
-      }
-      break;
-    case "event_driven":
-      if (
-        !categorySet.has("event_catalyst_evidence") ||
-        !categorySet.has("portfolio_risk_evidence")
-      ) {
-        throw new ToolInputError(
-          "event_driven requires event_catalyst_evidence and portfolio_risk_evidence",
-        );
-      }
-      break;
-    case "portfolio_risk_gates":
-      if (
-        !categorySet.has("portfolio_risk_evidence") ||
-        !categorySet.has("implementation_evidence")
-      ) {
-        throw new ToolInputError(
-          "portfolio_risk_gates requires portfolio_risk_evidence and implementation_evidence",
-        );
-      }
-      break;
     case "causal_map":
-      if (!categorySet.has("causal_chain_evidence")) {
-        throw new ToolInputError("causal_map requires causal_chain_evidence");
-      }
       {
         const causalText = [params.keyCausalChain, params.causalSupportText]
           .filter(Boolean)
           .join("\n");
         const hasMechanisticLink =
-          causalText.includes("->") ||
+          /->|→|⇒/u.test(causalText) ||
           /mechanis|transmi|because|causal|upstream|downstream/iu.test(causalText);
         const hasStructuredSupport =
           (params.upstreamDrivers?.length ?? 0) > 0 &&
@@ -165,6 +167,8 @@ export function validateFinanceDomainEvidenceGate(params: {
           );
         }
       }
+      break;
+    default:
       break;
   }
 

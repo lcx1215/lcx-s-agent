@@ -25,6 +25,7 @@ import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
 } from "./finance-data-gateway.js";
+import { readBoundedFinanceResponseText } from "./finance-http-body.js";
 import { financeResponseCache } from "./finance-response-cache.js";
 import { governFinanceQuota } from "./finance-source-quota.js";
 
@@ -127,7 +128,7 @@ export function createFinanceNativeFetch(gzipText = false): FetchImpl {
       headers: response.headers,
       text: async () => {
         if (!gzipText || !response.ok) {
-          return response.text();
+          return readBoundedFinanceResponseText(response, { label: "finance market data" });
         }
         const reader = response.body?.getReader();
         if (!reader) {

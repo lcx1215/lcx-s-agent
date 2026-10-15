@@ -1,13 +1,23 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { recordAgentArtifact } from "../../src/agents/artifact-result-recording.js";
+import { projectCleanupReview } from "../../src/agents/central-harness/cleanup-review-handoff.js";
+import { fitGovernanceDigest } from "../../src/agents/central-harness/governance-digest-budget.js";
+import { projectFlowHandoff } from "../../src/agents/central-harness/governance-input.js";
 import {
   boundPerception,
   compactReceipts,
+  nextCycleContinuation,
+  projectFinancePerceptionEvidence,
   resumableReceipts,
   runCentralHarnessCycle,
 } from "../../src/agents/central-harness/harness-loop.js";
-import type { CompactBacklogEntry } from "../../src/agents/central-harness/harness-loop.js";
+import type {
+  CentralCycleContinuation,
+  CompactBacklogEntry,
+} from "../../src/agents/central-harness/harness-loop.js";
 import { createCentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import type { CentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import {
@@ -22,10 +32,18 @@ import {
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../../src/agents/central-harness/tool-registry.js";
 import type {
+  CentralHostTask,
   CentralPerception,
   CentralRunReceipt,
 } from "../../src/agents/central-harness/types.js";
+import { buildFinanceAutomaticLifecycleFeedback } from "../../src/agents/finance-automatic-lifecycle-feedback.js";
 import { loadConfig } from "../../src/config/io.js";
+import { readFileWithinRoot } from "../../src/infra/fs-safe.js";
+import {
+  backfillOwnerArtifacts,
+  type OwnerArtifactBackfillReceipt,
+} from "../../src/memory/artifact-owner-backfill.js";
+import { LCX_RUN_STATUSES } from "../../src/shared/lcx-run-receipt.js";
 import {
   CENTRAL_AGENT_LATEST_PATH,
   CENTRAL_AGENT_LOG_JSONL_PATH,
@@ -41,6 +59,7 @@ const LATEST_PATH = CENTRAL_AGENT_LATEST_PATH;
 const RUNS_DIR = CENTRAL_AGENT_RUNS_DIR;
 /** Resume window: how many prior cycles the brain is allowed to see (thread-store tail). */
 const RESUME_WINDOW = 40;
+const CENTRAL_CAPABILITY_IDS = new Set(CENTRAL_CAPABILITY_OWNER_IDS);
 
 const CLAIMED_BOUNDARIES = [
   "research_only",
@@ -58,7 +77,7 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
     durationMinutes: 2,
     dryRun: false,
     planOnly: false,
-    maxCycles: Number.POSITIVE_INFINITY,
+    maxCycles: 5,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -67,6 +86,19 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
       i += 1;
     } else if (arg === "--max-cycles") {
       out.maxCycles = Number(args[i + 1]);
+      i += 1;
+    } else if (arg === "--governance-input") {
+      const value = args[++i];
+      if (!value || value.startsWith("--")) {
+        throw new ParseError("--governance-input requires a path");
+      }
+      out.governanceInput = value;
+    } else if (arg === "--objective" || arg === "--focus") {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("--") || !value.trim()) {
+        throw new ParseError(`${arg} requires a value`);
+      }
+      out[arg === "--objective" ? "objective" : "focus"] = value.trim();
       i += 1;
     } else if (arg === "--dry-run") {
       out.dryRun = true;
@@ -80,56 +112,247 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
       out.json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new ParseError(
-        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json]",
+        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json] [--objective TEXT] [--focus general|finance] [--governance-input PATH]",
       );
+    } else {
+      throw new ParseError(`unknown argument: ${arg}`);
     }
+  }
+  if (
+    !Number.isFinite(out.durationMinutes) ||
+    Number(out.durationMinutes) <= 0 ||
+    Number(out.durationMinutes) > 60 ||
+    !Number.isSafeInteger(out.maxCycles) ||
+    Number(out.maxCycles) < 1 ||
+    Number(out.maxCycles) > 100
+  ) {
+    throw new ParseError("duration must be finite in (0, 60] minutes; max cycles must be 1..100");
+  }
+  if (out.focus !== undefined && out.focus !== "general" && out.focus !== "finance") {
+    throw new ParseError("focus must be general or finance");
+  }
+  if (out.focus !== undefined && out.objective === undefined) {
+    throw new ParseError("focus requires an objective");
+  }
+  if (typeof out.objective === "string" && Buffer.byteLength(out.objective, "utf8") > 2048) {
+    throw new ParseError("objective must be at most 2048 UTF8 bytes");
   }
   return out;
 }
 
-async function readLatest<T>(name: string, fallback: T): Promise<T> {
+type SnapshotReadFailure = "missing" | "read_failed" | "invalid_json" | "invalid_shape";
+
+async function readLatest<T>(
+  name: string,
+  fallback: T,
+  onUnavailable?: (status: SnapshotReadFailure) => void,
+  stateDirectory = STATE_DIR,
+): Promise<T> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(path.join(STATE_DIR, name), "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
+    raw = await fs.readFile(path.join(stateDirectory, name), "utf8");
+  } catch (error) {
+    const missing = isRecord(error) && error.code === "ENOENT";
+    onUnavailable?.(missing ? "missing" : "read_failed");
     return fallback;
   }
-}
-
-function extractOwnerTotals(state: Record<string, unknown>): Record<string, unknown> {
-  const byOwner = state.byOwner as Record<string, unknown> | undefined;
-  if (byOwner && typeof byOwner === "object") {
-    const totals: Record<string, unknown> = {};
-    for (const [ownerId, run] of Object.entries(byOwner)) {
-      const r = run as Record<string, unknown>;
-      const compact = r?.compact as Record<string, unknown> | undefined;
-      totals[ownerId] = {
-        ok: r?.ok,
-        status: (r?.runReceipt as Record<string, unknown> | undefined)?.status,
-        ...(compact?.ok !== undefined ? { compactOk: compact.ok } : {}),
-      };
-    }
-    return totals;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    onUnavailable?.("invalid_json");
+    return fallback;
   }
-  return {};
+  if (!isRecord(value)) {
+    onUnavailable?.("invalid_shape");
+    return fallback;
+  }
+  return value as T;
 }
 
-async function buildPerception(
+/** Accept the original completed-owner handoff, never a fabricated final verdict. */
+export async function readCentralGovernanceInput(
+  inputPath: string,
+): Promise<Readonly<Record<string, unknown>>> {
+  try {
+    const resolved = path.resolve(inputPath);
+    const { buffer } = await readFileWithinRoot({
+      rootDir: path.dirname(resolved),
+      relativePath: path.basename(resolved),
+      maxBytes: 512 * 1024,
+    });
+    const value: unknown = JSON.parse(buffer.toString("utf8"));
+    if (
+      !isRecord(value) ||
+      value.schemaVersion !== "lcx_central_governance_input_v1" ||
+      value.boundary !== "same_cycle_completed_owners_only" ||
+      value.phase !== "before_central_decision" ||
+      typeof value.parentRunId !== "string" ||
+      !value.parentRunId.trim() ||
+      typeof value.checkedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.checkedAt)) ||
+      !isRecord(value.snapshot) ||
+      value.snapshot.authorityOwner !== "lcx-governance-autopilot" ||
+      typeof value.snapshot.snapshotId !== "string" ||
+      !value.snapshot.snapshotId ||
+      typeof value.snapshot.observedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.snapshot.observedAt)) ||
+      typeof value.snapshot.sourceCommit !== "string" ||
+      !value.snapshot.sourceCommit ||
+      Date.parse(value.checkedAt) < Date.parse(value.snapshot.observedAt) ||
+      !isRecord(value.byOwner) ||
+      Object.hasOwn(value.byOwner, "centralAgent") ||
+      Object.keys(value.byOwner).length === 0 ||
+      Object.keys(value.byOwner).length > 64
+    ) {
+      throw new Error("invalid handoff");
+    }
+    if (value.multiAgentPatternShadow !== undefined) {
+      const shadow = value.multiAgentPatternShadow;
+      if (
+        !isRecord(shadow) ||
+        typeof shadow.status !== "string" ||
+        !["fresh", "stale", "blocked", "missing"].includes(shadow.status) ||
+        typeof shadow.checkedAt !== "string" ||
+        !Number.isFinite(Date.parse(shadow.checkedAt)) ||
+        Date.parse(shadow.checkedAt) < Date.parse(value.snapshot.observedAt) ||
+        Date.parse(shadow.checkedAt) > Date.parse(value.checkedAt) ||
+        typeof shadow.reason !== "string" ||
+        (shadow.trialDecision !== undefined &&
+          (typeof shadow.trialDecision !== "string" ||
+            !["pass", "downrank", "unverified", "discard"].includes(shadow.trialDecision))) ||
+        (shadow.status === "fresh" &&
+          (typeof shadow.experimentId !== "string" ||
+            !shadow.experimentId.trim() ||
+            typeof shadow.completedAt !== "string" ||
+            !Number.isFinite(Date.parse(shadow.completedAt)) ||
+            Date.parse(shadow.completedAt) > Date.parse(shadow.checkedAt) ||
+            shadow.trialDecision === undefined))
+      ) {
+        throw new Error("invalid shadow observation binding");
+      }
+    }
+    const owners: Record<string, unknown> = {};
+    const failures: string[] = [];
+    for (const [id, owner] of Object.entries(value.byOwner)) {
+      if (
+        !isRecord(owner) ||
+        owner.id !== id ||
+        !isRecord(owner.compact) ||
+        !isRecord(owner.runReceipt) ||
+        owner.runReceipt.owner !== id ||
+        owner.runReceipt.parentRunId !== value.parentRunId ||
+        !isRecord(owner.runReceipt.snapshot) ||
+        owner.runReceipt.snapshot.snapshotId !== value.snapshot.snapshotId ||
+        owner.runReceipt.snapshot.sourceCommit !== value.snapshot.sourceCommit ||
+        owner.runReceipt.snapshot.observedAt !== value.snapshot.observedAt ||
+        typeof owner.runReceipt.checkedAt !== "string" ||
+        !Number.isFinite(Date.parse(owner.runReceipt.checkedAt)) ||
+        Date.parse(owner.runReceipt.checkedAt) < Date.parse(value.snapshot.observedAt) ||
+        Date.parse(owner.runReceipt.checkedAt) > Date.parse(value.checkedAt) ||
+        !(LCX_RUN_STATUSES as readonly unknown[]).includes(owner.runReceipt.status)
+      ) {
+        throw new Error("invalid owner binding");
+      }
+      owners[id] = owner.compact;
+      if (owner.runReceipt.status === "failed" || owner.runReceipt.status === "blocked") {
+        failures.push(id);
+      }
+    }
+    return {
+      ...value,
+      sourceSha256: createHash("sha256").update(buffer).digest("hex"),
+      owners,
+      summary: { structuralOwnerFailures: failures },
+    };
+  } catch {
+    // Explicit handoff failure must not silently revert to the previous cycle.
+    throw new ParseError("central_governance_input_unavailable_or_invalid");
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function extractOwnerTotals(state: Record<string, unknown>): Record<string, unknown> {
+  const byOwner = isRecord(state.byOwner)
+    ? state.byOwner
+    : Object.fromEntries(
+        (Array.isArray(state.ownerCommands) ? state.ownerCommands : [])
+          .filter(
+            (owner): owner is Record<string, unknown> =>
+              isRecord(owner) && typeof owner.id === "string",
+          )
+          .map((owner) => [String(owner.id), owner]),
+      );
+  const totals: Record<string, unknown> = {};
+  for (const [ownerId, run] of Object.entries(byOwner)) {
+    if (!isRecord(run)) {
+      continue;
+    }
+    const compact = isRecord(run.compact)
+      ? run.compact
+      : isRecord(state.owners) && isRecord(state.owners[ownerId])
+        ? state.owners[ownerId]
+        : {};
+    totals[ownerId] = {
+      ok: run.ok,
+      status: isRecord(run.runReceipt) ? run.runReceipt.status : undefined,
+      ...(compact.ok !== undefined ? { compactOk: compact.ok } : {}),
+    };
+  }
+  return totals;
+}
+
+export async function buildPerception(
   backlog: readonly CompactBacklogEntry[],
+  task?: CentralHostTask,
+  governanceInput?: Readonly<Record<string, unknown>>,
+  resumeScan?: Readonly<Record<string, unknown>>,
+  options: Readonly<{ stateDirectory?: string }> = {},
 ): Promise<CentralPerception> {
-  const controlRoom = await readLatest<Record<string, unknown>>("lcx-control-room-latest.json", {});
-  const governance = await readLatest<Record<string, unknown>>(
-    "lcx-governance-autopilot-latest.json",
+  // A failed read is an evidence gap, not an empty/healthy system. Keep only
+  // bounded status codes; source contents and filesystem error text stay out.
+  const snapshotReadFailures: Record<string, SnapshotReadFailure> = {};
+  const onUnavailable = (source: string) => (status: SnapshotReadFailure) => {
+    snapshotReadFailures[source] = status;
+  };
+  const controlRoom = await readLatest<Record<string, unknown>>(
+    "lcx-control-room-latest.json",
     {},
+    onUnavailable("controlRoom"),
+    options.stateDirectory,
   );
+  const governance =
+    governanceInput ??
+    (await readLatest<Record<string, unknown>>(
+      "lcx-governance-autopilot-latest.json",
+      {},
+      onUnavailable("governance"),
+      options.stateDirectory,
+    ));
   const learningWorkflow = await readLatest<Record<string, unknown>>(
     "lcx-learning-workflow-latest.json",
     {},
+    onUnavailable("learningWorkflow"),
+    options.stateDirectory,
   );
-  const ownerTotals = extractOwnerTotals(governance);
   const observedAt = new Date().toISOString();
+  const financeAutomaticLifecycle =
+    task?.focus === "general"
+      ? undefined
+      : await buildFinanceAutomaticLifecycleFeedback({ observedAt });
+  const controlRoomProjection: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(controlRoom)) {
+    if (key !== "financeAutomaticLifecycle") {
+      controlRoomProjection[key] = value;
+    }
+  }
+  const ownerTotals = extractOwnerTotals(governance);
   return {
     observedAt,
+    ...(task ? { task } : {}),
     ownerTotals,
     // The learning-workflow and governance surfaces ride in the flexible
     // control-room section so the existing byte budget bounds them like any other
@@ -137,7 +360,30 @@ async function buildPerception(
     // deliberately small (counts + verdicts); the full surfaces stay on disk under
     // the latest pointers.
     controlRoom: {
-      ...controlRoom,
+      // Prioritize finance's actionable state within the bounded control-room section.
+      ...(financeAutomaticLifecycle ? { financeAutomaticLifecycle } : {}),
+      ...controlRoomProjection,
+      runtimeFreshness: {
+        ...projectRuntimeFreshness({ controlRoom, governance, learningWorkflow }, observedAt),
+        ...(Object.keys(snapshotReadFailures).length > 0 ? { snapshotReadFailures } : {}),
+        ...(resumeScan ? { resumeScan } : {}),
+        ...(governanceInput
+          ? {
+              sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
+              governanceInput: {
+                parentRunId: governanceInput.parentRunId,
+                snapshotId: isRecord(governanceInput.snapshot)
+                  ? governanceInput.snapshot.snapshotId
+                  : null,
+                sourceSha256: governanceInput.sourceSha256,
+                phase: governanceInput.phase,
+                ownerCount: isRecord(governanceInput.byOwner)
+                  ? Object.keys(governanceInput.byOwner).length
+                  : 0,
+              },
+            }
+          : {}),
+      },
       ...(learningWorkflow && typeof learningWorkflow === "object"
         ? { learningWorkflow: projectLearningWorkflow(learningWorkflow) }
         : {}),
@@ -199,8 +445,9 @@ export function projectGovernanceDigest(
           .map((entry) => entry.slice(0, 80))
           .slice(0, 6)
       : [];
-  return {
-    status: "present",
+  const beforeDecision = state.phase === "before_central_decision";
+  const digest: Record<string, unknown> = {
+    status: beforeDecision ? "pre_decision" : "present",
     ok: state.ok === true,
     checkedAt: boundedString(state.checkedAt, 40),
     cycleStatus: boundedString(receipt.status, 40),
@@ -210,8 +457,12 @@ export function projectGovernanceDigest(
     failedGates: listSlice(summary.failedGates),
     blockedGates: listSlice(summary.blockedGates),
     shadow: {
+      status: boundedString(shadow.status, 40),
       experimentId: boundedString(shadow.experimentId, 60),
       trialDecision: boundedString(shadow.trialDecision, 60),
+      trialDecisionReason: boundedString(shadow.trialDecisionReason, 240),
+      reason: boundedString(shadow.reason, 180),
+      checkedAt: boundedString(shadow.checkedAt, 40),
       completion: boundedString(shadow.completedAt, 40),
     },
     projectionReader: {
@@ -219,6 +470,224 @@ export function projectGovernanceDigest(
       readStatus: boundedString(reader.readStatus, 40),
       blocked: reader.blocked === true,
     },
+  };
+  if (beforeDecision) {
+    delete digest.ok;
+    delete digest.releaseBlocked;
+    digest.cycleStatus = "pending_central_decision";
+    digest.nextAction = "decide_from_completed_owner_observations";
+    digest.complete = false;
+    digest.pendingOwners = ["centralAgent"];
+    digest.parentRunId = boundedString(state.parentRunId, 160);
+    digest.sourceSha256 = boundedString(state.sourceSha256, 64);
+    digest.sourceBoundary = "same_cycle_completed_owners_only";
+  }
+  const owners = isPresentObject(state.owners as Record<string, unknown>)
+    ? (state.owners as Record<string, unknown>)
+    : {};
+  if (isRecord(owners.providerCouncilAcceleration)) {
+    const council = owners.providerCouncilAcceleration;
+    const cleanup = isRecord(council.providerRunCleanup) ? council.providerRunCleanup : undefined;
+    if (council.providerRunTimedOut === true || cleanup || council.providerRunFailureCode) {
+      digest.providerCouncilRun = {
+        ...(typeof council.providerRunTimedOut === "boolean"
+          ? { timedOut: council.providerRunTimedOut }
+          : {}),
+        failureCode: ["provider_council_timeout", "provider_council_failed"].includes(
+          String(council.providerRunFailureCode),
+        )
+          ? council.providerRunFailureCode
+          : "not_observed",
+        cleanupStatus:
+          cleanup?.scope === "local_council_operation_only_remote_execution_not_confirmed" &&
+          cleanup.cancellationRequested === true &&
+          cleanup.status === "local_operation_settled"
+            ? "local_operation_settled"
+            : cleanup
+              ? "cleanup_unconfirmed"
+              : "not_observed",
+        cancellationRequested: cleanup?.cancellationRequested === true,
+        remoteCancellation: "not_confirmed",
+        actionAuthority: "diagnostic_only",
+      };
+    }
+  }
+  if (owners.flowGraph !== undefined) {
+    digest.flowHandoff = projectFlowHandoff(owners.flowGraph);
+  }
+  if (isRecord(owners.changeImpact) && isRecord(owners.changeImpact.cleanupReview)) {
+    // Already bounded at the original owner seam; preserve the substantive
+    // review verdict separately from the impact owner's source artifact label.
+    digest.cleanupReview = projectCleanupReview(owners.changeImpact.cleanupReview);
+  }
+  if (isRecord(owners.selfRepairHands)) {
+    const repair = owners.selfRepairHands;
+    const latest = isRecord(repair.latestWrittenReceipt) ? repair.latestWrittenReceipt : {};
+    const observed = isRecord(repair.diagnosticFeedback)
+      ? repair.diagnosticFeedback
+      : isRecord(latest.diagnosticFeedbackReadback)
+        ? latest.diagnosticFeedbackReadback
+        : undefined;
+    const feedback =
+      observed ?? (isRecord(latest.diagnosticFeedback) ? latest.diagnosticFeedback : undefined);
+    if (feedback) {
+      const map = isRecord(feedback.map) ? feedback.map : {};
+      const governance = isRecord(feedback.governance) ? feedback.governance : {};
+      const originalDiagnostic =
+        observed?.status === "read" && typeof observed.diagnostic === "string"
+          ? observed.diagnostic
+          : undefined;
+      // The original reader puts identity on its first line. Keep the actual
+      // source uncertainty first; identity has separate whole-or-omitted fields.
+      const diagnostic =
+        originalDiagnostic?.startsWith("Owner-map diagnostic only: ") &&
+        originalDiagnostic.includes("\n")
+          ? originalDiagnostic.slice(originalDiagnostic.indexOf("\n") + 1)
+          : originalDiagnostic;
+      digest.selfRepairFeedback = {
+        status:
+          observed?.status === "read" || observed?.status === "blocked"
+            ? observed.status
+            : "not_observed",
+        sourceRunId:
+          typeof feedback.sourceRunId === "string" && feedback.sourceRunId.length <= 160
+            ? feedback.sourceRunId
+            : undefined,
+        sourceCheckedAt: boundedString(feedback.sourceCheckedAt, 40),
+        itemId:
+          typeof feedback.itemId === "string" && feedback.itemId.length <= 160
+            ? feedback.itemId
+            : undefined,
+        mapPath: typeof map.path === "string" && map.path.length <= 240 ? map.path : undefined,
+        identityFieldsOmitted: [
+          ["sourceRunId", feedback.sourceRunId, 160],
+          ["itemId", feedback.itemId, 160],
+          ["mapPath", map.path, 240],
+        ].flatMap(([field, value, limit]) =>
+          typeof value === "string" && typeof limit === "number" && value.length > limit
+            ? [field]
+            : [],
+        ),
+        mapSha256:
+          typeof map.sha256 === "string" && /^[a-f0-9]{64}$/u.test(map.sha256)
+            ? map.sha256
+            : undefined,
+        governanceSha256:
+          typeof governance.sha256 === "string" && /^[a-f0-9]{64}$/u.test(governance.sha256)
+            ? governance.sha256
+            : undefined,
+        blockers: observed ? listSlice(observed.blockers) : [],
+        diagnostic: boundedString(diagnostic, 512),
+        diagnosticOmitted: diagnostic !== undefined && diagnostic.length > 512,
+        proofLevel: "reference_readback_only",
+        semanticTruth: "not_proven",
+        actionAuthority: false,
+        candidateOnly: true,
+        reuseAllowed: false,
+      };
+    }
+  }
+  const failures = new Set(listSlice(summary.structuralOwnerFailures));
+  const entries = Object.entries(owners).toSorted(
+    ([a], [b]) => Number(failures.has(b)) - Number(failures.has(a)),
+  );
+  const results: Record<string, unknown>[] = [];
+  let candidates = 0;
+  for (const [ownerId, value] of entries) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || ownerId.length > 80) {
+      continue;
+    }
+    const owner = value as Record<string, unknown>;
+    const evidence = owner.artifactEvidence;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+      continue;
+    }
+    const ref = evidence as Record<string, unknown>;
+    if (!["registered", "unchanged", "unavailable"].includes(String(ref.status))) {
+      continue;
+    }
+    candidates += 1;
+    const result: Record<string, unknown> = {
+      ownerId,
+      status: ref.status,
+      sourceObservedAt: boundedString(owner.sourceObservedAt, 40),
+      sourceTimeBasis: boundedString(ref.sourceTimeBasis, 40),
+    };
+    if (
+      ref.status !== "unavailable" &&
+      typeof ref.id === "string" &&
+      /^artifact-[a-f0-9]{64}$/u.test(ref.id) &&
+      typeof ref.sha256 === "string" &&
+      /^[a-f0-9]{64}$/u.test(ref.sha256)
+    ) {
+      result.artifactId = ref.id;
+      result.sourceSha256 = ref.sha256;
+    } else {
+      result.status = "unavailable";
+      result.reason = boundedString(ref.reason, 100) ?? "owner_artifact_binding_missing";
+    }
+    const candidate = {
+      ...digest,
+      ownerResults: [...results, result],
+      ownerResultsOmitted: entries.length,
+    };
+    if (results.length < 4 && Buffer.byteLength(JSON.stringify(candidate)) <= 2048) {
+      results.push(result);
+    }
+  }
+  if (candidates > 0) {
+    digest.ownerResults = results;
+    digest.ownerResultsOmitted = candidates - results.length;
+  }
+  return fitGovernanceDigest(digest);
+}
+
+/**
+ * Reports the age of persisted runtime snapshots at perception time. This is
+ * evidence only: no TTL is configured here, and in-flight owner state is not read.
+ */
+export function projectRuntimeFreshness(
+  snapshots: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+  measuredAt: string,
+): Readonly<Record<string, unknown>> {
+  const measuredAtMs = Date.parse(measuredAt);
+  const sources = Object.fromEntries(
+    Object.entries(snapshots).map(([name, snapshot]) => {
+      if (!snapshot || Object.keys(snapshot).length === 0) {
+        return [name, { status: "snapshot_missing", sourceObservedAt: null, ageMs: null }];
+      }
+      const timestamp = ["checkedAt", "generatedAt", "updatedAt", "observedAt"]
+        .map((key) => snapshot[key])
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (!timestamp) {
+        return [name, { status: "timestamp_missing", sourceObservedAt: null, ageMs: null }];
+      }
+      const sourceObservedAtMs = Date.parse(timestamp);
+      if (!Number.isFinite(sourceObservedAtMs)) {
+        return [name, { status: "timestamp_invalid", sourceObservedAt: timestamp, ageMs: null }];
+      }
+      if (!Number.isFinite(measuredAtMs)) {
+        return [
+          name,
+          { status: "measurement_time_invalid", sourceObservedAt: timestamp, ageMs: null },
+        ];
+      }
+      const ageMs = measuredAtMs - sourceObservedAtMs;
+      return [
+        name,
+        {
+          status: ageMs < 0 ? "clock_skew" : "measured_age",
+          sourceObservedAt: timestamp,
+          ageMs,
+        },
+      ];
+    }),
+  );
+  return {
+    measuredAt,
+    sourceBoundary: "published_latest_snapshots_only",
+    freshnessPolicy: "age_reported_no_cutoff",
+    sources,
   };
 }
 
@@ -258,23 +727,124 @@ function projectLearningWorkflow(
 }
 
 /** Thread-store: read the persisted JSONL tail so a restart resumes prior decisions. */
-async function loadPersistedReceipts(): Promise<CentralRunReceipt[]> {
-  try {
-    const raw = await fs.readFile(LOG_PATH, "utf8");
-    const out: CentralRunReceipt[] = [];
-    for (const line of raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .slice(-RESUME_WINDOW)) {
-      try {
-        out.push(JSON.parse(line) as CentralRunReceipt);
-      } catch {
-        /* Skip malformed tail; keep going on the well-formed part. */
-      }
+/** A different explicit objective is a different decision context, not inherited evidence. */
+export function receiptsForHostTask(
+  receipts: readonly CentralRunReceipt[],
+  task?: CentralHostTask,
+): CentralRunReceipt[] {
+  return receipts.filter((receipt) =>
+    task
+      ? receipt.task?.objective === task.objective && receipt.task?.focus === task.focus
+      : receipt.task === undefined,
+  );
+}
+
+type CentralResumeRead = Readonly<{
+  receipts: readonly CentralRunReceipt[];
+  scannedRows: number;
+  invalidRows: number;
+  droppedNonDecisionCycles: number;
+  skippedOtherTaskCycles: number;
+}>;
+
+function isResumeReceipt(value: unknown): value is CentralRunReceipt {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== "lcx_central_agent_v1" ||
+    typeof value.runId !== "string" ||
+    typeof value.observedAt !== "string" ||
+    !Number.isFinite(Date.parse(value.observedAt)) ||
+    typeof value.nextAction !== "string" ||
+    !isRecord(value.brainCall) ||
+    typeof value.brainCall.outcome !== "string" ||
+    !["completed", "failed", "blocked", "skipped"].includes(value.brainCall.outcome) ||
+    !Array.isArray(value.steps)
+  ) {
+    return false;
+  }
+  if (
+    value.task !== undefined &&
+    (!isRecord(value.task) ||
+      typeof value.task.objective !== "string" ||
+      typeof value.task.focus !== "string" ||
+      !["general", "finance"].includes(value.task.focus))
+  ) {
+    return false;
+  }
+  return value.steps.every(
+    (step: unknown) =>
+      isRecord(step) &&
+      typeof step.ownerId === "string" &&
+      isRecord(step.args) &&
+      typeof step.status === "string" &&
+      ["approved", "blocked_by_gate", "ran_ok", "ran_failed", "skipped"].includes(step.status) &&
+      (step.outcome === undefined || isRecord(step.outcome)) &&
+      (step.gateReason === undefined || typeof step.gateReason === "string") &&
+      (step.failureReason === undefined || typeof step.failureReason === "string") &&
+      (step.outcomeDroppedKeys === undefined ||
+        (Array.isArray(step.outcomeDroppedKeys) &&
+          step.outcomeDroppedKeys.every((key: unknown) => typeof key === "string"))),
+  );
+}
+
+/** Failures and other tasks remain audit evidence but cannot spend this task's resume window. */
+export function selectPersistedReceipts(raw: string, task?: CentralHostTask): CentralResumeRead {
+  const receipts: CentralRunReceipt[] = [];
+  let scannedRows = 0;
+  let invalidRows = 0;
+  let droppedNonDecisionCycles = 0;
+  let skippedOtherTaskCycles = 0;
+  for (const line of raw.split("\n").toReversed()) {
+    if (!line.trim()) {
+      continue;
     }
-    return out;
-  } catch {
-    return [];
+    scannedRows += 1;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      invalidRows += 1;
+      continue;
+    }
+    if (!isResumeReceipt(value)) {
+      invalidRows += 1;
+      continue;
+    }
+    if (value.brainCall.outcome !== "completed") {
+      droppedNonDecisionCycles += 1;
+      continue;
+    }
+    if (receiptsForHostTask([value], task).length === 0) {
+      skippedOtherTaskCycles += 1;
+      continue;
+    }
+    receipts.push(value);
+    if (receipts.length === RESUME_WINDOW) {
+      break;
+    }
+  }
+  return {
+    receipts: receipts.toReversed(),
+    scannedRows,
+    invalidRows,
+    droppedNonDecisionCycles,
+    skippedOtherTaskCycles,
+  };
+}
+
+export async function loadPersistedReceipts(
+  task?: CentralHostTask,
+): Promise<CentralResumeRead & Readonly<{ readStatus: "ready" | "missing" | "read_failed" }>> {
+  try {
+    return {
+      ...selectPersistedReceipts(await fs.readFile(LOG_PATH, "utf8"), task),
+      readStatus: "ready",
+    };
+  } catch (error) {
+    return {
+      ...selectPersistedReceipts("", task),
+      readStatus: isRecord(error) && error.code === "ENOENT" ? "missing" : "read_failed",
+    };
   }
 }
 
@@ -310,11 +880,14 @@ function failedCycleReceipt(
   perception: CentralPerception,
   index: number,
   error: unknown,
+  perceptionBuildMs: number,
 ): CentralRunReceipt {
+  const bounded = boundPerception(perception);
   return {
     schemaVersion: "lcx_central_agent_v1",
     runId: `central-${index}-${Date.now()}-failed`,
     observedAt: perception.observedAt,
+    ...(perception.task ? { task: perception.task } : {}),
     actionsProposed: 0,
     actionsApproved: 0,
     actionsBlockedByGate: 0,
@@ -330,7 +903,16 @@ function failedCycleReceipt(
     // The cycle threw, so nothing reached the brain; this records the budget that
     // was in force rather than claiming an injection happened. The receipt's own
     // brainCall.outcome is what tells a reader no injection occurred.
-    contextBudget: boundPerception(perception).report,
+    contextBudget: bounded.report,
+    ...(perception.task?.focus === "general"
+      ? {}
+      : { financePerception: projectFinancePerceptionEvidence(bounded) }),
+    stageDurationsMs: {
+      perceptionBuildMs,
+      brainProposalMs: null,
+      deterministicGateMs: null,
+      actionDispatchMs: null,
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -346,8 +928,14 @@ async function writeLatest(
     planOnly: boolean;
     runSnapshotPath?: string;
     droppedNonDecisionCycles: number;
+    resumeScan: Readonly<Record<string, unknown>>;
     evidenceWriteFailures: readonly EvidenceWriteFailure[];
+    recordEvidenceFailure: (target: string, error: unknown) => void;
     capabilityDrain: readonly string[];
+    receiptPersistenceDurationMs: number | null;
+    continuation?: CentralCycleContinuation;
+    artifactBackfill?: OwnerArtifactBackfillReceipt;
+    artifactBackfillDeferredReason: string | null;
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -355,7 +943,11 @@ async function writeLatest(
   const previous = await readLatest<{
     latestReceipt?: unknown;
     latestRunPath?: unknown;
-  }>(path.basename(LATEST_PATH), {});
+  }>(path.basename(LATEST_PATH), {}, (status) => {
+    if (status !== "missing") {
+      meta.recordEvidenceFailure("latest_pointer_read", status);
+    }
+  });
   const pointer = resolveLatestPointer(previous, receipt, meta.runSnapshotPath);
   await writeJsonAtomic(LATEST_PATH, {
     schemaVersion: "lcx_central_agent_latest_v1",
@@ -379,11 +971,18 @@ async function writeLatest(
     supersededThisRun: pointer.superseded && receipt ? receipt.runId : null,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: meta.droppedNonDecisionCycles,
+    resumeScan: meta.resumeScan,
+    /** Why this invocation stopped, from the TypeScript-authored receipt verdict. */
+    continuation: meta.continuation ?? null,
     /** Byte budget actually applied to the brain's perception this cycle. */
     contextBudget: receipt?.contextBudget ?? null,
+    /** JSONL append plus immutable per-cycle snapshot; excludes this latest pointer write. */
+    lastReceiptPersistenceDurationMs: meta.receiptPersistenceDurationMs,
     /** Evidence-write honesty: a completed cycle whose record could not be persisted. */
     evidenceComplete: meta.evidenceWriteFailures.length === 0,
     evidenceWriteFailures: meta.evidenceWriteFailures,
+    artifactBackfill: meta.artifactBackfill,
+    artifactBackfillDeferredReason: meta.artifactBackfillDeferredReason,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -402,22 +1001,37 @@ async function settle(receipt: unknown): Promise<void> {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  const task: CentralHostTask | undefined =
+    typeof options.objective === "string"
+      ? {
+          objective: options.objective,
+          focus: options.focus === "finance" ? "finance" : "general",
+        }
+      : undefined;
   const durationMinutes = Number(options.durationMinutes);
   const dryRun = options.dryRun === true;
   const planOnly = options.planOnly === true;
   const maxCycles = Number(options.maxCycles);
-  const registry = createCentralToolRegistry();
+  const governanceInput =
+    typeof options.governanceInput === "string"
+      ? await readCentralGovernanceInput(options.governanceInput)
+      : undefined;
+  const config = loadConfig();
+  const workspaceDir = path.dirname(STATE_DIR);
+  const registry = createCentralToolRegistry({ config, workspaceDir });
   const brain: CentralBrain = dryRun
     ? {
         propose: async () => ({ kind: "blocked_no_provider" as const, reason: "dry_run_no_llm" }),
       }
-    : createCentralBrain(loadConfig());
+    : createCentralBrain(config, { tools: [...registry.values()] });
 
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;
   let lastReceipt: CentralRunReceipt | undefined;
   let lastRunSnapshotPath: string | undefined;
+  let lastReceiptPersistenceDurationMs: number | null = null;
   let droppedNonDecisionCycles = 0;
+  let lastContinuation: CentralCycleContinuation | undefined;
   /**
    * Evidence writes are fail-open, the same way the codex harness treats its audit
    * trail: an unwritable log must not turn a completed cycle into an unparseable
@@ -430,19 +1044,44 @@ async function main(): Promise<void> {
   const recordEvidenceFailure = (target: string, error: unknown): void => {
     evidenceWriteFailures.push({ target, reason: String(error).slice(0, 300) });
   };
+  // Recovery indexing must not consume the first decision's time budget.
+  let artifactBackfill: OwnerArtifactBackfillReceipt | undefined;
+  let artifactBackfillDeferredReason: string | null = dryRun
+    ? "dry_run_no_recovery"
+    : "no_persisted_cycle";
   // thread-store resume: recover prior cycles so the brain inherits context.
-  let history = await loadPersistedReceipts();
+  const loadedResume = await loadPersistedReceipts(task);
+  droppedNonDecisionCycles = loadedResume.droppedNonDecisionCycles;
+  const resumeScan = {
+    scope: "physical_log_suffix_until_40_matching_completed_receipts",
+    readStatus: loadedResume.readStatus,
+    window: RESUME_WINDOW,
+    scannedRows: loadedResume.scannedRows,
+    invalidRows: loadedResume.invalidRows,
+    skippedOtherTaskCycles: loadedResume.skippedOtherTaskCycles,
+  };
+  let history = [...loadedResume.receipts];
   while (Date.now() < deadline && runs < maxCycles) {
     // context compaction: only the compacted tail reaches the brain, never raw history.
     // Terminal cycles are dropped first: a cycle whose brain call did not complete
     // carries no decision, so inheriting it would let an outage read as precedent.
-    const resumable = resumableReceipts(history);
-    droppedNonDecisionCycles = history.length - resumable.length;
-    const perception = await buildPerception(compactReceipts(resumable, 10));
+    const completed = resumableReceipts(history);
+    droppedNonDecisionCycles =
+      loadedResume.droppedNonDecisionCycles + history.length - completed.length;
+    const resumable = receiptsForHostTask(completed, task);
+    const perceptionBuildStartedAt = performance.now();
+    const perception = await buildPerception(
+      compactReceipts(resumable, 10, CENTRAL_CAPABILITY_IDS),
+      task,
+      governanceInput,
+      resumeScan,
+    );
+    const perceptionBuildMs = Math.max(0, Math.round(performance.now() - perceptionBuildStartedAt));
     let receipt: CentralRunReceipt;
     try {
       receipt = await runCentralHarnessCycle({
         perception,
+        deadlineMs: deadline,
         brain,
         registry,
         planOnly,
@@ -450,21 +1089,38 @@ async function main(): Promise<void> {
         // parallel, so only capability steps dispatch: they have no autopilot
         // equivalent and would otherwise never drain (learning workflow, ledger
         // reads, research plans).
-        capabilityOwnerIds: new Set(CENTRAL_CAPABILITY_OWNER_IDS),
+        capabilityOwnerIds: CENTRAL_CAPABILITY_IDS,
+        perceptionBuildDurationMs: perceptionBuildMs,
         runId: `central-${runs}-${Date.now()}`,
       });
     } catch (error) {
       // Never exit without a receipt: the owner surface stays parseable even when
       // perception or dispatch fails mid-cycle.
-      receipt = failedCycleReceipt(perception, runs, error);
+      receipt = failedCycleReceipt(perception, runs, error, perceptionBuildMs);
     }
+    const receiptPersistenceStartedAt = performance.now();
+    let cyclePersisted = false;
     try {
       await settle(receipt);
+      cyclePersisted = true;
     } catch (error) {
       recordEvidenceFailure("jsonl", error);
     }
     try {
       lastRunSnapshotPath = await writeRunSnapshot(RUNS_DIR, receipt);
+      const indexed = await recordAgentArtifact({
+        config,
+        agentId: "main",
+        workspaceDir,
+        owner: "central_harness",
+        runId: receipt.runId,
+        observedAt: receipt.observedAt,
+        value: receipt,
+        sourceReceiptRefs: [lastRunSnapshotPath],
+      });
+      if (indexed.status === "unavailable") {
+        recordEvidenceFailure("artifact_index", new Error(indexed.reason));
+      }
     } catch (error) {
       // The per-cycle snapshot is an extra copy of a receipt that is already in the
       // jsonl. Losing it must not cost the invocation its summary, so this stays
@@ -472,14 +1128,43 @@ async function main(): Promise<void> {
       recordEvidenceFailure("run_snapshot", error);
       lastRunSnapshotPath = undefined;
     }
+    lastReceiptPersistenceDurationMs = Math.max(
+      0,
+      Math.round(performance.now() - receiptPersistenceStartedAt),
+    );
     lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
-    if (dryRun || runs >= maxCycles) {
+    lastContinuation = nextCycleContinuation(receipt, runs, maxCycles, resumable.at(-1));
+    if (!artifactBackfill && cyclePersisted && !dryRun && Date.now() >= deadline) {
+      artifactBackfillDeferredReason = "run_deadline_exhausted";
+    }
+    if (!artifactBackfill && cyclePersisted && !dryRun && Date.now() < deadline) {
+      artifactBackfillDeferredReason = null;
+      artifactBackfill = await backfillOwnerArtifacts({
+        config,
+        agentId: "main",
+        workspaceDir,
+        deadlineMs: deadline,
+      });
+      if (artifactBackfill.status !== "complete") {
+        recordEvidenceFailure(
+          "artifact_backfill",
+          new Error(
+            `status=${artifactBackfill.status}; gaps=${artifactBackfill.gapCount}; truncated=${artifactBackfill.truncated}`,
+          ),
+        );
+      }
+    }
+    if (dryRun || !lastContinuation.run) {
       break;
     }
     // Bounded pacing: at least a short pause between cycles to stay idle-friendly.
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const pauseMs = Math.min(5000, deadline - Date.now());
+    if (pauseMs <= 0) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pauseMs));
   }
   // Always publish the observable snapshot, even on a zero-cycle run, so readers
   // never see a stale or absent central-agent surface.
@@ -489,8 +1174,14 @@ async function main(): Promise<void> {
       planOnly,
       ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
       droppedNonDecisionCycles,
+      resumeScan,
       evidenceWriteFailures,
-      capabilityDrain: dispatchedCapabilities(lastReceipt, new Set(CENTRAL_CAPABILITY_OWNER_IDS)),
+      recordEvidenceFailure,
+      artifactBackfill,
+      artifactBackfillDeferredReason,
+      capabilityDrain: dispatchedCapabilities(lastReceipt, CENTRAL_CAPABILITY_IDS),
+      receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
+      ...(lastContinuation ? { continuation: lastContinuation } : {}),
     });
   } catch (error) {
     // stdout is the last surface standing: the summary below still has to print.
@@ -514,6 +1205,7 @@ async function main(): Promise<void> {
     coverage: centralCoverage(),
     brainOutcome,
     brainAvailable: brainOutcome === "completed",
+    brainReason: lastReceipt?.brainCall.reason ?? null,
     actionsProposed: lastReceipt?.actionsProposed ?? 0,
     actionsApproved: lastReceipt?.actionsApproved ?? 0,
     actionsBlockedByGate: lastReceipt?.actionsBlockedByGate ?? 0,
@@ -535,6 +1227,8 @@ async function main(): Promise<void> {
         })) ?? [],
     /** TypeScript-computed next step; never model-authored. */
     nextAction: lastReceipt?.nextAction ?? null,
+    /** Why the loop stopped; null when the invocation completed zero cycles. */
+    continuation: lastContinuation ?? null,
     /** The brain's own one-line rationale, so readers see *why*, not just *what*. */
     brainNote: lastReceipt?.brainCall.note ?? null,
     /** Where this invocation's own cycle receipt was written, for direct reading. */
@@ -542,11 +1236,16 @@ async function main(): Promise<void> {
     runsDir: RUNS_DIR,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: droppedNonDecisionCycles,
+    resumeScan,
     /** Byte budget applied to the brain's perception, with every dropped key named. */
     contextBudget: lastReceipt?.contextBudget ?? null,
+    stageDurationsMs: lastReceipt?.stageDurationsMs ?? null,
+    receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
     /** False when a cycle's evidence could not be persisted; the run still succeeded. */
     evidenceComplete: evidenceWriteFailures.length === 0,
     evidenceWriteFailures,
+    artifactBackfill,
+    artifactBackfillDeferredReason,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

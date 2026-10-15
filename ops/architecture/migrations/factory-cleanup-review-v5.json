@@ -1,0 +1,11 @@
+{
+  "version": 5,
+  "kind": "descriptive_process_source_alignment",
+  "scenarios": ["universe_index_total_coverage_waterflow", "training_failure_feedback_waterflow"],
+  "source": "scripts/operator/lcx-change-impact-plan.ts:reviewUniverseCleanup",
+  "change": "Cleanup review now consumes pinned Universe/mind/flow owner artifacts archived before central judgment; preserves missing reference, retention and active writer checks.",
+  "retained": "All original required nodes, feedback edges, ontology relation/state vocabularies and execution boundaries.",
+  "authority": "No merge, deletion, restart, broker or memory authority added.",
+  "verification": "Offline original functions with transport substitutes; natural adoption remains unobserved.",
+  "trainingChange": "Healthy branch follows actual guard training, hardened evaluation, promotion decision then cooldown. Failure curriculum consumes evaluation fields for the next teacher; the training planner remains an observer."
+}

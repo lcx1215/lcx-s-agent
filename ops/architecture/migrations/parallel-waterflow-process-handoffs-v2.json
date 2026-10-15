@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "scenarioIds": [
+    "module_learning_internalization_waterflow",
+    "memory_correction_downrank_waterflow",
+    "local_to_external_channel_external_waterflow",
+    "external_visible_language_waterflow"
+  ],
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Describe the original intake and effective-card review consumer, distinguish optional correction review from inventory readiness, and register offline transport handoff checks.",
+  "changes": {
+    "preservedNodesAndEdges": true,
+    "learning": "Original finance intake retains source/read fields. Inspect consumes active original source/module review receipts; apply excludes blocked cards while stored cards remain retrievable.",
+    "memory": "Explicit correction review verifies source/correction bytes and host scope; provisional downrank identity grants no reuse, write or ranking authority.",
+    "external": "Original transport remains the owner; HTTP acknowledgement, local body cleanup, current binding proof and natural visible delivery are separate observations.",
+    "registry": "No ontology relation/state changes; added owner registration covers only original seams and focused offline tests."
+  },
+  "nonEffects": [
+    "no new automation",
+    "no forced provider/model call",
+    "no protected-memory write or source-truth claim",
+    "no broker, external send, restart or deployment authority"
+  ],
+  "remainingGap": "Whole scenes still require every declared original handoff and feedback; offline components cannot establish natural adoption, search-rank downranking or external user-visible proof."
+}

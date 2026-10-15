@@ -25,6 +25,45 @@ async function runStatus(args: string[]) {
 }
 
 describe("lcx-external-channel-status", () => {
+  it.each([
+    "channel_runtime_probe_failed",
+    "ready_for_channel_bind_apply",
+    "unrecognized",
+    "channel_runtime_probe_ok_user_visible_pending",
+  ])(
+    "rejects a visible claim contradicting canonical %s while retaining the reported observation",
+    (status) => {
+      const truth = resolveExternalChannelTruth({
+        binding: { status, userVisibleObserved: true },
+        bindingOwnerAvailable: true,
+        legacyExternalChannelStatus: { externalChannelBound: true, userVisibleObserved: true },
+        visibleProof: { status: "user_visible_observed", acceptanceMatched: true },
+      });
+      expect(truth.userVisibleObserved).toBe(false);
+      expect(truth.visibleProofObservation).toEqual({
+        reported: true,
+        adoptedForCurrentBinding: false,
+        reason: "binding_probe_or_visible_status_not_confirmed",
+      });
+    },
+  );
+  it("adopts a matching canonical observed status and keeps raw external proof separate", () => {
+    expect(
+      resolveExternalChannelTruth({
+        binding: {
+          status: "channel_runtime_probe_ok_user_visible_observed",
+          userVisibleObserved: true,
+        },
+        bindingOwnerAvailable: true,
+        legacyExternalChannelStatus: undefined,
+        visibleProof: undefined,
+      }),
+    ).toEqual({
+      externalChannelBound: true,
+      userVisibleObserved: true,
+      bindingStatus: "channel_runtime_probe_ok_user_visible_observed",
+    });
+  });
   it("does not let legacy compatibility evidence override the binding owner", () => {
     expect(
       resolveExternalChannelTruth({

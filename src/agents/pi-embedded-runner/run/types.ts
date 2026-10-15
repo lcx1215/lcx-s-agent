@@ -28,6 +28,8 @@ export type EmbeddedRunAttemptResult = {
   timedOut: boolean;
   /** True if the timeout occurred while compaction was in progress or pending. */
   timedOutDuringCompaction: boolean;
+  /** True only after the user prompt promise completed successfully. */
+  promptCompleted?: boolean;
   promptError: unknown;
   sessionIdUsed: string;
   bootstrapPromptWarningSignaturesSeen?: string[];

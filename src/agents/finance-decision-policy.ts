@@ -9,6 +9,7 @@
  * it only reports the authority a caller has already been granted.
  */
 
+import { FINANCE_EXPECTATION_GAP_GUIDANCE } from "./finance-expectation-gap.js";
 export const FINANCE_DECISION_MODES = [
   "research_only",
   "strategy_candidate",
@@ -17,6 +18,27 @@ export const FINANCE_DECISION_MODES = [
 ] as const;
 
 export type FinanceDecisionMode = (typeof FINANCE_DECISION_MODES)[number];
+
+export const FINANCE_CONDITION_ORIGIN_GUIDANCE =
+  "Distinguish supplied strategy conditions, actual controller execution gates, and your own proposed conditions. Never invent a requirement that every indicator agree or every auxiliary source be verified. Incomplete or conflicting auxiliary evidence alone is not a mandatory veto: explain its specific effect on this candidate's expected outcome and risk. You may recommend waiting or veto on a concrete candidate-specific concern, but label that as model judgment and state the supplied facts and reasoning; do not present it as an existing system rule. A new confirmation condition is a proposal, not an adopted strategy requirement. For an authorized Paper candidate whose supplied strategy conditions are met, prefer acting within its existing budget unless you identify a concrete candidate-specific reason to veto. Do not treat waiting or zero trades as inherently safer or more successful. Do not replace this explanation with research-only disclaimers.";
+
+/** Language guides a decision; execution authority remains in the controller gate. */
+export function financeDecisionInstructions(mode: FinanceDecisionMode): string {
+  return [
+    `Decision mode: ${mode}. Lead with the answer to the user's question.`,
+    FINANCE_CONDITION_ORIGIN_GUIDANCE,
+    FINANCE_EXPECTATION_GAP_GUIDANCE,
+    'Do not append generic disclaimers such as "not investment advice", "仅供研究", or "不能作为操作建议". State specific uncertainties and their effect on the decision instead.',
+    mode === "research_only"
+      ? "Answer the analytical question directly, including directional implications and what would change the conclusion. Do not invent an approved order or a funded position."
+      : mode === "strategy_candidate"
+        ? "Give a concrete strategy allocation proposal: exposure direction, trigger, horizon, invalidation, and budget fractions within supplied capital and risk limits. This mode proposes strategy budgets; instrument-specific buy/sell candidates use conditional_trade_candidate mode. Identify missing sizing inputs instead of inventing them."
+        : "Give an actionable conditional decision: instrument and direction, trigger, horizon, invalidation, and sizing within supplied capital and risk limits. If those limits are missing, identify the missing input instead of inventing a size. Explain why waiting or holding is preferable when appropriate.",
+    "Calculate sizes with quant_math action position_size for each entry/stop scenario separately; retain input prices with returned quantities and plannedLoss. If tools are unavailable, state the formula without inventing verified quantities.",
+    "A stop-based risk budget is planned loss, not a guaranteed maximum: gaps, slippage and fees can exceed it. A price trigger tests market behavior; it does not verify an unconfirmed report.",
+    "Partial or conflicting evidence may support an opportunity hypothesis; preserve its uncertainty. A proposal does not prove an order was placed. The controller checks authorization, current execution quotes, risk, deduplication and reconciliation. Existing autonomous Paper authorization does not require repeated human confirmation; Live requires its own explicit authority.",
+  ].join(" ");
+}
 
 /**
  * Research maturity stages as the trader-strategy-lab skill names them.
@@ -254,8 +276,6 @@ const RISK_PATTERN =
  */
 const HORIZON_PATTERN =
   /短线|中线|长线|持有期|周期|期限|一周|一个月|季度|\b(?:horizon|timeframe|terms?|weeks?|months?|quarters?)\b/iu;
-const REVIEW_BOUNDARY_PATTERN =
-  /仅候选|候选意见|需要确认|人工确认|不自动下单|不执行|执行前确认|仅供审阅|no automatic execution|human confirmation|review only|not execution/iu;
 /**
  * Whether the answer claims an execution happened.
  *
@@ -270,9 +290,16 @@ const REVIEW_BOUNDARY_PATTERN =
  * 成交 alone is deliberately NOT matched: "成交额" (turnover) and "成交量" (volume) are market
  * commentary, not claims about a fill. Only the completed-claim constructions are matched, and
  * 已执行 is bound to a trade verb so that "该策略已执行回测" is not read as a fill.
+ * Schedule wording and a descriptor such as "executed monthly signal" do not assert a broker
+ * fill. Other `executed at ...` and all `filled at ...` claims remain execution claims.
  */
 const EXECUTION_CLAIM_PATTERN =
-  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|已(?:成交|建仓|加仓|减仓|清仓|交割|报单)|已委托[^。！？?\n]{0,6}(?:买入|卖出|下单|成交|交易)|(?:已|已经)[^。！？?\n]{0,8}成交(?!额|量)|已执行(?:买入|卖出|下单|交易|委托)|(?:交易|委托|订单|指令)已执行|(?:委托|订单|报单)已成交|成交完成|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\b(?:filled|executed)\b\s+(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
+  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|已(?:成交|建仓|加仓|减仓|清仓|交割|报单)|已委托[^。！？?\n]{0,6}(?:买入|卖出|下单|成交|交易)|(?:已|已经)[^。！？?\n]{0,8}成交(?!额|量)|已执行(?:买入|卖出|下单|交易|委托)|(?:交易|委托|订单|指令)已执行|(?:委托|订单|报单)已成交|成交完成|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\bfilled\b\s+(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\bexecuted\b\s+(?!at\s+the\s+next\s+tradable\s+point\b|(?:monthly|daily|weekly|intraday)\s+signal\b)(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
+
+/** Shared by mode admission and final quality review so the two gates cannot drift. */
+export function hasFinanceExecutionClaim(answer: string): boolean {
+  return EXECUTION_CLAIM_PATTERN.test(answer);
+}
 
 function hasCitedSupportingEvidence(context: FinanceDecisionCandidateContext): boolean {
   const evidenceIds = new Set(
@@ -354,11 +381,13 @@ export function evaluateFinanceDecisionPolicy(params: {
   const answer = params.answer.trim();
   const executionAdapter = params.executionAdapter?.trim() ?? "";
   const asksForAction = CANDIDATE_ACTION_PATTERN.test(ask);
-  const hasAction = hasAssetAction(answer);
+  // Counted broker fills describe executions; their buy/sell labels are not commands.
+  const actionText = answer.replace(/\b\d+\s+(?:buy|sell)\s+fills?\b/giu, "reported executions");
+  const hasAction = hasAssetAction(actionText);
   const failedReasons: string[] = [];
   const requiredEvidence: string[] = [];
 
-  if (EXECUTION_CLAIM_PATTERN.test(answer) && mode !== "live_execution") {
+  if (hasFinanceExecutionClaim(answer) && mode !== "live_execution") {
     failedReasons.push("finance_execution_claim_forbidden");
   }
 
@@ -388,7 +417,7 @@ export function evaluateFinanceDecisionPolicy(params: {
   }
 
   if (mode === "research_only") {
-    if (DIRECT_ACTION_PATTERN.test(answer) || hasDirectAssetAction(answer)) {
+    if (DIRECT_ACTION_PATTERN.test(actionText) || hasDirectAssetAction(actionText)) {
       failedReasons.push("direct_trade_or_position_action_language");
     }
     return Object.freeze({
@@ -415,9 +444,6 @@ export function evaluateFinanceDecisionPolicy(params: {
   }
   if (!HORIZON_PATTERN.test(answer)) {
     requiredEvidence.push("time_horizon");
-  }
-  if (!REVIEW_BOUNDARY_PATTERN.test(answer)) {
-    requiredEvidence.push("human_review_and_no_automatic_execution_boundary");
   }
 
   if (mode === "strategy_candidate" && hasAction) {

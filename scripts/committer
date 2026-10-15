@@ -154,4 +154,17 @@ if [ "$committed" = false ]; then
   exit 1
 fi
 
+# A path-specific commit can restore the pre-hook index after committing a
+# formatter's staged edits. Sync only the committed paths; never touch worktree
+# content or unrelated index entries. Fully deleted paths need no sync.
+committed_paths=()
+for file in "${files[@]}"; do
+  if git ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || git cat-file -e "HEAD:$file" >/dev/null 2>&1; then
+    committed_paths+=("$file")
+  fi
+done
+if [ "${#committed_paths[@]}" -gt 0 ]; then
+  run_git_with_lock_retry "synchronizing committed paths" git restore --staged -- "${committed_paths[@]}"
+fi
+
 printf 'Committed "%s" with %d files\n' "$commit_message" "${#files[@]}"

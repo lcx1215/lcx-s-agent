@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import vm from "node:vm";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -114,6 +116,39 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
 }
 
 describe("LCX universe index", () => {
+  it("routes the existing maintainer document without admitting unknown agent files", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-universe-index.ts"),
+      "utf8",
+    );
+    const ast = ts.createSourceFile("universe.ts", source, ts.ScriptTarget.Latest, true);
+    const statements = ast.statements.filter(
+      (node) =>
+        (ts.isVariableStatement(node) &&
+          node.declarationList.declarations.some(
+            (declaration) => declaration.name.getText(ast) === "GOVERNANCE_COMPONENT_RULES",
+          )) ||
+        (ts.isFunctionDeclaration(node) && node.name?.text === "governanceRuleFor"),
+    );
+    expect(statements).toHaveLength(2);
+    const compiled = ts.transpileModule(
+      `${statements.map((node) => node.getText(ast)).join("\n")}\ngovernanceRuleFor;`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+    ).outputText;
+    const route = vm.runInNewContext(compiled) as (
+      file: string,
+    ) => { category: string; routeOwner: string; boundary: string } | undefined;
+    expect(route(".agents/maintainers.md")).toMatchObject({
+      category: "documentation_and_instruction",
+      routeOwner: "scripts/operator/lcx-doctrine-consistency.ts",
+      boundary:
+        "documentation and skills are context/instructions, not provider or external-sender authority",
+    });
+    expect(route(".agents/unregistered-executor.ts")).toBeUndefined();
+    expect(route(".agents/unregistered-instructions.md")).toBeUndefined();
+    expect(route(".agents/maintainers.md/other.ts")).toBeUndefined();
+  });
+
   it("builds one read-only index for repo files, runtime artifacts, live sidecar, and owner coverage", async () => {
     const payload = await runUniverseIndex();
 
@@ -166,6 +201,27 @@ describe("LCX universe index", () => {
       payload.summary.workspaceArtifactFiles + payload.summary.liveSidecarFiles,
     );
     expect(payload.ownerCoverage.governanceCoverage.unknownComponents).toEqual([]);
+    expect(
+      payload.ownerCoverage.governanceCoverage.components.find(
+        (component) => component.path === ".agents/skills/agent-brain-eval",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        routeOwner: "scripts/operator/lcx-doctrine-consistency.ts",
+        disposition: "governed_source",
+      }),
+    );
+    expect(
+      payload.ownerCoverage.governanceCoverage.components.find(
+        (component) => component.path === "dist/protocol.schema.json",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        routeOwner: "scripts/protocol-gen.ts",
+        proofSurface: "pnpm protocol:check plus focused gateway protocol tests",
+        disposition: "governed_source",
+      }),
+    );
     expect(payload.ownerCoverage.governanceCoverage.components).toHaveLength(
       payload.summary.trackedAndVisibleFiles,
     );

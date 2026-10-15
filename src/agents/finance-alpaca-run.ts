@@ -2,14 +2,25 @@ import { createAlpacaExecutionAdapter } from "./finance-alpaca-execution-adapter
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import {
   placeFinanceOrder,
+  type FinanceExecutionResearchLineage,
+  type FinanceExecutionTargetWeightAuthorization,
   type FinanceExecutionReceipt,
   type FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
+import type {
+  FinanceExecutionSafetyContextFactory,
+  FinanceExecutionSafetyFailure,
+} from "./finance-execution-safety.js";
 import {
   compileExecutionIntent,
+  type FinanceIntentCompilationResult,
   type FinanceResearchConclusion,
 } from "./finance-intent-compiler.js";
 import type { FinanceStrategyClass } from "./finance-mandate.js";
+import {
+  isLegalUsEquityPrice,
+  isValidAlpacaLongStopDistance,
+} from "./finance-us-equity-price-normalization.js";
 import {
   createFinanceUncachedFetch,
   createFinanceWriteTransport,
@@ -64,9 +75,12 @@ export type AlpacaAccountSnapshot = Readonly<{
 }>;
 
 export async function fetchAlpacaAccountSnapshot(
-  options: { read?: FinanceUncachedFetch } = {},
+  options: { read?: FinanceUncachedFetch; directory?: string } = {},
 ): Promise<{ ok: true; account: AlpacaAccountSnapshot } | { ok: false; reason: string }> {
-  const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
+  const env = resolveFinanceCredentialEnv({
+    ...process.env,
+    ...(options.directory ? { LCX_FINANCE_STATE_DIR: options.directory } : {}),
+  }) as Record<string, unknown>;
   const keyId = typeof env.ALPACA_API_KEY_ID === "string" ? env.ALPACA_API_KEY_ID.trim() : "";
   const secret =
     typeof env.ALPACA_API_SECRET_KEY === "string" ? env.ALPACA_API_SECRET_KEY.trim() : "";
@@ -74,7 +88,7 @@ export async function fetchAlpacaAccountSnapshot(
     return { ok: false, reason: "Alpaca credentials are not configured" };
   }
 
-  const read = options.read ?? createFinanceUncachedFetch();
+  const read = options.read ?? createFinanceUncachedFetch({ directory: options.directory });
   try {
     const response = await read("https://paper-api.alpaca.markets/v2/account", {
       headers: {
@@ -100,6 +114,9 @@ export async function fetchAlpacaAccountSnapshot(
     if (!Number.isFinite(equity)) {
       return { ok: false, reason: "account read returned no usable equity" };
     }
+    if (typeof record.trading_blocked !== "boolean") {
+      return { ok: false, reason: "account read returned no explicit trading_blocked boolean" };
+    }
     return {
       ok: true,
       account: Object.freeze({
@@ -108,7 +125,7 @@ export async function fetchAlpacaAccountSnapshot(
         buyingPower: number("buying_power"),
         currency: typeof record.currency === "string" ? record.currency : "USD",
         status: typeof record.status === "string" ? record.status : "UNKNOWN",
-        tradingBlocked: record.trading_blocked === true,
+        tradingBlocked: record.trading_blocked,
       }),
     };
   } catch (error) {
@@ -256,7 +273,14 @@ export async function fetchAlpacaVenueState(
 }
 
 export type FinanceAlpacaRunRequest = Readonly<{
+  credentialStateDirectory?: string;
+  createSafetyContext?: FinanceExecutionSafetyContextFactory;
   conclusion: FinanceResearchConclusion;
+  /** Controller-only audit ancestry; it does not change the compiled order or authorize it. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Controller-only capital boundary; never accepted from model output. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
+  signal?: AbortSignal;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
   market: { referencePrice: number; referencePriceAt: string };
   /** Account equity in the same currency as the reference price. */
@@ -269,6 +293,10 @@ export type FinanceAlpacaRunRequest = Readonly<{
   instruments: readonly string[];
   strategyClass?: FinanceStrategyClass;
   minConviction?: number;
+  /** Trusted controller-only exact quantity for closing an observed venue position. */
+  quantityOverride?: number;
+  /** Required to protect a crypto buy with Alpaca's separate stop-limit order path. */
+  protectionLimitPrice?: number;
   committedInstrumentNotional?: number;
   ordersPlacedThisRun?: number;
   recordedAt?: string;
@@ -290,8 +318,71 @@ export type FinanceAlpacaRunRequest = Readonly<{
 
 export type FinanceAlpacaRunResult = Readonly<
   | { ok: true; receipt: FinanceExecutionReceipt; notes: readonly string[] }
-  | { ok: false; stage: "compile" | "place"; refusals: readonly string[] }
+  | {
+      ok: false;
+      stage: "compile" | "place";
+      refusals: readonly string[];
+      safetyFailure?: FinanceExecutionSafetyFailure;
+    }
 >;
+
+/** Pure preflight: no provider calls, safety reservations, or execution authority. */
+export function compileFinanceAlpacaOrderIntent(
+  request: FinanceAlpacaRunRequest,
+): FinanceIntentCompilationResult {
+  const { conclusion } = request;
+  const usEquityLong =
+    (conclusion.assetClass?.trim().toLowerCase() === "us_equity" ||
+      conclusion.assetClass?.trim().toLowerCase() === "etf") &&
+    conclusion.direction === "buy" &&
+    /^[A-Z][A-Z0-9.-]{0,9}$/u.test(conclusion.instrument?.trim().toUpperCase() ?? "");
+  if (
+    usEquityLong &&
+    conclusion.invalidationPrice !== undefined &&
+    (!isLegalUsEquityPrice(conclusion.invalidationPrice) ||
+      !isValidAlpacaLongStopDistance(conclusion.invalidationPrice, request.market.referencePrice))
+  ) {
+    return {
+      ok: false,
+      refusals: [
+        "refuse: Alpaca US-equity stop price violates venue tick or minimum-distance rules",
+      ],
+    };
+  }
+  const committed = request.committedInstrumentNotional ?? 0;
+  const orderCap = request.budget.maxOrderNotional;
+  const instrumentCap = request.budget.maxInstrumentNotional;
+  const sizeWithinPaperCaps =
+    (request.mode ?? "paper") === "paper" &&
+    request.conclusion.direction === "buy" &&
+    request.quantityOverride === undefined &&
+    typeof orderCap === "number" &&
+    Number.isFinite(orderCap) &&
+    orderCap > 0 &&
+    typeof instrumentCap === "number" &&
+    Number.isFinite(instrumentCap) &&
+    instrumentCap > 0 &&
+    Number.isFinite(committed) &&
+    committed >= 0;
+  const entryHeadroom = sizeWithinPaperCaps
+    ? Math.max(0, Math.min(orderCap, instrumentCap - committed))
+    : undefined;
+  return compileExecutionIntent({
+    conclusion: request.conclusion,
+    market: request.market,
+    equity: request.equity,
+    ...(entryHeadroom === undefined ? {} : { maxEntryNotional: entryHeadroom }),
+    ...(request.targetWeightAuthorization === undefined
+      ? {}
+      : { maxAuthorizedNotional: request.targetWeightAuthorization.maxOrderNotional }),
+    runAuthorizationId: request.runAuthorizationId,
+    ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
+    ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),
+    ...(request.quantityOverride === undefined
+      ? {}
+      : { quantityOverride: request.quantityOverride }),
+  });
+}
 
 export async function runFinanceAlpacaOrder(
   request: FinanceAlpacaRunRequest,
@@ -304,36 +395,71 @@ export async function runFinanceAlpacaOrder(
     };
   }
 
-  const compiled = compileExecutionIntent({
-    conclusion: request.conclusion,
-    market: request.market,
-    equity: request.equity,
-    runAuthorizationId: request.runAuthorizationId,
-    ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
-    ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),
-  });
+  if (!request.createSafetyContext) {
+    return {
+      ok: false,
+      stage: "place",
+      refusals: ["execution_safety_context_required: trusted controller facts unavailable"],
+    };
+  }
+
+  const compiled = compileFinanceAlpacaOrderIntent(request);
   if (!compiled.ok) {
     return Object.freeze({ ok: false, stage: "compile", refusals: compiled.refusals });
   }
 
+  const intent = Object.freeze({
+    ...compiled.intent,
+    ...(request.protectionLimitPrice === undefined
+      ? {}
+      : { protectionLimitPrice: request.protectionLimitPrice }),
+    ...(request.researchLineage === undefined ? {} : { researchLineage: request.researchLineage }),
+    ...(request.targetWeightAuthorization === undefined
+      ? {}
+      : { targetWeightAuthorization: Object.freeze({ ...request.targetWeightAuthorization }) }),
+  });
+
   const fillPoll =
     request.fillPoll === false ? undefined : (request.fillPoll ?? DEFAULT_ALPACA_FILL_POLL);
 
-  const transport = request.transport ?? createFinanceWriteTransport();
+  // A DAY OTO stop expires at the close even when its bought shares remain held.
+  // Preserve explicit caller time-in-force and the adapter's crypto/fractional rules.
+  const timeInForce =
+    request.timeInForce ??
+    (request.conclusion.assetClass?.trim().toLowerCase() === "us_equity" &&
+    compiled.intent.side === "buy" &&
+    Number.isInteger(compiled.intent.quantity) &&
+    compiled.intent.stopPrice !== undefined
+      ? "gtc"
+      : undefined);
+  const transport =
+    request.transport ??
+    createFinanceWriteTransport({ directory: request.credentialStateDirectory });
   const adapter = createAlpacaExecutionAdapter({
     id: FINANCE_ALPACA_ADAPTER_ID,
+    credentialStateDirectory: request.credentialStateDirectory,
     instruments: request.instruments,
     ...(request.mode === undefined ? {} : { mode: request.mode }),
     postJson: (url, init) =>
       transport({ url, headers: init.headers, body: init.body, signal: init.signal }),
-    statusFetch: request.read ?? createFinanceUncachedFetch(),
-    ...(request.timeInForce === undefined ? {} : { timeInForce: request.timeInForce }),
+    cancelOrder: (url, init) =>
+      transport({ url, headers: init.headers, body: "", method: "DELETE", signal: init.signal }),
+    statusFetch:
+      request.read ?? createFinanceUncachedFetch({ directory: request.credentialStateDirectory }),
+    ...(timeInForce === undefined ? {} : { timeInForce }),
     ...(fillPoll === undefined ? {} : { fillPoll }),
   });
 
   const placed = await placeFinanceOrder({
     mode: "live_execution",
-    intent: compiled.intent,
+    safetyContext: request.createSafetyContext?.({
+      intent,
+      budget: request.budget,
+      adapterId: adapter.id,
+      venue: adapter.venue,
+    }),
+    signal: request.signal,
+    intent,
     budget: request.budget,
     adapters: [adapter],
     executionAdapterId: adapter.id,
@@ -343,7 +469,12 @@ export async function runFinanceAlpacaOrder(
   });
 
   if (placed.status !== "placed" || placed.receipt === undefined) {
-    return Object.freeze({ ok: false, stage: "place", refusals: placed.refusalReasons });
+    return Object.freeze({
+      ok: false,
+      stage: "place",
+      refusals: placed.refusalReasons,
+      ...(placed.safetyFailure ? { safetyFailure: placed.safetyFailure } : {}),
+    });
   }
 
   return Object.freeze({ ok: true, receipt: placed.receipt, notes: compiled.notes });

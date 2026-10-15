@@ -19,6 +19,7 @@ import {
 } from "../utils/message-channel.js";
 import { GatewayClient } from "./client.js";
 import { resolveGatewayCredentialsFromConfig } from "./credentials.js";
+import { isConfiguredLocalGatewayTlsUrl } from "./local-tls-url.js";
 import {
   CLI_DEFAULT_OPERATOR_SCOPES,
   resolveLeastPrivilegeOperatorScopesForMethod,
@@ -522,9 +523,8 @@ async function resolveGatewayTlsFingerprint(params: {
   const { opts, context, url } = params;
   const useLocalTls =
     context.config.gateway?.tls?.enabled === true &&
-    !context.urlOverrideSource &&
-    !context.remoteUrl &&
-    url.startsWith("wss://");
+    (!context.remoteUrl || context.remoteUrl !== url) &&
+    isConfiguredLocalGatewayTlsUrl(context.config, url);
   const tlsRuntime = useLocalTls
     ? await loadGatewayTlsRuntime(context.config.gateway?.tls)
     : undefined;

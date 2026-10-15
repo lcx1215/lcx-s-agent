@@ -115,6 +115,9 @@ function runCommand(params: {
   const startedAt = Date.now();
   return new Promise((resolve) => {
     let settled = false;
+    let deadlineExceeded = false;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    let cleanupDeadline: ReturnType<typeof setTimeout> | undefined;
     const child = spawn(params.command, params.args, {
       cwd: params.cwd ?? WORKTREE_CWD,
       env: process.env,
@@ -130,6 +133,32 @@ function runCommand(params: {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
+    const finishTimeout = (
+      cleanupStatus: "local_child_closed" | "cleanup_unconfirmed",
+      exitCode?: number | null,
+      signal?: NodeJS.Signals | null,
+    ) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      clearTimeout(escalation);
+      clearTimeout(cleanupDeadline);
+      resolve({
+        name: params.name,
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        summary: {
+          stdoutTail: stdout.slice(-500),
+          stderrTail: stderr.slice(-500),
+          timeoutMs: params.timeoutMs,
+          cleanupStatus,
+          ...(cleanupStatus === "local_child_closed" ? { exitCode, signal } : {}),
+        },
+        error: `${params.name} timed out after ${params.timeoutMs}ms`,
+      });
+    };
     const timeout =
       params.timeoutMs === undefined
         ? undefined
@@ -137,22 +166,22 @@ function runCommand(params: {
             if (settled) {
               return;
             }
-            settled = true;
+            deadlineExceeded = true;
             child.kill("SIGTERM");
-            resolve({
-              name: params.name,
-              ok: false,
-              durationMs: Date.now() - startedAt,
-              summary: {
-                stdoutTail: stdout.slice(-500),
-                stderrTail: stderr.slice(-500),
-                timeoutMs: params.timeoutMs,
-              },
-              error: `${params.name} timed out after ${params.timeoutMs}ms`,
-            });
+            // A sent signal is not cleanup evidence. Wait for native close, bounded separately.
+            escalation = setTimeout(() => {
+              if (!settled) {
+                child.kill("SIGKILL");
+              }
+            }, 250);
+            cleanupDeadline = setTimeout(() => finishTimeout("cleanup_unconfirmed"), 1000);
           }, params.timeoutMs);
     child.on("error", (error) => {
       if (settled) {
+        return;
+      }
+      if (deadlineExceeded) {
+        finishTimeout("cleanup_unconfirmed");
         return;
       }
       settled = true;
@@ -167,8 +196,12 @@ function runCommand(params: {
         error: error.message,
       });
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (settled) {
+        return;
+      }
+      if (deadlineExceeded) {
+        finishTimeout("local_child_closed", code, signal);
         return;
       }
       settled = true;
@@ -192,13 +225,37 @@ function runCommand(params: {
       }
       try {
         const payload = params.parseJson ? parseJsonObjectFromOutput(stdout) : undefined;
+        const ownerFailed = payload?.ok === false;
+        const escalation = payload?.escalation;
+        const ownerFailures = Array.isArray(payload?.actionableFailures)
+          ? payload.actionableFailures
+              .filter(
+                (reason): reason is string =>
+                  typeof reason === "string" && reason.trim().length > 0,
+              )
+              .join("; ")
+          : "";
+        const escalationReason =
+          escalation &&
+          typeof escalation === "object" &&
+          !Array.isArray(escalation) &&
+          "reason" in escalation &&
+          typeof escalation.reason === "string" &&
+          escalation.reason.trim()
+            ? escalation.reason
+            : "";
+        const ownerReason =
+          typeof payload?.reason === "string" && payload.reason.trim()
+            ? payload.reason
+            : ownerFailures || escalationReason || `${params.name} reported ok=false`;
         resolve({
           name: params.name,
-          ok: true,
+          ok: !ownerFailed,
           durationMs,
           summary: payload
             ? summarizeJson(params.name, payload)
             : summarizeText(params.name, stdout),
+          ...(ownerFailed ? { error: ownerReason } : {}),
         });
       } catch (error) {
         resolve({
@@ -326,6 +383,9 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
   if (name === "local-brain-dataset") {
     return {
       ok: payload.ok,
+      mode: payload.mode,
+      storedSnapshot: payload.storedSnapshot,
+      reason: payload.reason,
       counts: payload.counts,
       sourceKinds: payload.sourceKinds,
       notTouched: payload.notTouched,
@@ -779,6 +839,9 @@ type CouncilRoleSummary = {
   role: string;
   model: string;
   providerFamily: string;
+  actualProvider?: string;
+  actualModel?: string;
+  requestedModelHealth: "healthy" | "failed" | "mismatched" | "unknown";
   success: boolean;
   error?: string;
 };
@@ -800,6 +863,15 @@ function summarizeCouncilRoles(payload: Record<string, unknown>): CouncilRoleSum
         model: typeof record.model === "string" ? record.model : "",
         providerFamily:
           typeof record.providerFamily === "string" ? record.providerFamily : "unknown",
+        actualProvider:
+          typeof record.actualProvider === "string" ? record.actualProvider : undefined,
+        actualModel: typeof record.actualModel === "string" ? record.actualModel : undefined,
+        requestedModelHealth:
+          record.requestedModelHealth === "healthy" ||
+          record.requestedModelHealth === "failed" ||
+          record.requestedModelHealth === "mismatched"
+            ? record.requestedModelHealth
+            : "unknown",
         success: record.success === true,
         error: typeof record.error === "string" ? record.error : undefined,
       };
@@ -809,6 +881,43 @@ function summarizeCouncilRoles(payload: Record<string, unknown>): CouncilRoleSum
 
 function incrementCounter(counter: Record<string, number>, key: string): void {
   counter[key] = (counter[key] ?? 0) + 1;
+}
+
+function isConfirmedCouncilRoleHealthy(role: CouncilRoleSummary): boolean {
+  return (
+    role.success &&
+    role.requestedModelHealth === "healthy" &&
+    Boolean(role.actualProvider && role.actualModel) &&
+    `${role.actualProvider}/${role.actualModel}` === role.model
+  );
+}
+
+function summarizeCouncilHealth(roles: readonly CouncilRoleSummary[]) {
+  const roleSuccesses: Record<string, number> = {};
+  const roleFailures: Record<string, number> = {};
+  const roleHealthSuccesses: Record<string, number> = {};
+  const roleHealthUnconfirmed: Record<string, number> = {};
+  for (const role of roles) {
+    incrementCounter(role.success ? roleSuccesses : roleFailures, role.role);
+    incrementCounter(
+      isConfirmedCouncilRoleHealthy(role) ? roleHealthSuccesses : roleHealthUnconfirmed,
+      role.role,
+    );
+  }
+  return { roleSuccesses, roleFailures, roleHealthSuccesses, roleHealthUnconfirmed };
+}
+
+function latestLearningCouncilFailureReason(
+  latest: { status: string; roles: readonly CouncilRoleSummary[] } | undefined,
+  unconfirmedRoles: readonly string[],
+): string | undefined {
+  if (!latest) {
+    return "no learning-council artifact in the 7-day evidence window; provider health is unconfirmed";
+  }
+  const roleEvidence =
+    unconfirmedRoles.join(",") ||
+    (latest.roles.length > 0 ? "provider_identity_or_health_unconfirmed" : "no_role_evidence");
+  return `latest learning council degraded: status=${latest.status}, unconfirmedModelRoles=${roleEvidence}`;
 }
 
 async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
@@ -856,13 +965,8 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
     } => Boolean(entry),
   );
 
-  const roleSuccesses: Record<string, number> = {};
-  const roleFailures: Record<string, number> = {};
-  for (const artifact of learningCouncilArtifacts) {
-    for (const role of artifact.roles) {
-      incrementCounter(role.success ? roleSuccesses : roleFailures, role.role);
-    }
-  }
+  const { roleSuccesses, roleFailures, roleHealthSuccesses, roleHealthUnconfirmed } =
+    summarizeCouncilHealth(learningCouncilArtifacts.flatMap((artifact) => artifact.roles));
 
   const reviewPanelReceipts = await Promise.all(
     reviewPanelFiles.map(async (entry) => {
@@ -884,9 +988,16 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
 
   const latestLearningCouncil = learningCouncilArtifacts[0];
   const latestRoleFailures =
-    latestLearningCouncil?.roles.filter((role) => !role.success).map((role) => role.role) ?? [];
+    latestLearningCouncil?.roles
+      .filter((role) => !isConfirmedCouncilRoleHealthy(role))
+      .map((role) => role.role) ?? [];
   const latestLearningCouncilDegraded =
-    latestLearningCouncil?.status === "degraded" || latestRoleFailures.length > 0;
+    !latestLearningCouncil ||
+    latestLearningCouncil.status === "degraded" ||
+    latestRoleFailures.length > 0;
+  const latestLearningCouncilError = latestLearningCouncilDegraded
+    ? latestLearningCouncilFailureReason(latestLearningCouncil, latestRoleFailures)
+    : undefined;
   const reviewPanelProviderBacked = reviewPanelReceipts.filter(
     (receipt) => receipt.providerCallsMade,
   ).length;
@@ -899,13 +1010,22 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
     summary: {
       windowDays: MODEL_COUNCIL_AUDIT_WINDOW_MS / (24 * 60 * 60 * 1000),
       learningCouncilArtifacts: learningCouncilArtifacts.length,
+      latestProviderEvidenceState: latestLearningCouncil
+        ? latestLearningCouncilDegraded
+          ? "unconfirmed"
+          : "healthy"
+        : "missing_recent_artifact",
       latestLearningCouncil,
       roleSuccesses,
       roleFailures,
+      roleHealthSuccesses,
+      roleHealthUnconfirmed,
+      outputEvidenceBoundary:
+        "roleSuccesses count usable role output, not requested-model health; only matching actual identity with requestedModelHealth=healthy is confirmed.",
       recentProviderEvidence: {
-        kimi: (roleSuccesses.kimi ?? 0) > 0,
-        minimax: (roleSuccesses.minimax ?? 0) > 0,
-        deepseek: (roleSuccesses.deepseek ?? 0) > 0,
+        kimi: (roleHealthSuccesses.kimi ?? 0) > 0,
+        minimax: (roleHealthSuccesses.minimax ?? 0) > 0,
+        deepseek: (roleHealthSuccesses.deepseek ?? 0) > 0,
         deepseekAttemptedButFailed: (roleFailures.deepseek ?? 0) > 0,
       },
       reviewPanelReceipts: reviewPanelReceipts.length,
@@ -916,9 +1036,7 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
       liveTouched: false,
       providerConfigTouched: false,
     },
-    error: latestLearningCouncilDegraded
-      ? `latest learning council degraded: status=${latestLearningCouncil?.status}, failedRoles=${latestRoleFailures.join(",") || "unknown"}`
-      : undefined,
+    error: latestLearningCouncilError,
   };
 }
 
@@ -1067,7 +1185,10 @@ function skipped(name: string, reason: string): CheckResult {
 function actionableFailures(checks: CheckResult[]): string[] {
   return checks
     .filter((check) => !check.ok)
-    .map((check) => `${check.name}: ${check.error ?? "failed"}`);
+    .map(
+      (check) =>
+        `${check.name}: ${check.error ?? "failed"}${check.summary.cleanupStatus === "cleanup_unconfirmed" ? "; local child cleanup unconfirmed" : ""}`,
+    );
 }
 
 const options = parseArgs(process.argv.slice(2));
@@ -1187,7 +1308,13 @@ checks.push(
   await runCommand({
     name: "local-brain-dataset",
     command: process.execPath,
-    args: ["--import", "tsx", "scripts/operator/local-brain-distill-dataset.ts", "--json"],
+    args: [
+      "--import",
+      "tsx",
+      "scripts/operator/local-brain-distill-dataset.ts",
+      "--inspect",
+      "--json",
+    ],
     parseJson: true,
   }),
 );
@@ -1337,5 +1464,17 @@ process.stdout.write(
         .filter(Boolean)
         .join("\n") + "\n",
 );
+
+if (failures.length > 0) {
+  let digest = "";
+  for (const character of failures.join("\n")) {
+    if (Buffer.byteLength(digest + character, "utf8") > 1020) {
+      digest += "…";
+      break;
+    }
+    digest += character;
+  }
+  process.stderr.write(`${digest}\n`);
+}
 
 process.exitCode = result.ok ? 0 : 1;

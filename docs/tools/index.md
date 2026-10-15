@@ -12,6 +12,9 @@ LCX Agent exposes **first-class agent tools** for browser, canvas, nodes, and cr
 These replace the old `openclaw-*` skills: the tools are typed, no shelling,
 and the agent should rely on them directly.
 
+For optional structured classification and routing through Cloudflare Clef, see
+[Structured decision model](/tools/decision-model).
+
 ## Disabling tools
 
 You can globally allow/deny tools via `tools.allow` / `tools.deny` in `openclaw.json`

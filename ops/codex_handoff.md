@@ -1,16 +1,45 @@
 # Codex Handoff
 
-## Purpose
+## Current recovery route
 
-This file is the shortest useful truth-source for the current local LCX system and its canonical repository.
+This file is a recovery index for LCX Agent (`lcx1215/lcx-s-agent`). Current
+source, runtime receipts and the task's session-bound state card establish
+current status; the historical observations below do not.
 
-It exists to stop drift between:
+1. Read the state card bound to the current session. If no card is bound,
+   reconstruct the task from the current request and source rather than using
+   another task's card or a global `CURRENT` pointer.
+2. Read [the repository contract](../AGENTS.md),
+   [architecture map](architecture/LCX-SYSTEM-ARCHITECTURE.md) and
+   [Git delivery standard](engineering/LCX-GIT-DELIVERY-STANDARD.md).
+3. When a fresh system handoff is needed, use the existing recovery owner:
 
-- chat claims
-- external-channel handoff narrative
-- canonical-repository reality
+   ```bash
+   node --import tsx scripts/operator/lcx-context-recovery-exam.ts --handoff --json
+   ```
 
-Use this file together with:
+4. Continue through the relevant owner below. Reuse fresh evidence for unchanged
+   source; run other owners only when the task or a concrete gap requires them.
+
+| Work                 | Existing owner                                                                    | Evidence boundary                                                                 |
+| -------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Paper trading        | `scripts/operator/lcx-finance-scheduler.ts`                                       | Scheduler, orders, fills and reconciliation need their own receipts.              |
+| System decisions     | `scripts/operator/lcx-central-agent.ts`, `src/agents/central-harness/`            | Perception, proposal, gate and feedback do not grant execution authority.         |
+| Stored results       | `src/memory/artifact-store.ts`, `src/agents/tools/artifact-memory-recall-tool.ts` | Verify original identity, scope and cutoff before using a result.                 |
+| Local model training | `scripts/operator/local-brain-training-plan.ts`                                   | Historical evals and protocol health do not prove current inference or promotion. |
+| External channels    | `scripts/operator/lcx-external-channel-status.ts`                                 | Channel binding and user-visible delivery remain separate acceptance steps.       |
+
+See [the local operations runbook](local-brain/README.md) for these owners'
+commands. An unavailable optional model does not require restarting training,
+probing a paid provider or replacing the existing workflow.
+
+## Historical orientation
+
+The remaining sections retain earlier implementation observations and receipt
+wording. Treat their model choices, status claims and source paths as historical
+leads to verify, including entries without an explicit date.
+
+Related historical context:
 
 - `AGENTS.md`
 - `MEMORY.md`
@@ -25,9 +54,11 @@ The former `2026-03-27-workspace-division.md` and
 `2026-03-27-workspace-role-runbook.md` references are retained as a historical
 compatibility/migration gap only; those files are not present at this PR head.
 
-## Observed In The Local System
+## Historical architecture observations
 
-- This canonical repository is `lcx-s-openclaw`; local parallel work uses linked Git worktrees.
+- The historical checkout name is `lcx-s-openclaw`; the canonical repository
+  identity is LCX Agent (`lcx1215/lcx-s-agent`). Local parallel work uses linked
+  Git worktrees.
 - The current vendor-neutral external-channel interface lives under:
   - `extensions/external/src/channel.ts` (channel registration and dispatch)
   - `extensions/external/src/monitor.ts` (webhook ingress and authorization)

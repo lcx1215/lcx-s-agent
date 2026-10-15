@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "fromVersion": 7,
+  "toVersion": 8,
+  "scenarioIds": ["local_automation_digest_waterflow"],
+  "reason": "Replace the required missing digest owner with the verified original single-file owner-brief consumer.",
+  "changes": {
+    "operatorDigest": "Explicit operator-path reads the original latest receipt, checks source scope and freshness, and preserves native owner failures and governance blockers in original JSON and Markdown.",
+    "acceptance": "Existing source is separately verified offline; legacy canonical run identity, natural invocation and semantic acceptance remain unproven.",
+    "registry": "All 28 scenes and existing relation/state vocabularies retained; no dispatch or execution authority change."
+  },
+  "nonEffects": [
+    "no host loop or owner stack execution",
+    "no automation or forced provider/model calls",
+    "no broker permission or risk changes",
+    "no restart or deployment"
+  ]
+}

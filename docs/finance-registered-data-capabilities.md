@@ -24,6 +24,37 @@ of credentials, entitlement, freshness, or successful collection. FMP compatibil
 IDs retain `free_basic` for callers, but now use `/stable` endpoints and do not
 promise free account access. No adapter accesses trading, orders, wallets or funds.
 
+## Provider health and invocation
+
+`finance_source_health_read` reports whether the CoinGecko route is configured,
+whether it has a recent successful call, and its persisted provider heartbeat;
+reading it performs no network request. To plan or probe only the CoinGecko
+realtime adapter, use:
+
+```bash
+pnpm lcx:finance:source:heartbeat -- --once --adapter-id coingecko_public_crypto_price --json
+pnpm lcx:finance:source:heartbeat -- --once --adapter-id coingecko_public_crypto_price --live --force --json
+```
+
+The first command is an offline plan. The second makes one bounded public
+read-only request and persists the heartbeat. `--loop --live` keeps a foreground
+heartbeat loop; it does not install a service supervisor or start automatically.
+CoinGecko health requires its returned `last_updated_at` timestamp to be present
+and within the request freshness window.
+
+The `echoapi_cli_health` Agent tool reads local CLI installation and invocation
+status without network activity. Its `public_probe` action requires the pinned
+CLI to be installed, then tests one Binance public snapshot through the CLI and
+a local case. It verifies the local CLI invocation path, not EchoAPI cloud CI
+uptime or CoinGecko reachability. Run `pnpm lcx:echoapi:health` for the same
+offline CLI status; `pnpm lcx:echoapi:ensure` installs or reuses the exact pinned
+CLI.
+
+`api_capability_health_read` combines the local EchoAPI CLI snapshot and
+CoinGecko route, call, and provider-heartbeat evidence in one no-network Agent
+tool response. The two integration states remain separate; this summary does
+not turn either into a continuous-uptime claim.
+
 ## Use and retained evidence
 
 Preview the configured plan and the extended catalog, including missing credentials:
@@ -108,6 +139,25 @@ prices are excluded by the registered capability engine.
 Use raw artifacts for subsequent extraction, receipts for provenance/failures,
 and existing research quality gates for freshness and cross-source comparison.
 Local acquisition does not prove a model used the evidence or delivered an answer.
+
+### Reusing historical computation across strategies
+
+Daily price consumers share `readFinanceBarLedger`: it verifies the entire
+append-only chain before returning, including records outside an instrument or
+observation-time filter. Reads stream records and retain the requested bars;
+full content signatures are computed only when an instrument-day repeats.
+Exact replays collapse, conflicting closes remain visible, and filtered reads
+still report the full book's record count and head. Agent tools and rule readiness
+use this same reader without a separate provider-specific implementation.
+
+Reuse this daily-bar contract for a new data adapter only when its instrument
+identity, calendar-day meaning, price units and adjustment basis are compatible.
+Keep source/feed and observation timing explicit. Point observations remain
+`point_derived`, and intraday periods need their existing separate contract.
+This computational reuse does not establish support for trading on a new venue
+or in a new asset class: those paths still need their strategy, calendar,
+account, funding, precision and execution-risk contracts. Execution facts and
+quotes retain the shared gate's fresh account-scoped checks.
 
 Official contracts: [FMP](https://site.financialmodelingprep.com/developer/docs),
 [Alpha Vantage](https://www.alphavantage.co/documentation/),

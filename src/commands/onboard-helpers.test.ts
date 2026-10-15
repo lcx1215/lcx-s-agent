@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeGatewayTokenInput,
   openUrl,
+  formatControlUiSshHint,
   resolveBrowserOpenCommand,
   resolveControlUiLinks,
   validateGatewayPasswordInput,
@@ -103,6 +104,17 @@ describe("resolveControlUiLinks", () => {
     expect(links.wsUrl).toBe("ws://100.64.0.9:18789");
   });
 
+  it("uses HTTPS and WSS for TLS-enabled tailnet links", () => {
+    mocks.pickPrimaryTailnetIPv4.mockReturnValueOnce("100.64.0.9");
+    const links = resolveControlUiLinks({
+      port: 18789,
+      bind: "tailnet",
+      tlsEnabled: true,
+    });
+    expect(links.httpUrl).toBe("https://100.64.0.9:18789/");
+    expect(links.wsUrl).toBe("wss://100.64.0.9:18789");
+  });
+
   it("keeps loopback for auto even when tailnet is present", () => {
     mocks.pickPrimaryTailnetIPv4.mockReturnValueOnce("100.64.0.9");
     const links = resolveControlUiLinks({
@@ -111,6 +123,14 @@ describe("resolveControlUiLinks", () => {
     });
     expect(links.httpUrl).toBe("http://127.0.0.1:18789/");
     expect(links.wsUrl).toBe("ws://127.0.0.1:18789");
+  });
+});
+
+describe("formatControlUiSshHint", () => {
+  it("uses HTTPS when the local Gateway enables TLS", () => {
+    expect(formatControlUiSshHint({ port: 18789, tlsEnabled: true })).toContain(
+      "https://localhost:18789/",
+    );
   });
 });
 

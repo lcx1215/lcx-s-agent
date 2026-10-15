@@ -2414,8 +2414,8 @@ See [Plugins](/tools/plugin).
 - `port`: single multiplexed port for WS + HTTP. Precedence: `--port` > `OPENCLAW_GATEWAY_PORT` > `gateway.port` > `18789`.
 - `bind`: `auto`, `loopback` (default), `lan` (`0.0.0.0`), `tailnet` (Tailscale IP only), or `custom`.
 - **Legacy bind aliases**: use bind mode values in `gateway.bind` (`auto`, `loopback`, `lan`, `tailnet`, `custom`), not host aliases (`0.0.0.0`, `127.0.0.1`, `localhost`, `::`, `::1`).
-- **Docker note**: the default `loopback` bind listens on `127.0.0.1` inside the container. With Docker bridge networking (`-p 18789:18789`), traffic arrives on `eth0`, so the gateway is unreachable. Use `--network host`, or set `bind: "lan"` (or `bind: "custom"` with `customBindHost: "0.0.0.0"`) to listen on all interfaces.
-- **Auth**: required by default. Non-loopback binds require a shared token/password. Onboarding wizard generates a token by default.
+- **Docker note**: the default `loopback` bind listens on `127.0.0.1` inside the container. With Docker bridge networking (`-p 18789:18789`), traffic arrives on `eth0`, so the gateway is unreachable. Use `--network host`, or set `bind: "lan"` (or `bind: "custom"` with `customBindHost: "0.0.0.0"`) to listen on all interfaces. Non-loopback binds also require Gateway TLS.
+- **Auth and transport**: every direct non-loopback bind (`lan`, `custom`, `tailnet`, or `auto` when it resolves beyond loopback) requires a shared token/password and `gateway.tls.enabled: true`. Binding a socket to a Tailnet IP does not prove every packet reached it through WireGuard. Onboarding generates a token by default. Loopback behind SSH/Tailscale Serve remains the default.
 - `gateway.auth.mode: "none"`: explicit no-auth mode. Use only for trusted local loopback setups; this is intentionally not offered by onboarding prompts.
 - `gateway.auth.mode: "trusted-proxy"`: delegate auth to an identity-aware reverse proxy and trust identity headers from `gateway.trustedProxies` (see [Trusted Proxy Auth](/gateway/trusted-proxy-auth)).
 - `gateway.auth.allowTailscale`: when `true`, Tailscale Serve identity headers can satisfy Control UI/WebSocket auth (verified via `tailscale whois`); HTTP API endpoints still require token/password auth. This tokenless flow assumes the gateway host is trusted. Defaults to `true` when `tailscale.mode = "serve"`.
@@ -2430,6 +2430,7 @@ See [Plugins](/tools/plugin).
 - `gateway.remote.token` / `.password` are remote-client credential fields. They do not configure gateway auth by themselves.
 - Local gateway call paths can use `gateway.remote.*` as fallback when `gateway.auth.*` is unset.
 - `trustedProxies`: reverse proxy IPs that terminate TLS. Only list proxies you control.
+- For a non-loopback Gateway behind a reverse proxy, TLS must also protect the proxy-to-Gateway hop. A same-host proxy can connect to a loopback-bound Gateway instead.
 - `allowRealIpFallback`: when `true`, the gateway accepts `X-Real-IP` if `X-Forwarded-For` is missing. Default `false` for fail-closed behavior.
 - `gateway.tools.deny`: extra tool names blocked for HTTP `POST /tools/invoke` (extends default deny list).
 - `gateway.tools.allow`: remove tool names from the default HTTP deny list.

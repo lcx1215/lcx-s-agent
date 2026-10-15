@@ -14,10 +14,27 @@
  */
 
 import fs from "node:fs/promises";
+import { readFinanceAccountTradingBook } from "./finance-account-trading-book.js";
+import { reconcileFinanceBrokerHistory } from "./finance-alpaca-history-reconciliation.js";
+import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
+import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
+import {
+  DEFAULT_FINANCE_CYCLE_SLOTS,
+  FINANCE_TRADING_WEEKDAYS,
+  financeEtClock,
+} from "./finance-cycle-schedule.js";
 import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
-import { readFinancePositionLedger } from "./finance-position-ledger.js";
+import {
+  readFinanceAccountPositionLedger,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
+import { financeSchedulerPidPresent, readFinanceSchedulerPid } from "./finance-scheduler-lock.js";
+import {
+  inspectFinanceSchedulerProgress,
+  readFinanceSchedulerState,
+} from "./finance-scheduler-state.js";
 import {
   financeResearchSamplesPath,
   financeResearchScoredPath,
@@ -25,6 +42,7 @@ import {
   type FinanceStateDirSource,
 } from "./finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
+import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
 export const FINANCE_LINK_HEALTH_SCHEMA = "lcx_finance_link_health_v1" as const;
 
@@ -88,46 +106,86 @@ function calendarDaysBehind(later: string, earlier: string): number {
 async function readVenuePositions(
   keyId: string,
   secret: string,
-): Promise<{ ok: true; bySymbol: Map<string, number> } | { ok: false; reason: string }> {
+  read: FinanceUncachedFetch,
+): Promise<
+  { ok: true; accountId: string; bySymbol: Map<string, number> } | { ok: false; reason: string }
+> {
   try {
-    const response = await fetch("https://paper-api.alpaca.markets/v2/positions", {
-      headers: {
-        "APCA-API-KEY-ID": keyId,
-        "APCA-API-SECRET-KEY": secret,
-        accept: "application/json",
-      },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (response.status !== 200) {
-      return { ok: false, reason: "positions read returned " + response.status };
+    const signal = AbortSignal.timeout(15_000);
+    const get = async (endpoint: string) => {
+      const response = await read(`https://paper-api.alpaca.markets/v2/${endpoint}`, {
+        headers: {
+          "APCA-API-KEY-ID": keyId,
+          "APCA-API-SECRET-KEY": secret,
+          accept: "application/json",
+        },
+        signal,
+      });
+      if (response.status !== 200) {
+        throw new Error("venue unavailable");
+      }
+      return JSON.parse(response.body) as unknown;
+    };
+    const account = await get("account");
+    if (
+      !account ||
+      typeof account !== "object" ||
+      !("id" in account) ||
+      typeof account.id !== "string" ||
+      !account.id.trim()
+    ) {
+      throw new Error("account identity");
     }
-    const parsed = (JSON.parse(await response.text()) ?? []) as {
-      symbol?: unknown;
-      qty?: unknown;
-    }[];
+    const parsed = await get("positions");
+    if (!Array.isArray(parsed)) {
+      throw new Error("positions list");
+    }
     const bySymbol = new Map<string, number>();
     for (const position of parsed) {
-      const symbol = typeof position.symbol === "string" ? position.symbol.toUpperCase() : "";
+      if (
+        !position ||
+        typeof position !== "object" ||
+        typeof position.symbol !== "string" ||
+        !position.symbol.trim() ||
+        (typeof position.qty !== "number" &&
+          (typeof position.qty !== "string" || !position.qty.trim()))
+      ) {
+        throw new Error("position row");
+      }
       const qty = Number(position.qty);
-      if (symbol.length > 0 && Number.isFinite(qty)) {
+      let symbol = position.symbol.trim().toUpperCase();
+      if (position.asset_class === "crypto" && /^[A-Z0-9]+USD$/.test(symbol)) {
+        symbol = `${symbol.slice(0, -3)}/USD`;
+      }
+      if (!Number.isFinite(qty) || bySymbol.has(symbol)) {
+        throw new Error("quantity or duplicate");
+      }
+      if (qty !== 0) {
         bySymbol.set(symbol, qty);
       }
     }
-    return { ok: true, bySymbol };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: (error instanceof Error ? error.message : String(error)).slice(0, 100),
-    };
+    return { ok: true, accountId: account.id, bySymbol };
+  } catch {
+    return { ok: false, reason: "account_or_positions_unavailable_or_invalid" };
   }
 }
 
 export async function readFinanceLinkHealth(
-  options: Readonly<{ directory?: string; asOf?: string }> = {},
+  options: Readonly<{
+    directory?: string;
+    asOf?: string;
+    schedulerAt?: Date;
+    env?: NodeJS.ProcessEnv;
+    read?: FinanceUncachedFetch;
+  }> = {},
 ): Promise<FinanceLinkHealth> {
-  const state = resolveFinanceStateDir({ directory: options.directory });
+  const state = resolveFinanceStateDir({ directory: options.directory, env: options.env });
   const directory = state.directory;
-  const today = options.asOf?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+  const observedAt = options.schedulerAt ?? new Date();
+  // The plane schedules and trades on the New York session day. UTC advances four or five
+  // hours earlier, so using `toISOString()` here makes bars and research calls look one day
+  // older between 20:00 and midnight ET. An explicit asOf remains a caller-declared day.
+  const today = options.asOf?.slice(0, 10) ?? financeEtClock(observedAt).date;
   const checks: FinanceLinkHealthCheck[] = [];
 
   // 1. Which book. Every count below is meaningless without it.
@@ -169,6 +227,18 @@ export async function readFinanceLinkHealth(
       barAgeDays: Number.isFinite(barAge) ? barAge : null,
       collapsedRepeats: bars.collapsedRepeats,
       divergentDates: [...bars.divergentDates],
+    },
+  });
+  checks.push({
+    id: "bar_source_consistency",
+    severity: bars.divergentDates.length > 0 ? "warn" : "info",
+    ok: bars.divergentDates.length === 0,
+    summary:
+      bars.divergentDates.length === 0
+        ? "no instrument/date close conflicts across recorded bar observations"
+        : `${bars.divergentDates.length} instrument/date close conflict(s); affected rule-readiness windows are withheld`,
+    detail: {
+      conflictCount: bars.divergentDates.length,
     },
   });
 
@@ -424,30 +494,116 @@ export async function readFinanceLinkHealth(
     },
   });
 
-  // 7. Has the unattended loop actually fired, on both slots?
-  let lastFired: { day?: string; night?: string } = {};
-  let schedulerPresent = false;
+  // Attempt markers cannot establish that the latest day and night cycles succeeded.
+  let schedulerState: ReturnType<typeof readFinanceSchedulerState> | undefined;
+  let schedulerError: string | undefined;
   try {
-    const parsed = JSON.parse(
-      await fs.readFile(`${directory}/daily-cycle-scheduler.json`, "utf8"),
-    ) as { lastFired?: { day?: string; night?: string } };
-    schedulerPresent = true;
-    lastFired = parsed.lastFired ?? {};
-  } catch {
-    schedulerPresent = false;
+    schedulerState = readFinanceSchedulerState(directory);
+  } catch (error) {
+    schedulerError = String(error);
   }
-  const nightNeverFired = schedulerPresent && lastFired.night === undefined;
+  const lastFired = schedulerState?.lastFired ?? {};
+  const lastSucceeded = schedulerState?.lastSucceeded ?? {};
+  const schedulerPresent = Object.keys(lastFired).length > 0;
+  const recordedStatus = schedulerState?.lastRun?.status;
+  const latestStatus = typeof recordedStatus === "string" ? recordedStatus : undefined;
+  const lastStatus = schedulerState?.lastStatus ?? {};
+  const schedulerClock = financeEtClock(observedAt);
+  const dueSlots = DEFAULT_FINANCE_CYCLE_SLOTS.filter(
+    (slot) =>
+      FINANCE_TRADING_WEEKDAYS.includes(schedulerClock.weekday) &&
+      schedulerClock.minutes >= slot.hour * 60 + slot.minute,
+  );
+  const unresolvedDueSlots = dueSlots.filter(
+    (slot) =>
+      lastFired[slot.mode] !== schedulerClock.date ||
+      lastSucceeded[slot.mode] !== schedulerClock.date ||
+      lastStatus[slot.mode] !== "succeeded",
+  );
+  const lastRunDate =
+    typeof schedulerState?.lastRun?.firedAt === "string" &&
+    Number.isFinite(Date.parse(schedulerState.lastRun.firedAt))
+      ? financeEtClock(new Date(schedulerState.lastRun.firedAt)).date
+      : undefined;
+  const latestRunUnsuccessful =
+    dueSlots.length > 0 &&
+    latestStatus !== undefined &&
+    latestStatus !== "succeeded" &&
+    (lastRunDate === undefined || lastRunDate === schedulerClock.date);
+  const slotsSucceeded = unresolvedDueSlots.length === 0 && !latestRunUnsuccessful;
   checks.push({
     id: "scheduler_slots",
-    severity: !schedulerPresent ? "warn" : nightNeverFired ? "warn" : "info",
-    ok: schedulerPresent && !nightNeverFired,
-    summary: !schedulerPresent
-      ? "no scheduler state: the unattended loop has never recorded a firing"
-      : nightNeverFired
-        ? `day last fired ${lastFired.day ?? "never"}, night has never fired`
-        : `day last fired ${lastFired.day ?? "never"}, night ${lastFired.night ?? "never"}`,
-    detail: { schedulerPresent, lastFired, nightEverFired: !nightNeverFired },
+    severity: slotsSucceeded ? "info" : "warn",
+    ok: slotsSucceeded,
+    summary: schedulerError
+      ? `scheduler state unreadable: ${schedulerError}`
+      : slotsSucceeded
+        ? dueSlots.length === 0
+          ? `no finance cycle slot is due yet (${schedulerClock.date} ${schedulerClock.minutes} ET); this is not a freshness check`
+          : `all due finance cycle slots succeeded (${dueSlots.map((slot) => slot.mode).join(", ")}); this is not a freshness check`
+        : `scheduler success unverified for due slot(s) ${unresolvedDueSlots.map((slot) => slot.mode).join(", ")}: day attempted ${lastFired.day ?? "never"}, succeeded ${lastSucceeded.day ?? "unknown"}, status ${lastStatus.day ?? "unknown"}; night attempted ${lastFired.night ?? "never"}, succeeded ${lastSucceeded.night ?? "unknown"}, status ${lastStatus.night ?? "unknown"}; latest status ${latestStatus ?? "unknown"}`,
+    detail: {
+      schedulerPresent,
+      lastFired,
+      lastSucceeded,
+      lastStatus,
+      latestStatus,
+      nightEverFired: lastFired.night !== undefined,
+      schedulerClock,
+      dueSlots: dueSlots.map((slot) => slot.mode),
+      unresolvedDueSlots: unresolvedDueSlots.map((slot) => slot.mode),
+      lastRunDate: lastRunDate ?? null,
+      latestRunUnsuccessful,
+      schedulerError,
+    },
   });
+
+  // Scheduling deadlines do not establish that a resident execution loop is configured.
+  try {
+    const pid = readFinanceSchedulerPid(directory);
+    const present = pid !== null && financeSchedulerPidPresent(pid);
+    const progress = inspectFinanceSchedulerProgress(
+      directory,
+      pid,
+      present,
+      (options.schedulerAt ?? new Date()).getTime(),
+    );
+    const responsive = progress.status === "responsive";
+    const placementEnabled = responsive ? progress.placementEnabled : undefined;
+    const intradayEnabled =
+      progress.intraday !== null &&
+      typeof progress.intraday === "object" &&
+      "enabled" in progress.intraday &&
+      progress.intraday.enabled;
+    const policyStatus = intradayEnabled
+      ? progress.intradayControllerPolicyStatus
+      : progress.executionPolicyStatus;
+    const policyCurrent =
+      policyStatus === "current" ||
+      policyStatus === "until_revoked" ||
+      policyStatus === "not_required";
+    checks.push({
+      id: "scheduler_execution_loop",
+      severity: responsive && placementEnabled === true && policyCurrent ? "info" : "warn",
+      ok: responsive && placementEnabled === true && policyCurrent,
+      summary: !responsive
+        ? `resident scheduler execution unverified: ${progress.status}`
+        : !placementEnabled
+          ? "resident scheduler responsive in preview mode; placement is disabled"
+          : !policyCurrent
+            ? `resident scheduler responsive but ${intradayEnabled ? "intraday controller" : "execution"} policy ${policyStatus}; placement readiness unverified`
+            : "resident scheduler responsive with placement enabled; this does not verify a broker fill",
+      detail: { pid, processPresent: present, progress, executionHealthVerified: false },
+    });
+  } catch {
+    checks.push({
+      id: "scheduler_execution_loop",
+      severity: "warn",
+      ok: false,
+      summary: "resident scheduler ownership unreadable; execution is unverified",
+      detail: { executionHealthVerified: false },
+    });
+  }
 
   // 7. The book the system thinks it holds, against the book the venue actually holds.
   //
@@ -458,63 +614,248 @@ export async function readFinanceLinkHealth(
   //
   // Runs only when credentials exist, and reports when it does not: "not checked" and
   // "checked and fine" must not look the same.
-  const credentialEnv = resolveFinanceCredentialEnv(process.env) as Record<string, string>;
-  const alpacaKeyId = credentialEnv.ALPACA_API_KEY_ID ?? "";
-  const alpacaSecret = credentialEnv.ALPACA_API_SECRET_KEY ?? "";
+  let credentialEnv: NodeJS.ProcessEnv = {};
+  let credentialStoreUnavailable = false;
+  try {
+    credentialEnv = resolveFinanceCredentialEnv({
+      ...(options.env ?? process.env),
+      LCX_FINANCE_STATE_DIR: directory,
+    });
+  } catch {
+    credentialStoreUnavailable = true;
+  }
+  const alpacaKeyId = credentialEnv.ALPACA_API_KEY_ID?.trim() ?? "";
+  const alpacaSecret = credentialEnv.ALPACA_API_SECRET_KEY?.trim() ?? "";
   if (alpacaKeyId.length === 0 || alpacaSecret.length === 0) {
     checks.push({
       id: "venue_ledger_parity",
-      severity: "info",
-      ok: true,
-      summary: "venue not checked: no Alpaca credentials configured",
-      detail: { checked: false, reason: "no_credentials" },
+      severity: "error",
+      ok: false,
+      summary: credentialStoreUnavailable
+        ? "venue not checked: finance credential store unavailable"
+        : "venue not checked: no Alpaca credentials configured for this finance root",
+      detail: {
+        checked: false,
+        reason: credentialStoreUnavailable ? "credential_store_unavailable" : "no_credentials",
+      },
     });
   } else {
-    const venuePositions = await readVenuePositions(alpacaKeyId, alpacaSecret);
+    const venuePositions = await readVenuePositions(
+      alpacaKeyId,
+      alpacaSecret,
+      options.read ?? createAlpacaSafetyReadTransport(),
+    );
     if (!venuePositions.ok) {
       checks.push({
         id: "venue_ledger_parity",
-        severity: "warn",
+        severity: "error",
         ok: false,
         summary: "venue not checked: " + venuePositions.reason,
         detail: { checked: false, reason: venuePositions.reason },
       });
     } else {
-      const ledgerBySymbol = new Map(held.map((p) => [p.instrument.toUpperCase(), p.quantity]));
-      const onlyLedger = [...ledgerBySymbol.entries()]
+      const economic = await readFinanceBrokerReconciliation(directory, venuePositions.accountId);
+      checks.push({
+        id: "broker_economic_reconciliation",
+        severity: economic.ok ? "info" : "error",
+        ok: economic.ok,
+        summary: economic.ok
+          ? "broker activities, fees and positions reconciled"
+          : `broker economic reconciliation ${String(economic.reason)}`,
+        detail: { status: economic.reason, snapshot: economic.snapshot },
+      });
+      const scoped = await readFinanceAccountPositionLedger(directory, {
+        accountId: venuePositions.accountId,
+        venue: "alpaca:paper",
+      });
+      let historicalProjection:
+        | Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>>
+        | undefined;
+      let accountBook: Awaited<ReturnType<typeof readFinanceAccountTradingBook>> | undefined;
+      try {
+        accountBook = await readFinanceAccountTradingBook({
+          directory,
+          accountId: venuePositions.accountId,
+          venue: "alpaca:paper",
+        });
+        historicalProjection = accountBook.brokerHistory;
+      } catch {
+        // Raw broker history remains useful even when an older page is malformed. Keep the
+        // parity check conservative and expose the missing projection in the detail below.
+      }
+      const ledgerBySymbol = new Map(
+        scoped.ledger.positions
+          .filter((p) => p.quantity !== 0)
+          .map((p) => [p.instrument.toUpperCase(), p.quantity]),
+      );
+      const baselineBySymbol = new Map(
+        (accountBook?.positions ?? [])
+          .filter((position) => position.quantity !== 0)
+          .map((position) => [position.instrument.toUpperCase(), position.quantity]),
+      );
+      const useBrokerBaseline = accountBook?.brokerBaselineUsable === true;
+      const effectiveBySymbol = useBrokerBaseline ? baselineBySymbol : ledgerBySymbol;
+      const historyKnown = useBrokerBaseline || scoped.historyStatus !== "missing";
+      const onlyLedger = [...effectiveBySymbol.entries()]
         .filter(([symbol, qty]) => qty !== 0 && !venuePositions.bySymbol.has(symbol))
         .map(([symbol]) => symbol);
       const onlyVenue = [...venuePositions.bySymbol.keys()].filter(
-        (symbol) => !ledgerBySymbol.has(symbol),
+        (symbol) => !effectiveBySymbol.has(symbol),
       );
-      const mismatch = [...ledgerBySymbol.entries()]
+      const mismatch = [...effectiveBySymbol.entries()]
         .filter(([symbol, qty]) => {
           const venueQty = venuePositions.bySymbol.get(symbol);
           return venueQty !== undefined && Math.abs(venueQty - qty) > 1e-6;
         })
         .map(([symbol]) => symbol);
       const divergent = onlyLedger.length + onlyVenue.length + mismatch.length;
+      const unmatchedHistoricalFills = historicalProjection?.unmatchedFillCount ?? null;
+      const historicalBySymbol = new Map(
+        (historicalProjection?.positions ?? [])
+          .filter((position) => position.quantity !== 0)
+          .map((position) => [position.instrument.toUpperCase(), position.quantity]),
+      );
+      const onlyVenueInHistory = [...venuePositions.bySymbol.entries()]
+        .filter(([symbol]) => !historicalBySymbol.has(symbol))
+        .map(([symbol]) => symbol);
+      const onlyHistory = [...historicalBySymbol.entries()]
+        .filter(([symbol]) => !venuePositions.bySymbol.has(symbol))
+        .map(([symbol]) => symbol);
+      const historyMismatch = [...historicalBySymbol.entries()]
+        .filter(([symbol, quantity]) => {
+          const venueQuantity = venuePositions.bySymbol.get(symbol);
+          return venueQuantity !== undefined && Math.abs(venueQuantity - quantity) > 1e-6;
+        })
+        .map(([symbol]) => symbol);
+      const brokerBaselineUsable = accountBook?.brokerBaselineUsable === true;
+      const brokerBaselineMatchesVenue =
+        brokerBaselineUsable &&
+        onlyVenueInHistory.length === 0 &&
+        onlyHistory.length === 0 &&
+        historyMismatch.length === 0;
+      checks.push({
+        id: "broker_history_baseline",
+        severity: brokerBaselineMatchesVenue
+          ? accountBook?.historicalOnlyInstruments.length
+            ? "warn"
+            : "info"
+          : accountBook === undefined || !brokerBaselineUsable
+            ? "warn"
+            : "error",
+        ok: brokerBaselineMatchesVenue,
+        summary:
+          accountBook === undefined
+            ? "broker history baseline unavailable; no historical position baseline was accepted"
+            : !brokerBaselineUsable
+              ? `broker history is ${historicalProjection?.historyStatus ?? "unavailable"}; baseline is not usable`
+              : brokerBaselineMatchesVenue
+                ? accountBook.historicalOnlyInstruments.length > 0
+                  ? `broker history matches current venue positions; ${accountBook.historicalOnlyInstruments.length} instrument(s) remain historical-only outside LCX receipts`
+                  : "broker history baseline matches current venue positions"
+                : `broker history baseline disagrees with venue: history only [${onlyHistory.join(", ")}], venue only [${onlyVenueInHistory.join(", ")}], quantity differs [${historyMismatch.join(", ")}]`,
+        detail: {
+          baselineSource: accountBook?.baselineSource ?? "unavailable",
+          brokerBaselineUsable,
+          brokerBaselineMatchesVenue,
+          historicalOnlyInstruments: accountBook?.historicalOnlyInstruments ?? [],
+          onlyHistory,
+          onlyVenue: onlyVenueInHistory,
+          mismatch: historyMismatch,
+          historyStatus: historicalProjection?.historyStatus ?? null,
+          positionsReconciled: historicalProjection?.positionsReconciled ?? false,
+          positionBaselineUsable: historicalProjection?.positionBaselineUsable ?? false,
+          baselineAppliedFeeCount: historicalProjection?.baselineAppliedFeeCount ?? null,
+          orderAllocatedFeeCount: historicalProjection?.orderAllocatedFeeCount ?? null,
+          appliedFeeCount: historicalProjection?.appliedFeeCount ?? null,
+          unappliedFeeCount: historicalProjection?.unappliedFeeCount ?? null,
+        },
+      });
+      checks.push({
+        id: "execution_receipt_coverage",
+        severity:
+          historicalProjection === undefined ||
+          historicalProjection.unmatchedFillCount > 0 ||
+          !historicalProjection.positionsReconciled
+            ? "warn"
+            : "info",
+        ok:
+          historicalProjection !== undefined &&
+          historicalProjection.unmatchedFillCount === 0 &&
+          historicalProjection.positionsReconciled,
+        summary:
+          historicalProjection === undefined
+            ? "LCX receipt coverage has no broker-history evidence to compare"
+            : historicalProjection.unmatchedFillCount > 0
+              ? `${historicalProjection.unmatchedFillCount} broker fill(s) remain historical-only; no LCX receipt was inferred`
+              : !historicalProjection.positionsReconciled
+                ? "broker position baseline is usable, but fee/order reconciliation remains incomplete"
+                : "all reconciled broker fills have matching LCX receipts",
+        detail: {
+          executionReceiptCount: scoped.receipts.length,
+          brokerFillCount: historicalProjection?.brokerFillCount ?? null,
+          matchedReceiptCount: historicalProjection?.matchedReceiptCount ?? null,
+          unmatchedFillCount: historicalProjection?.unmatchedFillCount ?? null,
+          positionsReconciled: historicalProjection?.positionsReconciled ?? false,
+          baselineAppliedFeeCount: historicalProjection?.baselineAppliedFeeCount ?? null,
+          orderAllocatedFeeCount: historicalProjection?.orderAllocatedFeeCount ?? null,
+          appliedFeeCount: historicalProjection?.appliedFeeCount ?? null,
+          unappliedFeeCount: historicalProjection?.unappliedFeeCount ?? null,
+          historicalOnlyInstruments: accountBook?.historicalOnlyInstruments ?? [],
+        },
+      });
       checks.push({
         id: "venue_ledger_parity",
-        severity: divergent > 0 ? "warn" : "info",
-        ok: divergent === 0,
-        summary:
-          divergent === 0
-            ? `venue and ledger agree on ${venuePositions.bySymbol.size} position(s)`
+        severity: divergent > 0 || !historyKnown ? "error" : "info",
+        ok: divergent === 0 && historyKnown,
+        summary: !historyKnown
+          ? "account-scoped execution history missing; cannot claim broker parity"
+          : divergent === 0
+            ? useBrokerBaseline
+              ? `venue and broker-history account baseline agree on ${venuePositions.bySymbol.size} position(s)`
+              : `venue and account-scoped execution ledger agree on ${venuePositions.bySymbol.size} position(s)`
             : "venue and ledger disagree: in ledger only [" +
               onlyLedger.join(", ") +
               "], at venue only [" +
               onlyVenue.join(", ") +
               "], quantity differs [" +
               mismatch.join(", ") +
-              "]",
+              "]" +
+              (unmatchedHistoricalFills === null
+                ? ""
+                : `; broker history has ${unmatchedHistoricalFills} fill(s) without an LCX receipt`),
         detail: {
           checked: true,
+          venue: "alpaca:paper",
+          accountIdentityVerified: true,
+          historyStatus: scoped.historyStatus,
+          baselineSource: accountBook?.baselineSource ?? "unavailable",
+          brokerBaselineUsable: useBrokerBaseline,
+          excludedReceiptCount: scoped.excludedReceiptCount,
+          unassignedReceiptCount: scoped.unassignedReceiptCount,
           venueCount: venuePositions.bySymbol.size,
-          ledgerCount: ledgerBySymbol.size,
+          ledgerCount: effectiveBySymbol.size,
+          executionLedgerCount: ledgerBySymbol.size,
+          brokerBaselineCount: baselineBySymbol.size,
           onlyLedger,
           onlyVenue,
           mismatch,
+          historicalProjection: historicalProjection
+            ? {
+                historyStatus: historicalProjection.historyStatus,
+                positionsReconciled: historicalProjection.positionsReconciled,
+                feesInterpreted: historicalProjection.feesInterpreted,
+                brokerFillCount: historicalProjection.brokerFillCount,
+                matchedReceiptCount: historicalProjection.matchedReceiptCount,
+                unmatchedFillCount: historicalProjection.unmatchedFillCount,
+                baselineAppliedFeeCount: historicalProjection.baselineAppliedFeeCount,
+                orderAllocatedFeeCount: historicalProjection.orderAllocatedFeeCount,
+                appliedFeeCount: historicalProjection.appliedFeeCount,
+                unappliedFeeCount: historicalProjection.unappliedFeeCount,
+                assetFeeAdjustedInstruments: historicalProjection.assetFeeAdjustedInstruments,
+                positions: historicalProjection.positions,
+                warnings: historicalProjection.warnings,
+              }
+            : null,
         },
       });
     }

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "finance_data_gateway_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Separate actual source collection, gateway validation, terminal review and the existing central feedback consumer.",
+  "sourceFacts": [
+    "runFinanceResearchRun invokes runFinanceResearchBatch with declared adapters when liveFetch is requested",
+    "the batch invokes runFinanceRealtimeRefresh, whose returned observations enter buildFinanceDataGatewaySnapshot",
+    "composeFinanceAnswer supplies the normalized snapshot as grounding context; buildPipelineResult reviews the actual candidate and same snapshot",
+    "the existing Harness consumes terminal result and gaps before the registered gateway executes a corrected source request"
+  ],
+  "changes": {
+    "preservedNodesAndEdges": true,
+    "sourceAttemptOwner": "src/agents/finance-realtime-source-registry.ts",
+    "controlRoomConsumerOwner": "src/agents/central-harness/harness-loop.ts",
+    "receiptCompatibility": "No runtime receipt, relation vocabulary or state contract changes. Existing fields and exact original call observations prove the offline handoffs."
+  },
+  "nonEffects": [
+    "no source trust upgrade",
+    "no new orchestration",
+    "no trading authority",
+    "no paid rerun or automation"
+  ],
+  "verification": [
+    "test/lcx-flow-handoff-gateway.test.ts",
+    "test/lcx-flow-handoff-caseflow.test.ts",
+    "scripts/operator/lcx-flow-graph.ts --json"
+  ],
+  "acceptance": "All ten nodes require actual original inputs/outputs and the terminal-review-to-next-gateway call; source failure/timeout must reach unresolved judgment without composition or tool execution."
+}

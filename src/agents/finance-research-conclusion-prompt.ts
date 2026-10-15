@@ -1,3 +1,6 @@
+import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
+import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js";
+
 /**
  * The wire between the model and the rules: asking for a conclusion in a shape
  * the machine can check, and getting it back out of the model's answer.
@@ -9,9 +12,9 @@
  * into JSON, which is where invented numbers get in.
  *
  * The prompt therefore states the requirements, lists only the sources that
- * actually exist, and tells the model to answer `hold` when it does not know.
- * An honest hold is worth more than a confident guess: hold is treated as no
- * opinion, while a guess becomes a trade.
+ * actually exist, and preserves unknown inputs as unknown. Conditional ideas and
+ * waiting both need reasons; neither a hypothesis nor a parsed conclusion proves
+ * an executed order.
  */
 
 export const FINANCE_CONCLUSION_JSON_SHAPE = `{
@@ -20,6 +23,7 @@ export const FINANCE_CONCLUSION_JSON_SHAPE = `{
   "direction": "buy" | "sell" | "hold",
   "conviction": <number between 0 and 1>,
   "thesis": "one or two sentences of reasoning",
+  "expectationGap": { "origin": "model_hypothesis", "edgeKind": "fundamentals" | "valuation" | "interpretation" | "timing" | "flow" | "risk_rebalance" | "unknown", "marketExpectation": "baseline hypothesis or null", "variantView": "different driver or null", "catalyst": "event and horizon or null", "invalidation": "falsification or null", "costRiskAssessment": "cost and downside implications or null" },
   "assetClass": "us_equity" | "crypto" | "...",
   "evidence": [{ "sourceId": "<one of the listed sources>", "ref": "<optional locator>" }],
   "invalidationPrice": <number, optional>,
@@ -39,11 +43,20 @@ export function buildFinanceConclusionPrompt(params: {
   availableSources: readonly AvailableSource[];
   question?: string;
   horizonDays?: number;
+  valueAssessmentId?: string;
 }): string {
   const sourceList = params.availableSources
     .map((source) => `- ${source.sourceId}: ${source.description}`)
     .join("\n");
 
+  const methodKit = buildFinanceStrategyMethodKit(
+    [
+      params.question ?? "",
+      `Instrument: ${params.instrument}`,
+      `Asset class: ${params.assetClass}`,
+      ...(params.horizonDays === undefined ? [] : [`Horizon: ${params.horizonDays} days`]),
+    ].join("\n"),
+  );
   const lines = [
     "You are producing a machine-checked research conclusion, not an essay.",
     "",
@@ -57,8 +70,19 @@ export function buildFinanceConclusionPrompt(params: {
     "Sources you may cite (cite only these; do not invent others):",
     sourceList,
     "",
+    methodKit.prompt,
+    FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE,
+    "For an investment candidate include expectationGap with each text field at most 180 characters, or null when unknown. It is a source-bound research hypothesis, never measured consensus or execution authority.",
+    "Foreground methods come from deterministic task matching and are not an exclusive catalog selection. When the request explicitly asks to design or evaluate a matched method, address its contract or state why it is inapplicable or blocked by missing evidence; do not force a method into a purely factual task. You may combine relevant methods from the full catalog when the supplied evidence supports them.",
+    "Explain the chosen mechanism, supporting evidence and failure conditions in the existing thesis and invalidation fields. Method evidence requirements do not authorize invented sources, unsupported numbers or order execution. Do not add fields to the JSON schema below.",
+    "",
     "Reply with a single JSON object in this shape and nothing else:",
-    FINANCE_CONCLUSION_JSON_SHAPE,
+    params.valueAssessmentId
+      ? FINANCE_CONCLUSION_JSON_SHAPE.replace(
+          "{\n",
+          `{\n  "valueAssessmentId": "${params.valueAssessmentId}",\n`,
+        )
+      : FINANCE_CONCLUSION_JSON_SHAPE,
     "",
     "Rules the checker enforces, so satisfy them or the conclusion is refused:",
     `- cite at least two DISTINCT sourceId values from the list above;`,
@@ -67,11 +91,11 @@ export function buildFinanceConclusionPrompt(params: {
     "  do not write 0.9 because the tone of the question is optimistic.",
     "- thesis is required and must state the reason, not restate the direction.",
     '- if the evidence does not support a direction, answer "hold".',
-    "  A hold is treated as no opinion and costs nothing; a guess becomes a trade.",
+    "  State the opportunity cost of waiting; uncertainty alone does not require hold when a bounded, evidence-linked conditional thesis is available.",
     "- use invalidationPrice when a price would prove you wrong, or",
     "  invalidationCondition when a fact would.",
     "",
-    "Do not wrap the JSON in prose. If you are unsure, answer hold.",
+    "Do not wrap the JSON in prose. Preserve uncertainty without inventing facts or forcing a direction.",
   ];
   return lines.join("\n");
 }

@@ -4,11 +4,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   FINANCE_OUTCOME_LEDGER_FILENAME,
+  FINANCE_INTRADAY_LEDGER_FILENAME,
+  FINANCE_INTRADAY_CONTROL_LEDGER_FILENAME,
   FINANCE_POSITION_LEDGER_FILENAME,
   FINANCE_RESEARCH_SAMPLES_FILENAME,
   FINANCE_RESEARCH_SCORED_FILENAME,
   FINANCE_STATE_DIR_ENV,
   financeOutcomeLedgerPath,
+  financeIntradayLedgerPath,
+  financeIntradayControlLedgerPath,
   financePositionLedgerPath,
   financeResearchSamplesPath,
   financeResearchScoredPath,
@@ -80,6 +84,14 @@ describe("finance state directory resolution", () => {
   it("suffixes each ledger file with its schema generation", () => {
     expect(FINANCE_POSITION_LEDGER_FILENAME).toBe("position-ledger_1.sqlite");
     expect(FINANCE_OUTCOME_LEDGER_FILENAME).toBe("outcome-ledger_1.sqlite");
+    expect(FINANCE_INTRADAY_LEDGER_FILENAME).toBe("intraday-ledger_1.sqlite");
+    expect(FINANCE_INTRADAY_CONTROL_LEDGER_FILENAME).toBe("intraday-control-ledger_1.sqlite");
+    expect(financeIntradayLedgerPath("/book")).toBe(
+      path.join("/book", FINANCE_INTRADAY_LEDGER_FILENAME),
+    );
+    expect(financeIntradayControlLedgerPath("/book")).toBe(
+      path.join("/book", FINANCE_INTRADAY_CONTROL_LEDGER_FILENAME),
+    );
   });
 
   it("adopts a generation-1 book still stored under its pre-suffix name", async () => {

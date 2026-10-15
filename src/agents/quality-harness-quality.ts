@@ -1,3 +1,4 @@
+import { hasFinanceExecutionClaim } from "./finance-decision-policy.js";
 import type { LogicalAgentPlanResult, LogicalAgentTaskResult } from "./logical-agent-pool.js";
 import {
   findQualityStageResult,
@@ -35,6 +36,20 @@ function normalizeFeedback(feedback: readonly string[]): string[] {
     .slice(0, 12);
 }
 
+// Relation labels can restrict support; a contrary/context citation must never certify a claim.
+// Older artifacts without relation annotations retain their existing citation contract.
+export function supportingEvidenceIds(
+  claim: QualityHarnessArtifact["claims"][number],
+): readonly string[] {
+  return claim.evidenceRelations === undefined
+    ? claim.evidenceIds
+    : claim.evidenceIds.filter((id) =>
+        claim.evidenceRelations?.some(
+          (entry) => entry.evidenceId === id && entry.relation === "supports",
+        ),
+      );
+}
+
 function validateGrounding(
   artifact: QualityHarnessArtifact | undefined,
   evidence: readonly QualityHarnessEvidence[],
@@ -49,8 +64,8 @@ function validateGrounding(
     if (unknown.length > 0) {
       problems.push(`claim ${claim.id} cites unknown evidence: ${unknown.join(", ")}`);
     }
-    if (claim.status === "supported" && claim.evidenceIds.length === 0) {
-      problems.push(`claim ${claim.id} has no evidence`);
+    if (claim.status === "supported" && supportingEvidenceIds(claim).length === 0) {
+      problems.push(`claim ${claim.id} has no supporting evidence`);
     }
     if (claim.status === "uncertain" && !claim.uncertainty) {
       problems.push(`claim ${claim.id} hides its uncertainty reason`);
@@ -130,21 +145,6 @@ const DIRECT_TRADE_ACTION_PATTERN =
 const POSITION_SIZING_PATTERN =
   /(?:\b(?:allocate|allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation)|invest)\b[^.!?\n]{0,10}\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%[^.!?\n]{0,40}\b(?:portfolio|position|allocate|allocation)\b|(?:配置|仓位|投入|分配)(?!上限|下限|占比|比例|均值|预算|红线|约束|门槛|区间|范围)[^。！？\n]{0,4}\d+(?:\.\d+)?\s*%)/imu;
 /**
- * Sibling copy of `EXECUTION_CLAIM_PATTERN` in `finance-decision-policy.ts`.
- *
- * Measured here: an answer saying "已成交 NVDA。" / "NVDA 已建仓。" / "该笔交易已执行" /
- * "Filled NVDA at the open." was graded clean -- the gate reported "contains no direct trade
- * instruction or ungrounded current-data number" for an answer that claimed a fill. Only 已下单 and
- * friends were caught, because they were the words that happened to be listed.
- *
- * The two copies must be kept in step; if this list ever drifts from the policy module's, an answer
- * can be refused by one and certified by the other. 成交 is not matched bare: 成交额 / 成交量 are
- * market commentary, not claims about a fill.
- */
-const EXECUTION_CLAIM_PATTERN =
-  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|已(?:成交|建仓|加仓|减仓|清仓|交割|报单)|已委托[^。！？?\n]{0,6}(?:买入|卖出|下单|成交|交易)|(?:已|已经)[^。！？?\n]{0,8}成交(?!额|量)|已执行(?:买入|卖出|下单|交易|委托)|(?:交易|委托|订单|指令)已执行|(?:委托|订单|报单)已成交|成交完成|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\b(?:filled|executed)\b\s+(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
-
-/**
  * The numbers in an answer that are *values*, as opposed to parts of a name or a label.
  *
  * Measured: the extractor took every digit run, so an index name or a tenor label contributed a
@@ -182,7 +182,13 @@ const ISO_DATE_PATTERN =
 const CHINESE_DATE_PATTERN = /\b20\d{2}年\d{1,2}月\d{1,2}日?/u;
 
 function extractDataNumbers(text: string): string[] {
-  const withoutDateLiterals = text
+  // A complete standalone UUID is an identity, not a financial quantity. Keep
+  // malformed/embedded tokens and unit-bearing values under the numeric gate.
+  const withoutIdentifiers = text.replace(
+    /(?<![\p{L}\p{N}_$€£¥])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\p{L}\p{N}_]|\.\d|\s*(?:%|USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))/giu,
+    " ",
+  );
+  const withoutDateLiterals = withoutIdentifiers
     .replace(new RegExp(ISO_DATE_PATTERN.source, "giu"), " ")
     .replace(new RegExp(CHINESE_DATE_PATTERN.source, "gu"), " ");
   const withoutNameNumbers = withoutDateLiterals
@@ -192,7 +198,12 @@ function extractDataNumbers(text: string): string[] {
     )
     .replace(/\b(?:S&P|SP|NASDAQ|RUSSELL|MSCI)[\s-]*\d{1,4}(?!\d)/giu, " ")
     .replace(/\b\d{1,2}(?:[YMWD]|年期?)(?!\d)/gu, " ")
-    .replace(/\b(?:Q[1-4]|H[12]|FY\s?\d{2,4})\b/giu, " ");
+    .replace(/\b(?:Q[1-4]|H[12]|FY\s?\d{2,4})\b/giu, " ")
+    // A named metric's window (12-month volatility) labels the method, not its value.
+    .replace(
+      /\b\d{1,3}[- ](?:months?|days?|years?)\b(?=\s+(?:daily[- ]return\s+)?(?:volatility|lookback|moving[- ]average|momentum)\b)/giu,
+      " ",
+    );
   return (
     withoutNameNumbers.match(
       /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))?/giu,
@@ -316,6 +327,7 @@ const FINANCE_ENTITY_ALIASES: readonly Readonly<{ alias: RegExp; canonical: stri
 ];
 
 const NON_ENTITY_TOKENS = new Set([
+  "LLM",
   // Currencies and units first: they appear in almost every finance sentence and would otherwise
   // read as the subject of the claim.
   "CNY",
@@ -404,6 +416,58 @@ function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolea
   );
 }
 
+// Keep positions and nonmarket units intact: exempting a numeric magnitude globally
+// would let a fixture budget also ground an unrelated real market quote.
+const NON_MARKET_QUANTITY = /(?<![\d.])[+-]?\d[\d,]*(?:\.\d+)?\s*(?:测试单位|秒)/gu;
+
+function nonMarketQuantityKey(value: string): string {
+  return `${normalizedNumber(value)}|${value.endsWith("秒") ? "seconds" : "test-units"}`;
+}
+
+function withoutGroundedNonMarketQuantities(
+  artifact: QualityHarnessArtifact,
+  evidence: readonly QualityHarnessEvidence[],
+): string {
+  const evidenceById = new Map(evidence.map((entry) => [entry.id, entry]));
+  const carries = (text: string, key: string) =>
+    [...text.matchAll(NON_MARKET_QUANTITY)].some((match) => nonMarketQuantityKey(match[0]) === key);
+  return artifact.answer.replace(NON_MARKET_QUANTITY, (value: string, offset: number) => {
+    const key = nonMarketQuantityKey(value);
+    const before =
+      artifact.answer
+        .slice(0, offset)
+        .split(/[。！？;；\n]/u)
+        .at(-1) ?? "";
+    const after = artifact.answer.slice(offset + value.length).split(/[。！？;；\n]/u)[0];
+    const context = `${before}${value}${after}`;
+    // Exact assertion binding is intentionally conservative: a shared quantity and
+    // entity cannot prove that a second sentence describes the same synthetic fact.
+    const normalizeAssertion = (text: string) => text.replace(/[\s\p{P}]/gu, "");
+    const contextAssertion = normalizeAssertion(context);
+    const contextEntities = financeEntities(context);
+    const grounded = artifact.claims.some(
+      (claim) =>
+        claim.status === "supported" &&
+        claim.text
+          .split(/[。！？;；\n]/u)
+          .some((assertion) => normalizeAssertion(assertion) === contextAssertion) &&
+        carries(claim.text, key) &&
+        (contextEntities.size === 0 || claimMatchesEvidenceEntity(context, claim.text)) &&
+        supportingEvidenceIds(claim).some((id) => {
+          const entry = evidenceById.get(id);
+          return (
+            entry !== undefined &&
+            (entry.kind === "synthetic_fixture" || entry.kind === "policy") &&
+            Boolean(entry.source?.trim()) &&
+            carries(entry.text, key) &&
+            claimMatchesEvidenceEntity(claim.text, entry.text)
+          );
+        }),
+    );
+    return grounded ? " ".repeat(value.length) : value;
+  });
+}
+
 function validateFinanceAnswerSafety(
   artifact: QualityHarnessArtifact | undefined,
   request: QualityHarnessRequest,
@@ -421,7 +485,7 @@ function validateFinanceAnswerSafety(
   ) {
     problems.push("final finance answer contains a direct trade action or recommendation");
   }
-  if (EXECUTION_CLAIM_PATTERN.test(artifact.answer)) {
+  if (hasFinanceExecutionClaim(artifact.answer)) {
     problems.push("final finance answer contains an execution claim");
   }
 
@@ -438,9 +502,9 @@ function validateFinanceAnswerSafety(
     // "480 美元" passed. The adoption gate already treats user-supplied numbers this way; a number
     // the reader supplied is not the answer inventing market data.
     const userSuppliedNumbers = new Set(extractDataNumbers(request.task).map(normalizedNumber));
-    const answerNumbers = extractDataNumbers(artifact.answer).filter(
-      (number) => !userSuppliedNumbers.has(normalizedNumber(number)),
-    );
+    const answerNumbers = extractDataNumbers(
+      withoutGroundedNonMarketQuantities(artifact, request.evidence),
+    ).filter((number) => !userSuppliedNumbers.has(normalizedNumber(number)));
     if (answerNumbers.length > 0) {
       const evidenceById = new Map(request.evidence.map((entry) => [entry.id, entry]));
       const supportedClaims = artifact.claims.filter((claim) => claim.status === "supported");
@@ -453,7 +517,7 @@ function validateFinanceAnswerSafety(
           if (!claimCarriesNumber) {
             return false;
           }
-          return claim.evidenceIds
+          return supportingEvidenceIds(claim)
             .map((id) => evidenceById.get(id))
             .filter((entry): entry is QualityHarnessEvidence => entry !== undefined)
             .some(
@@ -503,6 +567,8 @@ function reviewPassed(
 export function evaluateQuality(
   result: LogicalAgentPlanResult<QualityHarnessStageOutput>,
   request: QualityHarnessRequest,
+  evidenceBatches: readonly (readonly QualityHarnessEvidence[])[] = [request.evidence],
+  auditEvidenceBatches = false,
 ): QualityEvaluation {
   const format = findQualityStageResult(result, "formatting");
   const artifact =
@@ -537,14 +603,89 @@ export function evaluateQuality(
   ];
   const adversarialReview = reconciledReview("adversarial_challenge", "adversarial");
   const precheck = reviewPassed(findQualityStageResult(result, "final_precheck"), "precheck");
-  const allStagesCompleted = result.status === "completed" && result.tasks.length === 10;
+  const additionalBatchReviews: string[] = [];
+  for (let index = 0; auditEvidenceBatches && index < evidenceBatches.length; index += 1) {
+    const batch = evidenceBatches[index] ?? [];
+    const batchNumber = index + 1;
+    const taskChecks = [
+      ...(index > 0 ? ([{ suffix: "extract", label: "context extraction" }] as const) : []),
+      { suffix: "review", label: "final artifact audit" },
+    ];
+    for (const { suffix, label } of taskChecks) {
+      const taskId = `evidence_batch_${suffix}_${batchNumber}`;
+      const stageResult = findQualityStageResult(result, taskId);
+      const reviewResult =
+        suffix === "extract"
+          ? reconciledReview(taskId, "extraction")
+          : reviewPassed(stageResult, "evidence");
+      const output = stageResult?.status === "completed" ? stageResult.output : undefined;
+      const review = output?.kind === "review" ? output.review : undefined;
+      const uncoveredIds = batch
+        .map((entry) => entry.id)
+        .filter((id) => !review?.notes.some((note) => note.includes(`[${id}]`)));
+      const allowedIds = new Set(batch.map((entry) => entry.id));
+      const reviewedText = [
+        ...(review?.notes ?? []),
+        ...(review?.criticalFindings ?? []),
+        ...(review?.evidenceGaps ?? []),
+      ];
+      const referencedOutOfScopeIds = request.evidence
+        .map((entry) => entry.id)
+        .filter((id) => !allowedIds.has(id))
+        .filter((id) =>
+          reviewedText.some((text) => {
+            let offset = 0;
+            while (offset < text.length) {
+              const index = text.indexOf(id, offset);
+              if (index < 0) {
+                return false;
+              }
+              const before = text[index - 1];
+              const after = text[index + id.length];
+              if (
+                (before === undefined || !/[\p{L}\p{N}_.:-]/u.test(before)) &&
+                (after === undefined || !/[\p{L}\p{N}_.:-]/u.test(after))
+              ) {
+                return true;
+              }
+              offset = index + 1;
+            }
+            return false;
+          }),
+        );
+      const outOfScopeIds = [
+        ...new Set(
+          [
+            ...(review?.notes ?? []),
+            ...(review?.criticalFindings ?? []),
+            ...(review?.evidenceGaps ?? []),
+          ]
+            .flatMap((note) => [...note.matchAll(/\[([^\]]+)\]/gu)].map((match) => match[1]))
+            .filter((id) => !allowedIds.has(id))
+            .concat(referencedOutOfScopeIds),
+        ),
+      ];
+      if (!reviewResult.passed || uncoveredIds.length > 0 || outOfScopeIds.length > 0) {
+        additionalBatchReviews.push(
+          `batch ${batchNumber} ${label} incomplete${uncoveredIds.length > 0 ? `; missing note IDs: ${uncoveredIds.join(",")}` : ""}${outOfScopeIds.length > 0 ? `; out-of-scope note IDs: ${outOfScopeIds.join(",")}` : ""}${!reviewResult.passed ? `; ${reviewResult.reason}` : ""}`,
+        );
+      }
+    }
+  }
+  const allStagesCompleted =
+    result.status === "completed" &&
+    result.tasks.length ===
+      10 +
+        (auditEvidenceBatches
+          ? Math.max(0, evidenceBatches.length - 1) + evidenceBatches.length
+          : 0);
   const sideEffects = result.tasks.flatMap((entry) => entry.sideEffects);
   const gates: QualityHarnessGate[] = [
     {
       id: "all_stages_completed",
       passed: allStagesCompleted,
       reason: allStagesCompleted
-        ? "all ten existing role stages completed"
+        ? "all planned base and evidence-batch stages completed"
         : "one or more role stages failed or were blocked",
     },
     {
@@ -576,6 +717,16 @@ export function evaluateQuality(
       id: "evidence_integrity_review",
       passed: evidenceReview.passed,
       reason: evidenceReview.reason,
+    },
+    {
+      id: "evidence_batch_reviews",
+      passed: additionalBatchReviews.length === 0,
+      reason:
+        additionalBatchReviews.length === 0
+          ? auditEvidenceBatches
+            ? `all ${evidenceBatches.length} evidence batches have ID-covered final-artifact review and additional batches have ID-covered extraction`
+            : "single evidence batch requires no additional passes"
+          : additionalBatchReviews.slice(0, 12).join("; "),
     },
     {
       id: "adversarial_review",
@@ -611,6 +762,7 @@ export function evaluateQuality(
       ),
     ...supportingReviews.flatMap((review) => review.feedback),
     ...evidenceReview.feedback,
+    ...additionalBatchReviews,
     ...adversarialReview.feedback,
     ...precheck.feedback,
     ...gates.filter((gate) => !gate.passed).map((gate) => gate.reason),

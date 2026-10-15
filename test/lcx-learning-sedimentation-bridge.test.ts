@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { buildLocalBrainTrainingPlan } from "../scripts/operator/local-brain-training-plan.js";
+import { createModuleLearningPipelineReviewTool } from "../src/agents/tools/module-learning-pipeline-review-tool.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -50,6 +52,8 @@ async function runBridge(workspaceDir: string, extraArgs: string[] = []) {
       receiptPath: string | null;
       receiptWritten: boolean;
       receiptAlreadyExists: boolean;
+      priorReceiptStatus: string | null;
+      receiptNeedsReview: boolean;
     }>;
     notPromoted: boolean;
     liveTouched: boolean;
@@ -60,6 +64,16 @@ async function runBridge(workspaceDir: string, extraArgs: string[] = []) {
 
 async function seedBridgeEvidence(workspaceDir: string): Promise<void> {
   const memoryDir = path.join(workspaceDir, "memory");
+  await fs.mkdir(path.join(memoryDir, "local-memory"), { recursive: true });
+  await fs.mkdir(path.join(memoryDir, "research-sources"), { recursive: true });
+  await fs.writeFile(
+    path.join(memoryDir, "research-sources", "source.md"),
+    "Fixture source: portfolio risk sizing and research-only limits.\n",
+  );
+  await fs.writeFile(
+    path.join(memoryDir, "local-memory", "finance-learning-capability-candidates.md"),
+    "Fixture source registry: memory/research-sources/source.md; portfolio_risk_gates.\n",
+  );
   await writeJson(path.join(memoryDir, "finance-learning-retrieval-receipts", "day", "r.json"), {
     boundary: "finance_learning_retrieval_receipt",
     normalizedArticleArtifactPaths: ["memory/research-sources/source.md"],
@@ -81,6 +95,59 @@ async function seedBridgeEvidence(workspaceDir: string): Promise<void> {
 }
 
 describe("LCX learning sedimentation bridge", () => {
+  it("downgrades a reused application-ready receipt when its current source registry disappears", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-bridge-"));
+    try {
+      await seedBridgeEvidence(workspaceDir);
+      const first = await runBridge(workspaceDir, ["--write-plan-receipts"]);
+      expect(first.candidates[0].status).toBe("application_ready");
+      const receiptPath = path.join(workspaceDir, first.candidates[0].receiptPath!);
+      const original = await fs.readFile(receiptPath, "utf8");
+      await fs.rm(
+        path.join(workspaceDir, "memory/local-memory/finance-learning-capability-candidates.md"),
+      );
+      const second = await runBridge(workspaceDir);
+      expect(second.candidates[0]).toMatchObject({
+        status: "missing_evidence",
+        priorReceiptStatus: "application_ready",
+        receiptNeedsReview: true,
+        receiptAlreadyExists: true,
+        receiptWritten: false,
+      });
+      expect(second.candidates[0].missingEvidence).toContain(
+        "unreadable_evidence_file:memory/local-memory/finance-learning-capability-candidates.md",
+      );
+      expect(await fs.readFile(receiptPath, "utf8")).toBe(original);
+      const reviewTool = createModuleLearningPipelineReviewTool({ workspaceDir });
+      const review = await reviewTool.execute("source-lost-downstream", { writeReview: true });
+      expect(review.details).toMatchObject({ counts: { applicationReady: 0, missingEvidence: 1 } });
+      const guardLogPath = path.join(workspaceDir, "fixture-guard.jsonl");
+      const quotaLogPath = path.join(workspaceDir, "fixture-quota.jsonl");
+      await fs.writeFile(guardLogPath, "");
+      await fs.writeFile(quotaLogPath, "");
+      const trainingPlan = await buildLocalBrainTrainingPlan({
+        workspaceDir,
+        worktree: workspaceDir,
+        guardLogPath,
+        quotaLogPath,
+        json: true,
+        processCheck: false,
+      });
+      expect(trainingPlan.moduleLearningReview).toMatchObject({
+        counts: { applicationReady: 0, missingEvidence: 1 },
+      });
+      expect(trainingPlan.decisions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "module_learning_incomplete_evidence",
+            lane: "module_learning",
+          }),
+        ]),
+      );
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
   it("builds application-ready module-learning plan candidates without writing by default", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-bridge-"));
     await seedBridgeEvidence(workspaceDir);

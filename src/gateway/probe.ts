@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import type { OpenClawConfig } from "../config/types.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { SystemPresence } from "../infra/system-presence.js";
+import { readGatewayTlsFingerprint } from "../infra/tls/gateway.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { GatewayClient } from "./client.js";
+import { isConfiguredLocalGatewayTlsUrl } from "./local-tls-url.js";
 import { READ_SCOPE } from "./method-scopes.js";
 
 export type GatewayProbeAuth = {
@@ -31,10 +34,15 @@ export type GatewayProbeResult = {
 export async function probeGateway(opts: {
   url: string;
   auth?: GatewayProbeAuth;
+  config?: OpenClawConfig;
+  tlsFingerprint?: string;
   timeoutMs: number;
 }): Promise<GatewayProbeResult> {
   const startedAt = Date.now();
   const instanceId = randomUUID();
+  const tlsFingerprint =
+    opts.tlsFingerprint ??
+    (opts.config ? await resolveProbeTlsFingerprint(opts.config, opts.url) : undefined);
   let connectLatencyMs: number | null = null;
   let connectError: string | null = null;
   let close: GatewayProbeClose | null = null;
@@ -53,6 +61,7 @@ export async function probeGateway(opts: {
 
     const client = new GatewayClient({
       url: opts.url,
+      tlsFingerprint,
       token: opts.auth?.token,
       password: opts.auth?.password,
       scopes: [READ_SCOPE],
@@ -118,4 +127,18 @@ export async function probeGateway(opts: {
 
     client.start();
   });
+}
+
+async function resolveProbeTlsFingerprint(
+  config: OpenClawConfig,
+  url: string,
+): Promise<string | undefined> {
+  const remote = config.gateway?.remote;
+  if (typeof remote?.url === "string" && remote.url.trim() === url) {
+    return typeof remote.tlsFingerprint === "string" ? remote.tlsFingerprint : undefined;
+  }
+  if (config.gateway?.tls?.enabled === true && isConfiguredLocalGatewayTlsUrl(config, url)) {
+    return await readGatewayTlsFingerprint(config.gateway.tls);
+  }
+  return undefined;
 }

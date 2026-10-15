@@ -56,24 +56,31 @@ describe("additional finance source adapters", () => {
   });
 
   it("normalizes the public Nasdaq exchange quote as an independent cross-check", async () => {
-    const fetchImpl: FetchImpl = async () => ({
-      ok: true,
-      status: 200,
-      text: async () =>
-        JSON.stringify({
-          data: {
-            primaryData: {
-              lastSalePrice: "$718.96",
-              lastTradeTimestamp: "Sep 3, 2026",
-              isRealTime: false,
+    let requestedUrl = "";
+    const fetchImpl: FetchImpl = async (input) => {
+      requestedUrl = String(input);
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              primaryData: {
+                lastSalePrice: "$718.96",
+                lastTradeTimestamp: "Sep 3, 2026",
+                isRealTime: false,
+              },
             },
-          },
-        }),
-    });
-    const observation = await createNasdaqExchangeMarketAdapter({ fetchImpl }).collect(
-      REQUEST,
+          }),
+      };
+    };
+    const adapter = createNasdaqExchangeMarketAdapter({ fetchImpl });
+    expect(adapter.sampleRequest).toEqual({ instrument: "AAPL", assetClass: "us_equity" });
+    const observation = await adapter.collect(
+      { ...REQUEST, ...adapter.sampleRequest },
       new AbortController().signal,
     );
+    expect(requestedUrl).toContain("/quote/AAPL/info?assetclass=stocks");
     expect(observation.providerRole).toBe("cross_check_market_data");
     expect(observation.fields[0]).toEqual(
       expect.objectContaining({

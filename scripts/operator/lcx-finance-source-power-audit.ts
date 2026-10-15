@@ -42,6 +42,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
+import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
 
 /**
  * The credentials the finance pipeline reads. Kept in step with the code by the drift check below,
@@ -206,13 +208,16 @@ function readIfPresent(file: string): string | null {
   }
 }
 
-function layersFromDisk(): { layers: Layer[]; home: string } {
-  const home = process.env.LCX_USER_HOME?.trim() || process.env.HOME?.trim() || os.homedir();
+export function layersFromDisk(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): { layers: Layer[]; home: string } {
+  const home = env.LCX_USER_HOME?.trim() || env.HOME?.trim() || os.homedir();
   const layers: Layer[] = [
     {
       name: "process",
       values: new Map(
-        Object.entries(process.env).filter(
+        Object.entries(env).filter(
           (entry): entry is [string, string] => typeof entry[1] === "string",
         ),
       ),
@@ -220,7 +225,7 @@ function layersFromDisk(): { layers: Layer[]; home: string } {
     },
   ];
 
-  const cwdDotenv = readIfPresent(path.join(process.cwd(), ".env"));
+  const cwdDotenv = readIfPresent(path.join(cwd, ".env"));
   if (cwdDotenv !== null) {
     const parsed = parseDotenv(cwdDotenv);
     layers.push({ name: "./.env", values: parsed.values, template: parsed.template });
@@ -240,6 +245,28 @@ function layersFromDisk(): { layers: Layer[]; home: string } {
       template: new Set(),
     });
   }
+  // Resolve the same effective environment first, then let the runtime credential
+  // resolver supply only missing keys. Explicit empty values still disable a key.
+  const effectiveEnv: NodeJS.ProcessEnv = {};
+  for (const layer of layers) {
+    for (const [key, value] of layer.values) {
+      if (effectiveEnv[key] === undefined) {
+        effectiveEnv[key] = value;
+      }
+    }
+  }
+  const resolved = resolveFinanceCredentialEnv(effectiveEnv);
+  const state = resolveFinanceStateDir({ env: effectiveEnv });
+  layers.push({
+    name: `finance credentials.env (${state.source})`,
+    values: new Map(
+      Object.entries(resolved).filter(
+        (entry): entry is [string, string] =>
+          effectiveEnv[entry[0]] === undefined && typeof entry[1] === "string",
+      ),
+    ),
+    template: new Set(),
+  });
   return { layers, home };
 }
 

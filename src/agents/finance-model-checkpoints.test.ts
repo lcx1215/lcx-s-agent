@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { openFinanceModelCheckpoints } from "./finance-model-checkpoints.js";
+import { requireNodeSqlite } from "../memory/sqlite.js";
+import {
+  FinanceModelStageFailure,
+  FinanceModelStageUncertainError,
+  openFinanceModelCheckpoints,
+} from "./finance-model-checkpoints.js";
+import { ModelAdapterError } from "./logical-agent-model-router.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -87,7 +93,7 @@ describe("finance model checkpoints", () => {
       first.stage("quality", async () => {
         throw new Error("interrupted");
       }),
-    ).rejects.toThrow("interrupted");
+    ).rejects.toMatchObject({ stage: "quality", cause: new Error("interrupted") });
     first.close();
     const resumed = openFinanceModelCheckpoints(opts, {});
     try {
@@ -98,10 +104,178 @@ describe("finance model checkpoints", () => {
       resumed.close();
     }
   });
+  it("binds quality-stage reuse to an optional external evidence fingerprint", async () => {
+    const opts = await options();
+    const first = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    expect(await first.stage("quality", async () => "old review", "ledger-head-a")).toBe(
+      "old review",
+    );
+    first.close();
+
+    const resumed = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    try {
+      expect(
+        await resumed.stage("quality", async () => "review for new head", "ledger-head-b"),
+      ).toBe("review for new head");
+      expect(await resumed.stage("quality", async () => "must not run", "ledger-head-a")).toBe(
+        "old review",
+      );
+    } finally {
+      resumed.close();
+    }
+  });
+  it("keeps the existing quality checkpoint key when no ledger query was requested", async () => {
+    const opts = await options();
+    const first = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    await first.stage("quality", async () => "original no-query review");
+    first.close();
+    const resumed = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    try {
+      expect(await resumed.stage("quality", async () => "must not rerun", undefined)).toBe(
+        "original no-query review",
+      );
+      expect(resumed.summary().newModelCalls).toBe(0);
+    } finally {
+      resumed.close();
+    }
+  });
   it("blocks changed evidence before model dispatch", async () => {
     const opts = await options();
     openFinanceModelCheckpoints(opts, { evidence: "old" }).close();
     expect(() => openFinanceModelCheckpoints(opts, { evidence: "new" })).toThrow("mismatch");
+  });
+  it("records transport outcomes without claiming contract acceptance", async () => {
+    const opts = await options();
+    const store = openFinanceModelCheckpoints(opts, {});
+    await store.invoker(async () => ({ secret: "must not persist per-call output" }))!(
+      {},
+      new AbortController().signal,
+    );
+    store.close();
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(opts.path);
+    try {
+      const row = db
+        .prepare("SELECT job_id, status, result FROM finance_checkpoint_nodes WHERE cost=1")
+        .get()!;
+      expect(row.job_id).toMatch(/^call:legacy:/);
+      expect(row.status).toBe("completed");
+      expect(JSON.parse(String(row.result))).toMatchObject({
+        transportOutcome: "returned",
+        contractAcceptance: "not_assessed",
+      });
+      expect(String(row.result)).not.toContain("secret");
+    } finally {
+      db.close();
+    }
+  });
+  it("records bounded contract failures without changing or retaining the raw model output", async () => {
+    const opts = await options();
+    const store = openFinanceModelCheckpoints(opts, {});
+    const output = { arbitrary: "model text" };
+    const routing = store.routing({
+      revision: "fixture",
+      adapters: [
+        {
+          id: "fixture",
+          provider: "fixture",
+          modelId: "fixture",
+          mode: "deterministic",
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: [],
+          invoke: async () => output,
+        },
+      ],
+      defaultPolicy: {
+        primary: "fixture",
+        requiredCapabilities: [],
+        maxInputBytes: 10000,
+        timeoutMs: 1000,
+        outputContract: {
+          revision: "fixture",
+          validate: () => false,
+          describeFailure: () => "missing uncertainty ".repeat(100),
+        },
+      },
+    })!;
+    expect(
+      await routing.adapters[0].invoke(
+        {
+          callId: "c",
+          correlationId: "r",
+          taskId: "draft",
+          role: "research_draft",
+          attempt: 1,
+          provider: "fixture",
+          modelId: "fixture",
+          payload: {},
+        },
+        new AbortController().signal,
+      ),
+    ).toBe(output);
+    store.close();
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(opts.path);
+    try {
+      const row = db.prepare("SELECT result FROM finance_checkpoint_nodes WHERE cost=1").get()!;
+      const result = JSON.parse(String(row.result));
+      expect(result.contractCheck.passed).toBe(false);
+      expect(result.contractCheck.detail).toHaveLength(600);
+      expect(result.contractAcceptance).toBe("not_assessed");
+      expect(String(row.result)).not.toContain("model text");
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([new ModelAdapterError("output_truncated"), new Error("private provider text")])(
+    "records fixed failure codes without provider text",
+    async (error) => {
+      const opts = await options();
+      const store = openFinanceModelCheckpoints(opts, {});
+      await expect(
+        store.invoker(async () => {
+          throw error;
+        })!({}, new AbortController().signal),
+      ).rejects.toBe(error);
+      store.close();
+      const { DatabaseSync } = requireNodeSqlite();
+      const db = new DatabaseSync(opts.path);
+      try {
+        const row = db.prepare("SELECT result FROM finance_checkpoint_nodes WHERE cost=1").get()!;
+        expect(JSON.parse(String(row.result)).failureCode).toBe(
+          error instanceof ModelAdapterError ? "output_truncated" : "adapter_error",
+        );
+        expect(String(row.result)).not.toContain("private provider text");
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+  it("does not write late transport results into a closed checkpoint", async () => {
+    const opts = await options();
+    const store = openFinanceModelCheckpoints(opts, {});
+    let finish!: (value: unknown) => void;
+    const pending = store.invoker(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )!({}, new AbortController().signal);
+    store.close();
+    finish("late");
+    await expect(pending).resolves.toBe("late");
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(opts.path);
+    try {
+      expect(
+        db.prepare("SELECT status FROM finance_checkpoint_nodes WHERE cost=1").get()?.status,
+      ).toBe("reserved");
+    } finally {
+      db.close();
+    }
   });
   it("does not charge or invoke a cancelled dispatch", async () => {
     const store = openFinanceModelCheckpoints(await options(), {});
@@ -120,4 +294,51 @@ describe("finance model checkpoints", () => {
       store.close();
     }
   });
+});
+
+it.each(["committee", "quality"] as const)(
+  "retains %s entered-stage cause and leaves failed execution reserved",
+  async (stage) => {
+    const opts = await options();
+    const owner = openFinanceModelCheckpoints(opts, {});
+    const cause = new Error("original private detail");
+    try {
+      await expect(
+        owner.stage(stage, async () => {
+          throw cause;
+        }),
+      ).rejects.toMatchObject({ stage, cause });
+      expect(owner.summary().reservedModelCalls).toBe(0);
+    } finally {
+      owner.close();
+    }
+    const resumed = openFinanceModelCheckpoints(opts, {});
+    let reran = false;
+    try {
+      await expect(
+        resumed.stage(stage, async () => {
+          reran = true;
+          return "fake";
+        }),
+      ).rejects.toBeInstanceOf(FinanceModelStageUncertainError);
+      expect(reran).toBe(false);
+    } finally {
+      resumed.close();
+    }
+  },
+);
+
+it("does not reinterpret existing stage uncertainty as an entered-stage execution failure", async () => {
+  const owner = openFinanceModelCheckpoints(await options(), {});
+  const uncertainty = new FinanceModelStageUncertainError("quality");
+  try {
+    await expect(
+      owner.stage("committee", async () => {
+        throw uncertainty;
+      }),
+    ).rejects.toBe(uncertainty);
+    expect(uncertainty).not.toBeInstanceOf(FinanceModelStageFailure);
+  } finally {
+    owner.close();
+  }
 });

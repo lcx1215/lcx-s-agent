@@ -1,10 +1,12 @@
 ---
 name: local-agent-skill-distiller
-description: Distill local or external Agent Skill patterns into LCX-safe reusable skills and local-brain training cases. Use when the user asks the local agent to learn SKILL.md workflows, open-source agent skills, Harness/Hermes-style workflows, or existing repo skills without polluting protected memory or live config.
+description: Distill reviewed Agent Skill patterns into LCX workflow improvements and evaluation packets; local-model training cases are optional profile-specific output.
 metadata: { "openclaw": { "emoji": "🧠" } }
 ---
 
 # local-agent-skill-distiller
+
+Read the [current runtime contract](../_shared/lcx-runtime-contract.md). A Skill workflow, learning receipt and model-weight absorption are separate evidence. Match the current Harness/module owner before choosing an evaluation; no model size, trainer or sender is implied.
 
 Use this skill when LCX should learn a reusable agent workflow from local `skills/`,
 external SKILL.md examples, or open-source agent patterns.
@@ -22,7 +24,7 @@ external SKILL.md examples, or open-source agent patterns.
    - rewrite a local skill
    - add a new isolated skill
    - reject as duplicate, unsafe, or off-mainline
-4. Convert the useful part into a local-brain packet:
+4. Convert the useful part into a capability/evaluation packet for its current owner. Use a local-brain training packet only when the active profile selects that lane:
    - `task_family`
    - `primary_modules`
    - `supporting_modules`
@@ -49,6 +51,6 @@ Return:
 - existing local skill reused or new skill added
 - source path or source URL
 - duplicate and safety decision
-- local-brain packet
+- capability/evaluation packet, and optional profile-specific training candidate
 - validation command and result
 - uninstall path

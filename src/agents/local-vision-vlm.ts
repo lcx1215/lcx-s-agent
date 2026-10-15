@@ -289,7 +289,7 @@ export async function runLocalVisionVlm(params: {
     try {
       const result = await execFileAsync(pythonPath, buildLocalMlxCommand("mlx_vlm", args), {
         cwd: tempDir,
-        env: buildLocalModelProcessEnv(process.env, { PYTHONUNBUFFERED: "1" }),
+        env: buildLocalModelProcessEnv(process.env, { PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: "1" }),
         timeout: timeoutMs,
         signal: params.signal,
         maxBuffer: 2 * 1024 * 1024,

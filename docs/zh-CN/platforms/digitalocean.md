@@ -142,10 +142,13 @@ lcx gateway restart
 
 ```bash
 lcx config set gateway.bind tailnet
+lcx config set gateway.tls.enabled true
 lcx gateway restart
 ```
 
-打开：`http://<tailscale-ip>:18789`（需要令牌）。
+为 Tailnet IP 或 MagicDNS 名称配置客户端信任的证书，并保持 Gateway 认证启用。仅绑定 Tailscale 地址不能证明每个入站数据包都经过 WireGuard。
+
+打开：`https://<tailscale-ip>:18789`（需要受信任的证书和令牌）。
 
 ## 7) 连接你的渠道
 

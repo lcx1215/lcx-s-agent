@@ -2,17 +2,22 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolvePluginTools } from "../plugins/tools.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
-import type { FinanceWorkflowSlotModels } from "./finance-model-workflow.js";
+import { withArtifactResultRecording } from "./artifact-result-recording.js";
+import { resolveFinanceWorkflowSlotModels } from "./finance-model-workflow.js";
 import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "./finance-realtime-source-registry.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
 import { createAiderTool } from "./tools/aider-tool.js";
+import { createApiCapabilityHealthReadTool } from "./tools/api-capability-health-read-tool.js";
+import { createArtifactMemoryRecallTool } from "./tools/artifact-memory-recall-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
 import { createCanvasTool } from "./tools/canvas-tool.js";
 import { createCodexCodingHarnessTool } from "./tools/codex-coding-harness-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
+import { createDecisionModelTool } from "./tools/decision-model-tool.js";
+import { createEchoApiCliHealthTool } from "./tools/echoapi-cli-health-tool.js";
 import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-article-extract-capability-input-tool.js";
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
@@ -75,6 +80,7 @@ import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pipeline-plan-tool.js";
 import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-pipeline-review-tool.js";
+import { createNativeCodingHarnessTool } from "./tools/native-coding-harness-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createPlanUpdateTool } from "./tools/plan-update-tool.js";
@@ -94,32 +100,12 @@ import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
-function resolveModelFleetSlotModels(
-  config?: OpenClawConfig,
-): FinanceWorkflowSlotModels | undefined {
-  const raw = config?.plugins?.entries?.["lcx-model-fleet"]?.config?.slotModels;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return undefined;
-  }
-  const slots = raw as Record<string, unknown>;
-  if (
-    typeof slots.fast !== "string" ||
-    typeof slots.reasoning !== "string" ||
-    typeof slots.review !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    fast: slots.fast,
-    reasoning: slots.reasoning,
-    review: slots.review,
-  };
-}
-
 export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
   allowHostBrowserControl?: boolean;
   agentSessionKey?: string;
+  /** Host invocation identity only; never sourced from tool arguments. */
+  agentRunId?: string;
   agentChannel?: GatewayMessageChannel;
   agentAccountId?: string;
   /** Delivery target (e.g. telegram:group:123:topic:456) for topic/thread routing. */
@@ -139,6 +125,8 @@ export function createOpenClawTools(options?: {
   workspaceDir?: string;
   sandboxed?: boolean;
   config?: OpenClawConfig;
+  /** The full coding-tool assembly records once after policy and hook wrapping. */
+  recordArtifacts?: boolean;
   pluginToolAllowlist?: string[];
   /** Current channel ID for auto-threading (Slack). */
   currentChannelId?: string;
@@ -244,6 +232,7 @@ export function createOpenClawTools(options?: {
       config: options?.config,
     }),
     createQuantMathTool(),
+    createDecisionModelTool({ sandboxed: options?.sandboxed }),
     createQuantLabTool(),
     createReviewTierTool(),
     createReviewPanelTool({
@@ -262,6 +251,8 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceDataConnectorTool(),
+    createEchoApiCliHealthTool(),
+    createApiCapabilityHealthReadTool({ workspaceDir }),
     createFinanceRealtimeRefreshTool({
       workspaceDir,
       ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
@@ -270,7 +261,9 @@ export function createOpenClawTools(options?: {
     createFinanceResearchRunTool({
       workspaceDir,
       config: options?.config,
-      slotModels: resolveModelFleetSlotModels(options?.config),
+      slotModels: resolveFinanceWorkflowSlotModels(options?.config),
+      agentRunId: options?.agentRunId,
+      agentSessionKey: options?.agentSessionKey,
     }),
     createFinancePositionLedgerReadTool({ workspaceDir }),
     createFinanceBarLedgerTool({ workspaceDir }),
@@ -408,6 +401,13 @@ export function createOpenClawTools(options?: {
     createMcpCallToolTool({ config: options?.config }),
     createAiderTool({
       workspaceDir,
+      sandboxed: options?.sandboxed,
+    }),
+    createNativeCodingHarnessTool({
+      workspaceDir,
+      agentSessionKey: options?.agentSessionKey,
+      config: options?.config,
+      sandboxed: options?.sandboxed,
     }),
     createCodexCodingHarnessTool({
       workspaceDir,
@@ -460,6 +460,11 @@ export function createOpenClawTools(options?: {
     ...(pdfTool ? [pdfTool] : []),
   ];
 
+  const config = options?.config;
+  const agentId = resolveSessionAgentId({ sessionKey: options?.agentSessionKey, config });
+  if (!options?.sandboxed) {
+    tools.push(createArtifactMemoryRecallTool({ config, agentId, workspaceDir }));
+  }
   const pluginTools = resolvePluginTools({
     context: {
       config: options?.config,
@@ -481,5 +486,8 @@ export function createOpenClawTools(options?: {
     toolAllowlist: options?.pluginToolAllowlist,
   });
 
-  return [...tools, ...pluginTools];
+  const allTools = [...tools, ...pluginTools];
+  return config && !options?.sandboxed && options?.recordArtifacts !== false
+    ? allTools.map((tool) => withArtifactResultRecording(tool, { config, agentId, workspaceDir }))
+    : allTools;
 }

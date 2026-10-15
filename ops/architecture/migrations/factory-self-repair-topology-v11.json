@@ -1,0 +1,17 @@
+{
+  "version": 11,
+  "kind": "descriptive_process_source_alignment",
+  "scenarios": ["self_repair_hands_waterflow"],
+  "source": "Original buildSelfRepairHandsReceipt and writeSelfRepairHandsReceipt construction, source verification and file writes",
+  "changes": [
+    "Replace the false source-review-before-construction chain with same-input correction/training construction branches joining the original writer gate.",
+    "Keep source review, allowed roots and diagnostic checks before actual candidate file writes; the writer also emits terminal blocked latest/log receipts.",
+    "Describe provisional_downrank as static candidate metadata, not an independent ranking consumer or proof of changed retrieval order.",
+    "The original writer gate may deliver a terminal blocked latest receipt only when both native block records retain the same filter and exact reason; regular content, identity and readback checks still apply, and candidate execution remains blocked.",
+    "Post-block governance observation requires its original observe child and parent snapshot. The owner map must retain the identical original governance runReceipt; missing observer evidence or non-observe activity still requires owner review."
+  ],
+  "compatibility": "Only the descriptive scenario topology and process descriptions change. Legacy receipts and strict handoff evidence verification remain; old indexes may expose new missing-edge evidence and cannot be silently treated as complete.",
+  "retained": "All 12 required nodes, all 9 required filters, both feedback obligations, original owners, canonical relation/state vocabularies and broker unknown blocking.",
+  "authority": "No new worker, workflow authority, business state store, write permission, scheduling, paid call or execution authority.",
+  "verification": "Original source ordering, targeted topology/handoff regressions and pinned native receipt replay. Internal derivation, ranking execution, training absorption and natural adoption remain independently unproven."
+}

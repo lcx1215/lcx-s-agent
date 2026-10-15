@@ -16,17 +16,28 @@
  * It is reversible and should be overruled by the owner if wrong.
  */
 
-import type { FinanceExecutionIntent, FinanceOrderSide } from "./finance-execution-adapter.js";
+import type {
+  FinanceDecisionReference,
+  FinanceExecutionIntent,
+  FinanceOrderSide,
+} from "./finance-execution-adapter.js";
 import {
   DEFAULT_FINANCE_CLASS_RULES,
   classifyFinanceStrategy,
   type FinanceStrategyClass,
 } from "./finance-mandate.js";
+import { calculateFinancePositionSize } from "./finance-position-sizing.js";
+import {
+  US_EQUITY_PRICE_POLICY_VERSION,
+  type UsEquityPriceNormalizationProvenance,
+} from "./finance-us-equity-price-normalization.js";
 
 export type FinanceConclusionDirection = "buy" | "sell" | "hold" | "avoid";
 
 export type FinanceResearchConclusion = Readonly<{
   conclusionId: string;
+  /** Optional upstream source key; absent callers retain only the conclusion id in the intent. */
+  decisionRef?: FinanceDecisionReference;
   instrument?: string;
   direction?: FinanceConclusionDirection;
   /** 0..1. Absent is treated as unknown, not as maximum conviction. */
@@ -41,15 +52,17 @@ export type FinanceResearchConclusion = Readonly<{
   /** Non-price condition that invalidates the thesis. Required for class C. */
   invalidationCondition?: string;
   /**
-   * Target price. Checked only for coherence: a target on the wrong side of the entry is refused.
-   * No reward/risk ratio floor is enforced.
+   * Target price retained as candidate evidence for pre-review venue normalization and coherence.
+   * It is never an execution-intent target. No reward/risk ratio floor is enforced here.
    */
   targetPrice?: number;
+  /** Host-bound audit provenance for prices normalized before review; never model authority. */
+  priceNormalization?: UsEquityPriceNormalizationProvenance;
 }>;
 
 export type FinanceIntentCompilationResult = Readonly<
   | { ok: true; intent: FinanceExecutionIntent; notes: readonly string[] }
-  | { ok: false; refusals: readonly string[] }
+  | { ok: false; refusals: readonly string[]; notes?: readonly string[] }
 >;
 
 export type CompileExecutionIntentParams = Readonly<{
@@ -60,11 +73,19 @@ export type CompileExecutionIntentParams = Readonly<{
   equity: number;
   /** Existing position in this instrument, if any. */
   existingPosition?: { quantity: number; unrealizedFraction: number };
+  /** Trusted controller flag permitting a pre-budgeted add to an underwater position. */
+  plannedScaleIn?: boolean;
   /** The explicit authorization that admitted this run. Empty means unauthorized. */
   runAuthorizationId: string;
   /** Minimum conviction to act. Defaults per class below. */
   minConviction?: number;
   strategyClass?: FinanceStrategyClass;
+  /** Trusted controller-only exact quantity, used to close an observed position without re-sizing. */
+  quantityOverride?: number;
+  /** Trusted entry notional headroom; never resizes an exact closing quantity. */
+  maxEntryNotional?: number;
+  /** Trusted controller notional ceiling for either order side. */
+  maxAuthorizedNotional?: number;
 }>;
 
 const DEFAULT_MIN_CONVICTION: Record<FinanceStrategyClass, number> = {
@@ -77,9 +98,38 @@ const DEFAULT_MIN_CONVICTION: Record<FinanceStrategyClass, number> = {
 export function compileExecutionIntent(
   params: CompileExecutionIntentParams,
 ): FinanceIntentCompilationResult {
-  const { conclusion, market, equity } = params;
+  const { market, equity } = params;
+  const conclusion = params.conclusion;
   const refusals: string[] = [];
   const notes: string[] = [];
+  const strategyClass =
+    params.strategyClass ??
+    classifyFinanceStrategy({
+      assetClass: conclusion.assetClass ?? "",
+      ...(conclusion.horizonDays !== undefined
+        ? { holdingPeriodDays: conclusion.horizonDays }
+        : {}),
+    });
+  const priceNormalization = conclusion.priceNormalization;
+  if (
+    priceNormalization &&
+    (priceNormalization.policyVersion !== US_EQUITY_PRICE_POLICY_VERSION ||
+      priceNormalization.instrument !== conclusion.instrument?.trim().toUpperCase() ||
+      priceNormalization.normalized.stopPrice !== conclusion.invalidationPrice ||
+      priceNormalization.normalized.targetPrice !== conclusion.targetPrice)
+  ) {
+    refusals.push("refuse: normalized price provenance does not match this candidate and quote");
+  }
+  const decisionRef: FinanceDecisionReference | undefined = conclusion.decisionRef
+    ? { ...conclusion.decisionRef, id: conclusion.decisionRef.id.trim() }
+    : undefined;
+
+  if (!conclusion.conclusionId.trim()) {
+    refusals.push("refuse: conclusion needs an id; the intent id derives from it");
+  }
+  if (conclusion.decisionRef !== undefined && !decisionRef?.id) {
+    refusals.push("refuse: decision reference needs a stable source id");
+  }
 
   if (!params.runAuthorizationId.trim()) {
     refusals.push("refuse: no run authorization; an unauthorized run produces no order");
@@ -107,14 +157,6 @@ export function compileExecutionIntent(
     refusals.push("refuse: equity is missing or not positive");
   }
 
-  const strategyClass =
-    params.strategyClass ??
-    classifyFinanceStrategy({
-      assetClass: conclusion.assetClass ?? "",
-      ...(conclusion.horizonDays !== undefined
-        ? { holdingPeriodDays: conclusion.horizonDays }
-        : {}),
-    });
   if (strategyClass === "unknown") {
     refusals.push("refuse: strategy class cannot be determined from the conclusion");
   }
@@ -147,6 +189,9 @@ export function compileExecutionIntent(
   // would launder a guess into an enforced decision -- the same reason `classifyFinanceStrategy`
   // refuses instead of guessing a class.
   const target = conclusion.targetPrice;
+  if (target !== undefined && (!Number.isFinite(target) || target <= 0)) {
+    refusals.push("refuse: target price must be positive and finite");
+  }
   if (
     target !== undefined &&
     Number.isFinite(target) &&
@@ -171,7 +216,8 @@ export function compileExecutionIntent(
   // direction is the behaviour that destroys accounts, while building a planned
   // position in a name with no losing exposure is ordinary execution. This lets
   // class C build a position over time without being refused for it, while still
-  // catching the real thing. Overrule if the owner prefers plan-based evidence.
+  // catching the real thing. A pre-budgeted scale-in is allowed through this
+  // compiler, but remains subject to the separate account and risk caps.
   const existing = params.existingPosition;
   if (
     existing &&
@@ -179,16 +225,29 @@ export function compileExecutionIntent(
     existing.unrealizedFraction < 0 &&
     conclusion.direction === (existing.quantity > 0 ? "buy" : "sell")
   ) {
-    refusals.push(
-      "refuse: adding to an existing losing position in the same direction (averaging down)",
-    );
+    if (params.plannedScaleIn !== true) {
+      refusals.push(
+        "refuse: adding to an existing losing position (averaging down) without a pre-budgeted scale-in plan",
+      );
+    } else {
+      notes.push("planned scale-in accepted; aggregate account and instrument caps still apply");
+    }
   }
 
   // Sizing. Stop-driven classes risk the distance to the stop; classes without a
   // price stop risk the whole position, which is deliberately more conservative
   // rather than pretending a missing stop is a tight one.
   let quantity = 0;
-  if (classRules.stopLossKind === "structural") {
+  if (params.quantityOverride !== undefined) {
+    if (!Number.isFinite(params.quantityOverride) || params.quantityOverride <= 0) {
+      refusals.push("refuse: quantity override must be positive and finite");
+    } else {
+      quantity = params.quantityOverride;
+      notes.push(
+        "trusted controller exact-quantity override; risk budget and account gates still apply",
+      );
+    }
+  } else if (classRules.stopLossKind === "structural") {
     const stop = conclusion.invalidationPrice;
     if (stop === undefined || !Number.isFinite(stop) || stop <= 0) {
       refusals.push(`refuse: class ${strategyClass} sizes from a price stop and none was given`);
@@ -211,9 +270,20 @@ export function compileExecutionIntent(
       } else if (distance === 0) {
         refusals.push("refuse: stop distance is zero; size would be unbounded");
       } else {
-        quantity = Math.floor((equity * classRules.maxRiskPerTradeFraction) / distance);
+        try {
+          quantity = calculateFinancePositionSize({
+            side: conclusion.direction === "buy" ? "buy" : "sell",
+            entryPrice: market.referencePrice,
+            stopPrice: stop,
+            riskBudget: equity * classRules.maxRiskPerTradeFraction,
+          }).quantity;
+        } catch (error) {
+          refusals.push(
+            `refuse: invalid position size: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
         notes.push(
-          `sized from stop distance ${distance.toFixed(4)} at ${(classRules.maxRiskPerTradeFraction * 100).toFixed(2)}% risk`,
+          `sized from stop distance ${distance.toFixed(4)} at ${(classRules.maxRiskPerTradeFraction * 100).toFixed(2)}% planned risk; costs excluded and gap loss is not capped`,
         );
       }
     }
@@ -239,12 +309,59 @@ export function compileExecutionIntent(
     }
   }
 
+  if (params.maxAuthorizedNotional !== undefined && params.quantityOverride === undefined) {
+    if (!Number.isFinite(params.maxAuthorizedNotional) || params.maxAuthorizedNotional < 0) {
+      refusals.push("refuse: authorized order notional must be finite and nonnegative");
+    } else if (Number.isFinite(market.referencePrice) && market.referencePrice > 0) {
+      const bounded = Math.min(
+        quantity,
+        Math.floor(params.maxAuthorizedNotional / market.referencePrice),
+      );
+      if (bounded < quantity) {
+        notes.push(
+          `order size reduced from ${quantity} to ${bounded} within controller authorization ${params.maxAuthorizedNotional}`,
+        );
+      }
+      quantity = bounded;
+    }
+  } else if (params.maxAuthorizedNotional !== undefined) {
+    if (
+      !Number.isFinite(params.maxAuthorizedNotional) ||
+      params.maxAuthorizedNotional < 0 ||
+      quantity * market.referencePrice > params.maxAuthorizedNotional
+    ) {
+      refusals.push("refuse: exact quantity exceeds controller authorized order notional");
+    }
+  }
+
+  if (
+    params.maxEntryNotional !== undefined &&
+    params.quantityOverride === undefined &&
+    conclusion.direction === "buy"
+  ) {
+    if (!Number.isFinite(params.maxEntryNotional) || params.maxEntryNotional < 0) {
+      refusals.push("refuse: entry notional headroom must be finite and nonnegative");
+    } else if (Number.isFinite(market.referencePrice) && market.referencePrice > 0) {
+      const bounded = Math.min(
+        quantity,
+        Math.floor(params.maxEntryNotional / market.referencePrice),
+      );
+      if (bounded < quantity) {
+        notes.push(
+          `entry size reduced from ${quantity} to ${bounded} within supplied notional headroom ${params.maxEntryNotional}`,
+        );
+      }
+      quantity = bounded;
+    }
+  }
+
   if (quantity <= 0 && refusals.length === 0) {
     refusals.push("refuse: computed size rounds to zero; refusing rather than trading a token");
   }
 
   if (refusals.length > 0) {
-    return { ok: false, refusals };
+    // Failed sizing still carries its computed bounds; notes never grant an intent.
+    return { ok: false, refusals, ...(notes.length ? { notes } : {}) };
   }
 
   const side: FinanceOrderSide = conclusion.direction === "buy" ? "buy" : "sell";
@@ -253,6 +370,7 @@ export function compileExecutionIntent(
     notes,
     intent: {
       intentId: `intent:${conclusion.conclusionId}`,
+      ...(decisionRef === undefined ? {} : { decisionRef }),
       instrument,
       side,
       orderType: "market",
@@ -266,6 +384,7 @@ export function compileExecutionIntent(
       ...(classRules.stopLossKind === "structural" && conclusion.invalidationPrice !== undefined
         ? { stopPrice: conclusion.invalidationPrice }
         : {}),
+      ...(priceNormalization === undefined ? {} : { priceNormalization }),
       rationale: conclusion.thesis ?? "",
     },
   };

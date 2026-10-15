@@ -92,6 +92,12 @@ If `gateway.bind` is `loopback`, include a loopback proxy address in
 
 Use one TLS termination point and apply HSTS there.
 
+For a non-loopback Gateway behind a proxy, the proxy-to-Gateway connection must
+also use TLS and the proxy must validate the Gateway certificate. The
+self-generated Gateway certificate is not automatically trusted by proxies;
+use a certificate issued by a CA trusted by the proxy or configure its trust
+store explicitly. A same-host proxy can instead connect to a loopback Gateway.
+
 ### Recommended pattern: proxy TLS termination
 
 When your reverse proxy handles HTTPS for `https://control.example.com`, set
@@ -144,6 +150,7 @@ Pomerium passes identity in `x-pomerium-claim-email` (or other claim headers) an
 {
   gateway: {
     bind: "lan",
+    tls: { enabled: true },
     trustedProxies: ["10.0.0.1"], // Pomerium's IP
     auth: {
       mode: "trusted-proxy",
@@ -161,7 +168,7 @@ Pomerium config snippet:
 ```yaml
 routes:
   - from: https://openclaw.example.com
-    to: http://lcx-gateway:18789
+    to: https://lcx-gateway:18789
     policy:
       - allow:
           or:
@@ -178,6 +185,7 @@ Caddy with the `caddy-security` plugin can authenticate users and pass identity 
 {
   gateway: {
     bind: "lan",
+    tls: { enabled: true },
     trustedProxies: ["127.0.0.1"], // Caddy's IP (if on same host)
     auth: {
       mode: "trusted-proxy",
@@ -196,7 +204,7 @@ openclaw.example.com {
     authenticate with oauth2_provider
     authorize with policy1
 
-    reverse_proxy openclaw:18789 {
+    reverse_proxy https://openclaw:18789 {
         header_up X-Forwarded-User {http.auth.user.email}
     }
 }
@@ -210,6 +218,7 @@ oauth2-proxy authenticates users and passes identity in `x-auth-request-email`.
 {
   gateway: {
     bind: "lan",
+    tls: { enabled: true },
     trustedProxies: ["10.0.0.1"], // nginx/oauth2-proxy IP
     auth: {
       mode: "trusted-proxy",
@@ -228,7 +237,7 @@ location / {
     auth_request /oauth2/auth;
     auth_request_set $user $upstream_http_x_auth_request_email;
 
-    proxy_pass http://openclaw:18789;
+    proxy_pass https://openclaw:18789;
     proxy_set_header X-Auth-Request-Email $user;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -242,6 +251,7 @@ location / {
 {
   gateway: {
     bind: "lan",
+    tls: { enabled: true },
     trustedProxies: ["172.17.0.1"], // Traefik container IP
     auth: {
       mode: "trusted-proxy",
@@ -261,6 +271,7 @@ Before enabling trusted-proxy auth, verify:
 - [ ] **trustedProxies is minimal**: Only your actual proxy IPs, not entire subnets
 - [ ] **Proxy strips headers**: Your proxy overwrites (not appends) `x-forwarded-*` headers from clients
 - [ ] **TLS termination**: Your proxy handles TLS; users connect via HTTPS
+- [ ] **Backend TLS**: For a non-loopback Gateway bind, enable `gateway.tls.enabled` and configure the proxy to validate the Gateway certificate. Alternatively, keep the Gateway on loopback when the proxy runs on the same host.
 - [ ] **allowUsers is set** (recommended): Restrict to known users rather than allowing anyone authenticated
 
 ## Security Audit

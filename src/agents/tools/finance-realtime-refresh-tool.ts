@@ -12,6 +12,7 @@ import {
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, ToolInputError } from "./common.js";
+import { financeDataGatewayFollowUp } from "./finance-data-gateway-tool.js";
 
 const FinanceRealtimeRefreshSchema = Type.Object({
   instrument: Type.String(),
@@ -158,10 +159,7 @@ export function createFinanceRealtimeRefreshTool(options?: {
         return jsonResult({
           ...receipt,
           receiptPath,
-          nextTool:
-            receipt.status === "ready"
-              ? "finance_framework_core_inspect"
-              : "data_provenance_quality_review_input",
+          ...financeDataGatewayFollowUp(receipt.status === "ready" ? "ready" : "blocked"),
         });
       } catch (error) {
         if (error instanceof ToolInputError) {

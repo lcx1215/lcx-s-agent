@@ -1,14 +1,21 @@
 import crypto from "node:crypto";
 import { resolveRunModelFallbacksOverride } from "../../agents/agent-scope.js";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
+import {
+  createCommercialAnswerReplyGate,
+  buildCommercialAnswerPlanningSystemPrompt,
+} from "../../agents/commercial-answer-reply-gate.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { createFinanceReplyEvidenceTracker } from "../../agents/finance-reply-evidence.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
+import { verifyProviderCouncilEvidence } from "../../agents/provider-council-evidence.js";
+import { applyVisibleAnswerAdoptionGate } from "../../agents/visible-answer-adoption-gate.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
-import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { emitAgentEvent, onAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { defaultRuntime } from "../../runtime.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import type { OriginatingChannelType } from "../templating.js";
@@ -69,7 +76,14 @@ export function createFollowupRunner(params: {
    * session's current dispatcher. This ensures replies go back to
    * where the message originated.
    */
-  const sendFollowupPayloads = async (payloads: ReplyPayload[], queued: FollowupRun) => {
+  const sendFollowupPayloads = async (
+    payloads: ReplyPayload[],
+    queued: FollowupRun,
+    runId: string,
+    runStopped: boolean,
+    commercialGate: ReturnType<typeof createCommercialAnswerReplyGate>,
+    financeEvidence: ReturnType<typeof createFinanceReplyEvidenceTracker>,
+  ) => {
     // Check if we should route to originating channel.
     const { originatingChannel, originatingTo } = queued;
     const shouldRouteToOriginating = isRoutableChannel(originatingChannel) && originatingTo;
@@ -79,7 +93,98 @@ export function createFollowupRunner(params: {
       return;
     }
 
-    for (const payload of payloads) {
+    for (const originalPayload of payloads) {
+      let financePayload = originalPayload;
+      if (originalPayload.text) {
+        const decision = await financeEvidence.check(
+          originalPayload.text,
+          queued.commercialAuditAsk ?? "",
+        );
+        if (financeEvidence.hasReceipt()) {
+          emitAgentEvent({
+            runId,
+            sessionKey: queued.run.sessionKey,
+            stream: "lifecycle",
+            data: {
+              phase: "finance_reply_evidence_gate",
+              surface: "followup",
+              ...decision,
+              text: undefined,
+              auditInput: undefined,
+              candidateSha256: crypto
+                .createHash("sha256")
+                .update(originalPayload.text)
+                .digest("hex"),
+            },
+          });
+        }
+        commercialGate.selectFinanceEvidence(decision, runId);
+        financePayload = { ...originalPayload, text: decision.text };
+      }
+      const commercial = commercialGate.check(financePayload, "final", runStopped, {
+        runId,
+        messageId: queued.messageId,
+        sessionKey: queued.run.sessionKey,
+        replyChannelAccountId: queued.originatingAccountId,
+      });
+      if (commercial.trace) {
+        emitAgentEvent({
+          runId,
+          sessionKey: queued.run.sessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "commercial_answer_terminal_gate",
+            surface: "followup",
+            ...(commercialGate.financeSelection()
+              ? { selection: "verified_finance_reference", ...commercialGate.financeSelection() }
+              : {}),
+            ...commercial.trace,
+          },
+        });
+      }
+      let payload = commercial.payload;
+      if (payload.text) {
+        const source = opts?.providerCouncilEvidence;
+        const evidence =
+          opts?.abortSignal?.aborted || runStopped
+            ? {
+                messageId: queued.messageId ?? "",
+                unavailableReason: "provider_council_run_cancelled",
+              }
+            : source
+              ? { ...source, messageId: queued.messageId ?? "" }
+              : undefined;
+        const proof = verifyProviderCouncilEvidence(queued.prompt, payload.text, evidence);
+        if (proof.required) {
+          emitAgentEvent({
+            runId,
+            sessionKey: queued.run.sessionKey,
+            stream: "lifecycle",
+            data: {
+              phase: "provider_council_completion_gate",
+              surface: "followup",
+              status: proof.status === "verified" ? "ok" : "blocked",
+              candidateSha256: crypto.createHash("sha256").update(payload.text).digest("hex"),
+              providerCouncil: proof,
+            },
+          });
+          if (proof.status !== "verified") {
+            const decision = applyVisibleAnswerAdoptionGate({
+              userMessage: queued.prompt,
+              answerText: payload.text,
+              providerEvidence: evidence,
+            });
+            payload = { ...payload, text: decision.text };
+          }
+        }
+        const presentation = applyVisibleAnswerAdoptionGate({
+          userMessage: queued.prompt,
+          answerText: payload.text ?? "",
+          presentationOnly: true,
+        });
+        payload = { ...payload, text: presentation.text };
+      }
+
       if (!payload?.text && !payload?.mediaUrl && !payload?.mediaUrls?.length) {
         continue;
       }
@@ -91,6 +196,29 @@ export function createFollowupRunner(params: {
         continue;
       }
       await typingSignals.signalTextDelta(payload.text);
+
+      const dispatchCancelled = () => {
+        if (!commercialGate.hasRequest() || !opts?.abortSignal?.aborted || payload.isError) {
+          return false;
+        }
+        // Recheck lifecycle after awaited callbacks, without repeating the native auditor.
+        const cancelled = commercialGate.check(payload, "final", true);
+        emitAgentEvent({
+          runId,
+          sessionKey: queued.run.sessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "commercial_answer_terminal_gate",
+            surface: "followup",
+            dispatchCancelled: true,
+            ...cancelled.trace,
+          },
+        });
+        return true;
+      };
+      if (dispatchCancelled()) {
+        continue;
+      }
 
       // Route to originating channel if set, otherwise fall back to dispatcher.
       if (shouldRouteToOriginating) {
@@ -119,7 +247,9 @@ export function createFollowupRunner(params: {
             originatingChannel,
           });
           if (opts?.onBlockReply && origin && origin === provider) {
-            await opts.onBlockReply(payload);
+            if (!dispatchCancelled()) {
+              await opts.onBlockReply(payload);
+            }
           }
         }
       } else if (opts?.onBlockReply) {
@@ -129,8 +259,23 @@ export function createFollowupRunner(params: {
   };
 
   return async (queued: FollowupRun) => {
+    const financeEvidence = createFinanceReplyEvidenceTracker({
+      workspaceDir: queued.run.workspaceDir,
+      sessionKey: queued.run.sessionKey,
+      signal: opts?.abortSignal,
+    });
+    const unsubscribeFinance = onAgentEvent((event) => financeEvidence.observe(event));
     try {
       const runId = crypto.randomUUID();
+      financeEvidence.start(runId);
+      const commercialGate = createCommercialAnswerReplyGate({
+        request: opts?.commercialAnswerAudit,
+        messageId: queued.messageId,
+        ask: queued.commercialAuditAsk ?? "",
+        signal: opts?.abortSignal,
+        historicalSystemPrompt: queued.run.extraSystemPrompt,
+      });
+      commercialGate.startFinanceRun(runId);
       if (queued.run.sessionKey) {
         registerAgentRunContext(runId, {
           sessionKey: queued.run.sessionKey,
@@ -186,7 +331,14 @@ export function createFollowupRunner(params: {
               config: queued.run.config,
               skillsSnapshot: queued.run.skillsSnapshot,
               prompt: queued.prompt,
-              extraSystemPrompt: queued.run.extraSystemPrompt,
+              extraSystemPrompt: buildCommercialAnswerPlanningSystemPrompt({
+                request: opts?.commercialAnswerAudit,
+                messageId: queued.messageId,
+                ask: queued.commercialAuditAsk ?? "",
+                runId,
+                signal: opts?.abortSignal,
+                extraSystemPrompt: queued.run.extraSystemPrompt,
+              }),
               ownerNumbers: queued.run.ownerNumbers,
               enforceFinalTag: queued.run.enforceFinalTag,
               provider,
@@ -199,6 +351,7 @@ export function createFollowupRunner(params: {
               execOverrides: queued.run.execOverrides,
               bashElevated: queued.run.bashElevated,
               timeoutMs: queued.run.timeoutMs,
+              abortSignal: opts?.abortSignal,
               runId,
               blockReplyBreak: queued.run.blockReplyBreak,
               bootstrapPromptWarningSignaturesSeen,
@@ -333,8 +486,27 @@ export function createFollowupRunner(params: {
         }
       }
 
-      await sendFollowupPayloads(finalPayloads, queued);
+      const completedBeforeCompactionTimeout =
+        runResult.meta?.timedOut === true &&
+        runResult.meta.timedOutDuringCompaction === true &&
+        runResult.meta.promptCompleted === true;
+      const runStopped = Boolean(
+        (runResult.meta?.aborted || runResult.meta?.timedOut) && !completedBeforeCompactionTimeout,
+      );
+      if (runStopped) {
+        financeEvidence.stop();
+      }
+      await sendFollowupPayloads(
+        finalPayloads,
+        queued,
+        runId,
+        runStopped,
+        commercialGate,
+        financeEvidence,
+      );
     } finally {
+      financeEvidence.stop();
+      unsubscribeFinance();
       // Both signals are required for the typing controller to clean up.
       // The main inbound dispatch path calls markDispatchIdle() from the
       // buffered dispatcher's finally block, but followup turns bypass the

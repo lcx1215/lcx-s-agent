@@ -415,6 +415,21 @@ function openDatabase(directory: string): RuleDatabase {
   return db;
 }
 
+function openReadOnlyDatabase(directory: string): RuleDatabase {
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(databasePath(directory), { readOnly: true });
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA query_only=ON;");
+  return db;
+}
+
+function hasStrategyRuleRecordsTable(db: RuleDatabase): boolean {
+  return (
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+      .get("finance_strategy_rule_records") !== undefined
+  );
+}
+
 export type FinanceStrategyRuleAppend = Readonly<{
   record: FinanceStrategyRuleRecord;
   /** `false` when the identical record was already present: append-only, and idempotent. */
@@ -550,6 +565,10 @@ export async function readFinanceStrategyRuleLedger(
   options: Readonly<{ asOf?: string }> = {},
 ): Promise<FinanceStrategyRuleLedgerRead> {
   const asOf = options.asOf;
+  const cutoff = asOf === undefined || asOf.length === 0 ? undefined : Date.parse(asOf);
+  if (cutoff !== undefined && !Number.isFinite(cutoff)) {
+    throw new Error("strategy rule ledger asOf must identify a valid timestamp");
+  }
   const databasePresent = await fs.stat(databasePath(directory)).then(
     () => true,
     () => false,
@@ -562,13 +581,21 @@ export async function readFinanceStrategyRuleLedger(
       databasePresent: false,
     });
   }
-  const db = openDatabase(directory);
+  const db = openReadOnlyDatabase(directory);
   try {
+    if (!hasStrategyRuleRecordsTable(db)) {
+      return Object.freeze({
+        ledger: emptyLedger(),
+        recordCount: 0,
+        headRef: null,
+        databasePresent: true,
+      });
+    }
     const stored = readStoredRecords(db);
     const records =
-      asOf === undefined || asOf.length === 0
+      cutoff === undefined
         ? stored
-        : stored.filter((record) => record.body.observedAt.localeCompare(asOf) <= 0);
+        : stored.filter((record) => Date.parse(record.body.observedAt) <= cutoff);
     const ledger = projectFinanceStrategyRules(records);
     return Object.freeze({
       ledger,

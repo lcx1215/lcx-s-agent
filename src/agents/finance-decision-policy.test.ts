@@ -3,6 +3,7 @@ import {
   FINANCE_STAGE_ALLOWED_MODES,
   FINANCE_STAGE_MODE_REFUSAL,
   evaluateFinanceDecisionPolicy,
+  financeDecisionInstructions,
 } from "./finance-decision-policy.js";
 
 const candidateContext = {
@@ -14,6 +15,63 @@ const candidateContext = {
 };
 
 describe("finance decision policy", () => {
+  it("distinguishes a schedule timestamp from an actual execution claim", () => {
+    const scheduled = evaluateFinanceDecisionPolicy({
+      ask: "Review the strategy schedule.",
+      answer: "The strategy is executed at the next tradable point.",
+    });
+    expect(scheduled.failedReasons).not.toContain("finance_execution_claim_forbidden");
+    const description =
+      "The trend sign is provisional and is not the rule's executed monthly signal.";
+    expect(
+      evaluateFinanceDecisionPolicy({ ask: "Review the strategy schedule.", answer: description })
+        .failedReasons,
+    ).not.toContain("finance_execution_claim_forbidden");
+
+    for (const answer of [
+      "Filled NVDA at the open.",
+      "fIlLeD NVDA at the open.",
+      "Filled at $100.",
+      "Filled 100 shares at the open.",
+      "Executed at $100.",
+      "Executed NVDA at the open.",
+      "executed nvda at the open.",
+      "已成交 NVDA。",
+      "该笔交易已执行。",
+      `${description} Executed NVDA at the open.`,
+    ]) {
+      expect(
+        evaluateFinanceDecisionPolicy({ ask: "Review SPY fills.", answer }).failedReasons,
+        answer,
+      ).toContain("finance_execution_claim_forbidden");
+    }
+
+    expect(
+      evaluateFinanceDecisionPolicy({
+        ask: "Review SPY fills.",
+        answer: "The report discusses成交额 and 成交量 as market statistics.",
+      }).failedReasons,
+    ).not.toContain("finance_execution_claim_forbidden");
+  });
+
+  it("distinguishes counted broker fills from a new trade instruction", () => {
+    const summary = "Broker summary shows 3 buy fills, 0 sell fills and 2 unallocated fees.";
+    expect(
+      evaluateFinanceDecisionPolicy({ ask: "Review SPY fills", answer: summary }),
+    ).toMatchObject({
+      allowed: true,
+      executionAuthority: "none",
+    });
+    for (const instruction of ["Buy SPY now.", "Sell SPY now.", "Buy more shares."]) {
+      expect(
+        evaluateFinanceDecisionPolicy({
+          ask: "Review SPY fills",
+          answer: `${summary} ${instruction}`,
+        }).failedReasons,
+      ).toContain("direct_trade_or_position_action_language");
+    }
+  });
+
   it("keeps the legacy research-only mode unable to adopt direct trade language", () => {
     const result = evaluateFinanceDecisionPolicy({
       ask: "NVDA 现在能买吗？",
@@ -39,6 +97,22 @@ describe("finance decision policy", () => {
     expect(result.requiredEvidence).toEqual([]);
   });
 
+  it("accepts a complete conditional decision without a disclaimer or repeated human confirmation", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "conditional_trade_candidate",
+      ask: "NVDA 现在适合买吗？",
+      answer:
+        "候选买入 NVDA：如果财报指引保持则触发，依据截至 2026-09-07 的财报数据来源。持有周期一个月，主要风险是估值压缩，失效条件是指引下修。",
+      candidateContext,
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.executionAuthority).toBe("none");
+    expect(result.requiredEvidence).toEqual([]);
+    const instructions = financeDecisionInstructions("strategy_candidate");
+    expect(instructions).toContain("exposure direction, trigger, horizon, invalidation");
+    expect(instructions).toContain("does not require repeated human confirmation");
+    expect(instructions).not.toContain("Keep research-only");
+  });
   it("allows a conditional buy candidate without granting execution authority", () => {
     const result = evaluateFinanceDecisionPolicy({
       mode: "conditional_trade_candidate",
@@ -63,11 +137,7 @@ describe("finance decision policy", () => {
     expect(result.allowed).toBe(false);
     expect(result.failedReasons).toContain("finance_candidate_contract_incomplete");
     expect(result.requiredEvidence).toEqual(
-      expect.arrayContaining([
-        "source_and_timestamped_evidence",
-        "risk_and_invalidation",
-        "human_review_and_no_automatic_execution_boundary",
-      ]),
+      expect.arrayContaining(["source_and_timestamped_evidence", "risk_and_invalidation"]),
     );
   });
 

@@ -74,6 +74,11 @@ const CaseRun = z.object({
     ),
   }),
 });
+const AdoptedResearchSnapshot = z.object({
+  status: z.literal("candidate"),
+  gates: z.array(z.object({ passed: z.literal(true) })).min(1),
+  quarterlyOutput: z.object({ adopted: z.literal(true) }),
+});
 type ParsedFinanceCaseRun = z.infer<typeof CaseRun>;
 export type FinanceCaseRun = Omit<ParsedFinanceCaseRun, "schemaVersion" | "ontologyEdges"> & {
   schemaVersion: typeof LCX_CASEFLOW_CONTRACT.schemaVersion;
@@ -349,6 +354,21 @@ function verify(value: unknown): FinanceCaseRun {
     throw new Error("caseflow fingerprint mismatch");
   }
   assertValidLcxOntologyEdges(result.ontologyEdges, "caseflow ontology edges");
+  if (result.packet.adopted) {
+    const evidenceIds = new Set(result.run.evidence.map((item) => item.id));
+    if (
+      result.packet.status !== "candidate" ||
+      !AdoptedResearchSnapshot.safeParse(result.run.snapshot).success ||
+      result.packet.claims.some(
+        (claim) =>
+          claim.referenceStatus !== "linked" ||
+          claim.evidenceIds.length === 0 ||
+          claim.evidenceIds.some((id) => !evidenceIds.has(id)),
+      )
+    ) {
+      throw new Error("caseflow adoption conflicts with original research gates or evidence");
+    }
+  }
   if (
     result.packet.forecasts &&
     caseflowFingerprint(result.packet.forecasts) !==

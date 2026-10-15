@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "scenarioIds": ["provider_council_evidence_waterflow", "commercial_answer_pipeline_waterflow"],
+  "fromVersion": 2,
+  "toVersion": 3,
+  "reason": "Bind completed council claims to original reply delivery seams and preserve the existing supplied-arithmetic path.",
+  "changes": {
+    "preservedNodesAndEdges": true,
+    "replyOwners": [
+      "src/auto-reply/reply/agent-runner.ts",
+      "src/auto-reply/reply/followup-runner.ts"
+    ],
+    "optionalHostInput": "GetReplyOptions.providerCouncilEvidence",
+    "receiptSurface": "Existing agent lifecycle event provider_council_completion_gate carries source-bound attribution or exact gaps.",
+    "compatibility": "Only completed council claims are checked at final, partial, block and queued delivery. Ordinary replies retain original behavior; current message identity and cancellation fence source reuse. No ontology relation/state changes.",
+    "arithmetic": "Reuse the supplied-percentage predicate and original planner requirements; current quotes, missing operands and factual verification still require sources."
+  },
+  "nonEffects": [
+    "no provider/model configuration changes",
+    "no trading permission or threshold changes",
+    "no new automation or business state store",
+    "no external delivery, source truth or natural semantic adoption claim"
+  ],
+  "verification": [
+    "src/agents/provider-council-handoff.test.ts",
+    "src/auto-reply/reply/agent-runner.misc.runreplyagent.test.ts",
+    "src/auto-reply/reply/agent-runner.runreplyagent.e2e.test.ts",
+    "src/auto-reply/reply/followup-runner.test.ts",
+    "test/lcx-commercial-answer-pipeline.test.ts"
+  ],
+  "remainingGap": "Offline original-owner callbacks prove local delivery checks; natural runtime loading, external delivery, rule-content adoption and complete commercial/provider waterflows still require their own evidence."
+}

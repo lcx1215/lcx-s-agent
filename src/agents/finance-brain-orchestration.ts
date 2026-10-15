@@ -1,5 +1,12 @@
 import type { LcxOntologyModuleId } from "../shared/lcx-ontology.js";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
+import {
+  buildFinanceModuleComposition,
+  parseFinanceModuleComposition,
+  type FinanceModuleCompositionInput,
+  type FinanceModuleComposition,
+} from "./finance-module-composition.js";
 
 export type FinanceBrainModuleId = LcxOntologyModuleId;
 
@@ -10,6 +17,12 @@ type FinanceBrainModuleDefinition = {
   triggerPatterns: RegExp[];
 };
 
+export type FinanceModuleSelection = Readonly<{
+  moduleIds: readonly FinanceBrainModuleId[];
+  rationale: string;
+  composition?: FinanceModuleComposition | FinanceModuleCompositionInput;
+}>;
+
 export type FinanceBrainOrchestrationInput = {
   text: string;
   hasHoldingsOrPortfolioContext?: boolean;
@@ -17,13 +30,24 @@ export type FinanceBrainOrchestrationInput = {
   highStakesConclusion?: boolean;
   writesDurableMemory?: boolean;
   decisionMode?: FinanceDecisionMode;
+  moduleSelection?: FinanceModuleSelection;
 };
 
 export type FinanceBrainOrchestrationPlan = {
   primaryModules: FinanceBrainModuleId[];
   supportingModules: FinanceBrainModuleId[];
+  moduleContracts: Array<Pick<FinanceBrainModuleDefinition, "id" | "role" | "requiredTools">>;
+  composition: FinanceModuleComposition;
   selectionTrace: {
+    compositionModuleInput?: Readonly<{
+      moduleIds: readonly FinanceBrainModuleId[];
+      requiredModuleIds: readonly FinanceBrainModuleId[];
+    }>;
     financeTask: boolean;
+    selectionSource: "rules" | "caller_proposal";
+    ruleSuggestedModules: FinanceBrainModuleId[];
+    requiredModules: FinanceBrainModuleId[];
+    proposal?: FinanceModuleSelection;
     rawMatchedModules: FinanceBrainModuleId[];
     suppressedModules: Array<{ id: FinanceBrainModuleId; reason: string }>;
     focus: "none" | "focused" | "broad";
@@ -117,7 +141,9 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "company_fundamentals_value",
-    role: "Inspect business quality, earnings, cash flow, balance sheet, valuation, moat, capex conversion, power/supply-chain constraints, and thesis durability.",
+    role:
+      "Inspect business quality, earnings, cash flow, balance sheet, valuation, moat, capex conversion, power/supply-chain constraints, and thesis durability. " +
+      FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE,
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_company_fundamentals_value_producer",
@@ -183,14 +209,15 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "commodities_oil_gold",
-    role: "Connect oil, gold, commodities, inventory, supply shocks, inflation hedge, energy, and terms-of-trade evidence.",
+    role: "Connect commodities, inventory, supply shocks, inflation hedge, energy, terms of trade, and the industrial mechanisms behind substitution, shared costs, processing margins, and cross-commodity spreads.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_commodities_oil_gold_producer",
     ],
     triggerPatterns: [
       /\b(?:commodity|commodities|oil|gold|energy|copper|inventory|supply shock|strait of hormuz|opec|spr|inflation hedge)\b/u,
-      /商品|原油|黄金|能源|铜|库存|供给冲击|霍尔木兹|OPEC|战略储备/u,
+      /\b(?:commodity|futures) (?:spread|pair|relative value)\b|\b(?:intercommodity|calendar) spread\b/u,
+      /商品.{0,12}(?:期货|价差|套利|配对|跨品种)|(?:期货|价差|套利|配对|跨品种).{0,12}商品|跨品种(?:价差|套利|配对)?|商品替代|共同成本|加工利润|豆油|棕榈油|棕油|螺纹钢?|热卷|塑料|聚丙烯|国际铜|沪铜|原油|黄金|能源|铜|库存|供给冲击|霍尔木兹|OPEC|战略储备/u,
     ],
   },
   {
@@ -231,6 +258,67 @@ export const FINANCE_BRAIN_MODULES = [
   },
 ] as const satisfies readonly FinanceBrainModuleDefinition[];
 
+/** Descriptions come from the existing module registry, never a second catalog. */
+export function financeBrainModuleCatalog() {
+  return FINANCE_BRAIN_MODULES.map(({ id, role, requiredTools }) => ({
+    id,
+    role,
+    requiredTools: [...requiredTools],
+  }));
+}
+
+/** Runtime validation also covers direct callers that bypass the agent tool schema. */
+export function parseFinanceModuleSelection(value: unknown): FinanceModuleSelection | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("moduleSelection must contain moduleIds and rationale");
+  }
+  const proposal = value as Record<string, unknown>;
+  if (
+    Object.keys(proposal).some(
+      (key) => key !== "moduleIds" && key !== "rationale" && key !== "composition",
+    )
+  ) {
+    throw new Error("moduleSelection cannot override gates or execution authority");
+  }
+  if (
+    !Array.isArray(proposal.moduleIds) ||
+    proposal.moduleIds.length === 0 ||
+    proposal.moduleIds.length > FINANCE_BRAIN_MODULES.length ||
+    typeof proposal.rationale !== "string" ||
+    !proposal.rationale.trim() ||
+    proposal.rationale.length > 2000
+  ) {
+    throw new Error(
+      "moduleSelection requires a bounded nonempty moduleIds list and rationale (max 2000 characters)",
+    );
+  }
+  const moduleIds = Array.from(proposal.moduleIds, (id: unknown) => {
+    const definition = FINANCE_BRAIN_MODULES.find((module) => module.id === id);
+    if (!definition) {
+      throw new Error("moduleSelection contains an unknown finance module");
+    }
+    return definition.id;
+  });
+  if (new Set(moduleIds).size !== moduleIds.length) {
+    throw new Error("moduleSelection contains duplicate moduleIds");
+  }
+  const composition = parseFinanceModuleComposition(proposal.composition, moduleIds);
+  if (composition) {
+    const composedModuleIds = new Set(composition.nodes.map((node) => node.moduleId));
+    if (moduleIds.some((moduleId) => !composedModuleIds.has(moduleId))) {
+      throw new Error("moduleSelection.composition must include every selected module");
+    }
+  }
+  return Object.freeze({
+    moduleIds: Object.freeze(moduleIds),
+    rationale: proposal.rationale.trim(),
+    ...(composition ? { composition } : {}),
+  });
+}
+
 function normalize(text: string): string {
   return text.trim().toLowerCase();
 }
@@ -246,7 +334,7 @@ function moduleMatches(module: FinanceBrainModuleDefinition, text: string): bool
 function hasFinanceTaskSignal(text: string): boolean {
   // `shares?` and `holdings?` were missing, so "how many shares do I own" was not a finance task at
   // all and therefore never reached the data-gateway condition below, which is gated on financeTask.
-  return /\b(finance|market|stock|shares?|holdings?|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
+  return /\b(?:trend|momentum|mean[- ]reversion|arbitrage|intraday|investment|trading) strateg(?:y|ies)\b|趋势策略|动量策略|套利策略|日内策略|\b(finance|market|stock|shares?|holdings?|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
     text,
   );
 }
@@ -302,11 +390,14 @@ function arbitrateFinanceModules(text: string, rawMatched: FinanceBrainModuleId[
 export function planFinanceBrainOrchestration(
   input: FinanceBrainOrchestrationInput,
 ): FinanceBrainOrchestrationPlan {
+  const moduleSelection = parseFinanceModuleSelection(input.moduleSelection);
   const text = normalize(input.text);
   const rawMatched = FINANCE_BRAIN_MODULES.filter((module) => moduleMatches(module, text)).map(
     (module) => module.id,
   );
   const financeTask =
+    moduleSelection !== undefined ||
+    input.hasHoldingsOrPortfolioContext === true ||
     hasFinanceTaskSignal(text) ||
     rawMatched.some(
       (id) =>
@@ -316,20 +407,50 @@ export function planFinanceBrainOrchestration(
     ? arbitrateFinanceModules(text, rawMatched)
     : { selected: [], suppressedModules: [], focus: "none" as const };
   const matched = financeTask ? arbitration.selected : [];
-  const seeded = financeTask ? unique<FinanceBrainModuleId>([...matched, "causal_map"]) : matched;
-
-  if (input.hasHoldingsOrPortfolioContext && !seeded.includes("portfolio_risk_gates")) {
-    seeded.push("portfolio_risk_gates");
+  // Domain lenses are replaceable. Required evidence/risk/math lanes survive a
+  // caller proposal; choosing a module never grants permission to execute its tools.
+  const requiredModules: FinanceBrainModuleId[] = financeTask ? ["causal_map"] : [];
+  const selected = moduleSelection?.moduleIds ?? matched;
+  if (
+    input.hasHoldingsOrPortfolioContext ||
+    matched.includes("portfolio_risk_gates") ||
+    selected.includes("portfolio_risk_gates")
+  ) {
+    requiredModules.push("portfolio_risk_gates");
   }
   if (
-    (input.hasLocalMathInputs || seeded.includes("portfolio_risk_gates")) &&
-    !seeded.includes("quant_math")
+    input.hasLocalMathInputs ||
+    matched.includes("quant_math") ||
+    requiredModules.includes("portfolio_risk_gates")
   ) {
-    seeded.push("quant_math");
+    requiredModules.push("quant_math");
   }
-  if (financeTask && !seeded.includes("finance_learning_memory")) {
-    seeded.push("finance_learning_memory");
+  const requiresRetainedMethod =
+    /\b(?:reuse|apply|retrieve|use)\b.{0,50}\b(?:retained|learned|previous|memory|capability cards?)\b|(?:复用|应用|检索|根据).{0,25}(?:已学|学过|保留|历史方法|记忆|能力卡)|(?:以前|学过|已学习).{0,25}(?:应用|复用)/u.test(
+      text,
+    );
+  if (
+    moduleSelection?.moduleIds.includes("finance_learning_memory") ||
+    (financeTask && requiresRetainedMethod)
+  ) {
+    requiredModules.push("finance_learning_memory");
   }
+  // Attempt retained guidance on every finance task, but an empty learning store
+  // must not prevent new source-backed research. Explicit selection remains strict.
+  const analyticalModules = unique<FinanceBrainModuleId>([
+    ...selected,
+    ...(financeTask ? ["finance_learning_memory" as const] : []),
+  ]);
+  const seeded = unique<FinanceBrainModuleId>([...analyticalModules, ...requiredModules]);
+  const compositionModuleInput = Object.freeze({
+    moduleIds: Object.freeze([...analyticalModules]),
+    requiredModuleIds: Object.freeze([...requiredModules]),
+  });
+  const composition = buildFinanceModuleComposition(
+    compositionModuleInput.moduleIds,
+    compositionModuleInput.requiredModuleIds,
+    moduleSelection?.composition,
+  );
 
   const primaryModules = seeded.filter((id) => id !== "finance_learning_memory");
   const supportingModules = seeded.filter((id) => id === "finance_learning_memory");
@@ -374,11 +495,25 @@ export function planFinanceBrainOrchestration(
   return {
     primaryModules,
     supportingModules,
+    moduleContracts: seeded.flatMap((id) => {
+      const module = moduleById.get(id);
+      return module ? [{ id, role: module.role, requiredTools: [...module.requiredTools] }] : [];
+    }),
+    composition,
     selectionTrace: {
+      compositionModuleInput,
       financeTask,
+      selectionSource: moduleSelection ? "caller_proposal" : "rules",
+      ruleSuggestedModules: unique([...matched, ...requiredModules]),
+      requiredModules,
+      ...(moduleSelection ? { proposal: moduleSelection } : {}),
       rawMatchedModules: rawMatched,
-      suppressedModules: arbitration.suppressedModules,
-      focus: arbitration.focus,
+      suppressedModules: moduleSelection
+        ? unique([...matched, ...arbitration.suppressedModules.map(({ id }) => id)])
+            .filter((id) => !seeded.includes(id))
+            .map((id) => ({ id, reason: "not_selected_by_caller_proposal" }))
+        : arbitration.suppressedModules,
+      focus: moduleSelection ? (seeded.length >= 15 ? "broad" : "focused") : arbitration.focus,
       dataGatewayReason,
     },
     requiredTools: unique([...requiredTools, ...reviewTools]),

@@ -347,7 +347,7 @@ lcx onboard
 **非本地环境：**
 
 - **Tailscale Serve**（推荐）：保持绑定 loopback，运行 `lcx gateway --tailscale serve`，打开 `https://<magicdns>/`。如果 `gateway.auth.allowTailscale` 为 `true`，身份标头满足认证要求（无需令牌）。
-- **Tailnet 绑定**：运行 `lcx gateway --bind tailnet --token "<token>"`，打开 `http://<tailscale-ip>:18789/`，在仪表板设置中粘贴令牌。
+- **Tailnet 绑定**：配置 `gateway.bind: "tailnet"`、`gateway.tls.enabled: true` 和认证，打开 `https://<tailscale-ip>:18789/`。证书必须受客户端信任且包含该 IP 或 MagicDNS 名称，然后在仪表板设置中粘贴令牌。
 - **SSH 隧道**：`ssh -N -L 18789:127.0.0.1:18789 user@host`，然后从 `lcx dashboard` 打开 `http://127.0.0.1:18789/?token=...`。
 
 参阅[仪表板](/web/dashboard)和 [Web 界面](/web)了解绑定模式和认证详情。
@@ -1223,12 +1223,13 @@ $OPENCLAW_CONFIG_PATH
 
 ### 我设置了 gateway.bind: "lan"（或 "tailnet"），现在什么都监听不了 / UI 显示未授权
 
-非 local loopback 绑定**需要认证**。配置 `gateway.auth.mode` + `gateway.auth.token`（或使用 `OPENCLAW_GATEWAY_TOKEN`）。
+直接 LAN/custom/tailnet 绑定以及解析到非回环地址的 `auto` 绑定**需要认证和 Gateway TLS**。配置 `gateway.auth.mode` + `gateway.auth.token`（或使用 `OPENCLAW_GATEWAY_TOKEN`），并启用 `gateway.tls.enabled`。若希望由 Tailscale 负责 HTTPS，可让 Gateway 保持 loopback 并使用 Tailscale Serve。
 
 ```json5
 {
   gateway: {
     bind: "lan",
+    tls: { enabled: true },
     auth: {
       mode: "token",
       token: "replace-me",

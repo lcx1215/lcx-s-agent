@@ -120,7 +120,7 @@ describe("module-learning-pipeline-plan CLI", () => {
       expect.objectContaining({
         ok: true,
         targetModule: "global_index_regime",
-        status: "eval_absorbed",
+        status: "missing_evidence",
         receiptWritten: true,
       }),
     );

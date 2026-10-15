@@ -231,7 +231,8 @@ export function createStooqDelayedMarketAdapter(
     providerName: "stooq-public-daily",
     providerRole: "cross_check_market_data",
     priority: 20,
-    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
+    supports: (request) =>
+      !["crypto", "prediction_market"].includes(request.assetClass.trim().toLowerCase()),
     collect: async (request) => {
       const symbol = request.instrument.includes(".")
         ? request.instrument.toLowerCase()
@@ -281,7 +282,9 @@ export function createNasdaqExchangeMarketAdapter(
     providerName: "nasdaq-exchange-public-quote",
     providerRole: "cross_check_market_data",
     priority: 12,
-    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
+    sampleRequest: { instrument: "AAPL", assetClass: "us_equity" },
+    supports: (request) =>
+      !["crypto", "prediction_market"].includes(request.assetClass.trim().toLowerCase()),
     collect: async (request) => {
       const assetClass = request.assetClass.trim().toLowerCase();
       const nasdaqAssetClass = assetClass === "etf" ? "etfs" : "stocks";
@@ -377,7 +380,8 @@ export function createAlphaVantageMarketAdapter(options: {
     providerName: "alpha-vantage-global-quote",
     providerRole: "cross_check_market_data",
     priority: 15,
-    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
+    supports: (request) =>
+      !["crypto", "prediction_market"].includes(request.assetClass.trim().toLowerCase()),
     collect: async (request) => {
       const sourceUrlOrArtifact = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(request.instrument)}`;
       const url = `${sourceUrlOrArtifact}&apikey=${encodeURIComponent(apiKey)}`;

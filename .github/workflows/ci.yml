@@ -79,6 +79,9 @@ jobs:
       - name: Build dist
         run: pnpm build
 
+      - name: Verify build identity
+        run: pnpm build:identity:check
+
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
         with:

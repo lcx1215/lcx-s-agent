@@ -16,7 +16,7 @@ import {
  */
 
 export const FINANCE_STRATEGY_METHOD_KIT_SCHEMA_VERSION =
-  "lcx_finance_strategy_method_kit_v2" as const;
+  "lcx_finance_strategy_method_kit_v3" as const;
 
 export type FinanceStrategyMethodKit = Readonly<{
   schemaVersion: typeof FINANCE_STRATEGY_METHOD_KIT_SCHEMA_VERSION;
@@ -28,16 +28,36 @@ export type FinanceStrategyMethodKit = Readonly<{
   prompt: string;
 }>;
 
+export type FinanceStrategyMethodKitModelContext = Readonly<
+  Pick<
+    FinanceStrategyMethodKit,
+    "schemaVersion" | "selectedModules" | "taskScope" | "rules" | "requiredOutputChecks"
+  >
+>;
+
+export function toFinanceStrategyMethodKitModelContext(
+  kit: FinanceStrategyMethodKit,
+): FinanceStrategyMethodKitModelContext {
+  return Object.freeze({
+    schemaVersion: kit.schemaVersion,
+    selectedModules: kit.selectedModules,
+    taskScope: kit.taskScope,
+    rules: kit.rules,
+    requiredOutputChecks: kit.requiredOutputChecks,
+  });
+}
+
 const M01_RULES = Object.freeze([
   "Freeze the question, universe, horizon and information cutoff; freeze baseline and costs when testing a strategy.",
   "Use point-in-time evidence and report source timestamps; do not fill missing values with a convenient proxy.",
   "When testing a strategy, separate train/validation/out-of-sample windows and record failed or neutral trials; do not select parameters after seeing the full result.",
   "Treat a local receipt or a plausible explanation as method evidence, not as proof of alpha or model learning.",
+  "Track platform, data, model/token, commission, spread/slippage and financing costs separately; without a complete realized net-cost ledger, do not claim operating-cost or living-expense coverage.",
 ] as const);
 
 const M02_RULES = Object.freeze([
   "For a transparent trend diagnostic, use the prior completed close versus a fixed 200-session moving average; apply the decision on the next session.",
-  "Compare against same-universe buy-and-hold and cash baselines with the same entry, exit, and turnover costs.",
+  "Keep same-universe buy-and-hold as the core baseline; compare any lower-turnover trend overlay against buy-and-hold and cash with the same entry, exit, and turnover costs.",
   "Report CAGR, volatility, maximum drawdown, turnover, worst daily loss, and results by at least three non-overlapping periods.",
   "Stress cost and parameter ranges; a result that survives only one asset, period, or optimistic cost stays research-only.",
 ] as const);
@@ -46,6 +66,33 @@ const M12_RULES = Object.freeze([
   "Check common factor exposure and breadth before treating several assets as independent diversification.",
   "Use a simple risk gate when breadth weakens; explain the trade-off between drawdown reduction and missed rebound rather than calling it a hedge.",
   "Surface concentration, liquidity, financing, borrow, gap, and exit-day limits even when the test is long-only and unlevered.",
+] as const);
+
+const M11_RULES = Object.freeze([
+  "For Gamma Scalping, study a long-gamma option position with a mechanical delta hedge. Target hedge shares = -option delta times contracts times contract multiplier; rebalance the residual portfolio delta using a predeclared share band, lot size and inventory limit, not a forecast of tops or bottoms.",
+  "An at-the-money long straddle is not exactly delta-neutral, and gamma peaks near, not necessarily exactly at, the strike. Compute both option legs and the initial hedge rather than assuming zero delta.",
+  "Continuous delta hedging does not eliminate gamma P&L. Under zero rates/dividends and fixed implied volatility, local long-option hedged P&L is approximately 0.5 * Gamma * (dS)^2 + Theta * dt, or 0.5 * Gamma * S^2 * (realized variance - implied variance) * dt; this is an approximation, not a profit guarantee.",
+  "Use a gamma-weighted variance comparison with a matching horizon; a low IV percentile or an unweighted realized volatility greater than IV is not sufficient evidence of a net edge. Separate gamma/theta, residual delta, vega repricing, financing/borrow, transaction costs and approximation error.",
+  "Keep option mark change, hedge cash flows and hedge mark-to-market in one self-financing ledger. Hedge-account gains alone are not gamma gains; losses on a short stock hedge in a trend must be evaluated together with the long options.",
+  "Freeze hedge policy before testing. Include both option entry/exit spreads, commissions, contract multipliers, stock spread/slippage, borrowing and financing, lot rounding and inventory limits. Stress flat, oscillating, trending, gap and IV-crush paths, and compare the same straddle without hedging under the same costs.",
+  "Use docs/experiments/research/gamma-scalping/README.md and replayGammaScalping in src/agents/finance-gamma-scalping-replay.ts for an explicitly synthetic European, non-dividend teaching replay only. It is not a broker capability or a market backtest; do not infer American exercise, dividends, quote freshness, borrow availability or execution permission from it.",
+  "Without synchronous option/underlying quotes, Greeks, IV history, expiry/style/multiplier, fresh borrow and funding evidence, and an authorized options-plus-hedge adapter, retain research_only. Existing equity Paper authority does not authorize option legs, short stock, or Live execution.",
+] as const);
+
+const M13_RULES = Object.freeze([
+  "Treat a commodity pair as a testable relative-value hypothesis, not an arbitrage: state the physical or market mechanism that could repair the spread and what could permanently change it.",
+  "Separate same-underlying calendar spreads from cross-commodity pairs; map each exchange, contract month, unit, multiplier, expiry, and roll before comparing prices.",
+  "Choose an industrial formula, fixed spread, ratio, or residual for its economic meaning; explain scale sensitivity and any rolling hedge-ratio estimation window.",
+  "Use only supplied, synchronized, timestamped observations with known source and contract mapping. If these are absent, name the missing data and do not invent a series.",
+  "When quant_lab is available, use pair_spread_diagnostics for supplied aligned series; its z-score, AR(1), and ADF are limited diagnostics, not proof of cointegration, convergence, or profit.",
+  "If quant_lab is available, use pair_spread_reversion_replay only for a frozen fixed-spread hypothesis with synchronized observations, caller-chosen entry/exit/stop/holding thresholds, and both exact contract legs explicitly matched to instrument, exchange, month, integer quantity, multiplier, currency, commission per side, full quoted bid-ask width, per-side slippage, and initial margin. Never fill missing inputs with guessed or zero values; if the action is unavailable, say the replay could not run and list the missing capability or inputs.",
+  "Interpret replay entries and exits as next-observation close proxies, not executable fills. Read resolved-event net P&L separately from open censored positions, their entry costs, and last-observation mark-to-market; it excludes rolls, order-book fills, legging, and portfolio risk, and proves neither convergence nor profitability.",
+  "Report the replay's fixed event policy: first threshold touch while armed, no overlapping events, and rearm only after the absolute z-score moves back inside the entry threshold. Do not present that rule as an empirically selected optimum.",
+  "Before discussing a candidate, require event-based recovery rates and holding-time distributions including maximum adverse excursion, timeouts, failed years, and regime changes.",
+  "Model both legs at the next tradable time with integer lots, multipliers, commissions, bid-ask, slippage, margin, rolls, capacity, and legging risk; a close-price spread curve is not a net backtest.",
+  "For a later question about the soybean-oil/palm-oil pair, retrieve docs/experiments/research/commodity-pair-y2501-p2501/README.md as one exact-contract failure case; do not generalize its single maturity or assumed execution costs to other pairs or periods.",
+  "For multiple delivery-month evidence, retrieve docs/experiments/research/commodity-pair-y-maturity-panel/README.md; it is a fixed-rule robustness panel with overlapping May/September lifecycles, not a portfolio result or a clean preregistered out-of-sample claim.",
+  "If the work has only a diagnostic or historical association, keep it research-only and state that no pair selection, signal, contract-level backtest, or execution was established.",
 ] as const);
 
 const REQUIRED_OUTPUT_CHECKS = Object.freeze([
@@ -101,19 +148,27 @@ const METHOD_MATCHERS: readonly Readonly<{
   },
   {
     method: "M11",
-    pattern: /波动率|隐含波动|波动率曲面|Greeks|希腊值|动态对冲|volatility|implied vol|surface/iu,
+    pattern:
+      /波动率|隐含波动|波动率曲面|Greeks|希腊值|动态对冲|波动收割|伽马|跨式|gamma[\s-]*scalp(?:ing)?|delta[\s-]*(?:hedg(?:e|ing)|neutral)|long[\s-]*straddle|volatility|implied vol|surface/iu,
   },
   {
     method: "M12",
     pattern:
       /暴露|敞口|广度|分散|组合|风险|回撤|拥挤|融资|保证金|流动性|exposure|breadth|diversif|portfolio|risk|drawdown|crowding|financing/iu,
   },
+  {
+    method: "M13",
+    pattern:
+      /商品.{0,16}(?:套利|价差|配对|价比|相对价值|相关性)|(?:套利|价差|配对|价比|相对价值).{0,16}(?:商品|期货|品种)|商品期货|跨品种|跨商品|期货配对|豆油.{0,12}(?:棕榈油|棕油)|(?:棕榈油|棕油).{0,12}豆油|螺纹.{0,12}热卷|热卷.{0,12}螺纹|commodity spread|commodity pairs?|futures spread|pairs trading/iu,
+  },
 ]);
 
 const BASE_RULES: Partial<Record<StrategyMethodId, readonly string[]>> = Object.freeze({
   M01: M01_RULES,
   M02: M02_RULES,
+  M11: M11_RULES,
   M12: M12_RULES,
+  M13: M13_RULES,
 });
 
 export function selectFinanceStrategyMethodIds(ask: string): readonly StrategyMethodId[] {

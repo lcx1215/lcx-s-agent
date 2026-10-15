@@ -8,22 +8,29 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  buildFinanceLiveExecutionPayload,
+  buildFinanceLiveExecutionPayload as buildWithoutController,
   parseArgs,
   type Options,
 } from "../../scripts/operator/lcx-finance-live-execution.ts";
+import * as alpacaAdapters from "../../src/agents/finance-alpaca-execution-adapter.js";
 import {
   DEFAULT_FINANCE_RISK_BUDGET,
   FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
 } from "../../src/agents/finance-execution-adapter.ts";
+import * as executionAdapters from "../../src/agents/finance-execution-adapter.ts";
+import { syntheticSafetyContext } from "../../src/agents/finance-execution-safety.test-support.js";
 import { financePositionLedgerPath } from "../../src/agents/finance-state-dir.ts";
 import { createFinancePositionLedgerReadTool } from "../../src/agents/tools/finance-position-ledger-read-tool.ts";
 
+// Existing operator behavior fixtures explicitly authorize a synthetic funded account.
+const buildFinanceLiveExecutionPayload = (input: Options) =>
+  buildWithoutController(input, { createSafetyContext: syntheticSafetyContext });
+
 /** Safely in the past, so the ledger's future-observation guard is never what a test measures. */
-const AS_OF = "2026-09-10T00:00:00Z";
-const MARK_AT = "2026-09-10T01:00:00Z";
+const AS_OF = new Date(Date.now() - 1_000).toISOString();
+const MARK_AT = new Date(Date.now() - 500).toISOString();
 
 const directories: string[] = [];
 
@@ -34,6 +41,7 @@ async function storeDirectory(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -42,6 +50,11 @@ afterEach(async () => {
 function options(overrides: Partial<Options> = {}): Options {
   return {
     instrument: "AAPL",
+    assetClass: "us_equity",
+    riskPct: 0.5,
+    drawdownPct: 0,
+    hasStructure: true,
+    stopPrice: 225,
     side: "buy",
     orderType: "market",
     quantity: 10,
@@ -51,7 +64,12 @@ function options(overrides: Partial<Options> = {}): Options {
     rationale: "test",
     allowInstruments: [],
     marks: [],
-    budget: DEFAULT_FINANCE_RISK_BUDGET,
+    budget: {
+      ...DEFAULT_FINANCE_RISK_BUDGET,
+      maxOrderNotional: 500_000,
+      maxInstrumentNotional: 1_000_000,
+      maxOrdersPerRun: 10,
+    },
     writeLedger: false,
     json: true,
     ...overrides,
@@ -69,7 +87,7 @@ describe("finance live execution operator entry", () => {
     expect(written.ledgerDirectory).toBe("/book");
   });
 
-  it("writes nothing by default, so a run is not a side effect", async () => {
+  it("writes no execution ledger without --write-ledger (safety claims are separate)", async () => {
     const directory = await storeDirectory();
     const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
 
@@ -132,6 +150,22 @@ describe("finance live execution operator entry", () => {
     expect(payload.durableLedger.recordCountDelta).toBe(0);
     expect(payload.durableLedger.replayNote).toBeNull();
     await expect(fs.access(financePositionLedgerPath(directory))).rejects.toThrow();
+  });
+
+  it("routes the explicit Alpaca adapter instead of silently falling back to paper", async () => {
+    const directory = await storeDirectory();
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({ adapter: "alpaca", runAuthorization: "", ledgerDirectory: directory }),
+    );
+
+    expect(payload.nodes.declared_execution_adapter.adapterId).toBe("alpaca-venue");
+    expect(payload.nodes.order_placement.refusalReasons).toContain(
+      "explicit_run_authorization_required",
+    );
+    expect(payload.nodes.order_placement.refusalReasons).not.toContain(
+      "declared_execution_adapter_required",
+    );
+    expect(payload.claims.paperAdapterOnly).toBe(false);
   });
 
   it("announces a write into a location the operator did not name", async () => {
@@ -244,16 +278,18 @@ describe("finance live execution entry allowlist translation", () => {
     expect(payload.nodes.position_ledger?.recordCount).toBe(2);
   });
 
-  it("places a large order when no cap is declared", async () => {
+  it("refuses a risk increase when the attended entry declares no cap", async () => {
     const directory = await storeDirectory();
     // 1000 x 231.4 = 231,400. With no --max-* declared there is no boundary to cross, so this is
     // an ordinary paper fill. A cap nobody declared is not a control, it is a surprise.
     const payload = await buildFinanceLiveExecutionPayload(
-      options({ ledgerDirectory: directory, quantity: 1000 }),
+      options({ ledgerDirectory: directory, quantity: 1000, budget: DEFAULT_FINANCE_RISK_BUDGET }),
     );
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
-    expect(payload.nodes.order_placement.refusalReasons).toEqual([]);
+    expect(payload.nodes.order_placement.status).toBe("refused");
+    expect(payload.nodes.order_placement.refusalReasons).toContain(
+      "execution_safety_increase_requires_complete_budget",
+    );
   });
 
   it("still enforces a cap once the run declares one", async () => {
@@ -329,15 +365,81 @@ describe("finance live execution unattended ceiling gate", () => {
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
   });
 
-  it("leaves an attended run's caps optional: the default stays attended", async () => {
+  it("does not let attended mode waive the final risk-increase budget", async () => {
     const directory = await storeDirectory();
     // Same absence of caps as the refused case above; the only difference is who is watching.
     const payload = await buildFinanceLiveExecutionPayload(
-      options({ ledgerDirectory: directory, quantity: 1000 }),
+      options({ ledgerDirectory: directory, quantity: 1000, budget: DEFAULT_FINANCE_RISK_BUDGET }),
     );
 
     expect(DEFAULT_FINANCE_RISK_BUDGET.automation).toBe("attended");
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(payload.nodes.order_placement.status).toBe("refused");
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
   });
+});
+
+describe("mandatory owner-entry mandate and stop delivery", () => {
+  it.each(["paper", "alpaca"] as const)(
+    "rejects absent class before constructing %s adapter",
+    async (adapter) => {
+      const paperFactory = vi.spyOn(executionAdapters, "createPaperExecutionAdapter");
+      const venueFactory = vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter");
+      await expect(
+        buildFinanceLiveExecutionPayload(options({ adapter, assetClass: undefined })),
+      ).rejects.toThrow("--asset-class is required");
+      expect(paperFactory).not.toHaveBeenCalled();
+      expect(venueFactory).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["paper", "alpaca"] as const)(
+    "rejects missing drawdown before constructing %s adapter",
+    async (adapter) => {
+      const paperFactory = vi.spyOn(executionAdapters, "createPaperExecutionAdapter");
+      const venueFactory = vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter");
+      await expect(
+        buildFinanceLiveExecutionPayload(options({ adapter, drawdownPct: undefined })),
+      ).rejects.toThrow("missing drawdown is unknown, not zero");
+      expect(paperFactory).not.toHaveBeenCalled();
+      expect(venueFactory).not.toHaveBeenCalled();
+    },
+  );
+  it("delivers the same stop approved by mandate to the venue adapter", async () => {
+    const directory = await storeDirectory();
+    const execute = vi.fn(async () => ({
+      filledQuantity: 10,
+      fillPrice: 231.4,
+      filledAt: AS_OF,
+      venueRef: "synthetic:never-sent",
+      terminalOrderIdentity: { orderId: "synthetic-terminal", terminal: true as const },
+    }));
+    vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter").mockReturnValue({
+      id: "alpaca-venue",
+      venue: "fixture",
+      kind: "venue",
+      orderTypes: ["market"],
+      instruments: ["AAPL"],
+      credentialsAuthority: "external",
+      execute,
+    });
+    await buildFinanceLiveExecutionPayload(
+      options({ adapter: "alpaca", ledgerDirectory: directory, stopPrice: 225 }),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ stopPrice: 225 }),
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        adapterId: "alpaca-venue",
+        instrument: "AAPL",
+        quote: expect.objectContaining({ price: 231.4 }),
+      }),
+    );
+  });
+});
+
+it("does not treat CLI labels and attended flags as controller authorization", async () => {
+  const factory = vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter");
+  await expect(buildWithoutController(options({ adapter: "alpaca" }))).rejects.toThrow(
+    "execution_safety_context_required",
+  );
+  expect(factory).not.toHaveBeenCalled();
 });

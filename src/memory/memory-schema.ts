@@ -45,7 +45,32 @@ const MEMORY_INDEX_MIGRATIONS: readonly SqliteMigration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    description: "owner artifact registry",
+    sql: `
+      CREATE TABLE IF NOT EXISTS owner_artifacts (
+        id TEXT PRIMARY KEY,
+        workspace_root TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        cutoff TEXT,
+        record_json TEXT NOT NULL,
+        search_text TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_artifacts_scope
+        ON owner_artifacts(workspace_root, owner, observed_at);
+    `,
+  },
 ];
+
+export function ensureMemoryIndexCoreSchema(db: DatabaseSync): void {
+  applySqliteMigrations({
+    db,
+    ledgerTable: MEMORY_INDEX_MIGRATION_LEDGER,
+    migrations: MEMORY_INDEX_MIGRATIONS,
+  });
+}
 
 export function ensureMemoryIndexSchema(params: {
   db: DatabaseSync;
@@ -53,11 +78,7 @@ export function ensureMemoryIndexSchema(params: {
   ftsTable: string;
   ftsEnabled: boolean;
 }): { ftsAvailable: boolean; ftsError?: string } {
-  applySqliteMigrations({
-    db: params.db,
-    ledgerTable: MEMORY_INDEX_MIGRATION_LEDGER,
-    migrations: MEMORY_INDEX_MIGRATIONS,
-  });
+  ensureMemoryIndexCoreSchema(params.db);
 
   params.db.exec(`
     CREATE TABLE IF NOT EXISTS ${params.embeddingCacheTable} (

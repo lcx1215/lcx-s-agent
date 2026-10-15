@@ -1,4 +1,5 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { promisify } from "node:util";
 import JSON5 from "json5";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { resolveLcxIdentityMigrationPlan } from "../../src/config/paths.ts";
+import type { TrainingRepairPlanContext } from "./lcx-automation-repair-lock.js";
 import { buildLearningSedimentationBridge } from "./lcx-learning-sedimentation-bridge.ts";
 import {
   DEFAULT_GUARD_LOG_PATH,
@@ -21,6 +23,9 @@ type CliOptions = {
   workspaceDir?: string;
   json: boolean;
   processCheck: boolean;
+  acceptanceFeedbackReceipt?: string;
+  acceptanceFeedbackSha256?: string;
+  acceptanceFeedbackCurrentRunId?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -34,6 +39,7 @@ type EvalSnapshot = {
   total: number;
   passRate: number;
   promotionReady: boolean;
+  trainingSliceRef?: string;
   failedCaseIds: string[];
   parseErrorCaseIds: string[];
   parseRecoveredCaseIds: string[];
@@ -391,10 +397,309 @@ type TrainingDecision = {
   reason: string;
   codexRepairEligible: boolean;
   nextCommand?: string;
+  repairContext?: TrainingRepairPlanContext;
 };
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export type CommercialAcceptanceFeedbackReadback = {
+  boundary: "prior_commercial_acceptance_diagnostic_only_no_execution_authority";
+  status: "not_requested" | "not_observed" | "held" | "observed";
+  gaps: string[];
+  source?: {
+    path: string;
+    sha256: string;
+    bytes: number;
+    runId: string;
+    sourceObservedAt: string;
+    sourceCommit: string;
+    snapshotId: string;
+  };
+  failures?: {
+    id: string;
+    status: "failed" | "blocked";
+    severity: string;
+    reason: string;
+    nextAction: string;
+  }[];
+  omittedFailures?: number;
+};
+
+/** Display excerpts remain subordinate to the full original gate and artifact. */
+export function compactCommercialAcceptanceFailures(payload: JsonRecord) {
+  const gates = Array.isArray(payload.gates) ? payload.gates.filter(isRecord) : [];
+  const failures = gates.filter((gate) => gate.status === "failed" || gate.status === "blocked");
+  const short = (value: unknown, limit = 240) =>
+    typeof value === "string"
+      ? Array.from(value.slice(0, limit), (character) =>
+          character.charCodeAt(0) < 32 ? " " : character,
+        ).join("")
+      : "";
+  let textClipped = false;
+  return {
+    failures: failures.slice(0, 3).map((gate) => {
+      const evidence = isRecord(gate.evidence) ? gate.evidence : {};
+      const actionable = Array.isArray(evidence.actionableFailures)
+        ? evidence.actionableFailures
+            .filter((value): value is string => typeof value === "string")
+            .slice(0, 2)
+            .join("; ")
+        : "";
+      const failedChecks = Array.isArray(evidence.failedCheckIds)
+        ? evidence.failedCheckIds
+            .filter((value): value is string => typeof value === "string")
+            .slice(0, 3)
+            .join(",")
+        : "";
+      const failedCases = Array.isArray(evidence.failedCases)
+        ? evidence.failedCases
+            .filter(isRecord)
+            .slice(0, 2)
+            .map((value) => {
+              const caseId = short(value.caseId, 100);
+              const expected = short(value.expectedDecision, 50);
+              const actual = short(value.actualDecision, 50);
+              return [
+                caseId,
+                expected ? `expected=${expected}` : "",
+                actual ? `actual=${actual}` : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
+            })
+            .filter(Boolean)
+            .join("; ")
+        : "";
+      const reason = [
+        failedCases,
+        short(evidence.error),
+        short(evidence.reason),
+        actionable,
+        failedChecks,
+      ]
+        .filter(Boolean)
+        .join("; ");
+      textClipped ||= reason.length > 480 || evidence.textClipped === true;
+      return {
+        id: short(gate.id, 128),
+        status: gate.status as "failed" | "blocked",
+        severity: short(gate.severity, 16),
+        reason: short(reason, 480),
+        nextAction: short(gate.nextAction),
+        ...(typeof evidence.sourceFingerprint === "string" &&
+        /^[a-f0-9]{64}$/u.test(evidence.sourceFingerprint)
+          ? { sourceFingerprint: evidence.sourceFingerprint }
+          : {}),
+        ...(typeof evidence.collectionRunId === "string" && evidence.collectionRunId.length <= 128
+          ? { collectionRunId: evidence.collectionRunId }
+          : {}),
+      };
+    }),
+    omittedFailures: Math.max(0, failures.length - 3),
+    excerptOnly: true,
+    textClipped,
+  };
+}
+
+/** Read only a prior host snapshot. Its pin proves bytes observed, never trust or authority. */
+export async function readCommercialAcceptanceFeedback(options: {
+  receiptPath?: string;
+  expectedSha256?: string;
+  currentRunId?: string;
+  observedAt?: string;
+  captureHostPin?: boolean;
+}): Promise<CommercialAcceptanceFeedbackReadback> {
+  const base = {
+    boundary: "prior_commercial_acceptance_diagnostic_only_no_execution_authority" as const,
+  };
+  const held = (gap: string): CommercialAcceptanceFeedbackReadback => ({
+    ...base,
+    status: "held",
+    gaps: [gap],
+  });
+  if (!options.receiptPath && !options.expectedSha256) {
+    return { ...base, status: "not_requested", gaps: [] };
+  }
+  if (
+    !options.receiptPath ||
+    (!options.captureHostPin && !/^[a-f0-9]{64}$/u.test(options.expectedSha256 ?? ""))
+  ) {
+    return held("commercial_acceptance_feedback_pin_missing");
+  }
+  if (!options.currentRunId?.trim()) {
+    return held("commercial_acceptance_feedback_current_host_unavailable");
+  }
+  let bytes: Buffer;
+  try {
+    const file = await fs.open(options.receiptPath, "r");
+    try {
+      if ((await file.stat()).size > 2 * 1024 * 1024) {
+        return held("commercial_acceptance_feedback_exceeds_2mb");
+      }
+      const buffer = Buffer.alloc(2 * 1024 * 1024 + 1);
+      const read = await file.read(buffer, 0, buffer.length, 0);
+      if (read.bytesRead > 2 * 1024 * 1024) {
+        return held("commercial_acceptance_feedback_exceeds_2mb");
+      }
+      bytes = buffer.subarray(0, read.bytesRead);
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return {
+      ...base,
+      status: "held",
+      gaps: ["commercial_acceptance_feedback_receipt_unreadable"],
+    };
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (!options.captureHostPin && sha256 !== options.expectedSha256) {
+    return held("commercial_acceptance_feedback_sha256_mismatch");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return held("commercial_acceptance_feedback_json_invalid");
+  }
+  if (
+    !isRecord(value) ||
+    value.boundary !== "local_governance_autopilot_only" ||
+    !isRecord(value.runReceipt) ||
+    !isRecord(value.snapshot)
+  ) {
+    return held("commercial_acceptance_feedback_identity_invalid");
+  }
+  const receipt = value.runReceipt;
+  const snapshot = value.snapshot;
+  const observedAt = options.observedAt ?? new Date().toISOString();
+  const now = Date.parse(observedAt);
+  const at = typeof value.checkedAt === "string" ? Date.parse(value.checkedAt) : NaN;
+  if (
+    receipt.contractVersion !== "lcx_run_receipt_v3" ||
+    receipt.owner !== "lcx-governance-autopilot" ||
+    typeof value.runId !== "string" ||
+    !value.runId.trim() ||
+    value.runId !== receipt.runId ||
+    typeof receipt.status !== "string" ||
+    !["passed", "blocked", "failed"].includes(receipt.status) ||
+    receipt.phase !== "observe" ||
+    receipt.checkedAt !== value.checkedAt ||
+    !isRecord(receipt.snapshot) ||
+    ["snapshotId", "observedAt", "sourceCommit", "sourceBranch", "authorityOwner"].some(
+      (key) =>
+        receipt.snapshot && isRecord(receipt.snapshot) && receipt.snapshot[key] !== snapshot[key],
+    ) ||
+    snapshot.observedAt !== value.checkedAt ||
+    typeof snapshot.snapshotId !== "string" ||
+    !snapshot.snapshotId.trim() ||
+    typeof snapshot.sourceCommit !== "string" ||
+    !/^[a-f0-9]{40,64}$/u.test(snapshot.sourceCommit) ||
+    typeof snapshot.sourceBranch !== "string" ||
+    !snapshot.sourceBranch.trim() ||
+    !isRecord(receipt.boundary) ||
+    receipt.boundary.scope !== "local_governance_autopilot_only" ||
+    ["externalSender", "training", "providerConfig", "protectedMemory"].some(
+      (key) =>
+        !isRecord(receipt.boundary) ||
+        !["unknown", "not_touched_by_projection", "touched"].includes(
+          typeof receipt.boundary[key] === "string" ? receipt.boundary[key] : "",
+        ),
+    ) ||
+    snapshot.authorityOwner !== "lcx-governance-autopilot"
+  ) {
+    return held("commercial_acceptance_feedback_identity_invalid");
+  }
+  if (value.runId === options.currentRunId) {
+    return held("commercial_acceptance_feedback_same_run");
+  }
+  if (
+    !Number.isFinite(now) ||
+    !Number.isFinite(at) ||
+    at >= now ||
+    now - at > 24 * 60 * 60 * 1000
+  ) {
+    return held("commercial_acceptance_feedback_stale_or_future");
+  }
+  const owners = isRecord(value.owners) ? value.owners : {};
+  const commercial = isRecord(owners.commercialAcceptance)
+    ? owners.commercialAcceptance
+    : undefined;
+  const sourceAt =
+    typeof commercial?.sourceObservedAt === "string" ? commercial.sourceObservedAt : undefined;
+  const failures = commercial?.failureDiagnostics;
+  if (
+    !commercial ||
+    !sourceAt ||
+    !Number.isFinite(Date.parse(sourceAt)) ||
+    Date.parse(sourceAt) >= now ||
+    now - Date.parse(sourceAt) > 24 * 60 * 60 * 1000 ||
+    !isRecord(failures) ||
+    !Array.isArray(failures.failures) ||
+    failures.failures.length > 3 ||
+    !Number.isSafeInteger(failures.omittedFailures) ||
+    Number(failures.omittedFailures) < 0
+  ) {
+    return held("commercial_acceptance_feedback_failure_details_not_observed");
+  }
+  const expectedIds = [
+    ...(Array.isArray(commercial.failedGates) ? commercial.failedGates : []),
+    ...(Array.isArray(commercial.blockedGates) ? commercial.blockedGates : []),
+  ];
+  if (
+    expectedIds.some((id) => typeof id !== "string" || !id) ||
+    failures.failures.length !== Math.min(3, expectedIds.length) ||
+    expectedIds.length !== failures.failures.length + Number(failures.omittedFailures)
+  ) {
+    return held("commercial_acceptance_feedback_failure_details_incomplete");
+  }
+  const rows: NonNullable<CommercialAcceptanceFeedbackReadback["failures"]> = [];
+  for (const row of failures.failures) {
+    if (
+      !isRecord(row) ||
+      typeof row.id !== "string" ||
+      !row.id ||
+      row.id.length > 128 ||
+      (row.status !== "failed" && row.status !== "blocked") ||
+      typeof row.severity !== "string" ||
+      row.severity.length > 16 ||
+      typeof row.reason !== "string" ||
+      row.reason.length > 480 ||
+      typeof row.nextAction !== "string" ||
+      row.nextAction.length > 240
+    ) {
+      return held("commercial_acceptance_feedback_failure_details_invalid");
+    }
+    const ids = row.status === "failed" ? commercial.failedGates : commercial.blockedGates;
+    if (!Array.isArray(ids) || !ids.includes(row.id)) {
+      return held("commercial_acceptance_feedback_gate_identity_mismatch");
+    }
+    rows.push({
+      id: row.id,
+      status: row.status,
+      severity: row.severity,
+      reason: row.reason,
+      nextAction: row.nextAction,
+    });
+  }
+  return {
+    ...base,
+    status: "observed",
+    gaps: [],
+    source: {
+      path: options.receiptPath,
+      sha256,
+      bytes: bytes.length,
+      runId: value.runId,
+      sourceObservedAt: sourceAt,
+      sourceCommit: snapshot.sourceCommit,
+      snapshotId: snapshot.snapshotId,
+    },
+    failures: rows,
+    omittedFailures: Number(failures.omittedFailures),
+  };
 }
 
 /**
@@ -731,8 +1036,8 @@ async function readRegisteredEvalCaseIds(worktree: string): Promise<ReadonlySet<
     [...source.slice(start, end).matchAll(/^\s+id: "([^"]+)"/gmu)].map((match) => match[1]),
   );
 }
-const buildRepairLockCommand = (worktree: string): string =>
-  `node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)} --json`;
+const buildRepairLockCommand = (worktree: string, context?: TrainingRepairPlanContext): string =>
+  `node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)}${context ? ` --plan-context-json ${quoteShellArg(JSON.stringify(context))}` : ""} --json`;
 const buildMediumTrainingCommand = (logPath: string): string =>
   `node --import tsx scripts/operator/minimax-brain-training-guard.ts --duration-minutes 285 --batch-limit 20 --teacher-profile minimax-plus-brain --teacher-duration-minutes 12 --teacher-concurrency 6 --teacher-sidecar --teacher-sidecar-max-calls 900 --teacher-sidecar-batch-limit 36 --teacher-sidecar-concurrency 8 --train-every 2 --eval-every 1 --evolution-cooldown-minutes 10 --train-iters 40 --load-max 100 --train-load-max 12 --log ${quoteShellArg(logPath)}`;
 const extractAdapterFromCommand = (command: string): string | undefined => {
@@ -795,6 +1100,9 @@ function usage(): never {
       "  --no-process-check  skip ps-based active process detection",
       "  --worktree PATH  default script directory's repo root",
       "  --workspace PATH  default ~/.openclaw/workspace for local learning receipts",
+      "  --acceptance-feedback-receipt PATH  optional prior governance diagnostic snapshot",
+      "  --acceptance-feedback-sha256 SHA   independent host pin for that snapshot",
+      "  --acceptance-feedback-current-run-id ID  current host observation identity",
       "  --json            print JSON, default true",
     ].join("\n"),
   );
@@ -828,6 +1136,15 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--workspace" || arg === "--workspace-dir") {
       options.workspaceDir = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--acceptance-feedback-receipt") {
+      options.acceptanceFeedbackReceipt = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--acceptance-feedback-sha256") {
+      options.acceptanceFeedbackSha256 = readValue(args, index);
+      index += 1;
+    } else if (arg === "--acceptance-feedback-current-run-id") {
+      options.acceptanceFeedbackCurrentRunId = readValue(args, index);
       index += 1;
     } else if (arg === "--no-process-check") {
       options.processCheck = false;
@@ -973,6 +1290,7 @@ function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
           ? passed / total
           : 0,
     promotionReady: summaryRecord.promotionReady === true && event.event === "step_ok",
+    trainingSliceRef: stringField(recordValue(resultRecord.trainingSliceIdentity), "ref"),
     failedCaseIds,
     parseErrorCaseIds,
     parseRecoveredCaseIds,
@@ -1735,6 +2053,7 @@ function trainSliceSummary(event: JsonRecord | undefined): JsonRecord | undefine
     sourceDataDir: record.sourceDataDir,
     outDir: record.outDir,
     policy: record.policy,
+    trainingSliceIdentity: record.trainingSliceIdentity,
     counts: record.counts,
     sourceKinds: record.sourceKinds,
     writtenSourceKinds: record.writtenSourceKinds,
@@ -2238,10 +2557,35 @@ function buildDecisions(params: {
   moduleLearningReview?: ModuleLearningReviewSnapshot;
   learningSedimentationBridge?: LearningSedimentationBridgeSnapshot;
   datasetRuntimeFreshness?: DatasetRuntimeFreshnessSnapshot;
+  acceptanceFeedback?: CommercialAcceptanceFeedbackReadback;
   guardLogPath: string;
   worktree: string;
 }): TrainingDecision[] {
   const decisions: TrainingDecision[] = [];
+  const feedback = params.acceptanceFeedback;
+  if (feedback && feedback.status !== "not_requested" && feedback.status !== "not_observed") {
+    if (feedback.status === "held") {
+      decisions.push({
+        id: "commercial_acceptance_feedback_held",
+        lane: "commercial_acceptance",
+        severity: "info",
+        action: "review_prior_acceptance_source_before_using_feedback",
+        reason: feedback.gaps.join("; "),
+        codexRepairEligible: false,
+      });
+    } else {
+      for (const failure of feedback.failures ?? []) {
+        decisions.push({
+          id: `commercial_acceptance_feedback:${failure.id}`,
+          lane: "commercial_acceptance",
+          severity: "info",
+          action: "review_prior_commercial_acceptance_failure",
+          reason: `${failure.status} ${failure.id}: ${failure.reason}; nextAction=${failure.nextAction}`,
+          codexRepairEligible: false,
+        });
+      }
+    }
+  }
   const active = params.activeProcesses.length > 0;
   const activeGuardEvolutionCooldown = activeGuardEvolutionCooldownSnapshot(params.activeProcesses);
   if (!params.miniMaxTeacherRuntime.enabled) {
@@ -2614,7 +2958,25 @@ function buildDecisions(params: {
     });
   }
 
-  return decisions;
+  return decisions.map((decision) => {
+    if (
+      !decision.codexRepairEligible ||
+      !decision.nextCommand?.includes("lcx-automation-repair-lock.ts")
+    ) {
+      return decision;
+    }
+    const repairContext: TrainingRepairPlanContext = {
+      schemaVersion: "lcx_training_repair_context_v1",
+      decisionId: decision.id,
+      worktree: params.worktree,
+      codexRepairEligible: decision.codexRepairEligible,
+    };
+    return {
+      ...decision,
+      repairContext,
+      nextCommand: buildRepairLockCommand(params.worktree, repairContext),
+    };
+  });
 }
 
 function buildEvolutionAccelerationQueue(params: {
@@ -2975,6 +3337,11 @@ async function moduleLearningReviewSnapshot(
 }
 
 export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<JsonRecord> {
+  const acceptanceFeedback = await readCommercialAcceptanceFeedback({
+    receiptPath: options.acceptanceFeedbackReceipt,
+    expectedSha256: options.acceptanceFeedbackSha256,
+    currentRunId: options.acceptanceFeedbackCurrentRunId,
+  });
   const guardEvents = await readJsonl(options.guardLogPath);
   const quotaLogPath = options.quotaLogPath ?? (await latestQuotaLogPath());
   const quotaEvents = await readJsonl(quotaLogPath);
@@ -3093,6 +3460,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     activeHeavyEvalCounts: activeHeavyEval.counts,
   });
   const decisions = buildDecisions({
+    acceptanceFeedback,
     activeProcesses,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
     latestGuardStart,
@@ -3132,6 +3500,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     workspaceDir,
     guardLogPath: options.guardLogPath,
     quotaLogPath: quotaLogPath ?? "",
+    ...(acceptanceFeedback.status !== "not_requested" ? { acceptanceFeedback } : {}),
     activeProcesses,
     activeHeavyEvalCounts: activeHeavyEval.counts,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
@@ -3183,7 +3552,15 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     codexAutoRepair: {
       eligible: repairDecisions.length > 0,
       repairDecisionIds: repairDecisions.map((decision) => decision.id),
-      lockCommand: buildRepairLockCommand(worktree),
+      lockCommand: buildRepairLockCommand(
+        worktree,
+        repairDecisions[0]?.repairContext ?? {
+          schemaVersion: "lcx_training_repair_context_v1",
+          decisionId: "no_eligible_repair_decision",
+          worktree,
+          codexRepairEligible: false,
+        },
+      ),
       allowedScope:
         "local-only local-brain training/eval/teacher/doctor scripts, focused tests, and local-only receipts",
       forbiddenScope:

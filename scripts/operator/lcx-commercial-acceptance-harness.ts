@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { buildDirectedDailyResearchBrief } from "./lcx-directed-daily-research-brief.ts";
+import {
+  buildDirectedDailyResearchBrief,
+  inspectDirectedContentReview,
+} from "./lcx-directed-daily-research-brief.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
@@ -13,8 +17,12 @@ const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 type Severity = "P1" | "P2" | "P3" | "info";
 type GateStatus = "passed" | "failed" | "blocked" | "watch";
 
-type OwnerSnapshot = {
+export type OwnerSnapshot = {
   ok: boolean;
+  commandSucceeded?: boolean;
+  /** Host collector invocation identity; never a child business run/account identity. */
+  collectionRunId?: string;
+  sourceFingerprint?: string;
   owner: string;
   command: string;
   payload?: Record<string, unknown>;
@@ -54,6 +62,8 @@ type CliOptions = {
   withChannelProbe: boolean;
   skipDoctor: boolean;
 };
+
+export type AcceptanceCollectionOptions = Pick<CliOptions, "withChannelProbe" | "skipDoctor">;
 
 function usage(): never {
   throw new Error(
@@ -149,6 +159,77 @@ function severityValue(value: unknown, fallback: Severity): Severity {
 }
 
 function ownerUnavailableGate(owner: string, snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (booleanValue(snapshot?.payload?.ok) === false) {
+    const payload = snapshot!.payload!;
+    const short = (value: unknown, limit: number): string | undefined => {
+      const text = stringValue(value);
+      return text === undefined ? undefined : text.slice(0, limit);
+    };
+    const findings = stringArray(payload.actionableFailures);
+    const failedChecks = arrayValue(payload.checks).flatMap((value) => {
+      const check = recordValue(value);
+      return check?.ok === false && typeof check.id === "string" ? [check.id] : [];
+    });
+    const cases = arrayValue(payload.failedCases).flatMap((value) => {
+      const result = recordValue(value);
+      return result && typeof result.caseId === "string" ? [result] : [];
+    });
+    const identityFieldsOmitted: string[] = [];
+    const identity: Record<string, string> = {};
+    for (const key of ["collectionRunId", "sourceFingerprint"] as const) {
+      const value = snapshot![key];
+      if (value === undefined) {
+        continue;
+      }
+      if (typeof value !== "string") {
+        identityFieldsOmitted.push(key);
+        continue;
+      }
+      if (value.length > 256 || (key === "sourceFingerprint" && !/^[a-f0-9]{64}$/u.test(value))) {
+        identityFieldsOmitted.push(key);
+      } else {
+        identity[key] = value;
+      }
+    }
+    return {
+      // Preserve the historical gate ID and rejection; only its diagnosis changes.
+      id: `${owner}_owner_unavailable`,
+      status: "failed",
+      severity: "P1",
+      owner,
+      evidence: {
+        command: snapshot?.command ?? "not_collected",
+        error: "owner_reported_failure",
+        ...identity,
+        ...(identityFieldsOmitted.length ? { identityFieldsOmitted } : {}),
+        actionableFailures: findings.slice(0, 3).map((value) => value.slice(0, 192)),
+        failedCheckIds: failedChecks.slice(0, 3).map((value) => value.slice(0, 100)),
+        failedCases: cases.slice(0, 3).map((value) => ({
+          caseId: short(value.caseId, 100),
+          expectedDecision: short(value.expectedDecision, 50),
+          actualDecision: short(value.actualDecision, 50),
+        })),
+        omitted: {
+          actionableFailures: Math.max(0, findings.length - 3),
+          failedCheckIds: Math.max(0, failedChecks.length - 3),
+          failedCases: Math.max(0, cases.length - 3),
+        },
+        textClipped:
+          findings.slice(0, 3).some((value) => value.length > 192) ||
+          failedChecks.slice(0, 3).some((value) => value.length > 100) ||
+          cases
+            .slice(0, 3)
+            .some(
+              (value) =>
+                (stringValue(value.caseId)?.length ?? 0) > 100 ||
+                (stringValue(value.expectedDecision)?.length ?? 0) > 50 ||
+                (stringValue(value.actualDecision)?.length ?? 0) > 50,
+            ),
+        sourceFields: ["/actionableFailures", "/checks", "/failedCases"],
+      },
+      nextAction: "Repair the reported owner findings before trusting commercial acceptance.",
+    };
+  }
   return {
     id: `${owner}_owner_unavailable`,
     status: "failed",
@@ -164,6 +245,16 @@ function ownerUnavailableGate(owner: string, snapshot: OwnerSnapshot | undefined
 
 function ownerOk(snapshot: OwnerSnapshot | undefined): boolean {
   return Boolean(snapshot?.ok && snapshot.payload && booleanValue(snapshot.payload.ok) !== false);
+}
+
+function ownerOutputAvailable(snapshot: OwnerSnapshot | undefined): boolean {
+  if (!snapshot?.payload) {
+    return false;
+  }
+  if (snapshot.commandSucceeded ?? snapshot.ok) {
+    return true;
+  }
+  return recordValue(snapshot.payload.runReceipt)?.status === "blocked";
 }
 
 function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
@@ -316,7 +407,7 @@ function visibleAnswerQualityFuzzerGate(snapshot: OwnerSnapshot | undefined): Ac
 }
 
 function externalCandidateCaptureGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
-  if (!ownerOk(snapshot)) {
+  if (!ownerOutputAvailable(snapshot)) {
     return ownerUnavailableGate("lcx-external-channel-status", snapshot);
   }
   const capture = recordValue(
@@ -488,12 +579,29 @@ function directedDailyResearchBriefGate(snapshot: OwnerSnapshot | undefined): Ac
         "Fix the focused daily research owner before relying on it as the main product surface.",
     };
   }
+  const executionStatus = stringValue(snapshot!.payload!.executionStatus) ?? "not_observed";
+  const researchPacketStatus =
+    stringValue(snapshot!.payload!.researchPacketStatus) ?? "not_observed";
+  const missingForPacket = stringArray(snapshot!.payload!.missingForPacket);
+  const contentReview = inspectDirectedContentReview(snapshot!.payload);
+  // A bound review receipt observes the handoff; it does not complete missing tasks or learning.
   return {
-    id: "directed_daily_research_brief_clean",
-    status: "passed",
-    severity: "info",
+    id: "directed_daily_research_packet_pending",
+    status: "blocked",
+    severity: "P2",
     owner: "scripts/operator/lcx-directed-daily-research-brief.ts",
     evidence: {
+      staticContractValid: true,
+      executionStatus,
+      researchPacketStatus,
+      missingForPacket,
+      packetEvidenceStatus:
+        contentReview.status === "bound_receipt" ? "review_receipt_bound" : "not_observed",
+      contentReview,
+      missingForAcceptance: [
+        ...contentReview.gaps,
+        "complete_task_coverage_and_learning_acceptance_not_observed",
+      ],
       focus,
       universe,
       taskCount: tasks.length,
@@ -501,7 +609,7 @@ function directedDailyResearchBriefGate(snapshot: OwnerSnapshot | undefined): Ac
       learningContract,
     },
     nextAction:
-      "Use this as the dependable daily product surface while open Q&A remains a guarded follow-up path.",
+      "Connect the original brief to source-bound research and a reviewed daily packet before accepting this product for release.",
   };
 }
 
@@ -707,8 +815,33 @@ function externalChannelStatusGate(
 }
 
 function trainingGuardGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
-  if (!snapshot?.payload) {
-    return ownerUnavailableGate("local-brain-training-plan", snapshot);
+  const owner = "local-brain-training-plan";
+  const missingStateFields = [
+    ...(!Array.isArray(snapshot?.payload?.activeProcesses) ? ["activeProcesses"] : []),
+    ...(typeof snapshot?.payload?.overlappingHeavyEval !== "boolean"
+      ? ["overlappingHeavyEval"]
+      : []),
+  ];
+  if (
+    !snapshot?.payload ||
+    !ownerOk(snapshot) ||
+    snapshot.commandSucceeded === false ||
+    snapshot.owner !== owner ||
+    missingStateFields.length > 0
+  ) {
+    const unavailable = ownerUnavailableGate(owner, snapshot);
+    return {
+      ...unavailable,
+      evidence: {
+        ...unavailable.evidence,
+        observedOwner: snapshot?.owner ?? "not_collected",
+        commandSucceeded: snapshot?.commandSucceeded,
+        ownerIdentityMatches: snapshot?.owner === owner,
+        missingStateFields,
+        payloadFailedReason: snapshot?.payload?.failedReason,
+        payloadError: snapshot?.payload?.error,
+      },
+    };
   }
   const activeProcesses = arrayValue(snapshot.payload.activeProcesses);
   const overlappingHeavyEval = booleanValue(snapshot.payload.overlappingHeavyEval) === true;
@@ -769,6 +902,17 @@ function providerCouncilGate(snapshot: OwnerSnapshot | undefined): AcceptanceGat
       nextAction: "Run system doctor when provider council freshness matters.",
     };
   }
+  if (snapshot.owner !== "lcx-system-doctor" || snapshot.commandSucceeded === false) {
+    const unavailable = ownerUnavailableGate("lcx-system-doctor", snapshot);
+    return {
+      ...unavailable,
+      evidence: {
+        ...unavailable.evidence,
+        reportedOwner: snapshot.owner,
+        commandSucceeded: snapshot.commandSucceeded,
+      },
+    };
+  }
   const checks = arrayValue(snapshot.payload.checks).map(recordValue);
   const council = checks.find((check) => check?.name === "model-council-provider-evidence");
   if (!council) {
@@ -793,6 +937,17 @@ function providerCouncilGate(snapshot: OwnerSnapshot | undefined): AcceptanceGat
         summary: council.summary,
       },
       nextAction: "Report provider degradation honestly; do not claim all model APIs are stable.",
+    };
+  }
+  if (booleanValue(council.ok) !== true) {
+    return {
+      id: "provider_council_check_unconfirmed",
+      status: "watch",
+      severity: "P3",
+      owner: "scripts/operator/lcx-system-doctor.ts",
+      evidence: { reason: "provider_check_result_not_observed", summary: council.summary },
+      nextAction:
+        "Obtain the original explicit council check result before reporting provider health.",
     };
   }
   return {
@@ -828,10 +983,47 @@ function providerCouncilAccelerationGate(snapshot: OwnerSnapshot | undefined): A
   const runCompleted =
     status === "provider_council_acceleration_receipt_written" ||
     action === "provider_council_run_completed";
+  const requiredRoles = Array.isArray(snapshot.payload.requiredRoles)
+    ? stringArray(snapshot.payload.requiredRoles)
+    : ["kimi", "minimax", "deepseek"];
+  const readback = recordValue(snapshot.payload.councilRunEvidence);
+  const confirmedRoles = arrayValue(readback?.confirmedRoles).map(recordValue);
+  const readbackComplete =
+    readback?.status === "verified" &&
+    typeof readback.sourceSha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(readback.sourceSha256) &&
+    typeof readback.messageId === "string" &&
+    readback.messageId.trim().length > 0 &&
+    Array.isArray(readback.gaps) &&
+    readback.gaps.length === 0 &&
+    requiredRoles.length > 0 &&
+    requiredRoles.every((role) => confirmedRoles.some((confirmed) => confirmed?.role === role));
+  if (snapshot.payload.ok === false || (runCompleted && !readbackComplete)) {
+    return {
+      id: "provider_council_completion_readback_missing_or_failed",
+      status: "blocked",
+      severity: "P2",
+      owner: "scripts/operator/lcx-provider-council-acceleration.ts",
+      evidence: {
+        status,
+        action,
+        councilRunEvidence: readback,
+        providerRunError: snapshot.payload.providerRunError,
+        requiredRoles,
+        dailyUse,
+      },
+      nextAction:
+        "Read the same-run original council role artifact; keep missing or failed roles unconfirmed. Do not force a paid rerun.",
+    };
+  }
+  const historicalRoles = stringArray(recordValue(snapshot.payload.latestCouncil)?.successfulRoles);
+  const historicalComplete =
+    requiredRoles.length > 0 &&
+    missingSuccessfulRoles.length === 0 &&
+    requiredRoles.every((role) => historicalRoles.includes(role));
   if (
-    runCompleted ||
-    freshCompleteCouncil ||
-    (completeCouncilInWindow && missingSuccessfulRoles.length === 0)
+    readbackComplete ||
+    ((freshCompleteCouncil || completeCouncilInWindow) && historicalComplete)
   ) {
     return {
       id: "provider_council_three_role_evidence_present",
@@ -844,6 +1036,8 @@ function providerCouncilAccelerationGate(snapshot: OwnerSnapshot | undefined): A
         dailyUse,
         latestCouncil: snapshot.payload.latestCouncil,
         outputsFeed: snapshot.payload.outputsFeed,
+        councilRunEvidence: readback,
+        requiredRoles,
       },
       nextAction:
         "Keep Kimi, MiniMax, and DeepSeek as separately attributable evidence inputs; never treat one model as final authority.",
@@ -979,7 +1173,55 @@ function financeDataGatewayGate(
   };
 }
 
+function snapshotFingerprint(snapshot: OwnerSnapshot): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(snapshot.payload ?? { error: snapshot.error ?? "missing_owner_payload" }),
+    )
+    .digest("hex");
+}
+
+function bindActualCollectedSnapshot<T extends OwnerSnapshot>(
+  snapshot: T,
+  collectionRunId: string,
+): T & { collectionRunId: string; sourceFingerprint: string } {
+  return { ...snapshot, collectionRunId, sourceFingerprint: snapshotFingerprint(snapshot) };
+}
+
+function consumeOwnerIdentities(inputs: HarnessInputs) {
+  const owners = Object.entries(inputs)
+    .filter(([, snapshot]) => snapshot !== undefined)
+    .map(([inputField, snapshot]) => {
+      const computedSourceFingerprint = snapshotFingerprint(snapshot);
+      return {
+        inputField,
+        owner: snapshot.owner,
+        collectionRunId: snapshot.collectionRunId,
+        sourceFingerprint: snapshot.sourceFingerprint,
+        computedSourceFingerprint,
+        sourceFingerprintMatches: snapshot.sourceFingerprint
+          ? snapshot.sourceFingerprint === computedSourceFingerprint
+          : undefined,
+      };
+    });
+  const ids = [
+    ...new Set(owners.map((owner) => owner.collectionRunId).filter((id) => id !== undefined)),
+  ];
+  const conflict =
+    ids.length > 1 || owners.some((owner) => owner.sourceFingerprintMatches === false);
+  const complete =
+    owners.length > 0 && owners.every((owner) => owner.collectionRunId && owner.sourceFingerprint);
+  return {
+    boundary:
+      "host_collection_and_consumed_content_identity_not_child_business_or_account_identity",
+    status: conflict ? "conflict" : complete ? "consistent" : "not_observed",
+    collectionRunId: ids.length === 1 ? ids[0] : undefined,
+    owners,
+  };
+}
+
 export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
+  const ownerConsumption = consumeOwnerIdentities(inputs);
   const gates = [
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     shortIntentFuzzerGate(inputs.shortIntentFuzzer),
@@ -995,6 +1237,17 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     moduleLearningClosedLoopGate(inputs.moduleLearningAbsorptionGate),
     financeDataGatewayGate(inputs.financeDataGatewaySmoke, inputs.financeDataGatewayConflictSmoke),
   ];
+  if (ownerConsumption.status === "conflict") {
+    gates.push({
+      id: "acceptance_owner_collection_identity_conflict",
+      status: "failed",
+      severity: "P1",
+      owner: "scripts/operator/lcx-commercial-acceptance-harness.ts",
+      evidence: { ownerConsumption },
+      nextAction:
+        "Use the original matching collector invocation and unchanged owner payloads; do not relabel cached snapshots.",
+    });
+  }
   const failed = gates.filter((gate) => gate.status === "failed");
   const blocked = gates.filter((gate) => gate.status === "blocked");
   const watch = gates.filter((gate) => gate.status === "watch");
@@ -1003,6 +1256,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     ok: failed.length === 0 && blocked.length === 0,
     readyForCommercialRelease: failed.length === 0 && blocked.length === 0,
     boundary: "local_commercial_acceptance_harness_only",
+    ownerConsumption,
     summary: {
       passed: passed.length,
       failed: failed.length,
@@ -1138,7 +1392,13 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
       timeout: 120_000,
     });
     const payload = parseJsonObjectFromOutput(result.stdout);
-    return { ok: booleanValue(payload.ok) !== false, owner, command, payload };
+    return {
+      ok: booleanValue(payload.ok) !== false,
+      commandSucceeded: true,
+      owner,
+      command,
+      payload,
+    };
   } catch (error) {
     const details = error as { stdout?: string; stderr?: string; message?: string };
     if (details.stdout) {
@@ -1146,6 +1406,7 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
         const payload = parseJsonObjectFromOutput(details.stdout);
         return {
           ok: false,
+          commandSucceeded: false,
           owner,
           command,
           payload,
@@ -1157,6 +1418,7 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
     }
     return {
       ok: false,
+      commandSucceeded: false,
       owner,
       command,
       error: [details.message, details.stderr?.slice(-500)].filter(Boolean).join("\n"),
@@ -1164,35 +1426,85 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
   }
 }
 
-async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs> {
+async function collectSharedOwnerSnapshots(
+  options: AcceptanceCollectionOptions,
+  runOwner: typeof runJsonOwner = runJsonOwner,
+): Promise<Partial<HarnessInputs>> {
   const [
-    commercialAnswerPipeline,
-    shortIntentFuzzer,
-    visibleAnswerQualityFuzzer,
-    directedDailyResearchBrief,
     problemRadar,
     flowGraph,
     mindModel,
     externalChannelStatus,
     externalChannelBindingStatus,
     trainingPlan,
-    systemDoctor,
     providerCouncilAcceleration,
     moduleLearningAbsorptionGate,
+  ] = await Promise.all([
+    runOwner("lcx-problem-cluster-radar", "scripts/operator/lcx-problem-cluster-radar.ts", [
+      "--json",
+    ]),
+    runOwner("lcx-flow-graph", "scripts/operator/lcx-flow-graph.ts", ["--json"]),
+    runOwner("lcx-mind-model", "scripts/operator/lcx-mind-model.ts", ["--json"]),
+    runOwner(
+      "lcx-external-channel-status",
+      "scripts/operator/lcx-external-channel-status.ts",
+      options.withChannelProbe ? ["--json", "--with-probe"] : ["--json"],
+    ),
+    runOwner("lcx-external-channel-binding", "scripts/operator/lcx-external-channel-binding.ts", [
+      "--json",
+    ]),
+    runOwner("local-brain-training-plan", "scripts/operator/local-brain-training-plan.ts", [
+      "--json",
+    ]),
+    runOwner(
+      "lcx-provider-council-acceleration",
+      "scripts/operator/lcx-provider-council-acceleration.ts",
+      ["--json", "--profile", "aggressive"],
+    ),
+    runOwner(
+      "lcx-module-learning-absorption-gate",
+      "scripts/operator/lcx-module-learning-absorption-gate.ts",
+      ["--json"],
+    ),
+  ]);
+  return {
+    problemRadar,
+    flowGraph,
+    mindModel,
+    externalChannelStatus,
+    externalChannelBindingStatus,
+    trainingPlan,
+    providerCouncilAcceleration,
+    moduleLearningAbsorptionGate,
+  };
+}
+
+/** Collect only acceptance probes that are not already owned by governance autopilot. */
+export async function collectCommercialAcceptanceExclusiveSnapshots(
+  options: AcceptanceCollectionOptions,
+  runOwner: typeof runJsonOwner = runJsonOwner,
+  collectionRunId?: string,
+): Promise<Partial<HarnessInputs>> {
+  const [
+    commercialAnswerPipeline,
+    shortIntentFuzzer,
+    visibleAnswerQualityFuzzer,
+    directedDailyResearchBrief,
+    systemDoctor,
     financeDataGatewaySmoke,
     financeDataGatewayConflictSmoke,
   ] = await Promise.all([
-    runJsonOwner(
+    runOwner(
       "lcx-commercial-answer-pipeline",
       "scripts/operator/lcx-commercial-answer-pipeline.ts",
       ["--json"],
     ),
-    runJsonOwner(
+    runOwner(
       "lcx-external-short-intent-fuzzer",
       "scripts/operator/lcx-external-short-intent-fuzzer.ts",
       ["--json"],
     ),
-    runJsonOwner(
+    runOwner(
       "lcx-visible-answer-quality-fuzzer",
       "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
       ["--json"],
@@ -1203,24 +1515,6 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
       command: "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
       payload: buildDirectedDailyResearchBrief() as unknown as Record<string, unknown>,
     }),
-    runJsonOwner("lcx-problem-cluster-radar", "scripts/operator/lcx-problem-cluster-radar.ts", [
-      "--json",
-    ]),
-    runJsonOwner("lcx-flow-graph", "scripts/operator/lcx-flow-graph.ts", ["--json"]),
-    runJsonOwner("lcx-mind-model", "scripts/operator/lcx-mind-model.ts", ["--json"]),
-    runJsonOwner(
-      "lcx-external-channel-status",
-      "scripts/operator/lcx-external-channel-status.ts",
-      options.withChannelProbe ? ["--json", "--with-probe"] : ["--json"],
-    ),
-    runJsonOwner(
-      "lcx-external-channel-binding",
-      "scripts/operator/lcx-external-channel-binding.ts",
-      ["--json"],
-    ),
-    runJsonOwner("local-brain-training-plan", "scripts/operator/local-brain-training-plan.ts", [
-      "--json",
-    ]),
     options.skipDoctor
       ? Promise.resolve({
           ok: false,
@@ -1228,23 +1522,11 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
           command: "skipped",
           error: "doctor skipped by --skip-doctor",
         })
-      : runJsonOwner("lcx-system-doctor", "scripts/operator/lcx-system-doctor.ts", ["--json"]),
-    runJsonOwner(
-      "lcx-provider-council-acceleration",
-      "scripts/operator/lcx-provider-council-acceleration.ts",
-      ["--json", "--profile", "aggressive"],
-    ),
-    runJsonOwner(
-      "lcx-module-learning-absorption-gate",
-      "scripts/operator/lcx-module-learning-absorption-gate.ts",
-      ["--json"],
-    ),
-    runJsonOwner(
-      "finance-data-gateway-smoke-clean",
-      "scripts/operator/finance-data-gateway-smoke.ts",
-      ["--json"],
-    ),
-    runJsonOwner(
+      : runOwner("lcx-system-doctor", "scripts/operator/lcx-system-doctor.ts", ["--json"]),
+    runOwner("finance-data-gateway-smoke-clean", "scripts/operator/finance-data-gateway-smoke.ts", [
+      "--json",
+    ]),
+    runOwner(
       "finance-data-gateway-smoke-conflict",
       "scripts/operator/finance-data-gateway-smoke.ts",
       ["--conflict", "--json"],
@@ -1254,20 +1536,40 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     commercialAnswerPipeline,
     shortIntentFuzzer,
     visibleAnswerQualityFuzzer,
-    directedDailyResearchBrief,
-    problemRadar,
-    flowGraph,
-    mindModel,
-    externalChannelStatus,
-    externalChannelBindingStatus,
-    externalCandidateCapture: externalChannelStatus,
-    trainingPlan,
-    systemDoctor,
-    providerCouncilAcceleration,
-    moduleLearningAbsorptionGate,
+    directedDailyResearchBrief: collectionRunId
+      ? bindActualCollectedSnapshot(directedDailyResearchBrief, collectionRunId)
+      : directedDailyResearchBrief,
+    systemDoctor:
+      options.skipDoctor && collectionRunId
+        ? bindActualCollectedSnapshot({ ...systemDoctor, commandSucceeded: false }, collectionRunId)
+        : systemDoctor,
     financeDataGatewaySmoke,
     financeDataGatewayConflictSmoke,
   };
+}
+
+export function combineCommercialAcceptanceSnapshots(
+  shared: Partial<HarnessInputs>,
+  exclusive: Partial<HarnessInputs>,
+): HarnessInputs {
+  const snapshots = { ...shared, ...exclusive };
+  return {
+    ...snapshots,
+    externalCandidateCapture: snapshots.externalCandidateCapture ?? snapshots.externalChannelStatus,
+  };
+}
+
+export async function collectOwnerSnapshots(
+  options: AcceptanceCollectionOptions,
+): Promise<HarnessInputs> {
+  const collectionRunId = randomUUID();
+  const runOwner: typeof runJsonOwner = async (owner, script, args) =>
+    bindActualCollectedSnapshot(await runJsonOwner(owner, script, args), collectionRunId);
+  const [shared, exclusive] = await Promise.all([
+    collectSharedOwnerSnapshots(options, runOwner),
+    collectCommercialAcceptanceExclusiveSnapshots(options, runOwner, collectionRunId),
+  ]);
+  return combineCommercialAcceptanceSnapshots(shared, exclusive);
 }
 
 async function main() {

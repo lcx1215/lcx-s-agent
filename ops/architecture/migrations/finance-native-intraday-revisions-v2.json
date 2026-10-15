@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "finance_automatic_paper_trading_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Keep same-source cumulative intraday revisions append-only and point-in-time instead of making sparse native history permanently uncollectable.",
+  "changes": {
+    "canonicalOntologyUnchanged": true,
+    "newBusinessStateStore": false,
+    "receiptCompatibility": "Optional body.revisions binds prior record ref and prior normalized bar hash; old records remain readable.",
+    "owners": ["src/agents/finance-intraday-ledger.ts", "src/agents/finance-alpaca-intraday.ts"],
+    "acceptance": "Only explicitly declared Alpaca native same-feed cumulative revisions with later observation, unchanged open, expanded-or-equal range and increasing volume. Unsupported changes remain conflicts.",
+    "consumer": "Original ledger read selects one cutoff-visible version; previous decisions and raw records stay immutable."
+  },
+  "verification": [
+    "Native HWM revision and replay",
+    "Historical cutoff and downstream latest bar",
+    "Invalid source/feed/time/volume/range remain blocked",
+    "Revision reference corruption remains blocked"
+  ],
+  "rollback": "Revert consumer handling only after stopping affected intake; preserve every original and revision row and their hashes. Do not overwrite or delete source history."
+}

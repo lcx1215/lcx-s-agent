@@ -1,3 +1,4 @@
+import { createAlpacaExecutionAdapter } from "../../src/agents/finance-alpaca-execution-adapter.js";
 /**
  * Owner entry for `finance_live_execution_waterflow`.
  *
@@ -6,14 +7,14 @@
  *  -> order_placement -> execution_receipt`, plus the position projection that accumulates
  * across runs.
  *
- * It deliberately exercises the paper adapter only. No credential is read, no network call
- * is made, and no venue is contacted, so this entry proves the *seam* and its refusals, not
- * a real order path. A venue adapter replaces `createPaperExecutionAdapter` at the same
- * call site without changing this file's structure.
+ * The default is the paper adapter, which reads no credentials and makes no network call. An
+ * explicit `--adapter alpaca` selects the declared Alpaca venue adapter at the same call site;
+ * that path remains separately gated by its credential and venue authorities.
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-live-execution.ts --json \
  *     --instrument AAPL --quantity 10 --reference-price 231.4 \
+ *     --asset-class us_equity --risk-pct 0.5 --drawdown-pct 0 --stop-price 225 --has-structure \
  *     --as-of 2026-09-17T21:00:00Z --run-authorization run-2026-09-18-001 \
  *     --mark AAPL=233.1@2026-09-18T02:00:00Z
  *
@@ -30,8 +31,6 @@
  * `resolveFinancePositionLedgerLocation` the agent's read tool uses (`--ledger-dir`, else
  * `LCX_FINANCE_STATE_DIR`, else the workspace default), and the payload always reports which.
  */
-
-import { createAlpacaExecutionAdapter } from "../../src/agents/finance-alpaca-execution-adapter.js";
 import {
   createPaperExecutionAdapter,
   DEFAULT_FINANCE_RISK_BUDGET,
@@ -42,7 +41,10 @@ import {
   type FinanceRiskBudget,
   missingUnattendedCaps,
   placeFinanceOrder,
+  observeFinanceExecution,
+  type FinanceExecutionObserver,
 } from "../../src/agents/finance-execution-adapter.ts";
+import type { FinanceExecutionSafetyContextFactory } from "../../src/agents/finance-execution-safety.js";
 import { evaluateFinanceMandate } from "../../src/agents/finance-mandate.js";
 import {
   appendFinanceExecutionReceipt,
@@ -89,6 +91,8 @@ export type Options = {
   hasStructure?: boolean;
   /** Set when this order adds to an existing losing position. */
   averagingDown?: boolean;
+  /** Set only when the owner has pre-budgeted the scale-in. */
+  plannedScaleIn?: boolean;
   /** Set when size was raised to win back a loss. */
   revengeSizing?: boolean;
   /** Explicit ledger directory. When omitted, the shared resolver decides. */
@@ -228,6 +232,8 @@ export function parseArgs(args: readonly string[]): Options {
       options.hasStructure = true;
     } else if (arg === "--averaging-down") {
       options.averagingDown = true;
+    } else if (arg === "--planned-scale-in") {
+      options.plannedScaleIn = true;
     } else if (arg === "--revenge-sizing") {
       options.revengeSizing = true;
     } else if (arg === "--ledger-dir") {
@@ -258,12 +264,16 @@ export function parseArgs(args: readonly string[]): Options {
           "[--limit-price N] [--mark SYM=PRICE@ISO] [--max-order-notional N] " +
           "[--max-instrument-notional N] [--max-orders-per-run N] " +
           "[--automation attended|unattended] " +
+          "[--averaging-down --planned-scale-in] " +
+          "[--adapter paper|alpaca] [--alpaca-mode paper|live] " +
           "[--write-ledger] [--ledger-dir PATH]\n" +
+          "--asset-class and --drawdown-pct are required; missing drawdown is unknown, not zero. " +
           "Omitting --allow-instrument leaves the run open by instrument; repeating it narrows " +
           "the run to the named instruments. Each --max-* cap is optional and enforced only when " +
           "declared, EXCEPT under --automation unattended, where all three are required: a run " +
-          "with nobody watching that declines to name a ceiling has none. Without --write-ledger " +
-          "nothing is persisted.",
+          "with nobody watching that declines to name a ceiling has none. Placement also requires " +
+          "an internal controller with verified facts; CLI flags alone cannot authorize it. " +
+          "Execution safety claims persist even without --write-ledger.",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -272,7 +282,24 @@ export function parseArgs(args: readonly string[]): Options {
   return options;
 }
 
-export async function buildFinanceLiveExecutionPayload(options: Options) {
+export async function buildFinanceLiveExecutionPayload(
+  options: Options,
+  control: {
+    createSafetyContext?: FinanceExecutionSafetyContextFactory;
+    observe?: FinanceExecutionObserver;
+  } = {},
+) {
+  if (!options.assetClass?.trim()) {
+    throw new Error("--asset-class is required; unknown strategy class cannot bypass the mandate");
+  }
+  if (options.drawdownPct === undefined) {
+    throw new Error("--drawdown-pct is required; missing drawdown is unknown, not zero");
+  }
+  if (!control.createSafetyContext) {
+    throw new Error(
+      "execution_safety_context_required: trusted controller facts unavailable; CLI flags cannot authorize execution",
+    );
+  }
   // The allowlist narrows only when the caller names instruments. With none named the run is
   // open by instrument, and both checks in the adapter seam stay in force — so an explicit
   // empty list, or a list naming other instruments, still refuses.
@@ -304,6 +331,8 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
         })
       : createPaperExecutionAdapter({ instruments: allowedInstruments }),
   ]);
+  const executionAdapterId = options.adapter === "alpaca" ? "alpaca-venue" : "paper";
+  const paperAdapterOnly = executionAdapterId === "paper";
 
   // Which ceilings an unattended run still owes, spelled out as cap names rather than refusal
   // codes. The adapter refuses either way; this is so the operator reads "you owe
@@ -311,9 +340,8 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
   const unattendedMissingCaps = missingUnattendedCaps(budget);
 
   // The mandate runs before the order exists: a rule that only reports
-  // afterwards cannot prevent anything. It is skipped unless an asset class is
-  // declared, because a guess at the class would launder a guess into an
-  // enforced decision. Everything the mandate needs is passed explicitly -
+  // afterwards cannot prevent anything. An asset class must be declared, because
+  // guessing a class would launder a guess into an enforced decision. Everything the mandate needs is passed explicitly -
   // nothing is defaulted to "good enough" so the order can proceed.
   if (options.assetClass !== undefined) {
     if (options.riskPct === undefined) {
@@ -322,12 +350,13 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     const mandate = evaluateFinanceMandate({
       strategy: { assetClass: options.assetClass },
       riskFractionOfEquity: options.riskPct / 100,
-      drawdownFraction: (options.drawdownPct ?? 0) / 100,
+      drawdownFraction: options.drawdownPct / 100,
       ...(options.stopPrice !== undefined ? { stopLossDefined: true } : {}),
       ...(options.hasStructure !== undefined
         ? { hasSignificantAutocorrelation: options.hasStructure }
         : {}),
       ...(options.averagingDown !== undefined ? { averagingDown: options.averagingDown } : {}),
+      ...(options.plannedScaleIn !== undefined ? { plannedScaleIn: options.plannedScaleIn } : {}),
       ...(options.revengeSizing !== undefined ? { revengeSizing: options.revengeSizing } : {}),
     });
     if (mandate.verdict !== "pass") {
@@ -337,26 +366,38 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     }
   }
 
-  const placement = await placeFinanceOrder({
-    mode: "live_execution",
-    adapters,
-    executionAdapterId: "paper",
-    budget,
-    committedInstrumentNotional: 0,
-    ordersPlacedThisRun: 0,
-    intent: {
-      intentId: "owner-entry-intent-1",
-      instrument: options.instrument,
-      side: options.side,
-      orderType: options.orderType,
-      quantity: options.quantity,
-      ...(options.limitPrice === undefined ? {} : { limitPrice: options.limitPrice }),
-      referencePrice: options.referencePrice ?? Number.NaN,
-      referencePriceAt: options.asOf,
-      runAuthorizationId: options.runAuthorization,
-      rationale: options.rationale,
+  const intent: Parameters<typeof placeFinanceOrder>[0]["intent"] = {
+    intentId: "owner-entry-intent-1",
+    instrument: options.instrument,
+    side: options.side,
+    orderType: options.orderType,
+    quantity: options.quantity,
+    ...(options.limitPrice === undefined ? {} : { limitPrice: options.limitPrice }),
+    ...(options.stopPrice === undefined ? {} : { stopPrice: options.stopPrice }),
+    referencePrice: options.referencePrice ?? Number.NaN,
+    referencePriceAt: options.asOf,
+    runAuthorizationId: options.runAuthorization,
+    rationale: options.rationale,
+  };
+
+  const placement = await placeFinanceOrder(
+    {
+      mode: "live_execution",
+      adapters,
+      executionAdapterId,
+      budget,
+      committedInstrumentNotional: 0,
+      ordersPlacedThisRun: 0,
+      intent,
+      safetyContext: control.createSafetyContext?.({
+        intent,
+        budget,
+        adapterId: executionAdapterId,
+        venue: adapters[0].venue,
+      }),
     },
-  });
+    control.observe,
+  );
 
   const receipts: readonly FinanceExecutionReceipt[] =
     placement.receipt === undefined ? [] : [placement.receipt];
@@ -380,6 +421,7 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     // no trace in the book, and a mark can always be appended on its own by the ledger entry.
     durableReason = "order_refused_so_nothing_was_recorded";
   } else {
+    observeFinanceExecution(control.observe, { node: "position_ledger", input: placement.receipt });
     const receiptAppend = await appendFinanceExecutionReceipt(
       location.directory,
       placement.receipt,
@@ -403,10 +445,16 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
   }
 
   const after = wrote ? await readFinancePositionLedger(location.directory) : null;
+  if (after) {
+    observeFinanceExecution(control.observe, { node: "position_ledger", output: after });
+  }
   const recordCount = after?.recordCount ?? before.recordCount;
+  const venueOrderPlaced = !paperAdapterOnly && placement.status === "placed";
 
   return {
-    boundary: "paper_execution_adapter_only_no_credentials_no_venue",
+    boundary: paperAdapterOnly
+      ? "paper_execution_adapter_only_no_credentials_no_venue"
+      : "alpaca_venue_adapter_external_credentials_and_network_authority",
     waterflow: "finance_live_execution_waterflow",
     nodes: {
       execution_intent: {
@@ -420,7 +468,7 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
         present: options.runAuthorization.trim().length > 0,
       },
       declared_execution_adapter: {
-        adapterId: "paper",
+        adapterId: executionAdapterId,
         // What the adapter actually declares, not the raw flag: with no --allow-instrument the
         // adapter declares the any-instrument token, and reporting the empty flag list here
         // would contradict the placement that just succeeded.
@@ -479,17 +527,20 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
       ledger: after?.ledger ?? null,
     },
     claims: {
-      paperAdapterOnly: true,
-      credentialsRead: false,
-      networkTouched: false,
-      venueOrderPlaced: false,
-      realOrderPathImplemented: false,
+      paperAdapterOnly,
+      credentialsRead: venueOrderPlaced,
+      networkTouched: venueOrderPlaced,
+      venueOrderPlaced,
+      realOrderPathImplemented: !paperAdapterOnly,
       unrealizedPnlAvailable: ledger.unrealizedPnl !== null,
       databaseWritten: wrote,
     },
-    liveTouched: false,
-    liveTouchedReason:
-      "only the paper adapter ran; no venue, credential, account or network path is used",
+    liveTouched: venueOrderPlaced,
+    liveTouchedReason: paperAdapterOnly
+      ? "only the paper adapter ran; no venue, credential, account or network path is used"
+      : venueOrderPlaced
+        ? "the declared Alpaca venue adapter owned credential and network access for this run"
+        : "the Alpaca adapter was selected, but the order was refused before venue execution",
     providerConfigTouched: false,
     protectedMemoryTouched: false,
   };

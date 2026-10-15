@@ -15,6 +15,7 @@ import {
   type FinanceDataProviderRole,
   type FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
+import { createDeribitPublicCollectionAdapters } from "./finance-deribit-collection.js";
 import {
   createBinancePublicEodHistoryCollectionAdapter,
   createFredPublicIndexHistoryCollectionAdapter,
@@ -30,6 +31,7 @@ import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 import { assessFinanceNewsEntity } from "./finance-news-entity.js";
 import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
+import { createSecAnnualOperatingStatementsAdapter } from "./finance-us-equity-source-adapters.js";
 
 export {
   createBinancePublicEodHistoryCollectionAdapter,
@@ -48,6 +50,8 @@ import { createRegisteredCapabilityAdapters } from "./finance-registered-capabil
 const SEC_USER_AGENT = "LCX Agent research-only contact=local";
 
 export const FINANCE_MARKET_COLLECTION_SCHEMA_VERSION = "lcx_finance_market_collection_v1" as const;
+export const FINANCE_MARKET_COLLECTION_MAX_RECORDS = 260;
+export const FINANCE_EOD_HISTORY_MAX_RECORDS = 280;
 
 export const FINANCE_MARKET_COLLECTION_KINDS = [
   "news",
@@ -223,8 +227,12 @@ function assertIsoDate(value: string | undefined, label: string): string | undef
 
 function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarketCollectionRequest {
   const limit = request.limit ?? 20;
-  if (!Number.isInteger(limit) || limit <= 0 || limit > 250) {
-    throw new Error("limit must be an integer between 1 and 250");
+  const maxRecords =
+    request.collection === "eod_history"
+      ? FINANCE_EOD_HISTORY_MAX_RECORDS
+      : FINANCE_MARKET_COLLECTION_MAX_RECORDS;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > maxRecords) {
+    throw new Error(`limit must be an integer between 1 and ${maxRecords}`);
   }
   return {
     instrument: requiredText(request.instrument, "instrument"),
@@ -237,6 +245,33 @@ function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarke
     toDate: assertIsoDate(request.toDate, "toDate"),
     limit,
   };
+}
+
+function historicalMacroVintageVerified(
+  record: FinanceMarketCollectionItem,
+  request: FinanceMarketCollectionRequest,
+): boolean {
+  if (request.collection !== "macro_series" || request.asOfMode === "live_now") {
+    return true;
+  }
+  // Older collectors stamped observedAt from the requested asOf. That field alone
+  // cannot authenticate an archived capture, including when reusing cached receipts.
+  if (record.providerName !== "fred-macro-series") {
+    return false;
+  }
+  const vintageDay = new Date(Date.parse(request.asOf) - 86_400_000).toISOString().slice(0, 10);
+  const start = record.data.realtime_start;
+  const end = record.data.realtime_end;
+  return (
+    typeof start === "string" &&
+    typeof end === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/u.test(start) &&
+    /^\d{4}-\d{2}-\d{2}$/u.test(end) &&
+    Number.isFinite(Date.parse(start)) &&
+    Number.isFinite(Date.parse(end)) &&
+    start <= vintageDay &&
+    end >= vintageDay
+  );
 }
 
 function collectionRecordInRequestWindow(
@@ -430,7 +465,7 @@ function buildItem(
     providerRole: params.providerRole,
     sourceFamily: params.sourceFamily,
     sourceTimestamp: params.sourceTimestamp,
-    observedAt: request.asOf,
+    observedAt: new Date().toISOString(),
     delayStatus: params.delayStatus,
     sourceUrlOrArtifact: params.sourceUrlOrArtifact,
     data: params.data,
@@ -690,6 +725,13 @@ export function createBlsMacroSeriesCollectionAdapter(
     providerName: "bls-public-macro-series",
     providerRole: "official_or_issuer_reference",
     priority: 10,
+    // The generic macro heartbeat uses FRED's GDP ID; BLS needs its own native series.
+    sampleRequest: {
+      instrument: "CPI",
+      assetClass: "macro",
+      collection: "macro_series",
+      seriesId: "CUUR0000SA0",
+    },
     supports: (request) =>
       isMacroSeries(request) &&
       Boolean(request.seriesId ?? request.instrument) &&
@@ -969,18 +1011,45 @@ export function createFredMacroSeriesCollectionAdapter(options: {
   fetchImpl?: FetchImpl;
 }): FinanceMarketCollectionAdapter {
   const apiKey = requiredText(options.apiKey, "FRED apiKey");
+  const foreignSeries = new Set([
+    "debt_to_penny",
+    "avg_interest_rates",
+    "CUUR0000SA0",
+    "CUSR0000SA0",
+  ]);
   return {
     id: "fred_macro_series",
     providerName: "fred-macro-series",
     providerRole: "official_or_issuer_reference",
     priority: 30,
     supports: (request) =>
-      isMacroSeries(request) && Boolean(request.seriesId ?? request.instrument),
+      isMacroSeries(request) &&
+      Boolean(request.seriesId ?? request.instrument) &&
+      !foreignSeries.has(request.seriesId ?? request.instrument),
     collect: async (request) => {
       const seriesId = requiredText(request.seriesId ?? request.instrument, "FRED seriesId");
+      if (foreignSeries.has(seriesId)) {
+        throw new FinanceMarketCollectionAdapterError(
+          "source-native series requires its declared provider; no implicit FRED substitution",
+        );
+      }
       const baseUrl = "https://api.stlouisfed.org/fred/series/observations";
+      // FRED defaults to today's revised vintage. A historical replay must request what
+      // was available then. Use the prior UTC day because FRED vintages have day precision.
+      const vintageDate = new Date(Date.parse(request.asOf) - 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const observationEnd =
+        request.toDate && request.toDate < request.asOf.slice(0, 10)
+          ? request.toDate
+          : request.asOf.slice(0, 10);
       const params = {
         series_id: seriesId,
+        ...(request.asOfMode === "live_now"
+          ? {}
+          : { realtime_start: vintageDate, realtime_end: vintageDate }),
+        ...(request.fromDate ? { observation_start: request.fromDate } : {}),
+        observation_end: observationEnd,
         file_type: "json",
         sort_order: "desc",
         limit: request.limit ?? 20,
@@ -1214,6 +1283,9 @@ export async function runFinanceMarketCollectionRefresh(options: {
   const invalidRecordCount = records.filter(
     (record) => !collectionRecordInRequestWindow(record, request),
   ).length;
+  const unverifiedVintageCount = records.filter(
+    (record) => !historicalMacroVintageVerified(record, request),
+  ).length;
   const baseReceipt = {
     schemaVersion: FINANCE_MARKET_COLLECTION_SCHEMA_VERSION,
     refreshId: `${request.collection}:${request.instrument}:${request.asOf}`,
@@ -1251,9 +1323,10 @@ export async function runFinanceMarketCollectionRefresh(options: {
   //
   // A failed attempt at a secondary provider is therefore now environmental
   // noise, reported in `sourceAttempts` and in `requiredNextSteps` but no longer
-  // blocking. Two conditions still gate:
+  // blocking. Data-quality conditions still gate:
   //   1. at least one *selected* source actually succeeded, and
-  //   2. no out-of-window records (a real data-quality defect, not environment).
+  //   2. no out-of-window records (a real data-quality defect, not environment), and
+  //   3. historical macro values have a provider vintage covering the requested cutoff.
   const succeededSourceIds = new Set(
     sourceAttempts.filter((attempt) => attempt.status === "succeeded").map((a) => a.adapterId),
   );
@@ -1261,16 +1334,23 @@ export async function runFinanceMarketCollectionRefresh(options: {
   return {
     ...baseReceipt,
     status:
-      records.length > 0 && anySelectedSucceeded && invalidRecordCount === 0
+      records.length > 0 &&
+      anySelectedSucceeded &&
+      invalidRecordCount === 0 &&
+      unverifiedVintageCount === 0
         ? "ready"
         : "needs_review",
     missingEvidence: [
       ...(anySelectedSucceeded ? [] : ["successful_finance_market_collection"]),
       ...invalidEvidence,
+      ...(unverifiedVintageCount > 0 ? ["point_in_time_macro_vintage"] : []),
     ],
     requiredNextSteps: [
       ...(failedAttempts.length > 0 ? ["inspect_source_attempt_failures"] : []),
       ...(invalidRecordCount > 0 ? ["inspect_out_of_window_collection_records"] : []),
+      ...(unverifiedVintageCount > 0
+        ? ["obtain_macro_vintage_available_before_asof_or_use_live_now_for_current_research"]
+        : []),
     ],
   };
 }
@@ -1301,12 +1381,17 @@ export function createFinanceMarketCollectionRegistry(
 ): readonly FinanceMarketCollectionAdapter[] {
   const adapters: FinanceMarketCollectionAdapter[] = [
     ...createRegisteredCapabilityAdapters(options),
+    ...createDeribitPublicCollectionAdapters({
+      fetchImpl: options.fetchImpl,
+      captureRawResponse: options.captureRawResponse,
+    }),
     createBinancePublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createFredPublicIndexHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createBlsMacroSeriesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createSecAnnualOperatingStatementsAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltNewsTitlesAdapter({ fetchImpl: options.fetchImpl }),
     createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),

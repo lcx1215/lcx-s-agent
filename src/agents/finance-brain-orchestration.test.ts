@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { planFinanceBrainOrchestration } from "./finance-brain-orchestration.js";
+import {
+  FINANCE_BRAIN_MODULES,
+  financeBrainModuleCatalog,
+  parseFinanceModuleSelection,
+  planFinanceBrainOrchestration,
+} from "./finance-brain-orchestration.js";
 
 describe("planFinanceBrainOrchestration", () => {
   it("fans complex holdings research into finance, math, risk, and review modules", () => {
@@ -48,6 +53,7 @@ describe("planFinanceBrainOrchestration", () => {
       expect.arrayContaining(["etf_regime", "technical_timing", "causal_map"]),
     );
     expect(plan.supportingModules).toEqual(["finance_learning_memory"]);
+    expect(plan.composition.control.hardModuleIds).toContain("finance_learning_memory");
     expect(plan.requiredTools).toContain("finance_learning_capability_apply");
     expect(plan.boundaries).toContain("no_execution_authority");
   });
@@ -118,6 +124,20 @@ describe("planFinanceBrainOrchestration", () => {
     );
     expect(plan.requiredTools).not.toContain("finance_framework_crypto_market_structure_producer");
     expect(plan.requiredTools).not.toContain("finance_framework_cross_asset_liquidity_producer");
+  });
+
+  it.each([
+    "Review the currently active trend strategy",
+    "Evaluate a mean-reversion strategy after costs",
+    "评估趋势策略的失效条件",
+  ])("routes an analyst strategy question: %s", (text) => {
+    expect(planFinanceBrainOrchestration({ text }).selectionTrace.financeTask).toBe(true);
+  });
+  it("does not treat a marketing strategy as a finance task", () => {
+    expect(
+      planFinanceBrainOrchestration({ text: "Review our marketing strategy" }).selectionTrace
+        .financeTask,
+    ).toBe(false);
   });
 
   it.each([
@@ -274,6 +294,20 @@ describe("planFinanceBrainOrchestration", () => {
     );
   });
 
+  it("routes cross-commodity pair-spread language to the commodities owner", () => {
+    for (const text of [
+      "研究豆油和棕榈油商品期货配对价差",
+      "螺纹钢与热卷的跨品种套利机制",
+      "commodity futures spread research",
+    ]) {
+      const plan = planFinanceBrainOrchestration({ text });
+
+      expect(plan.selectionTrace.financeTask).toBe(true);
+      expect(plan.primaryModules).toContain("commodities_oil_gold");
+      expect(plan.requiredTools).toContain("finance_framework_commodities_oil_gold_producer");
+    }
+  });
+
   it("keeps ordinary currency requests from fanning into two overlapping FX owners", () => {
     const plan = planFinanceBrainOrchestration({
       text: "美元流动性变化会怎样影响我的组合？",
@@ -286,6 +320,21 @@ describe("planFinanceBrainOrchestration", () => {
       expect.objectContaining({ id: "fx_dollar" }),
     ]);
     expect(plan.selectionTrace.dataGatewayReason).toBe("holdings_or_portfolio_context");
+  });
+
+  it("uses controller portfolio context when a scheduler prompt omits finance keywords", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "Review all controller-declared active strategies against current source evidence for their declared instruments and schedules. Keep strategic horizons separate; evaluate intraday only for instruments covered by an active intraday rule and fresh intraday evidence. Allocate only among controller-declared active strategies; never activate or promote candidates. Use source application evaluations as partial evidence and retain counterevidence. If required evidence is missing or stale, record the exact gap and abstain.",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+      decisionMode: "strategy_candidate",
+    });
+
+    expect(plan.selectionTrace.financeTask).toBe(true);
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining(["causal_map", "portfolio_risk_gates", "quant_math"]),
+    );
+    expect(plan.requiredTools).toContain("finance_data_gateway_snapshot");
   });
 
   it("does not invent a heavy finance plan for non-finance text", () => {
@@ -307,5 +356,204 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.primaryModules).toEqual([]);
     expect(plan.supportingModules).toEqual([]);
     expect(plan.requiredTools).toEqual(["review_tier"]);
+  });
+});
+
+describe("caller module composition within fixed gates", () => {
+  it("keeps implicit learning optional but preserves explicitly requested dependencies", () => {
+    const plan = planFinanceBrainOrchestration({ text: "Review SPY profit capture" });
+    expect(plan.composition.control.softModuleIds).toContain("finance_learning_memory");
+    expect(
+      plan.composition.nodes.find((node) => node.moduleId === "etf_regime")?.dependsOn,
+    ).toEqual([]);
+    expect(
+      plan.composition.nodes.find((node) => node.moduleId === "causal_map")?.dependsOn,
+    ).toEqual([]);
+    const explicit = planFinanceBrainOrchestration({
+      text: "Review SPY profit capture",
+      moduleSelection: {
+        moduleIds: ["finance_learning_memory", "etf_regime"],
+        rationale: "This request depends on a retained method.",
+        composition: {
+          nodes: [
+            { id: "memory", moduleId: "finance_learning_memory", dependsOn: [] },
+            { id: "etf", moduleId: "etf_regime", dependsOn: ["memory"] },
+          ],
+        },
+      },
+    });
+    expect(explicit.composition.control.hardNodeIds).toContain("memory");
+    expect(explicit.composition.nodes.find((node) => node.id === "etf")?.dependsOn).toEqual([
+      "memory",
+    ]);
+  });
+  it("builds a bounded default DAG instead of an unbounded module chain", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "检查持仓风险和期权波动",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+    });
+    expect(plan.composition.schemaVersion).toBe("lcx_finance_module_composition_v1");
+    expect(plan.composition.nodes.length).toBe(
+      plan.primaryModules.length + plan.supportingModules.length,
+    );
+    expect(plan.composition.maxDepth).toBeLessThanOrEqual(8);
+    expect(plan.composition.topologicalOrder).toEqual(
+      expect.arrayContaining(["finance_learning_memory", "causal_map", "portfolio_risk_gates"]),
+    );
+  });
+
+  it("accepts a caller DAG while preserving required modules and rejecting cycles", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "研究一个市场假设",
+      moduleSelection: {
+        moduleIds: ["technical_timing", "credit_liquidity"],
+        rationale: "Test price behavior against funding transmission.",
+        composition: {
+          nodes: [
+            { id: "timing", moduleId: "technical_timing", dependsOn: [] },
+            { id: "credit", moduleId: "credit_liquidity", dependsOn: ["timing"] },
+          ],
+          maxReplans: 1,
+        },
+      },
+    });
+    expect(plan.composition.maxReplans).toBe(1);
+    expect(plan.composition.nodes.map((node) => node.id)).toEqual(
+      expect.arrayContaining(["timing", "credit", "causal_map", "finance_learning_memory"]),
+    );
+    expect(plan.composition.control).toMatchObject({
+      hardModuleIds: ["causal_map"],
+      softModuleIds: ["technical_timing", "credit_liquidity", "finance_learning_memory"],
+      maxSoftReplans: 1,
+      hardStopConditions: [
+        "missing_evidence",
+        "risk_gate_blocked",
+        "cancelled",
+        "unresolved_execution",
+      ],
+    });
+    expect(plan.composition.control.hardNodeIds).toEqual(expect.arrayContaining(["causal_map"]));
+    expect(plan.composition.control.softNodeIds).toEqual(
+      expect.arrayContaining(["timing", "credit"]),
+    );
+    expect(() =>
+      parseFinanceModuleSelection({
+        moduleIds: ["technical_timing"],
+        rationale: "cycle",
+        composition: {
+          nodes: [{ id: "timing", moduleId: "technical_timing", dependsOn: ["timing"] }],
+        },
+      }),
+    ).toThrow("composition");
+  });
+
+  it("can replace a rule-suggested domain and select a module absent from the keywords", () => {
+    const text = "研究宏观利率变化";
+    const baseline = planFinanceBrainOrchestration({ text });
+    const plan = planFinanceBrainOrchestration({
+      text,
+      moduleSelection: {
+        moduleIds: ["technical_timing", "credit_liquidity"],
+        rationale:
+          "Use observed price behavior and credit transmission to test the initial hypothesis.",
+      },
+    });
+    expect(baseline.primaryModules).toContain("macro_rates_inflation");
+    expect(plan.primaryModules.slice(0, 2)).toEqual(["technical_timing", "credit_liquidity"]);
+    expect(plan.primaryModules).not.toContain("macro_rates_inflation");
+    expect(plan.composition.inputReadback).toEqual(plan.selectionTrace.compositionModuleInput);
+    expect(plan.composition.inputReadback).not.toBe(plan.selectionTrace.compositionModuleInput);
+    expect(plan.composition.inputReadback?.moduleIds).toEqual([
+      "technical_timing",
+      "credit_liquidity",
+      "finance_learning_memory",
+    ]);
+    expect(plan.composition.nodes.map((node) => node.moduleId)).toEqual(
+      expect.arrayContaining(["technical_timing", "credit_liquidity", "causal_map"]),
+    );
+    expect(plan.composition.nodes.map((node) => node.moduleId)).not.toContain(
+      "macro_rates_inflation",
+    );
+    expect(plan.primaryModules).toContain("causal_map");
+    expect(plan.supportingModules).toEqual(["finance_learning_memory"]);
+    expect(plan.selectionTrace).toMatchObject({
+      selectionSource: "caller_proposal",
+      ruleSuggestedModules: expect.arrayContaining(["macro_rates_inflation"]),
+    });
+    expect(plan.requiredTools).toContain("finance_framework_credit_liquidity_producer");
+  });
+
+  it("retains portfolio, math, source, review and authority boundaries despite a narrower proposal", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "现在应该买入还是减仓，计算我的持仓风险",
+      decisionMode: "conditional_trade_candidate",
+      moduleSelection: { moduleIds: ["technical_timing"], rationale: "Focus the analytical lens." },
+    });
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "technical_timing",
+        "portfolio_risk_gates",
+        "quant_math",
+        "causal_map",
+      ]),
+    );
+    expect(plan.requiredTools).toEqual(
+      expect.arrayContaining(["finance_data_gateway_snapshot", "review_panel", "quant_math"]),
+    );
+    expect(plan.boundaries).toEqual(
+      expect.arrayContaining([
+        "conditional_trade_candidate",
+        "no_execution_authority",
+        "evidence_required",
+      ]),
+    );
+    expect(plan.selectionTrace.requiredModules).toEqual(
+      expect.arrayContaining(["portfolio_risk_gates", "quant_math"]),
+    );
+  });
+
+  it("accepts explicit task context without fabricating a keyword match", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "再检查一下这个假设",
+      moduleSelection: {
+        moduleIds: ["credit_liquidity"],
+        rationale: "The preceding evidence concerns funding stress.",
+      },
+    });
+    expect(plan.selectionTrace.financeTask).toBe(true);
+    expect(plan.selectionTrace.rawMatchedModules).not.toContain("credit_liquidity");
+    expect(plan.primaryModules).toContain("credit_liquidity");
+  });
+
+  it("derives the model-visible catalog from the existing registry", () => {
+    expect(financeBrainModuleCatalog().map((module) => module.id)).toEqual(
+      FINANCE_BRAIN_MODULES.map((module) => module.id),
+    );
+    const catalog = financeBrainModuleCatalog();
+    catalog[0].requiredTools.length = 0;
+    expect(financeBrainModuleCatalog()[0].requiredTools.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    null,
+    "credit_liquidity",
+    {},
+    { moduleIds: [], rationale: "empty" },
+    { moduleIds: ["not_registered"], rationale: "unknown" },
+    { moduleIds: ["credit_liquidity", "credit_liquidity"], rationale: "duplicate" },
+    { moduleIds: ["credit_liquidity"], rationale: " " },
+    { moduleIds: ["credit_liquidity"], rationale: "x".repeat(2001) },
+    { moduleIds: ["credit_liquidity"], rationale: "override", skipRisk: true },
+  ])("rejects malformed or authority-changing proposals", (value) => {
+    expect(() => parseFinanceModuleSelection(value)).toThrow("moduleSelection");
+  });
+
+  it("copies and freezes a validated caller proposal", () => {
+    const raw = { moduleIds: ["credit_liquidity"], rationale: "  bounded selection  " };
+    const proposal = parseFinanceModuleSelection(raw);
+    raw.moduleIds[0] = "event_driven";
+    expect(proposal).toEqual({ moduleIds: ["credit_liquidity"], rationale: "bounded selection" });
+    expect(Object.isFrozen(proposal?.moduleIds)).toBe(true);
   });
 });

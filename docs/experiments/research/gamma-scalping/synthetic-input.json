@@ -1,0 +1,27 @@
+{
+  "samples": [
+    { "elapsedDays": 0, "spot": 100, "impliedVolatility": 0.3 },
+    { "elapsedDays": 1, "spot": 104, "impliedVolatility": 0.3 },
+    { "elapsedDays": 2, "spot": 100, "impliedVolatility": 0.3 },
+    { "elapsedDays": 3, "spot": 96, "impliedVolatility": 0.3 },
+    { "elapsedDays": 4, "spot": 100, "impliedVolatility": 0.3 },
+    { "elapsedDays": 5, "spot": 104, "impliedVolatility": 0.3 },
+    { "elapsedDays": 6, "spot": 100, "impliedVolatility": 0.3 },
+    { "elapsedDays": 7, "spot": 96, "impliedVolatility": 0.3 },
+    { "elapsedDays": 8, "spot": 100, "impliedVolatility": 0.3 }
+  ],
+  "strike": 100,
+  "expiryDays": 30,
+  "contractsPerLeg": 1,
+  "contractMultiplier": 100,
+  "hedgeEnabled": true,
+  "deltaBandShares": 10,
+  "hedgeLotShares": 1,
+  "maxHedgeShares": 100,
+  "optionHalfSpreadPerShare": 0.02,
+  "optionCommissionPerContract": 0.5,
+  "stockHalfSpreadAndSlippagePerShare": 0.01,
+  "stockCommissionPerShare": 0.005,
+  "cashBorrowRateAnnual": 0.05,
+  "shortBorrowRateAnnual": 0.02
+}

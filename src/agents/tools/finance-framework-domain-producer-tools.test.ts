@@ -100,6 +100,24 @@ describe("finance framework domain producer tools", () => {
     );
   });
 
+  it("accepts equivalent causal arrows while retaining structured support requirements", async () => {
+    workspaceDir = await makeTempWorkspace("finance-causal-arrow-");
+    const tool = createFinanceFrameworkDomainProducerTools({ workspaceDir }).find(
+      (candidate) => candidate.name === "finance_framework_causal_map_producer",
+    )!;
+    for (const arrow of ["->", "→", "⇒"]) {
+      const input = {
+        ...buildValidSkeletonArgs("causal_map"),
+        keyCausalChain: `Observed inflation ${arrow} discount-rate expectation ${arrow} asset repricing; later links remain unverified.`,
+      };
+      const result = await tool.execute("causal-arrow", input);
+      expect(result.details).toMatchObject({ ok: true, allowedActionAuthority: "research_only" });
+      await expect(
+        tool.execute("missing-support", { ...input, upstreamDrivers: [] }),
+      ).rejects.toThrow();
+    }
+  });
+
   it("fails closed on invalid domain", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-framework-domain-producers-");
     const tool = createFinanceFrameworkDomainProducerTools({ workspaceDir }).find(

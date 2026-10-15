@@ -1,6 +1,18 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import {
+  verifyProviderCouncilEvidence,
+  type ProviderCouncilEvidenceInput,
+  type ProviderCouncilReviewFeedback,
+} from "../../src/agents/provider-council-evidence.js";
+export { verifyProviderCouncilEvidence } from "../../src/agents/provider-council-evidence.js";
+export type { ProviderCouncilEvidenceInput } from "../../src/agents/provider-council-evidence.js";
 import { buildAnswerAuditPolicy } from "../../src/agents/answer-audit-policy.js";
-import { checkAnswerGrounding } from "../../src/agents/finance-answer-grounding-gate.js";
+import {
+  checkAnswerGrounding,
+  fingerprintFinanceAnswerEvidence,
+} from "../../src/agents/finance-answer-grounding-gate.js";
 import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
@@ -19,6 +31,7 @@ import {
 import {
   applyVisibleAnswerAdoptionGate,
   findVisibleAnswerAdoptionGateFailures,
+  looksLikeUserSuppliedArithmeticPercentAsk,
 } from "../../src/agents/visible-answer-adoption-gate.js";
 import { LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS } from "../../src/shared/lcx-ontology.js";
 import type { LcxOntologyAnswerPipelineFilterId } from "../../src/shared/lcx-ontology.js";
@@ -27,6 +40,9 @@ type CliOptions = {
   ask?: string;
   candidateAnswer?: string;
   financeDecisionMode?: FinanceDecisionMode;
+  providerEvidencePath?: string;
+  providerMessageId?: string;
+  providerEvidenceSha256?: string;
   json: boolean;
 };
 
@@ -574,6 +590,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts [--ask TEXT --candidate-answer TEXT] [--json]",
       "",
       "Without --ask, runs the built-in commercial answer pipeline diagnostic scenarios.",
+      "Bind completed council claims to an original artifact with --provider-evidence FILE --provider-message-id ID; optionally pin --provider-evidence-sha256 HASH.",
       "Use --finance-mode conditional_trade_candidate to allow an evidence-bound buy/sell candidate; this never grants execution authority.",
       "This is local-only: it audits candidate answer adoption rules and never calls providers, external channel sender, or MLX.",
     ].join("\n"),
@@ -605,6 +622,12 @@ function parseArgs(args: string[]): CliOptions {
       }
       options.financeDecisionMode = value as FinanceDecisionMode;
       index += 1;
+    } else if (arg === "--provider-evidence") {
+      options.providerEvidencePath = readValue(args, index++);
+    } else if (arg === "--provider-message-id") {
+      options.providerMessageId = readValue(args, index++);
+    } else if (arg === "--provider-evidence-sha256") {
+      options.providerEvidenceSha256 = readValue(args, index++);
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -616,6 +639,12 @@ function parseArgs(args: string[]): CliOptions {
   if ((options.ask && !options.candidateAnswer) || (!options.ask && options.candidateAnswer)) {
     usage();
   }
+  if (
+    (options.providerEvidencePath && (!options.ask || !options.providerMessageId)) ||
+    (!options.providerEvidencePath && (options.providerMessageId || options.providerEvidenceSha256))
+  ) {
+    usage();
+  }
   return options;
 }
 
@@ -623,15 +652,46 @@ function includesPattern(text: string, pattern: RegExp): boolean {
   return pattern.test(text);
 }
 
+export async function readProviderCouncilEvidence(
+  path: string,
+  messageId: string,
+  expectedSha256?: string,
+): Promise<ProviderCouncilEvidenceInput> {
+  try {
+    const content = await readFile(path, "utf8");
+    return {
+      messageId,
+      content,
+      sha256: expectedSha256 ?? createHash("sha256").update(content).digest("hex"),
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "read_failed";
+    return { messageId, unavailableReason: `provider_council_source_${code}` };
+  }
+}
+
 function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan): PipelineNeed[] {
   const text = ask.toLowerCase();
-  const freshOrCurrentData = includesPattern(
-    text,
-    // Phrase-level English patterns added because the bare word list missed the ordinary phrasings
-    // ("trading at", "how much is X worth", "account balance", "how many shares do I own") that the
-    // Chinese side already caught. See needsFinanceDataGateway for why these are phrases, not words.
-    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|\b(?:trades?|trading) at\b|\bhow much\b[^.?]*\bworth\b|\b(?:account|my) balance\b|\bshares?\b[^.?]*\bown\b|\b(?:share|stock|market) (?:price|value)\b|\bnet worth\b|最近|最新|今天|现在|行情|价格|报价|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
-  );
+  const financeDataGateway = orchestration.requiredTools.includes("finance_data_gateway_snapshot");
+  // Reuse the original arithmetic route and planner's gateway requirement; supplied operands
+  // do not become a request for fresh market data merely because the ask contains "多少".
+  const suppliedArithmetic =
+    !financeDataGateway &&
+    !/核验|查证|验证|审计|确认真实|verify|validate|audit/iu.test(ask) &&
+    (looksLikeUserSuppliedArithmeticPercentAsk(ask) ||
+      /^\s*\d+(?:\.\d+)?\s*的\s*\d+(?:\.\d+)?\s*%\s*(?:是|等于|为)?\s*(?:多少|几)\s*[？?。.]*$/u.test(
+        ask,
+      ) ||
+      /^\s*(?:what is\s+)?\d+(?:\.\d+)?\s*%\s+of\s+\d+(?:\.\d+)?\s*[?.]*$/iu.test(ask));
+  const freshOrCurrentData =
+    !suppliedArithmetic &&
+    includesPattern(
+      text,
+      // Phrase-level English patterns added because the bare word list missed the ordinary phrasings
+      // ("trading at", "how much is X worth", "account balance", "how many shares do I own") that the
+      // Chinese side already caught. See needsFinanceDataGateway for why these are phrases, not words.
+      /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|\b(?:trades?|trading) at\b|\bhow much\b[^.?]*\bworth\b|\b(?:account|my) balance\b|\bshares?\b[^.?]*\bown\b|\b(?:share|stock|market) (?:price|value)\b|\bnet worth\b|最近|最新|今天|现在|行情|价格|报价|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
+    );
   const webOrExternalLearning = includesPattern(
     text,
     /\b(?:learn|study|read|ingest|absorb|web|online|internet|paper|blog|interview|podcast|source|github|repo|report)\b|学|学习|读|研读|吸收|沉淀|网上|联网|网页|论文|博客|访谈|播客|来源|链接|网址|报告|资料|开源|项目/u,
@@ -649,7 +709,6 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
     text,
     /\b(?:minimax agent|agent draft|agent team|multi-agent draft)\b|MiniMax Agent|MiniMax.*Agent|智能体草稿|外部智能体草稿|组队.*草稿|多智能体.*草稿/u,
   );
-  const financeDataGateway = orchestration.requiredTools.includes("finance_data_gateway_snapshot");
   const dataConflictAsk = includesPattern(
     text,
     /\b(?:data conflict|conflicting data|which source|provider mismatch|prices differ|quotes? differ|sources differ|vendor)\b|数据源.*(?:不一样|冲突|矛盾|打架)|数据.*(?:不一样|冲突|矛盾|打架)|价格.*(?:不一样|冲突|矛盾)|报价.*(?:不同|不一样|冲突|矛盾)|vendor.*官方.*不一致|官方.*vendor.*不一致|听哪个|哪个更准|谁准/u,
@@ -742,6 +801,22 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   ];
 }
 
+/** Ask-only planning; no candidate audit, source read, model invocation or completed-stage claim. */
+export function planCommercialAnswerRequirements(
+  ask: string,
+  financeDecisionMode: FinanceDecisionMode = "research_only",
+) {
+  const orchestration = planFinanceBrainOrchestration({
+    text: ask,
+    hasHoldingsOrPortfolioContext: /持仓|仓位|组合|portfolio|position|holdings?/iu.test(ask),
+    highStakesConclusion:
+      /买|卖|加仓|减仓|仓位|风险|当前|最新|今天|现在|buy|sell|risk|current|latest/iu.test(ask),
+    writesDurableMemory: /学习|沉淀|memory|learn|study/iu.test(ask),
+    decisionMode: financeDecisionMode,
+  });
+  return { orchestration, needs: resolveNeeds(ask, orchestration) };
+}
+
 function resolveRequiredStages(needs: PipelineNeed[]): PipelineStageId[] {
   const requiredNeedIds = new Set(needs.filter((need) => need.required).map((need) => need.id));
   return [
@@ -799,6 +874,7 @@ function auditCandidate(params: {
   candidateAnswer: string;
   needs: PipelineNeed[];
   financeDecisionMode?: FinanceDecisionMode;
+  providerEvidence?: ProviderCouncilEvidenceInput;
   /**
    * Require a real gap construction ("数据缺失") instead of a bare evidence noun ("数据").
    * Off by default: see `candidateMarksRealEvidenceGap` for why the loose test passes vacuously.
@@ -870,6 +946,7 @@ function auditCandidate(params: {
         userMessage: params.ask,
         answerText: candidate,
         financeDecisionMode: params.financeDecisionMode,
+        providerEvidence: params.providerEvidence,
       }).length > 0 ||
       (includesPattern(
         candidateLower,
@@ -1207,10 +1284,20 @@ function auditCandidate(params: {
   return checks;
 }
 
+/** Original reply caller identity, not an internal stage run or a financial account identity. */
+export type CommercialAuditCaller = {
+  runId?: string;
+  messageId?: string;
+  sessionKey?: string;
+  replyChannelAccountId?: string;
+};
+
 export function buildPipelineResult(
   ask: string,
   candidateAnswer: string,
   options: {
+    /** Explicit reply-host requirement; absent preserves the existing language behavior. */
+    responseLanguage?: "zh" | "en";
     financeDecisionMode?: FinanceDecisionMode;
     candidateContext?: FinanceDecisionCandidateContext;
     /** Snapshot the candidate was grounded on, when one exists. Absent means nothing to check against. */
@@ -1235,27 +1322,87 @@ export function buildPipelineResult(
      * switch rather than a side effect.
      */
     requireRealEvidenceMarking?: boolean;
+    providerEvidence?: ProviderCouncilEvidenceInput;
+    /** Bound previous native attribution refusal, supplied by the original reply host. */
+    providerCouncilReviewFeedback?: ProviderCouncilReviewFeedback;
   } = {},
+  auditCaller?: CommercialAuditCaller,
 ) {
+  const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+  const languageRequested = options.responseLanguage !== undefined;
+  const selectedLanguage =
+    options.responseLanguage === "zh" || options.responseLanguage === "en"
+      ? options.responseLanguage
+      : undefined;
+  const auditCallerObserved = Boolean(
+    auditCaller?.runId?.trim() && auditCaller.messageId?.trim() && auditCaller.sessionKey?.trim(),
+  );
+  const languageHostBound = auditCallerObserved;
+  // Script presence only identifies an obvious single-language conflict, never translation quality.
+  const languageText = candidateAnswer.replace(/```[\s\S]*?```|`[^`]*`/gu, "");
+  const quotedLanguage =
+    /["“”「」]|‘[^’\n]*’|(?:^|[\s([{])'[^'\n]+'(?=$|[\s.,;:!?)}\]])|^\s*>/mu.test(languageText);
+  const hasHan = /\p{Script=Han}/u.test(languageText);
+  const hasLatin = /\p{Script=Latin}/u.test(languageText);
+  // All-capital symbols and units (QQQ, USD) are not enough to identify an English answer.
+  const identifiersOnly = hasLatin && !hasHan && !/[a-z]/u.test(languageText);
+  const candidateLanguage =
+    quotedLanguage || identifiersOnly
+      ? ("undetermined" as const)
+      : hasHan && hasLatin
+        ? ("mixed" as const)
+        : hasHan
+          ? ("zh" as const)
+          : hasLatin
+            ? ("en" as const)
+            : ("undetermined" as const);
+  const languageConflict =
+    selectedLanguage !== undefined &&
+    (candidateLanguage === "zh" || candidateLanguage === "en") &&
+    candidateLanguage !== selectedLanguage;
+  const languageFailures = !languageRequested
+    ? []
+    : !selectedLanguage
+      ? ["commercial_response_language_invalid"]
+      : !languageHostBound
+        ? ["commercial_language_host_binding_not_observed"]
+        : languageConflict
+          ? ["commercial_response_language_conflict"]
+          : [];
+  const languageRoute = {
+    selectedLanguage,
+    status: !languageRequested
+      ? ("not_requested" as const)
+      : !selectedLanguage || !languageHostBound
+        ? ("blocked" as const)
+        : languageConflict
+          ? ("conflict" as const)
+          : candidateLanguage === selectedLanguage
+            ? ("matched" as const)
+            : ("unconfirmed" as const),
+    candidateLanguage,
+    candidateSha256: hash(candidateAnswer),
+    requestSource: !languageRequested
+      ? ("not_requested" as const)
+      : languageHostBound
+        ? ("bound_reply_host" as const)
+        : ("unbound_input" as const),
+    verification: "script_presence_only_not_semantic_quality" as const,
+  };
   const financeDecisionMode = options.financeDecisionMode ?? "research_only";
   const productGovernor = buildProductGovernor();
-  const orchestration = planFinanceBrainOrchestration({
-    text: ask,
-    hasHoldingsOrPortfolioContext: /持仓|仓位|组合|portfolio|position|holdings?/iu.test(ask),
-    highStakesConclusion:
-      /买|卖|加仓|减仓|仓位|风险|当前|最新|今天|现在|buy|sell|risk|current|latest/iu.test(ask),
-    writesDurableMemory: /学习|沉淀|memory|learn|study/iu.test(ask),
-    decisionMode: financeDecisionMode,
-  });
-  const needs = resolveNeeds(ask, orchestration);
+  const { orchestration, needs } = planCommercialAnswerRequirements(ask, financeDecisionMode);
+  const plannerInput = { ask, orchestration };
+  const classificationSha256 = hash(JSON.stringify(plannerInput.orchestration));
+  const qwenChallengeRequested = needs.some(
+    (need) => need.id === "qwen_challenge" && need.required,
+  );
   const stages = resolveRequiredStages(needs);
   const answerAuditPolicy = buildAnswerAuditPolicy({
     workOrder: {
       validation: {
         qwenChallenge: {
-          status: needs.some((need) => need.id === "qwen_challenge" && need.required)
-            ? "recommended"
-            : "not_requested",
+          status: qwenChallengeRequested ? "recommended" : "not_requested",
         },
       },
     },
@@ -1271,17 +1418,71 @@ export function buildPipelineResult(
     candidateAnswer,
     needs,
     financeDecisionMode,
+    providerEvidence: options.providerEvidence,
     ...(options.requireRealEvidenceMarking ? { requireRealEvidenceMarking: true } : {}),
   });
+  const providerCouncil = options.providerCouncilReviewFeedback
+    ? verifyProviderCouncilEvidence(
+        ask,
+        candidateAnswer,
+        options.providerEvidence,
+        options.providerCouncilReviewFeedback,
+      )
+    : verifyProviderCouncilEvidence(ask, candidateAnswer, options.providerEvidence);
+  // Artifact role attribution and this reply host's message are separate identities.
+  const providerCouncilHostBinding =
+    auditCallerObserved && options.providerEvidence
+      ? {
+          status:
+            providerCouncil.messageId === auditCaller?.messageId
+              ? ("matched" as const)
+              : ("conflict" as const),
+          expectedMessageId: auditCaller?.messageId,
+          artifactMessageId: providerCouncil.messageId,
+          sourceSha256: providerCouncil.sourceSha256,
+          boundary: "reply_host_message_attribution_only" as const,
+          semanticAdoption: "not_proven" as const,
+        }
+      : undefined;
+  if (providerCouncilHostBinding) {
+    checks.push({
+      id: "provider_council_host_message_binding",
+      ok: providerCouncilHostBinding.status === "matched",
+      failedReason:
+        providerCouncilHostBinding.status === "matched"
+          ? undefined
+          : "provider_council_host_message_scope_conflict",
+      evidence:
+        "Original council artifact message must match the observed reply caller; run identity and source truth remain separate.",
+    });
+  }
+  if (providerCouncil.required) {
+    checks.push({
+      id: "provider_council_completion_requires_original_receipt",
+      ok: providerCouncil.status === "verified",
+      failedReason:
+        providerCouncil.status === "verified"
+          ? undefined
+          : "provider_council_completion_without_verified_receipt",
+      evidence:
+        providerCouncil.status === "verified"
+          ? "claimed roles match original message-scoped runtime outputs"
+          : providerCouncil.gaps.join("; "),
+    });
+  }
   const visibleGateDecision = applyVisibleAnswerAdoptionGate({
     userMessage: ask,
     answerText: candidateAnswer,
     financeDecisionMode,
+    providerEvidence: options.providerEvidence,
   });
+  const gatewayRequired = needs.some((need) => need.id === "finance_data_gateway" && need.required);
+  // The same actual ledger snapshot is consumed by grounding and recorded in the input fingerprint.
+  const calculations = options.calculations ?? getSharedCalculationLedger().list();
   const answerGrounding = checkAnswerGrounding({
     answerText: candidateAnswer,
     ...(options.snapshot ? { snapshot: options.snapshot } : {}),
-    calculations: options.calculations ?? getSharedCalculationLedger().list(),
+    calculations,
   });
   // Reported always, blocking only when the caller opted in. A candidate written before the
   // declaration block existed is unverifiable, and saying so is not the same as refusing it.
@@ -1296,15 +1497,152 @@ export function buildPipelineResult(
     .map((check) => check.failedReason!)
     .concat(visibleGateDecision.failedReasons)
     .concat(financeDecision.failedReasons)
+    .concat(languageFailures)
     .concat(groundingFailures);
   const uniqueFailedReasons = [...new Set(failedReasons)];
   const terminalDecision: TerminalDecision =
     uniqueFailedReasons.length === 0 ? "adopt_visible_answer" : "return_failed_reason";
+  const upstreamGaps = [
+    ...new Set([
+      ...(gatewayRequired
+        ? (options.snapshot?.missingEvidence ?? ["finance_data_gateway_snapshot"])
+        : []),
+      ...(providerCouncil.required ? providerCouncil.gaps : []),
+    ]),
+  ];
+  const displayedReasons = uniqueFailedReasons.slice(0, 4);
+  const displayedGaps = upstreamGaps.slice(0, 4);
+  const summaryLanguageInput = {
+    selectedLanguage: languageHostBound ? selectedLanguage : undefined,
+    candidateCheckStatus: languageRoute.status,
+  };
+  const chineseSummary = summaryLanguageInput.selectedLanguage
+    ? summaryLanguageInput.selectedLanguage === "zh"
+    : /\p{Script=Han}/u.test(ask);
+  const summaryText = [
+    terminalDecision === "return_failed_reason"
+      ? chineseSummary
+        ? "本轮回答未通过原审阅。"
+        : "This answer failed the existing review."
+      : chineseSummary
+        ? "本轮回答通过原发送审阅。"
+        : "This answer passed the existing reply review.",
+    ...(displayedReasons.length
+      ? [`${chineseSummary ? "原因" : "Reasons"}: ${displayedReasons.join("; ")}.`]
+      : []),
+    ...(displayedGaps.length
+      ? [
+          `${chineseSummary ? "待补上游证据" : "Missing upstream evidence"}: ${displayedGaps.join("; ")}.`,
+        ]
+      : []),
+    `${chineseSummary ? "模式" : "Mode"}: ${financeDecisionMode}.`,
+    ...(selectedLanguage && languageHostBound
+      ? [`${chineseSummary ? "要求的回复语言" : "Required reply language"}: ${selectedLanguage}.`]
+      : []),
+  ].join(" ");
+  const controlRoomSummary = {
+    boundary: "original_terminal_diagnostic_summary_only" as const,
+    authority: "diagnostic_only_no_adoption_or_execution" as const,
+    terminalDecision,
+    status:
+      terminalDecision === "return_failed_reason" ? ("blocked" as const) : ("passed" as const),
+    mode: financeDecisionMode,
+    languageInput: summaryLanguageInput,
+    reviewBudget: {
+      maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
+      scope: "original_local_review_policy_diagnostic_not_external_quota" as const,
+    },
+    sourceQuality: {
+      required: gatewayRequired,
+      status: options.snapshot?.qualityStatus ?? "not_provided",
+    },
+    text: summaryText.slice(0, 1200),
+    textClipped: summaryText.length > 1200,
+    failedReasonFields: displayedReasons.map((_, index) => `/failedReasons/${index}`),
+    omitted: {
+      failedReasons: uniqueFailedReasons.length - displayedReasons.length,
+      upstreamGaps: upstreamGaps.length - displayedGaps.length,
+    },
+    semanticAdoption: "not_proven" as const,
+  };
+  const evidenceFingerprint = fingerprintFinanceAnswerEvidence(candidateAnswer, options.snapshot);
+  const auditInputs = {
+    askSha256: hash(ask),
+    ...evidenceFingerprint,
+    optionsSha256: hash(
+      JSON.stringify({
+        financeDecisionMode,
+        candidateContext: options.candidateContext ?? null,
+        calculations,
+        requireGrounding: options.requireGrounding === true,
+        requireRealEvidenceMarking: options.requireRealEvidenceMarking === true,
+        providerEvidence: options.providerEvidence ?? null,
+        ...(options.providerCouncilReviewFeedback
+          ? { providerCouncilReviewFeedback: options.providerCouncilReviewFeedback }
+          : {}),
+        ...(languageRequested ? { responseLanguage: options.responseLanguage } : {}),
+      }),
+    ),
+  };
+  const processEvidence = {
+    intentClassifier: {
+      askSha256: auditInputs.askSha256,
+      outputSha256: classificationSha256,
+    },
+    localPlanner: {
+      inputAskSha256: auditInputs.askSha256,
+      inputClassificationSha256: classificationSha256,
+      outputSha256: hash(JSON.stringify(needs)),
+      qwenChallengeRequested,
+    },
+    answerAuditBudget: {
+      inputQwenChallengeRequested: qwenChallengeRequested,
+      maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
+    },
+  };
   return {
     ok: uniqueFailedReasons.length === 0,
     boundary: "local_commercial_answer_pipeline_only",
     ask,
     candidateAuthority: "model_candidate_not_final_authority",
+    languageRoute,
+    processEvidence,
+    auditInvocation: {
+      schemaVersion: "lcx_commercial_audit_invocation_v1",
+      owner: "scripts/operator/lcx-commercial-answer-pipeline.ts#buildPipelineResult",
+      identityBoundary: "reply_caller_context_only",
+      status: auditCallerObserved ? "observed" : "not_observed",
+      caller: auditCaller
+        ? {
+            runId: auditCaller.runId,
+            messageId: auditCaller.messageId,
+            sessionKey: auditCaller.sessionKey,
+            replyChannelAccountId: auditCaller.replyChannelAccountId,
+          }
+        : undefined,
+      inputs: auditInputs,
+      inputSha256: hash(JSON.stringify(auditInputs)),
+      semanticAdoption: "not_proven",
+    },
+    consumedEvidence: {
+      ...evidenceFingerprint,
+      groundingRequired: options.requireGrounding === true,
+      semanticAdoption: "not_proven",
+      providerCouncil,
+      ...(providerCouncilHostBinding ? { providerCouncilHostBinding } : {}),
+      sourceAssessment: {
+        required: gatewayRequired,
+        status: options.snapshot?.qualityStatus ?? "not_provided",
+        missingEvidence:
+          options.snapshot?.missingEvidence ??
+          (gatewayRequired ? ["finance_data_gateway_snapshot"] : []),
+        conflictingFields: options.snapshot?.conflicts.map((conflict) => conflict.fieldName) ?? [],
+        freshnessWarnings: options.snapshot?.freshnessWarnings ?? [],
+        requiredNextSteps:
+          options.snapshot?.requiredNextSteps ??
+          (gatewayRequired ? ["provide_finance_data_gateway_snapshot"] : []),
+      },
+    },
     financeDecision,
     /** Figure-grounding verdict for this candidate. Reporting only unless `requireGrounding`. */
     answerGrounding: {
@@ -1348,6 +1686,7 @@ export function buildPipelineResult(
     maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
     terminalDecision,
     failedReasons: uniqueFailedReasons,
+    controlRoomSummary,
     visibleAnswerGate: {
       status: visibleGateDecision.status,
       failedReasons: visibleGateDecision.failedReasons,
@@ -1445,6 +1784,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     options.ask && options.candidateAnswer
       ? buildPipelineResult(options.ask, options.candidateAnswer, {
           financeDecisionMode: options.financeDecisionMode,
+          ...(options.providerEvidencePath && options.providerMessageId
+            ? {
+                providerEvidence: await readProviderCouncilEvidence(
+                  options.providerEvidencePath,
+                  options.providerMessageId,
+                  options.providerEvidenceSha256,
+                ),
+              }
+            : {}),
         })
       : runScenarioSuite();
 

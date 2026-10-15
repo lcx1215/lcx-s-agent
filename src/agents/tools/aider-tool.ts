@@ -97,7 +97,10 @@ function buildAiderCommandCandidates(): AiderCommandCandidate[] {
   ];
 }
 
-export function createAiderTool(options?: { workspaceDir?: string }): AnyAgentTool {
+export function createAiderTool(options?: {
+  workspaceDir?: string;
+  sandboxed?: boolean;
+}): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
     label: "Aider",
@@ -106,6 +109,13 @@ export function createAiderTool(options?: { workspaceDir?: string }): AnyAgentTo
       "Run a bounded aider one-shot edit against explicit workspace files. Use this only when the user explicitly asks for aider or when an external pair-programming pass is clearly useful. Returns explicit unavailable payloads when aider is missing instead of pretending success.",
     parameters: AiderSchema,
     execute: async (_toolCallId, params) => {
+      if (options?.sandboxed) {
+        return jsonResult({
+          ok: false,
+          status: "forbidden",
+          error: "Aider runs on the host and is unavailable in sandboxed sessions.",
+        });
+      }
       const prompt = readStringParam(params, "prompt", { required: true });
       const model = readStringParam(params, "model");
       const dryRun = params.dryRun === true;

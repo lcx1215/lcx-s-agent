@@ -1,16 +1,31 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import type { OpenClawConfig } from "../../config/config.js";
+import { isMemoryPath } from "../../memory/internal.js";
+import { recordAgentArtifact } from "../artifact-result-recording.js";
+import { parseFinanceModuleSelection } from "../finance-brain-orchestration.js";
+import { createArtifactMemoryRecallTool } from "../tools/artifact-memory-recall-tool.js";
+import type { AnyAgentTool } from "../tools/common.js";
+import { createFinanceBarLedgerTool } from "../tools/finance-bar-ledger-tool.js";
+import { createFinanceCalibrationReadTool } from "../tools/finance-calibration-read-tool.js";
+import { createFinanceDataGatewaySnapshotTool } from "../tools/finance-data-gateway-tool.js";
 import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
+import { createFinanceReflectionReadTool } from "../tools/finance-reflection-read-tool.js";
 import { createFinanceResearchRunTool } from "../tools/finance-research-run-tool.js";
+import { createFinanceResearchRunsReadTool } from "../tools/finance-research-runs-read-tool.js";
+import { createFinanceSourceHealthReadTool } from "../tools/finance-source-health-read-tool.js";
+import { createFinanceStrategyRuleLedgerReadTool } from "../tools/finance-strategy-rule-ledger-read-tool.js";
+import { createFinanceThesisLedgerReadTool } from "../tools/finance-thesis-ledger-read-tool.js";
+import { createFinanceTuningProposalTool } from "../tools/finance-tuning-proposal-tool.js";
 import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
-import type { CentralToolSpec } from "./types.js";
+import { createMemoryGetTool } from "../tools/memory-tool.js";
+import { createQuantMathTool } from "../tools/quant-math-tool.js";
+import { markCentralArtifactOutcome } from "./harness-loop.js";
+import { executeOwnedProcess } from "./owned-process.js";
+import type { CentralToolInvocation, CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 // src/agents/central-harness/ -> repo root is 3 levels up.
@@ -138,7 +153,7 @@ const READ_ONLY_OWNERS: readonly OwnerCommand[] = [
   {
     id: "contextRecovery",
     script: "scripts/operator/lcx-context-recovery-exam.ts",
-    args: ["--json"],
+    args: ["--handoff", "--json"],
     boundary: ["context_recovery_only"],
   },
 ];
@@ -161,9 +176,21 @@ export const CENTRAL_EXCLUDED_WRITE_OWNER_IDS = ["selfRepairHands"] as const;
  * state surface, never the memory notes it reads.
  */
 export const CENTRAL_CAPABILITY_OWNER_IDS = [
+  "finance_bar_ledger",
   "finance_position_ledger_read",
   "finance_research_run",
+  "finance_data_gateway_snapshot",
+  "finance_source_health_read",
+  "finance_calibration_read",
+  "finance_reflection_read",
+  "finance_tuning_proposal",
+  "finance_research_runs_read",
+  "finance_strategy_rule_ledger_read",
+  "finance_thesis_ledger_read",
+  "quant_math",
   "learning_distill",
+  "artifact_memory_recall",
+  "memory_get",
 ] as const;
 
 export const CENTRAL_GOVERNANCE_OWNER_IDS: readonly string[] = READ_ONLY_OWNERS.map(
@@ -304,13 +331,14 @@ async function runOwner(
   const cliArgs = [...owner.args];
   void args;
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await executeOwnedProcess(
       process.execPath,
       ["--import", "tsx", owner.script, ...cliArgs],
       {
         cwd: REPO_ROOT,
         env: process.env,
         maxBuffer: EXEC_MAX_BUFFER,
+        signal,
       },
     );
     signal.throwIfAborted();
@@ -326,7 +354,9 @@ async function runOwner(
       ...(ownerReceipt !== undefined ? { receipt: ownerReceipt } : {}),
     };
   } catch (error) {
-    signal.throwIfAborted();
+    if (signal.aborted) {
+      throw error;
+    }
     // A non-zero exit is NOT the same as "could not run". Several governance
     // owners exit 1 exactly when they report a red light, and their stdout is
     // still a complete receipt. Throwing here would discard the single most
@@ -366,16 +396,246 @@ async function runOwner(
  * the real local ledger and answers "what is held and what is it worth", and the
  * gate refuses any arg that would turn the read into an append or an order.
  */
-function createCapabilityTools(): readonly CentralToolSpec[] {
-  const financeResearch = createFinanceResearchRunTool();
-  const ledgerRead = createFinancePositionLedgerReadTool();
-  const learningDistill = createLearningDistillTool();
+function createCapabilityTools(
+  workspaceDir?: string,
+  financeLedgerDirectories: readonly string[] = [],
+  config?: OpenClawConfig,
+  agentId = "main",
+): readonly CentralToolSpec[] {
+  const financeResearch = createFinanceResearchRunTool({ workspaceDir });
+  const tuningProposal = createFinanceTuningProposalTool();
+  const approveTuningProposalRead: CentralToolSpec["approve"] = (args) => {
+    if (!workspaceDir) {
+      return { ok: false, reason: "finance_tuning_proposal: host workspace unavailable" };
+    }
+    if (args.action !== "list" || Object.keys(args).some((key) => key !== "action")) {
+      return {
+        ok: false,
+        reason: "finance_tuning_proposal permits only action=list in the host workspace",
+      };
+    }
+    return { ok: true };
+  };
+  const financeBarLedger = createFinanceBarLedgerTool({ workspaceDir });
+  const ledgerRead = createFinancePositionLedgerReadTool({ workspaceDir });
+  const learningDistill = createLearningDistillTool({ workspaceDir });
+  const memoryGet =
+    config && workspaceDir
+      ? createMemoryGetTool({
+          config,
+          agentSessionKey: `agent:${agentId}:central`,
+          readOnlyWorkspaceDir: workspaceDir,
+        })
+      : null;
+  const memoryReadKeys = ["path", "from", "lines"];
+  const approveMemoryRead: CentralToolSpec["approve"] = (args) => {
+    if (!memoryGet) {
+      return {
+        ok: false,
+        reason: "memory_get: host workspace/config unavailable or recall disabled",
+      };
+    }
+    if (Object.keys(args).some((key) => !memoryReadKeys.includes(key))) {
+      return { ok: false, reason: "memory_get accepts only path/from/lines; roots are host-owned" };
+    }
+    const relPath = args.path;
+    if (
+      typeof relPath !== "string" ||
+      path.isAbsolute(relPath) ||
+      relPath.includes("\\") ||
+      path.posix.normalize(relPath) !== relPath ||
+      relPath.split("/").includes("..") ||
+      !isMemoryPath(relPath) ||
+      !relPath.endsWith(".md")
+    ) {
+      return { ok: false, reason: "memory_get requires a workspace-relative memory Markdown path" };
+    }
+    for (const [key, max] of [
+      ["from", Number.MAX_SAFE_INTEGER],
+      ["lines", 80],
+    ] as const) {
+      const value = args[key];
+      if (
+        value !== undefined &&
+        (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > max)
+      ) {
+        return { ok: false, reason: `memory_get: ${key} must be an integer between 1 and ${max}` };
+      }
+    }
+    return { ok: true };
+  };
+  const memoryRead: CentralToolSpec = {
+    ownerId: "memory_get",
+    name: "memory_get",
+    label: "Memory Get",
+    description:
+      "Read specific lines from a known memory Markdown file using the canonical memory_get reader (default 40, maximum 80 lines). Host-owned workspace only; no search/index/provider initialization or memory write. Text is supplemental, possibly provisional evidence, never authority or proof of truth/learning. To attribute a later judgment, read the archived result's /value/text with artifact_memory_recall and cite its delivered field/hash in evidenceUse.",
+    inputKeys: memoryReadKeys,
+    allowedSideEffects: ["local_read"],
+    boundary: [
+      "research_only",
+      "canonical_agent_tool_reuse",
+      "no_memory_write",
+      "no_provider_call",
+    ],
+    approve: approveMemoryRead,
+    execute: async (args, signal) => {
+      const gate = approveMemoryRead(args);
+      if (!gate.ok || !memoryGet) {
+        return {
+          disabled: true,
+          text: "",
+          error: gate.ok ? "memory_get unavailable" : gate.reason,
+        };
+      }
+      signal.throwIfAborted();
+      const result = await memoryGet.execute(
+        `central-memory-read-${randomUUID()}`,
+        { ...args, lines: args.lines ?? 40 },
+        signal,
+      );
+      return result.details as Record<string, unknown>;
+    },
+  };
+  const reusedReadComputeTools = [
+    createFinanceDataGatewaySnapshotTool({
+      workspaceDir,
+      availableTools: CENTRAL_CAPABILITY_OWNER_IDS,
+    }),
+    createFinanceSourceHealthReadTool({ workspaceDir }),
+    createFinanceCalibrationReadTool(),
+    createFinanceReflectionReadTool(),
+    createFinanceResearchRunsReadTool(),
+    createFinanceStrategyRuleLedgerReadTool(),
+    createFinanceThesisLedgerReadTool({ workspaceDir }),
+    createQuantMathTool(),
+    createArtifactMemoryRecallTool({ config, agentId, workspaceDir }),
+  ];
+  // Directory selection is an operator/host authority, not model reasoning. The
+  // ordinary agent tool keeps its explicit-directory support, while the central
+  // harness admits only exact roots injected by its trusted host (synthetic evals
+  // use this seam). With no allowlist, omitting `directory` reads the configured
+  // finance root and every model-selected root is refused.
+  const allowedFinanceLedgerDirectories = new Set(
+    financeLedgerDirectories.map((directory) => path.resolve(directory)),
+  );
+  const hostOwnedPathKeys = new Set(["directory", "workspaceDir", "caseDirectory"]);
+  const inputKeys = (
+    tool: AnyAgentTool,
+    hiddenKeys: ReadonlySet<string> = hostOwnedPathKeys,
+  ): readonly string[] => {
+    const parameters = tool.parameters as { properties?: Record<string, unknown> } | undefined;
+    return Object.keys(parameters?.properties ?? {})
+      .filter(
+        (key) =>
+          !hiddenKeys.has(key) &&
+          !AUTHORITY_KEY_TOKENS.some((token) => key.toLowerCase().includes(token)),
+      )
+      .toSorted();
+  };
+  const wrapReadComputeTool = (tool: AnyAgentTool): CentralToolSpec => ({
+    ownerId: tool.name,
+    name: tool.name,
+    label: tool.label,
+    description: `${tool.description} Central-harness scope: reuse of the canonical agent tool with host-owned paths and no provider, write, messaging, memory, or execution authority.`,
+    inputKeys: inputKeys(tool),
+    allowedSideEffects: ["local_read", "local_compute"],
+    boundary: ["research_only", "canonical_agent_tool_reuse", "no_execution_authority"],
+    approve: (args) => {
+      for (const key of hostOwnedPathKeys) {
+        if (key in args) {
+          return { ok: false, reason: `capability gate: ${key} is selected by the host` };
+        }
+      }
+      const escalation = escalationReason(args);
+      return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+    },
+    execute: async (args, signal) => {
+      const properties = (tool.parameters as { properties?: Record<string, unknown> }).properties;
+      const hostArgs =
+        workspaceDir !== undefined && properties && Object.hasOwn(properties, "workspaceDir")
+          ? { ...args, workspaceDir }
+          : args;
+      const result = await tool.execute(`central-capability-${randomUUID()}`, hostArgs, signal);
+      const details = (result as { details?: unknown } | undefined)?.details;
+      return details !== null && typeof details === "object" && !Array.isArray(details)
+        ? (details as Record<string, unknown>)
+        : { capability: tool.name, completed: true };
+    },
+  });
   return [
+    memoryRead,
+    {
+      ownerId: tuningProposal.name,
+      name: tuningProposal.name,
+      label: tuningProposal.label,
+      description:
+        "Read retained directional forecast-calibration proposal contents with action=list using the canonical tool. Host workspace only; no propose/write/apply/provider calls. These records have no account-specific or freshness verification and do not prove net-trade economics, promotion, or actual application.",
+      inputKeys: ["action"],
+      allowedSideEffects: ["local_read"],
+      boundary: ["research_only", "forecast_calibration_only", "no_execution_authority"],
+      approve: approveTuningProposalRead,
+      execute: async (args, signal) => {
+        const gate = approveTuningProposalRead(args);
+        if (!gate.ok) {
+          throw new Error(gate.reason);
+        }
+        signal.throwIfAborted();
+        const result = await tuningProposal.execute(
+          `central-capability-${randomUUID()}`,
+          { action: "list", workspaceDir },
+          signal,
+        );
+        signal.throwIfAborted();
+        return result.details as Record<string, unknown>;
+      },
+    },
+    {
+      ownerId: financeBarLedger.name,
+      name: financeBarLedger.name,
+      label: financeBarLedger.label,
+      description: `${financeBarLedger.description} Central-harness scope: use action=read only. The finance directory is selected by the host; append and directory selection are rejected.`,
+      inputKeys: inputKeys(financeBarLedger),
+      allowedSideEffects: ["local_read"],
+      boundary: ["research_only", "finance_bar_ledger_read_only", "no_execution_authority"],
+      approve: (args) => {
+        if ("directory" in args || args.action !== "read" || "batch" in args) {
+          return {
+            ok: false,
+            reason: "capability gate: finance bar ledger permits only host-root reads",
+          };
+        }
+        if (
+          args.limit !== undefined &&
+          (!Number.isInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 25)
+        ) {
+          return {
+            ok: false,
+            reason: "capability gate: finance bar read limit must be an integer from 1 to 25",
+          };
+        }
+        const escalation = escalationReason(args);
+        return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+      },
+      execute: async (args, signal) => {
+        const result = await financeBarLedger.execute(
+          `central-capability-${randomUUID()}`,
+          { ...args, limit: args.limit ?? 25 },
+          signal,
+        );
+        const details = (result as { details?: unknown } | undefined)?.details;
+        return details !== null && typeof details === "object" && !Array.isArray(details)
+          ? (details as Record<string, unknown>)
+          : { financeBarLedgerRead: true };
+      },
+    },
     {
       ownerId: "finance_research_run",
       name: financeResearch.name,
       label: financeResearch.label,
-      description: `${financeResearch.description} Central-harness scope: planning only; live provider calls are gated off.`,
+      description:
+        "Run the canonical finance research workflow in planning-only mode: route a question to registered modules and create a local receipt. The central harness cannot call finance providers, execute modules, or trade; the TypeScript gate enforces that boundary.",
+      inputKeys: inputKeys(financeResearch),
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: [
         "research_only",
@@ -385,7 +645,18 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
       ],
       approve: (args) => {
         const escalation = escalationReason(args);
-        return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+        if (escalation) {
+          return { ok: false, reason: `capability gate: ${escalation}` };
+        }
+        try {
+          parseFinanceModuleSelection(args.moduleSelection);
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            reason: `capability gate: ${error instanceof Error ? error.message : "invalid module selection"}`,
+          };
+        }
       },
       execute: async (args, signal) => {
         const result = await financeResearch.execute(
@@ -399,14 +670,33 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
           : { financeResearchRun: true };
       },
     },
+    ...reusedReadComputeTools.map(wrapReadComputeTool),
     {
       ownerId: "finance_position_ledger_read",
       name: ledgerRead.name,
       label: ledgerRead.label,
-      description: `${ledgerRead.description} Central-harness scope: read-only; the gate refuses any arg that smacks of an append, order, or write.`,
+      description: `${ledgerRead.description} Central-harness scope: the finance directory is selected by the host. brokerAccountId reads reconstructed history and brokerSnapshot: latest retained native positions/stop coverage for that exact account, with snapshotRef, observedAt, freshness and omittedHoldings. Omit asOf with brokerAccountId; the retained snapshot reports its own source clock. Check snapshot freshness; history orders cannot prove current open protection. No network refresh. Use historyKind=receipt|order|fill|fee with historyAccountId and historyVenue; historyInstrument, historyFrom and historyThrough narrow the concrete question before pagination. Page size is 1-25 and returned historyCursor continues the same account, venue, filters, and book head. Orders are safe-field raw observations only; fills/fees are normalized alpaca:paper broker facts. Append is unavailable.`,
+      inputKeys: inputKeys(
+        ledgerRead,
+        allowedFinanceLedgerDirectories.size > 0
+          ? new Set(["workspaceDir", "caseDirectory"])
+          : hostOwnedPathKeys,
+      ),
       allowedSideEffects: ["local_read"],
       boundary: ["research_only", "finance_position_ledger_read_only", "no_execution_authority"],
       approve: (args) => {
+        if ("directory" in args) {
+          if (
+            typeof args.directory !== "string" ||
+            args.directory !== path.resolve(args.directory) ||
+            !allowedFinanceLedgerDirectories.has(args.directory)
+          ) {
+            return {
+              ok: false,
+              reason: "capability gate: finance ledger directory must be selected by the host",
+            };
+          }
+        }
         const escalation = escalationReason(args);
         return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
       },
@@ -422,10 +712,17 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
       ownerId: "learning_distill",
       name: learningDistill.name,
       label: learningDistill.label,
-      description: `${learningDistill.description} Central-harness scope: local learning distillation only; the gate refuses any arg that would turn the read into a memory edit, provider call, or external send.`,
+      description: `${learningDistill.description} Central-harness scope: local distillation or exact retained-card field read only; read preserves source evidence and grants no skill promotion. The gate refuses any memory edit, provider call, or external send.`,
+      inputKeys: inputKeys(
+        learningDistill,
+        new Set([...hostOwnedPathKeys, "memoryDir", "stateDir"]),
+      ),
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: ["research_only", "local_learning_distill_only", "no_execution_authority"],
       approve: (args) => {
+        if ("memoryDir" in args || "stateDir" in args) {
+          return { ok: false, reason: "learning paths are set by the host, not model proposals" };
+        }
         const escalation = escalationReason(args);
         return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
       },
@@ -450,7 +747,14 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
  * than one slice of it.
  */
 export function createCentralToolRegistry(
-  options: { execute?: typeof runOwner } = {},
+  options: {
+    execute?: typeof runOwner;
+    workspaceDir?: string;
+    config?: OpenClawConfig;
+    agentId?: string;
+    /** Exact host-owned ledger roots the model may select (synthetic/eval use only). */
+    financeLedgerDirectories?: readonly string[];
+  } = {},
 ): ReadonlyMap<string, CentralToolSpec> {
   const executeFn = options.execute ?? runOwner;
   const ownerSpecs = READ_ONLY_OWNERS.map((owner) => {
@@ -458,7 +762,11 @@ export function createCentralToolRegistry(
       ownerId: owner.id,
       name: owner.id,
       label: `Governance owner: ${owner.id}`,
-      description: `Run the read-only governance owner '${owner.id}' and surface its JSON receipt. Research-only; no execution or write authority.`,
+      description: `Run the read-only governance owner '${owner.id}' and surface its JSON receipt. Research-only; no execution or write authority.${
+        owner.id === "contextRecovery"
+          ? " Includes the original handoff source checks and required-source gaps. Source delivery is separate from module absorption or channel binding; use the archived result's precise fields before repeating an owner."
+          : ""
+      }`,
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: owner.boundary,
       approve: (args) => approveOwner(owner.id, args),
@@ -466,8 +774,65 @@ export function createCentralToolRegistry(
     };
     return [owner.id, spec] as const;
   });
-  const capabilitySpecs = createCapabilityTools().map((spec) => [spec.ownerId, spec] as const);
-  return new Map([...ownerSpecs, ...capabilitySpecs]);
+  const capabilitySpecs = createCapabilityTools(
+    options.workspaceDir,
+    options.financeLedgerDirectories,
+    options.config,
+    options.agentId,
+  ).map((spec) => [spec.ownerId, spec] as const);
+  const specs = [...ownerSpecs, ...capabilitySpecs];
+  const config = options.config;
+  const workspaceDir = options.workspaceDir;
+  if (!config || !workspaceDir) {
+    return new Map(specs);
+  }
+  return new Map(
+    specs.map(([ownerId, spec]) => [
+      ownerId,
+      ownerId === "artifact_memory_recall"
+        ? spec
+        : {
+            ...spec,
+            execute: async (
+              args: Readonly<Record<string, unknown>>,
+              signal: AbortSignal,
+              invocation?: CentralToolInvocation,
+            ) => {
+              const outcome = await spec.execute(args, signal);
+              const artifactEvidence = await recordAgentArtifact({
+                config,
+                agentId: options.agentId ?? "main",
+                workspaceDir,
+                owner: ownerId,
+                runId: `central-tool-${randomUUID()}`,
+                invocationRunId: invocation?.runId,
+                value: outcome,
+                signal,
+              });
+              if (Object.hasOwn(outcome, "artifactEvidence")) {
+                // Source-owned evidence stays untouched. Host provenance travels
+                // outside JSON so it cannot collide with a business field.
+                return markCentralArtifactOutcome(outcome, outcome, artifactEvidence);
+              }
+              return markCentralArtifactOutcome(
+                {
+                  ...(artifactEvidence.status !== "unavailable" &&
+                  Buffer.byteLength(JSON.stringify(outcome)) > 512
+                    ? {
+                        artifactId: artifactEvidence.id,
+                        artifactIndexStatus: artifactEvidence.status,
+                      }
+                    : {}),
+                  ...outcome,
+                  artifactEvidence,
+                },
+                outcome,
+                artifactEvidence,
+              );
+            },
+          },
+    ]),
+  );
 }
 
 export { approveOwner, escalationReason, CENTRAL_FORBIDDEN_SIDE_EFFECTS };

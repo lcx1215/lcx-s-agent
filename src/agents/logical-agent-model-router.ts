@@ -18,12 +18,15 @@ export type ModelCallOutcome = "completed" | "failed" | "rejected" | "timed_out"
 export class ModelAdapterError extends Error {
   constructor(
     readonly code:
+      | "prompt_input_invalid"
+      | "prompt_budget_exceeded"
       | "output_invalid"
       | "output_truncated"
       | "process_error"
       | "output_limit"
       | "runtime_timeout"
       | "provider_auth"
+      | "provider_payment_required"
       | "provider_rate_limit"
       | "call_budget_exhausted",
   ) {
@@ -52,6 +55,17 @@ export type ModelCallObservation = Readonly<{
   outputNormalization?: "terminal_delimiters" | "json_extraction";
   credentialSource?: "configuration" | "environment" | "auth_profile";
   reasoningEffort?: "low" | "high" | "max";
+  /** Adapter-authored evidence coverage for the exact request boundary. */
+  evidenceCoverage?: ModelEvidenceCoverage;
+}>;
+
+export type ModelEvidenceCoverage = Readonly<{
+  boundary: "canonical_prompt";
+  suppliedEvidenceIds: readonly string[];
+  includedEvidenceIds: readonly string[];
+  omittedEvidenceIds: readonly string[];
+  clippedEvidenceIds: readonly string[];
+  promptSha256?: string;
 }>;
 
 export type LogicalAgentModelAdapter = Readonly<{
@@ -64,6 +78,12 @@ export type LogicalAgentModelAdapter = Readonly<{
   requiredSideEffects: readonly LogicalAgentSideEffect[];
   /** Explicitly bounded specialists cannot become general fallbacks. */
   roleScope?: readonly LogicalAgentId[];
+  /** Read-only preflight; a rejected adapter is not dispatched or charged a model call. */
+  unavailableReason?: () =>
+    | "provider_rate_limit"
+    | "provider_auth"
+    | "provider_payment_required"
+    | undefined;
   maxInputBytes?: number;
   qualificationId?: string;
   invoke: (request: ModelCallRequest, signal: AbortSignal) => Promise<unknown>;
@@ -80,6 +100,14 @@ export type LogicalAgentRoleModelPolicy = Readonly<{
   requiredCapabilities: readonly string[];
   maxInputBytes: number;
   timeoutMs: number;
+  /** One same-adapter structural repair, using the existing dispatch and call budget.
+   * The adapter owns diagnostic feedback; semantic review failures are not retried here.
+   */
+  retryOutputContractOnce?: boolean;
+  /** Retry one truncated evidence or independent final review with the same adapter. */
+  retryTruncatedOutputOnce?: boolean;
+  /** Retry one truncated affinity-bound artifact once with its original author. */
+  retryAffinityTruncationOnce?: boolean;
   workload?: string;
   /** Require observed prior-role execution and exclude every model it used successfully. */
   excludeModelsUsedBy?: readonly LogicalAgentId[];
@@ -89,6 +117,8 @@ export type LogicalAgentRoleModelPolicy = Readonly<{
     /** Included in checkpoint identity; change when validation semantics change. */
     revision: string;
     validate: (output: unknown, input: unknown) => boolean;
+    /** Bounded diagnostic only; cannot approve an output or launch another call. */
+    describeFailure?: (output: unknown, input: unknown) => string;
   }>;
 }>;
 
@@ -123,6 +153,7 @@ export type ModelCallReceipt = Readonly<{
   outputNormalization?: "terminal_delimiters" | "json_extraction";
   credentialSource?: "configuration" | "environment" | "auth_profile";
   reasoningEffort?: "low" | "high" | "max";
+  evidenceCoverage?: ModelEvidenceCoverage;
   workload?: string;
   outputContractRevision?: string;
   qualificationId?: string;
@@ -190,6 +221,24 @@ export class LogicalAgentModelRouter {
       ) {
         throw new Error("model policy requires bounded input bytes and timeout");
       }
+      if (
+        policy.retryOutputContractOnce !== undefined &&
+        (typeof policy.retryOutputContractOnce !== "boolean" || !policy.outputContract)
+      ) {
+        throw new Error("model contract repair requires a validator and boolean policy");
+      }
+      if (
+        policy.retryAffinityTruncationOnce !== undefined &&
+        (typeof policy.retryAffinityTruncationOnce !== "boolean" || !policy.sameModelAsRole)
+      ) {
+        throw new Error("affinity truncation repair requires a same-model role policy");
+      }
+      if (
+        policy.retryTruncatedOutputOnce !== undefined &&
+        typeof policy.retryTruncatedOutputOnce !== "boolean"
+      ) {
+        throw new Error("truncated-output retry policy must be boolean");
+      }
       const targets = [policy.primary, ...(policy.fallback ?? [])];
       if (
         policy.outputContract &&
@@ -235,13 +284,26 @@ export class LogicalAgentModelRouter {
     return this.#adapters.get(this.#policy(role).primary)!.modelId;
   }
 
-  restoreCompletedModelCalls(correlationId: string, receipts: readonly ModelCallReceipt[]): void {
+  restoreCompletedModelCalls(
+    correlationId: string,
+    receipts: readonly ModelCallReceipt[],
+    sourceCorrelationId: string = correlationId,
+  ): void {
     if (!correlationId.trim()) {
       throw new Error("model routing restore requires a correlation ID");
     }
+    if (sourceCorrelationId !== correlationId) {
+      const sourceAttempt = /^(.*):attempt:(\d+)$/u.exec(sourceCorrelationId);
+      if (
+        !sourceAttempt ||
+        correlationId !== `${sourceAttempt[1]}:attempt:${Number(sourceAttempt[2]) + 1}`
+      ) {
+        throw new Error("model routing restore requires the next attempt of the same run");
+      }
+    }
     const completed = new Map<LogicalAgentId, Set<string>>();
     for (const receipt of receipts) {
-      if (receipt.correlationId !== correlationId) {
+      if (receipt.correlationId !== sourceCorrelationId) {
         throw new Error("model routing checkpoint receipt correlation mismatch");
       }
       if (receipt.outcome !== "completed") {
@@ -282,7 +344,17 @@ export class LogicalAgentModelRouter {
     record: (receipt: ModelCallReceipt) => void;
   }): Promise<unknown> {
     const policy = this.#policy(params.role);
+    if (
+      policy.retryTruncatedOutputOnce &&
+      params.role !== "evidence_integrity" &&
+      params.role !== "adversarial_challenge" &&
+      params.role !== "final_precheck"
+    ) {
+      throw new Error("truncated-output retry requires a quality review role");
+    }
     const targets = [policy.primary, ...(policy.fallback ?? [])];
+    let contractRepairUsed = false;
+    let affinityTruncationRetryTarget: string | undefined;
     // Freeze the input snapshot across retries; each adapter receives its own JSON copy.
     let serialized: string | undefined;
     try {
@@ -291,6 +363,7 @@ export class LogicalAgentModelRouter {
       /* Rejected below with a fixed code. */
     }
     for (const [index, id] of targets.entries()) {
+      const isAffinityTruncationRetryAttempt = affinityTruncationRetryTarget === id;
       const adapter = this.#adapters.get(id)!;
       const startedAtMs = Date.now();
       const identity = Object.freeze({
@@ -385,6 +458,12 @@ export class LogicalAgentModelRouter {
           reason = "adapter_input_constraint";
           throw new Error("model specialist input scope rejected");
         }
+        const unavailable = adapter.unavailableReason?.();
+        if (unavailable) {
+          outcome = "rejected";
+          reason = unavailable;
+          throw new ModelAdapterError(unavailable);
+        }
         const cancelled = new Promise<never>((_, reject) => {
           controller.signal.addEventListener(
             "abort",
@@ -429,12 +508,40 @@ export class LogicalAgentModelRouter {
         return result;
       } catch (error) {
         reason ??= error instanceof ModelAdapterError ? error.code : "adapter_error";
+        const retryContract =
+          reason === "output_contract" && policy.retryOutputContractOnce && !contractRepairUsed;
+        const retryTruncatedAffinity =
+          (reason === "output_truncated" ||
+            (params.role === "formatting" && reason === "output_invalid")) &&
+          policy.retryAffinityTruncationOnce &&
+          !contractRepairUsed;
+        const retryTruncatedOutput =
+          reason === "output_truncated" && policy.retryTruncatedOutputOnce && !contractRepairUsed;
+        if (
+          (retryContract || retryTruncatedAffinity || retryTruncatedOutput) &&
+          !params.signal.aborted
+        ) {
+          contractRepairUsed = true;
+          if (retryTruncatedAffinity) {
+            affinityTruncationRetryTarget = id;
+          }
+          // Stay with the same eligible author/reviewer; each attempt still goes
+          // through capability, separation, affinity, dispatch and budget checks.
+          targets.splice(index + 1, 0, id);
+        }
+        // An affinity-bound truncated or syntactically invalid rewrite gets one same-author repair.
+        // Do not try another adapter if the repair itself fails validation or truncates.
+        if (isAffinityTruncationRetryAttempt) {
+          throw new Error(`model routing ${outcome}: ${reason}`, { cause: error });
+        }
         // Cancellation never launches a fallback; failed/rejected/timed-out targets may do so.
         if (
           outcome === "aborted" ||
           params.signal.aborted ||
           index === targets.length - 1 ||
           reason === "input_constraint" ||
+          reason === "prompt_input_invalid" ||
+          reason === "prompt_budget_exceeded" ||
           reason === "call_budget_exhausted" ||
           reason === "model_separation_unproven" ||
           reason === "model_affinity_unproven"
@@ -494,6 +601,9 @@ export class LogicalAgentModelRouter {
             ...(observation?.outputNormalization
               ? { outputNormalization: observation.outputNormalization }
               : {}),
+            ...(observation?.evidenceCoverage
+              ? { evidenceCoverage: observation.evidenceCoverage }
+              : {}),
             ...(observation
               ? {
                   observationIdSha256: createHash("sha256")
@@ -516,7 +626,16 @@ export function modelRoutingTaskTimeoutMs(routing: LogicalAgentModelRouting): nu
     2_147_483_647,
     Math.max(
       ...[routing.defaultPolicy, ...Object.values(routing.roles ?? {})].map(
-        (policy) => policy.timeoutMs * (1 + (policy.fallback?.length ?? 0)) + 1_000,
+        (policy) =>
+          policy.timeoutMs *
+            (1 +
+              (policy.fallback?.length ?? 0) +
+              (policy.retryOutputContractOnce ||
+              policy.retryAffinityTruncationOnce ||
+              policy.retryTruncatedOutputOnce
+                ? 1
+                : 0)) +
+          1_000,
       ),
     ),
   );

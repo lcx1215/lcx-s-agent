@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,6 +19,44 @@ const run = (cwd: string, cmd: string, args: string[] = [], env?: NodeJS.Process
 };
 
 describe("git-hooks/pre-commit (integration)", () => {
+  it("leaves no reverse staged changes after a path-specific commit formats its file", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "lcx-committer-hook-"));
+    const file = "handoff [1].md";
+    try {
+      run(dir, "git", ["init", "-q", "--initial-branch=main"]);
+      run(dir, "git", ["config", "user.name", "LCX Test"]);
+      run(dir, "git", ["config", "user.email", "test@example.invalid"]);
+      run(dir, "git", ["config", "commit.gpgsign", "false"]);
+      run(dir, "git", ["config", "core.hooksPath", ".git/hooks"]);
+      writeFileSync(path.join(dir, file), "original\n");
+      writeFileSync(path.join(dir, "unrelated.md"), "baseline\n");
+      run(dir, "git", ["add", "--", file, "unrelated.md"]);
+      run(dir, "git", ["commit", "-qm", "initial fixture"]);
+      writeFileSync(path.join(dir, file), "unformatted edit\n");
+      writeFileSync(path.join(dir, "unrelated.md"), "user edit\n");
+      writeFileSync(path.join(dir, "untracked.md"), "keep untracked\n");
+      writeFileSync(
+        path.join(dir, ".git/hooks/pre-commit"),
+        `#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' 'formatted edit' > '${file}'\ngit add -- '${file}'\n`,
+        { mode: 0o755 },
+      );
+
+      run(dir, "bash", [path.join(process.cwd(), "scripts/committer"), "docs: fixture", file]);
+
+      expect(run(dir, "git", ["show", `HEAD:${file}`])).toBe("formatted edit");
+      expect(readFileSync(path.join(dir, file), "utf8")).toBe("formatted edit\n");
+      expect(run(dir, "git", ["diff", "--cached", "--name-only"])).toBe("");
+      expect(run(dir, "git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])).toBe(
+        file,
+      );
+      expect(readFileSync(path.join(dir, "unrelated.md"), "utf8")).toBe("user edit\n");
+      expect(readFileSync(path.join(dir, "untracked.md"), "utf8")).toBe("keep untracked\n");
+      expect(run(dir, "git", ["diff", "--name-only"])).toBe("unrelated.md");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not treat staged filenames as git-add flags (e.g. --all)", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "openclaw-pre-commit-"));
     run(dir, "git", ["init", "-q", "--initial-branch=main"]);
@@ -64,5 +102,31 @@ describe("git-hooks/pre-commit (integration)", () => {
 
     const staged = run(dir, "git", ["diff", "--cached", "--name-only"]).split("\n").filter(Boolean);
     expect(staged).toEqual(["--all"]);
+  });
+
+  it("can commit a removed tracked file without trying to restore an absent index entry", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "lcx-committer-delete-"));
+    try {
+      run(dir, "git", ["init", "-q", "--initial-branch=main"]);
+      run(dir, "git", ["config", "user.name", "LCX Test"]);
+      run(dir, "git", ["config", "user.email", "test@example.invalid"]);
+      run(dir, "git", ["config", "commit.gpgsign", "false"]);
+      run(dir, "git", ["config", "core.hooksPath", ".git/hooks"]);
+      writeFileSync(path.join(dir, "obsolete.md"), "fixture\n");
+      run(dir, "git", ["add", "--", "obsolete.md"]);
+      run(dir, "git", ["commit", "-qm", "initial fixture"]);
+      rmSync(path.join(dir, "obsolete.md"));
+
+      run(dir, "bash", [
+        path.join(process.cwd(), "scripts/committer"),
+        "docs: delete fixture",
+        "obsolete.md",
+      ]);
+
+      expect(run(dir, "git", ["ls-files"])).toBe("");
+      expect(run(dir, "git", ["status", "--porcelain"])).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

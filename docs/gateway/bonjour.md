@@ -33,7 +33,11 @@ iOS/Android nodes browse both `local.` and your configured wide‑area domain.
 
 ```json5
 {
-  gateway: { bind: "tailnet" }, // tailnet-only (recommended)
+  gateway: {
+    bind: "tailnet",
+    tls: { enabled: true },
+    auth: { mode: "token", token: "replace-me" },
+  },
   discovery: { wideArea: { enabled: true } }, // enables wide-area DNS-SD publishing
 }
 ```
@@ -74,6 +78,7 @@ access, bind explicitly and keep auth enabled.
 For tailnet‑only setups:
 
 - Set `gateway.bind: "tailnet"` in `~/.openclaw/openclaw.json`.
+- Also enable `gateway.tls.enabled` and configure authentication; the Gateway rejects direct non-loopback binds without both.
 - Restart the Gateway (`lcx gateway restart`).
 
 ## What advertises

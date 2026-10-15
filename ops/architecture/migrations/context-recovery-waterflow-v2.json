@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "compressed_context_recovery_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Original recovery sources fork from the recovery owner and join before delivery; static mind-model auditing does not consume change-impact output.",
+  "authority": "scripts/operator/lcx-context-recovery-exam.ts",
+  "sourceFacts": [
+    "main reads operator state and runs mindModelCheck, flowGraphCheck and currentTrainingPlanSnapshot in Promise.all",
+    "--handoff collects currentChangeImpactSnapshot and the other handoff sources before the result aggregate",
+    "the existing registry archives the owner result and artifact_memory_recall supplies selected fields to the next harness input"
+  ],
+  "changes": {
+    "preservedNodes": [
+      "new_codex_window",
+      "fixed_evidence_recovery",
+      "operator_latest_state",
+      "mind_model",
+      "flow_graph",
+      "training_plan",
+      "change_impact_plan"
+    ],
+    "addedExistingNode": "central_agent_perception",
+    "terminal": "central_agent_perception",
+    "feedback": ["central_agent_perception", "new_codex_window"],
+    "receiptCompatibility": "Legacy single output references remain valid. Optional per-consumer outputs select real producer fields and retain scope/hash/consumer-readback checks."
+  },
+  "nonEffects": [
+    "no relation vocabulary or state transition changes",
+    "no new workflow execution authority",
+    "no business state migration",
+    "no persisted receipt rewriting"
+  ],
+  "verification": ["test/lcx-flow-handoff.test.ts", "scripts/operator/lcx-flow-graph.ts --json"],
+  "acceptance": "A corrected graph is structure only until original producer and consumer field receipts prove traversal; natural adoption is separate."
+}

@@ -58,6 +58,7 @@ async function runGatewayHealthCheck(params: {
     port: params.port,
     customBindHost: params.cfg.gateway?.customBindHost,
     basePath: undefined,
+    tlsEnabled: params.cfg.gateway?.tls?.enabled === true,
   });
   const remoteUrl = params.cfg.gateway?.remote?.url?.trim();
   const wsUrl = params.cfg.gateway?.mode === "remote" && remoteUrl ? remoteUrl : localLinks.wsUrl;
@@ -246,7 +247,7 @@ export async function runConfigureWizard(
       }
     }
 
-    const localUrl = "ws://127.0.0.1:18789";
+    const localUrl = `${baseConfig.gateway?.tls?.enabled === true ? "wss" : "ws"}://127.0.0.1:${resolveGatewayPort(baseConfig)}`;
     const localProbe = await probeGatewayReachable({
       url: localUrl,
       token: baseConfig.gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN,
@@ -537,6 +538,7 @@ export async function runConfigureWizard(
       port: gatewayPort,
       customBindHost: nextConfig.gateway?.customBindHost,
       basePath: nextConfig.gateway?.controlUi?.basePath,
+      tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
     });
     // Try both new and old passwords since gateway may still have old config.
     const newPassword =

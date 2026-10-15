@@ -117,6 +117,9 @@ async function resolveProvidersForModelsJson(params: {
 }): Promise<Record<string, ProviderConfig>> {
   const { cfg, agentDir } = params;
   const explicitProviders = cfg.models?.providers ?? {};
+  if (cfg.models?.discovery === "configured_only") {
+    return mergeProviders({ explicit: explicitProviders });
+  }
   const implicitProviders = await resolveImplicitProviders({ agentDir, explicitProviders });
   const providers: Record<string, ProviderConfig> = mergeProviders({
     implicit: implicitProviders,
@@ -215,11 +218,14 @@ export async function ensureOpenClawModelsJson(
 
   const providers = await resolveProvidersForModelsJson({ cfg, agentDir });
 
-  if (Object.keys(providers).length === 0) {
+  const mode = cfg.models?.mode ?? DEFAULT_MODE;
+  if (
+    Object.keys(providers).length === 0 &&
+    !(cfg.models?.discovery === "configured_only" && mode === "replace")
+  ) {
     return { agentDir, wrote: false };
   }
 
-  const mode = cfg.models?.mode ?? DEFAULT_MODE;
   const targetPath = path.join(agentDir, "models.json");
   const mergedProviders = await resolveProvidersForMode({
     mode,

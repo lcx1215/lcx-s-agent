@@ -20,32 +20,23 @@ const unitIsolatedFilesRaw = [
   "src/commands/auth-choice.test.ts",
   // Process supervision + docker setup suites are stable but setup-heavy.
   "src/process/supervisor/supervisor.test.ts",
-  "src/docker-setup.test.ts",
   // Filesystem-heavy skills sync suite.
   "src/agents/skills.build-workspace-skills-prompt.syncs-merged-skills-into-target-workspace.test.ts",
   // Real git hook integration test; keep signal, move off unit-fast critical path.
   "test/git-hooks-pre-commit.test.ts",
   // Setup-heavy doctor command suites; keep them off the unit-fast critical path.
-  "src/commands/doctor.warns-state-directory-is-missing.test.ts",
-  "src/commands/doctor.warns-per-agent-sandbox-docker-browser-prune.test.ts",
-  "src/commands/doctor.runs-legacy-state-migrations-yes-mode-without.test.ts",
+  "src/commands/agent.test.ts",
   // Setup-heavy CLI update flow suite; move off unit-fast critical path.
   "src/cli/update-cli.test.ts",
   // Expensive schema build/bootstrap checks; keep coverage but run in isolated lane.
   "src/config/schema.test.ts",
-  "src/config/schema.tags.test.ts",
   // CLI smoke/agent flows are stable but setup-heavy.
   "src/cli/program.smoke.test.ts",
-  "src/commands/agent.test.ts",
   "src/media/store.test.ts",
-  "src/media/store.header-ext.test.ts",
   "src/web/media.test.ts",
-  "src/web/auto-reply.web-auto-reply.falls-back-text-media-send-fails.test.ts",
-  "src/browser/server.covers-additional-endpoint-branches.test.ts",
   "src/browser/server.post-tabs-open-profile-unknown-returns-404.test.ts",
   "src/browser/server.agent-contract-snapshot-endpoints.test.ts",
   "src/browser/server.agent-contract-form-layout-act-commands.test.ts",
-  "src/browser/server.skips-default-maxchars-explicitly-set-zero.test.ts",
   "src/browser/server.auth-token-gates-http.test.ts",
   // Keep this high-variance heavy file off the unit-fast critical path.
   "src/auto-reply/reply.block-streaming.test.ts",
@@ -59,22 +50,15 @@ const unitIsolatedFilesRaw = [
   "src/browser/extension-relay.test.ts",
   "extensions/acpx/src/runtime.test.ts",
   // Heavy runner/exec/archive suites are stable but contend on shared resources under vmForks.
-  "src/agents/pi-embedded-runner.test.ts",
   "src/agents/bash-tools.test.ts",
   "src/agents/openclaw-tools.subagents.sessions-spawn.lifecycle.test.ts",
   "src/agents/bash-tools.exec.background-abort.test.ts",
-  "src/agents/subagent-announce.format.test.ts",
   "src/infra/archive.test.ts",
   "src/cli/daemon-cli.coverage.test.ts",
   // Model normalization test imports config/model discovery stack; keep off unit-fast critical path.
   "src/agents/models-config.normalizes-gemini-3-ids-preview-google-providers.test.ts",
   // Auth profile rotation suite is retry-heavy and high-variance under vmForks contention.
-  "src/agents/pi-embedded-runner.run-embedded-pi-agent.auth-profile-rotation.test.ts",
-  // Heavy trigger command scenarios; keep off unit-fast critical path to reduce contention noise.
   "src/auto-reply/reply.triggers.trigger-handling.filters-usage-summary-current-model-provider.test.ts",
-  "src/auto-reply/reply.triggers.trigger-handling.targets-active-session-native-stop.test.ts",
-  "src/auto-reply/reply.triggers.group-intro-prompts.test.ts",
-  "src/auto-reply/reply.triggers.trigger-handling.handles-inline-commands-strips-it-before-agent.test.ts",
   "src/web/auto-reply.web-auto-reply.compresses-common-formats-jpeg-cap.test.ts",
   // Setup-heavy bot bootstrap suite.
   "src/telegram/bot.create-telegram-bot.test.ts",

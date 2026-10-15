@@ -1,8 +1,8 @@
 /**
  * Repository-local machine-readable projection of the full trader-strategy-lab
  * method surface. The source Skill contains the longer evidence and source
- * notes; this catalog makes every method and direction available to LCX model
- * requests regardless of which finance entry point selected the task.
+ * notes; this catalog remains complete in process, while model requests use a
+ * compact index and only the selected operational contracts.
  */
 
 export const FINANCE_STRATEGY_METHOD_CATALOG_SCHEMA_VERSION =
@@ -21,6 +21,7 @@ export const STRATEGY_METHOD_IDS = [
   "M10",
   "M11",
   "M12",
+  "M13",
 ] as const;
 export type StrategyMethodId = (typeof STRATEGY_METHOD_IDS)[number];
 
@@ -192,6 +193,25 @@ export const FINANCE_STRATEGY_METHODS: readonly StrategyMethodDefinition[] = Obj
     ["共同因子集中、被迫去杠杆", "融资余量缩小、借券撤回", "近期业绩好被误当作应加仓"],
     "这是立即可用的风险诊断工具；不提供自动调仓、下单或资金权限。",
   ),
+  method(
+    "M13",
+    "商品期货配对价差",
+    "产业替代、共享成本或其他可验证机制可能促使部分商品价差修复；共同涨跌或高相关性本身不说明偏离会收敛。",
+    [
+      "写明产业机制、候选关系、交易所、合约月份、计价单位、乘数和换月映射",
+      "按经济含义选择固定价差、价比、加工利润或滚动残差，并明确估计窗口",
+      "用历史偏离事件记录回归率、持有时长、最大不利偏离、失败年份和结构变化",
+      "两腿分别计算手续费、买卖价差、滑点、整数手、保证金、展期和腿间成交风险",
+      "组合中检查重复合约、共同产业因子、压力相关性和边际保证金",
+    ],
+    [
+      "新产能、工艺路线、进口政策、库存周期或交割规则永久改变均衡",
+      "产业调整存在长时滞，偏离在资金期限内不收敛",
+      "滚动对冲比例漂移、残差波动放大或相关关系失效",
+      "两腿流动性、换月或成交时点不匹配，成本吞噬理论价差",
+    ],
+    "只形成研究假说和诊断，不产生交易信号；没有合约级数据、成本和可执行性证据时不得称为可获利套利。",
+  ),
 ]);
 
 const methodContract = (
@@ -335,16 +355,31 @@ export const FINANCE_STRATEGY_METHOD_CONTRACTS: Readonly<
     ["真实报价和价差", "组合压力", "四类情景", "保费/退出规则"],
   ),
   M11: methodContract(
-    "不同市场、期限或执行价的波动率关系可能偏离可解释范围。",
-    ["同步期权曲面", "delta/gamma/vega/theta", "相关性", "连续对冲成本"],
+    "不同市场、期限或执行价的波动率关系可能偏离可解释范围；Gamma Scalping 检验做多期权并动态对冲后的 gamma 加权实现方差是否足以覆盖隐含方差、再定价及实施成本。",
+    [
+      "同步期权曲面和标的报价及来源时间戳",
+      "delta/gamma/vega/theta、行权方式、到期、乘数",
+      "相关性及同期限实现/隐含方差",
+      "对冲阈值、整数/分数股规则、库存、借券与融资条件",
+      "期权双腿和标的的价差、佣金及滑点",
+    ],
     [
       "先证明相对异常有机制解释，再计算非线性压力损益",
       "把相关性跃迁、跳空、资金和连续对冲成本放入情景",
       "分开记录局部 delta 中性与组合真实风险",
+      "Gamma Scalping 冻结再平衡规则，以期权价值变化、标的头寸和现金账本核算总净损益，不把对冲账户独立叫作 gamma 收益",
+      "检验横盘、震荡、趋势、跳空与隐波坍塌，并与同成本不对冲跨式比较",
     ],
     "曲面关系、结构变化和对冲成本均在预设范围内，且风险预算可承受。",
-    ["曲面跳变", "相关性跃迁", "跳空", "流动性或对冲执行恶化"],
-    ["完整同步曲面", "Greeks", "动态对冲成本", "压力和流动性"],
+    ["曲面跳变或隐波坍塌", "相关性跃迁", "跳空", "流动性或对冲执行恶化", "成本、库存或融资越限"],
+    [
+      "完整同步曲面",
+      "Greeks",
+      "动态对冲成本",
+      "压力和流动性",
+      "自融资净损益账本和对冲规则",
+      "同成本基线及样本外验证",
+    ],
   ),
   M12: methodContract(
     "策略名称数量不等于独立风险；共同因子和融资恶化会同步放大损失。",
@@ -357,6 +392,38 @@ export const FINANCE_STRATEGY_METHOD_CONTRACTS: Readonly<
     "新增策略只有在边际风险、现金和流动性预算都合适时才进入候选。",
     ["共同因子集中", "被迫去杠杆", "融资余量缩小", "借券撤回", "退出天数越限"],
     ["穿透重复持仓", "压力相关性", "总/净暴露", "融资/保证金", "退出计划"],
+  ),
+  M13: methodContract(
+    "有产业替代、共享成本或其他明确机制的商品配对，可能在采购、需求或生产调整后修复相对偏离；相关性只描述共同变化，不证明价差有均衡或会回归。",
+    [
+      "候选关系及其产业证据",
+      "同步且带来源/时间戳的观测值",
+      "交易所、合约月份、单位、乘数、到期与换月映射",
+      "手续费、买卖价差、滑点、保证金、整数手和腿间成交假设",
+      "库存、产能、检修、政策、交割和替代条件的状态证据",
+    ],
+    [
+      "先区分同标的跨期、跨品种替代、共享成本和上下游利润关系，并写清谁会通过什么行为修复偏离",
+      "按产业公式优先选择表达；固定价差、价比和残差各自说明尺度、估计窗口及可能失效原因",
+      "只用当时可得信息定义偏离事件，报告回归比例、回归时间分布、最大不利偏离、超时和未回归年份",
+      "两腿使用下一可交易时点的成交假设，按合约乘数和整数手核算净收益、保证金、换月及单腿未成交风险",
+      "在多配对组合中去重合约并检查共同产业因子、压力相关性和新增配对的边际贡献",
+    ],
+    "经济机制、合约映射和点时样本明确后，才把偏离事件作为研究候选；只有样本外事件、成本与资金期限检验通过，才讨论更高研究阶段。",
+    [
+      "新产能、工艺路线、进口政策、交割标准或终端需求改变均衡",
+      "偏离后的回归时间持续拉长或未回归事件集中出现",
+      "对冲比例持续单向漂移或残差波动明显抬升",
+      "可成交容量、保证金余量或任一腿流动性不满足预定预算",
+    ],
+    [
+      "机制和替代/传导路径的来源",
+      "可复现的合约、单位、乘数与展期规则",
+      "同步点时价格与缺失/停牌处理",
+      "逐次偏离事件及失败年份的回归统计",
+      "含双腿成交、手续费、价差、滑点、保证金和展期的净成本模型",
+      "样本外、制度变化与组合共同风险检查",
+    ],
   ),
 });
 
@@ -566,6 +633,13 @@ export const FINANCE_STRATEGY_DIRECTIONS: readonly StrategyDirectionDefinition[]
     "回购、借券和保证金收紧会放大相关性和被迫平仓。",
     "融资利率、借券可得性、冲击成本和压力情景",
   ),
+  direction(
+    "D29",
+    "商品期货跨品种价差",
+    ["M01", "M12", "M13"],
+    "产业替代、共享成本或其他可验证关系可能限制相对价格偏离，但其修复速度、状态依赖和失效年份必须由点时事件检验。",
+    "候选机制与合约/展期映射、偏离事件回归率和时长、未回归年份、双腿净成本、资金期限及组合共同暴露",
+  ),
 ]);
 
 export const FINANCE_STRATEGY_METHOD_CATALOG = Object.freeze({
@@ -577,20 +651,16 @@ export const FINANCE_STRATEGY_METHOD_CATALOG = Object.freeze({
 });
 
 export function buildFinanceStrategyCatalogPrompt(): string {
-  const methods = FINANCE_STRATEGY_METHODS.map((item) => {
-    const contract = FINANCE_STRATEGY_METHOD_CONTRACTS[item.id];
-    return `${item.id} ${item.name}: ${item.hypothesis} Mechanism=${contract.mechanism} Inputs=${contract.inputs.join("; ")} Workflow=${contract.workflow.join("; ")} Trigger=${contract.trigger} Invalidation=${contract.invalidation.join("; ")} MinimumEvidence=${contract.minimumEvidence.join("; ")} Checks=${item.requiredChecks.join("; ")} Failure=${item.failureModes.join("; ")} Boundary=${item.personalBoundary}`;
-  });
+  const methods = FINANCE_STRATEGY_METHODS.map((item) => `${item.id} ${item.name}`);
   const directions = FINANCE_STRATEGY_DIRECTIONS.map(
-    (item) =>
-      `${item.id} ${item.name} [${item.modules.join(",")}]: ${item.hypothesis} Minimum=${item.minimumValidation}`,
+    (item) => `${item.id} ${item.name} [${item.modules.join(",")}]`,
   );
   return [
-    "Full trader-strategy-lab method catalog (all 12 methods and all 28 directions) is available for retrieval and cross-checking.",
+    "Full trader-strategy-lab method catalog index (names and method-direction mapping only; detailed contracts are supplied for selected methods).",
     "Methods:",
     ...methods.map((item) => `- ${item}`),
     "Directions:",
     ...directions.map((item) => `- ${item}`),
-    "Select only the methods relevant to the task for the visible answer, but do not lose the full catalog or its boundaries.",
+    "MinimumEvidence= is provided with selected method contracts below. Use the index to identify relevant methods; do not infer that unselected methods were analyzed.",
   ].join("\n");
 }

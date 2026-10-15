@@ -5,7 +5,20 @@ import type {
 
 // Published exchange calendar; unknown years remain unverified, never guessed.
 // https://www.nyse.com/trade/hours-calendars (verified 2026-09-08)
+// 2025 dates: https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf
 const holidays: Record<string, readonly string[]> = {
+  "2025": [
+    "01-01",
+    "01-20",
+    "02-17",
+    "04-18",
+    "05-26",
+    "06-19",
+    "07-04",
+    "09-01",
+    "11-27",
+    "12-25",
+  ],
   "2026": [
     "01-01",
     "01-19",

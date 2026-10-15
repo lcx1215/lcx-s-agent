@@ -1,6 +1,6 @@
-# 三地人物与机构方法档案
+# 公开人物与机构方法档案
 
-检索截至2026-09-09。25条是人物、团队和历史案例混合档案，不是25名当代顶尖交易员排名。城市按已查证的机构关联标注；美国、英国与新加坡延伸项不冒充三地本地。每项的“迁移”与“失效”是本研究推导。
+档案检索截至 2026-09-09，含人物、团队与历史案例，不是排名、实时职位/仓位或完整名录。当前事实按[主 Skill](../SKILL.md)的快照规则处理；每项“迁移”与“失效”是本研究推导，不是来源原话。
 
 ## Pete Muller / PDT
 
@@ -65,12 +65,12 @@
 ## David Harding / Winton
 
 - 地域：伦敦。
-- 公开证据：官网说明早期伦敦创业与系统趋势方法。
-- 可迁移：跨资产、多个周期检验简单趋势，按风险而非金额分配。
+- 公开证据：官网材料介绍其早期沿革、系统趋势方法和 Portable Alpha 产品。
+- 可迁移：跨资产、多个周期检验趋势，以风险而非金额分配；把市场集合、信号速度和交易成本分开评估。
 - 不可直接复制：市场覆盖、历史数据与持续研究投入。
 - 失效条件：震荡反复、突发反转、分散失效。
 - 对应模块：M01、M02。
-- 来源：[S11 Winton沿革](https://www.winton.com/history)；[S13 Winton趋势介绍](https://www.winton.com/news/what-is-trend-following)。
+- 来源：[S11 Winton沿革](https://www.winton.com/history)；[S13 Winton趋势介绍](https://www.winton.com/news/what-is-trend-following)；[S79 Winton业务](https://www.winton.com/about)；[S81 Winton Portable Alpha](https://www.winton.com/news/winton-portable-alpha-ucits-launches-today)。
 
 ## Simon Judes / Winton研究文章
 
@@ -85,12 +85,12 @@
 ## Anthony Todd / Aspect
 
 - 地域：伦敦机构生态。
-- 公开证据：2023年访谈简介及机构分散研究。
+- 公开证据：访谈简介、机构分散研究及其趋势策略的压力期回顾。
 - 可迁移：评估跨市场有效风险分散；不同名称不等于独立风险。
 - 不可直接复制：替代市场接入和期货执行网络。
 - 失效条件：相关性上升、市场流动性消失、趋势反转。
 - 对应模块：M02、M12。
-- 来源：[S14 Aspect分散研究](https://www.aspectcapital.com/insight/diversification-trend-following/)；[S15 Anthony Todd访谈简介](https://www.aspectcapital.com/insight/contrarian-investor-podcast-with-anthony-todd/)。
+- 来源：[S14 Aspect分散研究](https://www.aspectcapital.com/insight/diversification-trend-following/)；[S15 Anthony Todd访谈简介](https://www.aspectcapital.com/insight/contrarian-investor-podcast-with-anthony-todd/)；[S83 Aspect趋势研究](https://aspectcapital.s3.amazonaws.com/documents/Aspect_Capital_Insight_Series_-_Living_With_Trend_Following_Lessons_From_the_P_kS3q7rz.pdf)。
 
 ## Jon Hiscock / GSA
 
@@ -101,26 +101,6 @@
 - 失效条件：交易成本超过毛优势、借券中断、结构变化。
 - 对应模块：M01、M05、M06。
 - 来源：[S16 GSA研究与沿革](https://www.gsacapital.com/who-we-are)。
-
-## Marshall Wace / TOPS团队
-
-- 地域：伦敦机构生态；全球业务。
-- 公开证据：官网公开TOPS存在和股票多空方法；没有公开其权重算法。
-- 可迁移：记录预测发布时间和原始观点，按样本外结果评价信息源。
-- 不可直接复制：经纪商网络、专有建议流、历史标签与执行。
-- 失效条件：重复信息被多次计权、事后改观点、拥挤。
-- 对应模块：M05。
-- 来源：[S17 Marshall Wace方法](https://www.mwam.com/about-us/)。
-
-## Chris Rokos / RCM历史案例
-
-- 地域：伦敦机构生态；历史风险案例。
-- 公开证据：2023年Reuters读取信函后报道亏损后降风险；不代表2026年仓位或收益。
-- 可迁移：方向假说、市场已定价路径和极端损失分开，预设减仓条件。
-- 不可直接复制：衍生品、融资、专家团队和盘中风险管理。
-- 失效条件：政策预期突然反转、杠杆放大与被迫平仓。
-- 对应模块：M03、M12。
-- 来源：[S18 Rokos历史降风险报道](https://uk.investing.com/news/economy/hedge-fund-rokos-cuts-risk-after-losses-bloomberg-report-2963620)；[S36 BIS利率衍生品与基差](https://www.bis.org/publications/qr-202512/goodbye-libor-hello-basis-traders-unpacking-surge-global-interest-rate-derivatives-turnover)。
 
 ## Robert Carver / 公开交易研究
 
@@ -314,7 +294,7 @@
 - 对应模块：M01、M05、M08、M09、M12。
 - 来源：[Citadel who we are](https://www.citadel.com/who-we-are/)；[credit and convertibles](https://www.citadel.com/what-we-do/credit-and-convertibles/)；[fixed income and macro](https://www.citadel.com/what-we-do/fixed-income-and-macro/)；[Barron's COO interview](https://www.citadel.com/wp-content/uploads/2025/09/Barrons_Citadel-COO-Dishes-on-His-Three-Decades-Working-With-Ken-Griffin.pdf)。
 
-## 伦敦/英国关联补充档案（2026-09-10）
+## 补充机构案例（2026-09-10）
 
 ### Mark Wong / Dymon Asia
 
@@ -389,22 +369,22 @@
 ### Chris Rokos / Rokos Capital
 
 - 地域：伦敦；全球宏观多资产。
-- 公开证据：官网描述宏观与微观研究、跨资产相对价值、量化分析和多因素不对称交易；报道提供2025年期间的阶段性回报，均为非审计媒体信息。
-- 可迁移：同一宏观观点比较现金、期货、期权、相对价值和跨市场表达，只有增长、通胀、政策、资金流和价格行为共同支持才提高信心。
+- 公开证据：官网描述宏观与微观研究、跨资产相对价值、量化分析和多因素不对称交易；媒体提供2025年阶段性回报，另有2023年回撤后降风险的历史报道。报道均不是独立审计业绩或当前仓位。
+- 可迁移：比较同一宏观观点的不同表达，并预先设定减仓条件；把研究判断与风险预算分开。
 - 不可直接复制：高集中度、杠杆、融资、衍生品和盘中风险管理。
-- 失效条件：观点正确但表达错误、期限错配、政策反转、融资挤兑和跳空。
+- 失效条件：观点表达错误、期限错配、政策反转、融资挤兑、跳空或损失后未按规则降风险。
 - 对应模块：M03、M10、M12。
-- 来源：[S70 Rokos平台](https://rcmplatform.com/)；[S71英国登记](https://find-and-update.company-information.service.gov.uk/company/OC398894)；[S72-S74阶段性报道](https://www.bloomberg.com/news/articles/2025-04-17/rokos-keeps-making-money-on-trump-fueled-market-rallies-or-routs)。
+- 来源：[S18 2023年降风险报道](https://uk.investing.com/news/economy/hedge-fund-rokos-cuts-risk-after-losses-bloomberg-report-2963620)；[S70 Rokos平台](https://rcmplatform.com/)；[S71英国登记](https://find-and-update.company-information.service.gov.uk/company/OC398894)；[S72 2025年4月报道](https://www.bloomberg.com/news/articles/2025-04-17/rokos-keeps-making-money-on-trump-fueled-market-rallies-or-routs)、[S73 2025上半年报道](https://www.bloomberg.com/news/articles/2025-07-08/chris-rokos-hedge-fund-gains-12-in-first-half-after-june-bump)、[S74 2025全年报道](https://www.bloomberg.com/news/articles/2026-01-08/rokos-hedge-fund-joins-macro-peers-surge-with-gains-of-21)。
 
-### Man AHL / Russell Korgaonkar、Winton / Simon Judes、Aspect Capital
+### Man AHL / Russell Korgaonkar
 
-- 地域：伦敦；系统化趋势机构。
-- 公开证据：三组官方研究均强调多市场、多速度、成本、容量与压力期回撤；Man比较20个趋势代理组合，Winton公开portable alpha，Aspect公开2025回撤和趋势失效情景。
-- 可迁移：以买入持有为基线，分层速度和市场集合，单独建模换手、滑点、容量和相关性；把趋势未形成与策略失效分开。
+- 地域：伦敦；系统化趋势管理人。
+- 公开证据：Man AHL 的公开研究比较趋势跟踪在不同市场环境与分散组合中的表现。
+- 可迁移：以简单基线检验趋势策略，并分开记录市场覆盖、趋势速度、成本和压力期表现。
 - 不可直接复制：专有市场集合、数据清洗、执行系统、融资和容量模型。
-- 失效条件：横盘、快速反转、政策干预、跳空、成本上升和低流动性市场容量不足。
-- 对应模块：M02、M03、M07、M12。
-- 来源：[S75 Man趋势回撤](https://www.man.com/insights/is-this-time-different)；[S76 Man趋势分散](https://www.man.com/insights/deep-dive-trend-following)；[S79 Winton业务](https://www.winton.com/about)；[S81 Winton Portable Alpha](https://www.winton.com/news/winton-portable-alpha-ucits-launches-today)；[S83 Aspect趋势研究](https://aspectcapital.s3.amazonaws.com/documents/Aspect_Capital_Insight_Series_-_Living_With_Trend_Following_Lessons_From_the_P_kS3q7rz.pdf)。
+- 失效条件：横盘、快速反转、跳空、成本上升和低流动性市场容量不足。
+- 对应模块：M02、M12。
+- 来源：[S75 Man趋势回撤](https://www.man.com/insights/is-this-time-different)；[S76 Man趋势分散](https://www.man.com/insights/deep-dive-trend-following)。
 
 ### Marshall Wace / TOPS
 
@@ -414,7 +394,7 @@
 - 不可直接复制：卖方网络、实时数据、历史样本和机构执行。
 - 失效条件：信号相关性上升、文本时点泄漏、低质量来源、成本与借券恶化。
 - 对应模块：M01、M05、M09、M12。
-- 来源：[S86 Marshall Wace团队](https://www.mwam.com/teams/)；[S87监管披露](https://us.mwam.com/regulatory-disclosures/stewardship-code-disclosure/)；[S88香港责任持有披露](https://us.mwam.com/regulatory-disclosures/principles-of-responsible-ownership/)。
+- 来源：[S17 Marshall Wace方法](https://www.mwam.com/about-us/)；[S86 Marshall Wace团队](https://www.mwam.com/teams/)；[S87监管披露](https://us.mwam.com/regulatory-disclosures/stewardship-code-disclosure/)；[S88香港责任持有披露](https://us.mwam.com/regulatory-disclosures/principles-of-responsible-ownership/)。
 
 ### Ruffer / Jonathan Ruffer、Henry Maxey
 

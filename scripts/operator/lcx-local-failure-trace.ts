@@ -1,10 +1,17 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  assertValidLcxOntologyEdges,
+  LCX_ONTOLOGY_EVIDENCE_KINDS,
+  LCX_ONTOLOGY_EVIDENCE_STATUSES,
+} from "../../src/shared/lcx-ontology.ts";
+import {
   boundaryFromFlags,
   buildLcxRunReceipt,
   createLcxRunId,
+  LCX_RUN_RECEIPT_CONTRACT_VERSION,
   type LcxRunReceipt,
   type LcxRunSnapshot,
 } from "../../src/shared/lcx-run-receipt.ts";
@@ -107,24 +114,33 @@ function inferFirstFailedGate(params: {
   if (parseFailure) {
     return `owner_parse_failed:${parseFailure.id}`;
   }
-  const exitFailure = params.ownerCommands.find((owner) => owner.exitCode !== 0);
+  const exitFailure = params.ownerCommands.find(
+    (owner) => owner.exitCode !== 0 && owner.runReceipt?.status !== "blocked",
+  );
   if (exitFailure) {
     return `owner_exit_failed:${exitFailure.id}`;
+  }
+  const failedOwner = params.ownerCommands.find((owner) => owner.runReceipt?.status === "failed");
+  if (failedOwner) {
+    return `owner_failed:${failedOwner.id}`;
   }
   if (params.activePidSummary.eval.length > 0 || params.activePidSummary.mlx.length > 0) {
     return "active_eval_or_mlx";
   }
+  const blockedOwner = params.ownerCommands.find((owner) => owner.runReceipt?.status === "blocked");
   return (
     params.blockedGates[0] ??
     params.failedGates[0] ??
     params.structuralOwnerFailures[0] ??
     params.blockedClusters[0] ??
+    (blockedOwner ? `owner_blocked:${blockedOwner.id}` : undefined) ??
     "none"
   );
 }
 
 function inferResult(params: {
   firstFailedGate: string;
+  ownerCommands: FailureTraceOwnerCommand[];
   activeTrainingOrEval: boolean;
   structuralOwnerFailures: string[];
   blockedGates: string[];
@@ -137,7 +153,8 @@ function inferResult(params: {
     params.boundaryFlags.providerConfigTouched ||
     params.boundaryFlags.protectedMemoryTouched ||
     params.firstFailedGate.startsWith("owner_parse_failed:") ||
-    params.firstFailedGate.startsWith("owner_exit_failed:")
+    params.firstFailedGate.startsWith("owner_exit_failed:") ||
+    params.ownerCommands.some((owner) => owner.runReceipt?.status === "failed")
   ) {
     return "failed";
   }
@@ -146,7 +163,8 @@ function inferResult(params: {
     params.structuralOwnerFailures.length > 0 ||
     params.blockedGates.length > 0 ||
     params.failedGates.length > 0 ||
-    params.blockedClusters.length > 0
+    params.blockedClusters.length > 0 ||
+    params.ownerCommands.some((owner) => owner.runReceipt?.status === "blocked")
   ) {
     return "blocked";
   }
@@ -185,6 +203,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
     input.activePidSummary.mlx.length > 0;
   const result = inferResult({
     firstFailedGate,
+    ownerCommands: input.ownerCommands,
     activeTrainingOrEval,
     structuralOwnerFailures,
     blockedClusters,
@@ -208,7 +227,12 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
 
   const runId = createLcxRunId({ checkedAt: input.checkedAt, owner: input.source, key });
   const nextAction =
-    stringifySafe(input.summary.fastestSafeNextAction) ?? "review_first_failed_gate";
+    stringifySafe(input.summary.fastestSafeNextAction) ??
+    input.ownerCommands.find((owner) => owner.runReceipt?.status === "failed")?.runReceipt
+      ?.nextAction ??
+    input.ownerCommands.find((owner) => owner.runReceipt?.status === "blocked")?.runReceipt
+      ?.nextAction ??
+    "review_first_failed_gate";
   const runReceipt = buildLcxRunReceipt({
     runId,
     owner: input.source,
@@ -314,11 +338,161 @@ export async function writeLocalFailureTraceReceipt(receipt: LocalFailureTraceRe
   await fs.appendFile(LOCAL_FAILURE_TRACE_JSONL_PATH, `${JSON.stringify(receipt)}\n`);
 }
 
-async function readJson(filePath: string): Promise<JsonRecord | undefined> {
+function readbackRunReceipt(value: unknown): LcxRunReceipt {
+  const row = recordValue(value);
+  if (
+    !row ||
+    row.contractVersion !== LCX_RUN_RECEIPT_CONTRACT_VERSION ||
+    !recordValue(row.snapshot) ||
+    !recordValue(row.boundary) ||
+    !Array.isArray(row.evidence) ||
+    !Array.isArray(row.ontologyEdges) ||
+    row.evidence.some((item) => {
+      const evidence = recordValue(item);
+      return (
+        !evidence ||
+        !LCX_ONTOLOGY_EVIDENCE_KINDS.some((kind) => kind === evidence.kind) ||
+        !LCX_ONTOLOGY_EVIDENCE_STATUSES.some((status) => status === evidence.status)
+      );
+    })
+  ) {
+    throw new Error("source_run_receipt_invalid");
+  }
+  // The original constructor validates identity, time, boundary and ontology at this JSON boundary.
+  const edges = row.ontologyEdges as LcxRunReceipt["ontologyEdges"];
+  assertValidLcxOntologyEdges(edges, "failure trace source receipt ontology");
+  const generated = edges.filter(
+    (edge) =>
+      edge.relation === "produces" &&
+      edge.subject.type === "module" &&
+      edge.subject.id === row.owner &&
+      edge.object.type === "receipt" &&
+      edge.object.id === row.runId,
+  );
+  if (generated.length !== 1) {
+    throw new Error("source_receipt_producer_missing");
+  }
+  // The constructor adds its own producer edge; retain original validated edge bytes in readback.
+  const normalized = buildLcxRunReceipt({
+    ...(row as unknown as LcxRunReceipt),
+    ontologyEdges: edges.filter((edge) => edge !== generated[0]),
+  });
+  return { ...normalized, ontologyEdges: edges };
+}
+
+export async function readFailureTraceSource(filePath: string, expectedSha256?: string) {
+  let sha256: string | undefined;
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as JsonRecord;
-  } catch {
-    return undefined;
+    const bytes = await fs.readFile(filePath);
+    sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (expectedSha256 && (!/^[a-f0-9]{64}$/u.test(expectedSha256) || expectedSha256 !== sha256)) {
+      throw new Error("source_hash_conflict");
+    }
+    const autopilot = recordValue(JSON.parse(bytes.toString("utf8")));
+    if (!autopilot || !Array.isArray(autopilot.ownerCommands)) {
+      throw new Error("source_owner_commands_missing");
+    }
+    const scoped =
+      autopilot.runReceipt !== undefined ||
+      autopilot.ownerCommands.some((owner) => recordValue(owner)?.runReceipt !== undefined);
+    if (scoped && autopilot.runReceipt === undefined) {
+      throw new Error("source_parent_receipt_missing");
+    }
+    const parent = scoped ? readbackRunReceipt(autopilot.runReceipt) : undefined;
+    const matchesSnapshot = (value: unknown) => {
+      const snapshot = recordValue(value);
+      return (
+        snapshot &&
+        parent &&
+        Object.entries(parent.snapshot).every(([key, item]) => snapshot[key] === item)
+      );
+    };
+    if (
+      parent &&
+      (parent.owner !== "lcx-governance-autopilot" ||
+        autopilot.runId !== parent.runId ||
+        autopilot.checkedAt !== parent.checkedAt ||
+        !matchesSnapshot(autopilot.snapshot))
+    ) {
+      throw new Error("source_parent_scope_conflict");
+    }
+    const owners = autopilot.ownerCommands.map((value) => {
+      const row = recordValue(value) ?? {};
+      const owner: FailureTraceOwnerCommand = {
+        id: typeof row.id === "string" ? row.id : "unknown_owner",
+        command: typeof row.command === "string" ? row.command : "",
+        exitCode: typeof row.exitCode === "number" ? row.exitCode : 0,
+        parsed: row.parsed === true,
+        ok: typeof row.ok === "boolean" ? row.ok : undefined,
+      };
+      if (parent) {
+        if (
+          !owner.id.trim() ||
+          owner.id === "unknown_owner" ||
+          !owner.command.trim() ||
+          typeof row.parsed !== "boolean" ||
+          !Number.isInteger(row.exitCode)
+        ) {
+          throw new Error(`source_owner_fields_invalid:${owner.id}`);
+        }
+        if (row.runReceipt === undefined) {
+          throw new Error(`source_owner_receipt_missing:${owner.id}`);
+        }
+        const receipt = readbackRunReceipt(row.runReceipt);
+        if (
+          receipt.owner !== owner.id ||
+          receipt.parentRunId !== parent.runId ||
+          receipt.checkedAt !== parent.checkedAt ||
+          !matchesSnapshot(receipt.snapshot)
+        ) {
+          throw new Error(`source_owner_scope_conflict:${owner.id}`);
+        }
+        owner.runReceipt = receipt;
+      }
+      return owner;
+    });
+    const seenOwners = new Set<string>();
+    for (const owner of owners) {
+      if (seenOwners.has(owner.id)) {
+        throw new Error(`source_owner_id_duplicate:${owner.id}`);
+      }
+      seenOwners.add(owner.id);
+    }
+    return {
+      autopilot,
+      parent,
+      owners,
+      sourceReadback: {
+        status: parent ? "validated" : "legacy_unverified",
+        reason: parent ? "source_parent_snapshot_consistent" : "legacy_owner_receipts_not_provided",
+        path: filePath,
+        sha256,
+        hashValidation: expectedSha256 ? "pinned" : "not_requested",
+        identityValidation: parent ? "same_source_parent_snapshot_only" : "not_verified",
+        semanticTruth: "not_proven",
+        readAt: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    return {
+      autopilot: {} as JsonRecord,
+      parent: undefined,
+      owners: [] as FailureTraceOwnerCommand[],
+      sourceReadback: {
+        status: "blocked",
+        reason: error instanceof Error ? error.message : String(error),
+        path: filePath,
+        sha256,
+        hashValidation: expectedSha256
+          ? sha256 === expectedSha256
+            ? "pinned"
+            : "pin_failed"
+          : "not_requested",
+        identityValidation: "not_verified",
+        semanticTruth: "not_proven",
+        readAt: new Date().toISOString(),
+      },
+    };
   }
 }
 
@@ -326,6 +500,7 @@ function parseArgs(args: string[]) {
   const options = {
     json: false,
     write: false,
+    autopilotSha256: undefined as string | undefined,
     autopilotPath: path.join(
       DEFAULT_WORKSPACE_DIR,
       "state",
@@ -338,6 +513,13 @@ function parseArgs(args: string[]) {
       options.json = true;
     } else if (arg === "--write") {
       options.write = true;
+    } else if (arg === "--autopilot-sha256") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--autopilot-sha256 requires a value");
+      }
+      options.autopilotSha256 = value;
+      index += 1;
     } else if (arg === "--autopilot-path") {
       const value = args[index + 1];
       if (!value) {
@@ -347,7 +529,7 @@ function parseArgs(args: string[]) {
       index += 1;
     } else if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: node --import tsx scripts/operator/lcx-local-failure-trace.ts [--json] [--write] [--autopilot-path PATH]",
+        "Usage: node --import tsx scripts/operator/lcx-local-failure-trace.ts [--json] [--write] [--autopilot-path PATH] [--autopilot-sha256 SHA256]",
       );
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -358,13 +540,18 @@ function parseArgs(args: string[]) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const autopilot = await readJson(options.autopilotPath);
-  if (!autopilot) {
-    throw new Error(`Cannot read autopilot JSON: ${options.autopilotPath}`);
-  }
-  const summary = recordValue(autopilot.summary) ?? {};
+  const source = await readFailureTraceSource(options.autopilotPath, options.autopilotSha256);
+  const autopilot = source.autopilot;
+  const blocked = source.sourceReadback.status === "blocked";
+  const summary = blocked
+    ? {
+        blockedGates: [`source_readback_blocked:${source.sourceReadback.reason}`],
+        fastestSafeNextAction: "repair_original_failure_trace_source",
+      }
+    : (recordValue(autopilot.summary) ?? {});
   const receipt = buildLocalFailureTraceReceipt({
-    checkedAt: new Date().toISOString(),
+    checkedAt: source.parent?.checkedAt ?? new Date().toISOString(),
+    snapshot: source.parent?.snapshot,
     workspaceDir:
       typeof autopilot.workspaceDir === "string" ? autopilot.workspaceDir : DEFAULT_WORKSPACE_DIR,
     repo: {
@@ -378,16 +565,7 @@ async function main() {
     writtenArtifacts: options.write
       ? [LOCAL_FAILURE_TRACE_LATEST_PATH, LOCAL_FAILURE_TRACE_JSONL_PATH]
       : [],
-    ownerCommands: arrayValue(autopilot.ownerCommands).map((owner) => {
-      const record = recordValue(owner) ?? {};
-      return {
-        id: typeof record.id === "string" ? record.id : "unknown_owner",
-        command: typeof record.command === "string" ? record.command : "",
-        exitCode: typeof record.exitCode === "number" ? record.exitCode : 0,
-        parsed: record.parsed === true,
-        ok: typeof record.ok === "boolean" ? record.ok : undefined,
-      };
-    }),
+    ownerCommands: source.owners,
     summary,
     boundaryFlags: {
       liveTouched: autopilot.liveTouched === true,
@@ -395,13 +573,24 @@ async function main() {
       protectedMemoryTouched: autopilot.protectedMemoryTouched === true,
     },
   });
+  const output = {
+    ...receipt,
+    ...(source.parent
+      ? { runReceipt: { ...receipt.runReceipt, parentRunId: source.parent.runId } }
+      : {}),
+    ok: !blocked,
+    sourceReadback: source.sourceReadback,
+  };
   if (options.write) {
-    await writeLocalFailureTraceReceipt(receipt);
+    await writeLocalFailureTraceReceipt(output);
   }
   if (options.json) {
-    console.log(JSON.stringify(receipt, null, 2));
+    console.log(JSON.stringify(output, null, 2));
   } else {
-    console.log(summarizeTraceForHandoff(receipt));
+    console.log(summarizeTraceForHandoff(output));
+  }
+  if (blocked) {
+    process.exitCode = 1;
   }
 }
 

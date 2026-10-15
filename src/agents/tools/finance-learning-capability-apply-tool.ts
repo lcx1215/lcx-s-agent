@@ -6,8 +6,17 @@ import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringOrNumberParam, readStringParam } from "./common.js";
 import { createFinanceLearningCapabilityInspectTool } from "./finance-learning-capability-inspect-tool.js";
+import {
+  evaluateFinanceLearningTask,
+  FinanceLearningTaskSchema,
+  FinanceLearningPriorTaskSchema,
+  type FinanceLearningTaskApplication,
+} from "./finance-learning-task-evaluation.js";
 
 const FinanceLearningCapabilityApplySchema = Type.Object({
+  sourceArticlePath: Type.Optional(Type.String()),
+  financialTask: Type.Optional(FinanceLearningTaskSchema),
+  priorTaskReceiptSource: Type.Optional(FinanceLearningPriorTaskSchema),
   queryText: Type.String({
     description:
       "Natural-language research question to answer using retained finance learning capabilities.",
@@ -289,7 +298,7 @@ async function writeReceiptFileWithoutOverwrite(params: {
   buildContent: () => string;
   receiptRelPath: string;
   workspaceDir: string;
-}): Promise<string> {
+}): Promise<{ path: string; sha256: string; bytes: number }> {
   const receiptRelDir = path.dirname(params.receiptRelPath);
   const receiptFileName = path.basename(params.receiptRelPath, ".json");
   await fs.mkdir(path.join(params.workspaceDir, receiptRelDir), { recursive: true });
@@ -301,8 +310,13 @@ async function writeReceiptFileWithoutOverwrite(params: {
     let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
     try {
       handle = await fs.open(path.join(params.workspaceDir, candidateRelPath), "wx");
-      await handle.writeFile(params.buildContent(), "utf8");
-      return candidateRelPath.split(path.sep).join("/");
+      const content = params.buildContent();
+      await handle.writeFile(content, "utf8");
+      return {
+        path: candidateRelPath.split(path.sep).join("/"),
+        sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+        bytes: Buffer.byteLength(content, "utf8"),
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
@@ -327,7 +341,10 @@ async function writeApplyUsageReceipt(params: {
   appliedCapabilities?: ReturnType<typeof formatCapabilityUse>[];
   answerScaffoldStatus?: string | null;
   capabilitySynthesis?: ReturnType<typeof buildCapabilitySynthesis> | null;
-}): Promise<string> {
+  taskApplication?: FinanceLearningTaskApplication;
+  taskResultScope?: "historical_task_not_current_market_or_trade";
+  consumedTaskReceipt?: { path: string; sha256: string };
+}) {
   const dateKey = new Date().toISOString().slice(0, 10);
   const receiptRelDir = path.join(FINANCE_LEARNING_APPLY_USAGE_RECEIPT_DIR, dateKey);
   const receiptRelPath = path.join(
@@ -350,6 +367,7 @@ async function writeApplyUsageReceipt(params: {
         {
           schemaVersion: 1,
           boundary: "finance_learning_capability_apply_usage_receipt",
+          toolCallId: params.toolCallId,
           generatedAt: new Date().toISOString(),
           queryText: params.queryText,
           ok: params.ok,
@@ -366,6 +384,11 @@ async function writeApplyUsageReceipt(params: {
             applicationBoundary: candidate.applicationBoundary,
             attachmentPoint: candidate.attachmentPoint,
           })),
+          ...(params.taskApplication ? { taskApplication: params.taskApplication } : {}),
+          ...(params.taskResultScope ? { taskResultScope: params.taskResultScope } : {}),
+          ...(params.consumedTaskReceipt
+            ? { consumedTaskReceipt: params.consumedTaskReceipt }
+            : {}),
           noExecutionAuthority: true,
           noDoctrineMutation: true,
           noProtectedMemoryWrite: true,
@@ -498,7 +521,8 @@ async function writeApplyUsageReview(params: {
 async function writeApplyUsageReceiptAndReview(
   params: Parameters<typeof writeApplyUsageReceipt>[0],
 ) {
-  const usageReceiptPath = await writeApplyUsageReceipt(params);
+  const usageReceiptSource = await writeApplyUsageReceipt(params);
+  const usageReceiptPath = usageReceiptSource.path;
   const match = usageReceiptPath.match(
     /^memory\/finance-learning-apply-usage-receipts\/(\d{4}-\d{2}-\d{2})\//u,
   );
@@ -506,7 +530,83 @@ async function writeApplyUsageReceiptAndReview(
     workspaceDir: params.workspaceDir,
     dateKey: match?.[1] ?? new Date().toISOString().slice(0, 10),
   });
-  return { usageReceiptPath, usageReviewPath };
+  return { usageReceiptPath, usageReceiptSource, usageReviewPath };
+}
+
+/** Read only a bounded recent receipt list for the selected primary method. */
+async function findPriorMethodTask(workspaceDir: string, sourcePath: string) {
+  let reviewDirectoryObserved = false;
+  try {
+    const root = await fs.realpath(workspaceDir);
+    const entries = await fs.readdir(path.join(root, FINANCE_LEARNING_APPLY_USAGE_REVIEW_DIR));
+    reviewDirectoryObserved = true;
+    const reviews = entries
+      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/u.test(name))
+      .toSorted()
+      .toReversed()
+      .slice(0, 3);
+    const read = async (relative: string, limit: number) => {
+      const filename = await fs.realpath(path.join(root, relative));
+      if (!filename.startsWith(root + path.sep) || (await fs.stat(filename)).size > limit) {
+        throw new Error("prior_task_feedback_scope_or_budget_gap");
+      }
+      const bytes = await fs.readFile(filename);
+      if (bytes.length > limit) {
+        throw new Error("prior_task_feedback_budget_gap");
+      }
+      return bytes;
+    };
+    let remaining = 16;
+    for (const review of reviews) {
+      const index = asRecord(
+        JSON.parse(
+          (
+            await read(path.join(FINANCE_LEARNING_APPLY_USAGE_REVIEW_DIR, review), 512_000)
+          ).toString("utf8"),
+        ),
+      );
+      for (const relative of stringArray(index.recentReceipts).toReversed()) {
+        if (remaining-- <= 0) {
+          return {
+            gap: "prior_task_feedback_recent_lookup_budget; older receipts require an exact pointer",
+          };
+        }
+        if (
+          !/^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/[^/]+\.json$/u.test(
+            relative,
+          )
+        ) {
+          throw new Error("prior_task_feedback_receipt_scope_gap");
+        }
+        const bytes = await read(relative, 64_000);
+        const receipt = asRecord(JSON.parse(bytes.toString("utf8")));
+        const task = asRecord(receipt.taskApplication);
+        if (asRecord(task.source).path !== sourcePath) {
+          continue;
+        }
+        if (
+          receipt.ok !== true ||
+          receipt.boundary !== "finance_learning_capability_apply_usage_receipt" ||
+          typeof task.taskId !== "string"
+        ) {
+          throw new Error("prior_task_feedback_original_receipt_invalid");
+        }
+        return {
+          prior: {
+            path: relative,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            taskId: task.taskId,
+          },
+        };
+      }
+    }
+    return {};
+  } catch (error) {
+    if (!reviewDirectoryObserved && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {};
+    }
+    return { gap: "prior_task_feedback_lookup_unavailable; inspect original usage review/receipt" };
+  }
 }
 
 export function createFinanceLearningCapabilityApplyTool(options?: {
@@ -520,7 +620,7 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
     label: "Finance Learning Capability Apply",
     name: "finance_learning_capability_apply",
     description:
-      "Apply retained finance learning capabilities to one bounded research question by retrieving capability cards and returning reuse guidance, required inputs, causal checks, and risk checks. This is read-only and does not create trading advice.",
+      "Apply retained finance learning capabilities to one bounded research question by retrieving capability cards and returning reuse guidance, required inputs, causal checks, and risk checks. Optional financialTask executes the native economics evaluator under one exact sourceArticlePath; priorTaskReceiptSource revalidates and consumes its original task feedback to change the next research action. These are bounded risk/sample-review methods, not paper-algorithm replication or execution approval.",
     parameters: FinanceLearningCapabilityApplySchema,
     execute: async (toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -530,9 +630,16 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
       });
       const maxCandidates = clampMaxCandidates(readStringOrNumberParam(params, "maxCandidates"));
       const writeUsageReceipt = params.writeUsageReceipt !== false;
+      const taskRequested =
+        params.financialTask !== undefined || params.priorTaskReceiptSource !== undefined;
+      const sourceArticlePath = readStringParam(params, "sourceArticlePath");
+      if (taskRequested && (!sourceArticlePath || !writeUsageReceipt)) {
+        throw new Error("financial_task_requires_exact_source_and_original_usage_receipt");
+      }
       const inspectResult = await inspectTool.execute("finance-learning-capability-apply:inspect", {
         queryText,
         maxCandidates,
+        ...(sourceArticlePath ? { sourceArticlePath } : {}),
       });
       const inspectDetails = asRecord(inspectResult.details);
       if (inspectDetails.ok !== true) {
@@ -552,6 +659,7 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         return jsonResult({
           ok: false,
           boundary: "finance_learning_capability_apply_read_only",
+          usageReceiptSource: usageRecord?.usageReceiptSource ?? null,
           applicationStatus: "not_application_ready",
           failedReason:
             typeof inspectDetails.reason === "string"
@@ -585,6 +693,7 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         return jsonResult({
           ok: false,
           boundary: "finance_learning_capability_apply_read_only",
+          usageReceiptSource: usageRecord?.usageReceiptSource ?? null,
           applicationStatus: "not_application_ready",
           failedReason: "no_retrievable_finance_capability",
           queryText,
@@ -595,7 +704,49 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
             "Do not improvise a learned answer. First run finance_learning_pipeline_orchestrator on a safe source or refine the query against existing capability tags.",
         });
       }
-      const appliedCapabilities = candidates.map((candidate) => formatCapabilityUse(candidate));
+      const blockedCapabilities = candidates
+        .filter((candidate) => {
+          const review = asRecord(candidate.moduleLearningReview);
+          return review.applicationAllowed === false;
+        })
+        .map((candidate) => ({
+          capabilityName: candidate.capabilityName,
+          sourceArticlePath: candidate.sourceArticlePath,
+          moduleLearningReview: candidate.moduleLearningReview,
+        }));
+      const applicableCandidates = candidates.filter(
+        (candidate) => asRecord(candidate.moduleLearningReview).applicationAllowed !== false,
+      );
+      if (applicableCandidates.length === 0 && blockedCapabilities.length > 0) {
+        const usageRecord = writeUsageReceipt
+          ? await writeApplyUsageReceiptAndReview({
+              workspaceDir,
+              toolCallId,
+              queryText,
+              ok: false,
+              reason: "module_learning_review_blocks_application",
+              candidateCount: 0,
+            })
+          : null;
+        return jsonResult({
+          ok: false,
+          boundary: "finance_learning_capability_apply_read_only",
+          usageReceiptSource: usageRecord?.usageReceiptSource ?? null,
+          applicationStatus: "not_application_ready",
+          failedReason: "module_learning_review_blocks_application",
+          reason: "module_learning_review_blocks_application",
+          queryText,
+          usageReceiptPath: usageRecord?.usageReceiptPath ?? null,
+          usageReviewPath: usageRecord?.usageReviewPath ?? null,
+          candidateCount: 0,
+          blockedCapabilities,
+          action:
+            "Resolve the cited original module-learning review decision or evidence gap before application; preserve the source and historical receipts.",
+        });
+      }
+      const appliedCapabilities = applicableCandidates.map((candidate) =>
+        formatCapabilityUse(candidate),
+      );
       const answerScaffold = buildResearchAnswerScaffold({ queryText, appliedCapabilities });
       const missingReuseGuidance = appliedCapabilities.filter(
         (candidate) =>
@@ -624,6 +775,7 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         return jsonResult({
           ok: false,
           boundary: "finance_learning_capability_apply_read_only",
+          usageReceiptSource: usageRecord?.usageReceiptSource ?? null,
           applicationStatus: "not_application_ready",
           failedReason: "missing_reuse_guidance",
           queryText,
@@ -639,12 +791,55 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
             "Repair retained finance capability reuse guidance before applying this learning to a research answer.",
         });
       }
+      let taskResult = taskRequested
+        ? await evaluateFinanceLearningTask({
+            workspaceDir,
+            candidate:
+              applicableCandidates.find(
+                (candidate) => candidate.sourceArticlePath === sourceArticlePath,
+              ) ?? {},
+            task: params.financialTask,
+            prior: params.priorTaskReceiptSource,
+          })
+        : undefined;
+      let priorTaskFeedbackGap: string | undefined;
+      let historicalFeedback = false;
+      const primary = applicableCandidates[0];
+      if (
+        !taskRequested &&
+        writeUsageReceipt &&
+        primary &&
+        stringArray(primary.capabilityTags).includes("risk_gate_design") &&
+        typeof primary.sourceArticlePath === "string"
+      ) {
+        const found = await findPriorMethodTask(workspaceDir, primary.sourceArticlePath);
+        priorTaskFeedbackGap = found.gap;
+        if (found.prior) {
+          try {
+            taskResult = await evaluateFinanceLearningTask({
+              workspaceDir,
+              candidate: primary,
+              prior: found.prior,
+            });
+            historicalFeedback = true;
+          } catch {
+            // A rejected optional historical result cannot become evidence or a trade veto.
+            priorTaskFeedbackGap =
+              "prior_task_feedback_validation_failed; inspect original source/task/receipt";
+          }
+        }
+      }
       const usageRecord = writeUsageReceipt
         ? await writeApplyUsageReceiptAndReview({
             workspaceDir,
             toolCallId,
             queryText,
             ok: true,
+            taskApplication: taskResult?.application,
+            ...(historicalFeedback
+              ? { taskResultScope: "historical_task_not_current_market_or_trade" as const }
+              : {}),
+            consumedTaskReceipt: taskResult?.consumedReceipt,
             synthesisMode: answerScaffold.capabilitySynthesis.mode,
             candidateCount: appliedCapabilities.length,
             appliedCapabilities,
@@ -652,16 +847,97 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
             capabilitySynthesis: answerScaffold.capabilitySynthesis,
           })
         : null;
+      if (taskResult && usageRecord) {
+        const { application, consumedReceipt } = taskResult;
+        // Keep task results in the original 4 KB handoff; exact rule/input detail stays
+        // in the original immutable usage receipt, not duplicated in the model context.
+        const response = {
+          ok: true,
+          boundary: "finance_learning_capability_apply_read_only",
+          applicationStatus: "application_ready",
+          applicationMode: historicalFeedback
+            ? "prior_method_task_feedback_context"
+            : "source_bound_financial_task_review",
+          ...(historicalFeedback
+            ? { taskResultScope: "historical_task_not_current_market_or_trade" }
+            : {}),
+          candidateCount: historicalFeedback ? appliedCapabilities.length : 1,
+          ...(historicalFeedback
+            ? {
+                supportingMethodSourceRefs: appliedCapabilities.slice(1, 3).map((candidate) => ({
+                  sourceArticlePath: candidate.sourceArticlePath,
+                  capabilityName: candidate.capabilityName,
+                })),
+                otherMethodsBoundary:
+                  "This prior result applies only to its exact primary source; supporting methods retain their own evidence and guidance requirements. Full selected method references remain in /appliedCapabilities of the original usage receipt.",
+              }
+            : {}),
+          usageReceiptPath: usageRecord.usageReceiptPath,
+          usageReviewPath: usageRecord.usageReviewPath,
+          usageReceiptSource: usageRecord.usageReceiptSource,
+          consumedTaskReceipt: consumedReceipt ?? null,
+          taskApplication: {
+            taskId: application.taskId,
+            source: application.source,
+            sourceMethod: application.sourceMethod,
+            methodOwner: application.methodOwner,
+            nativeReceiptRef: application.nativeReceiptRef,
+            datasetRef: application.datasetRef,
+            policyRef: application.policyRef,
+            assessmentInputs: application.assessmentInputs,
+            sourceTruth: application.sourceTruth,
+            algorithmFromSource: false,
+            executionAuthority: "none",
+          },
+          nextTaskReceiptSource: {
+            path: usageRecord.usageReceiptSource.path,
+            sha256: usageRecord.usageReceiptSource.sha256,
+            taskId: application.taskId,
+          },
+          answerSkeleton: {
+            summary: historicalFeedback
+              ? `Historical method-task feedback: ${application.assessment.conclusion} This is not a current market/trade assessment; refresh current inputs independently.`
+              : application.assessment.conclusion,
+            nextAction: application.assessment.nextAction,
+            requiredNextChecks: application.assessment.corrections,
+          },
+          remainingReceiptFields: [
+            ...(historicalFeedback ? ["/appliedCapabilities"] : []),
+            "/taskApplication/sourceChecksUsed",
+            "/taskApplication/replay",
+            "/taskApplication/policy",
+            "/taskApplication/assessment",
+          ],
+        };
+        if (Buffer.byteLength(JSON.stringify(response), "utf8") > 4096) {
+          if (historicalFeedback) {
+            return jsonResult({
+              ok: true,
+              applicationMode: "prior_method_feedback_omitted_budget",
+              candidateCount: appliedCapabilities.length,
+              usageReceiptSource: usageRecord.usageReceiptSource,
+              priorTaskFeedbackGap:
+                "Prior task feedback was not injected under the original 4KB budget; no current task assessment is implied.",
+              readFields: ["/taskApplication", "/appliedCapabilities"],
+            });
+          }
+          throw new Error("financial_task_response_exceeds_original_4kb_budget");
+        }
+        return jsonResult(response);
+      }
       return jsonResult({
         ok: true,
         boundary: "finance_learning_capability_apply_read_only",
+        usageReceiptSource: usageRecord?.usageReceiptSource ?? null,
         applicationStatus: "application_ready",
+        blockedCapabilities,
         failedReason: null,
         queryText,
         usageReceiptPath: usageRecord?.usageReceiptPath ?? null,
         usageReviewPath: usageRecord?.usageReviewPath ?? null,
         retrievalMode: inspectDetails.retrievalMode ?? "query_ranked",
         applicationMode: "reuse_guidance_bounded_research_answer",
+        ...(priorTaskFeedbackGap ? { priorTaskFeedbackGap } : {}),
         synthesisMode: answerScaffold.capabilitySynthesis.mode,
         candidateCount: appliedCapabilities.length,
         answerSkeleton: {
@@ -677,6 +953,7 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
           ],
           requiredNextChecks: [
             ...new Set(appliedCapabilities.flatMap((candidate) => candidate.requiredInputs)),
+            ...(priorTaskFeedbackGap ? [priorTaskFeedbackGap] : []),
           ],
           requiredEvidenceCategories: [
             ...new Set(

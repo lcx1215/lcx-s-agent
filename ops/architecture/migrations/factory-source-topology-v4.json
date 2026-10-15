@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scenarioIds": [
+    "universe_index_total_coverage_waterflow",
+    "commercial_acceptance_harness_waterflow",
+    "provider_council_evidence_waterflow"
+  ],
+  "fromVersion": 3,
+  "toVersion": 4,
+  "reason": "Align factory data dependencies and owner assignment with original source; retain required review/visible/feedback obligations rather than inventing serial workers.",
+  "changes": {
+    "Universe": "Git inventory feeds original change-impact child; its result joins inventory and coverage into final Universe. Mind/flow are independent source readers. Required cleanup review/disposition and feedback remain absent and cannot be fabricated with matching JSON fields.",
+    "acceptance": "Original shared/exclusive Promise.all siblings join in the acceptance owner. Doctor/training/mind/flow and binding are independent producer owners, not a serial chain or a harness-triggered binding/restart.",
+    "sourceInventory": "Optional implementationStatus is descriptive source inventory only. existing_source does not prove execution, trust or semantic adoption. A required_not_implemented stage cannot be accepted even with matching hashes/field refs.",
+    "preserved": "All required node IDs, cleanup/review obligations, external probe/inbound/visible tail, feedback, single ontology registry, original gate/risk/trading authority boundaries.",
+    "providerCouncil": "Separate original artifact intake, attribution verifier and pipeline consumer; keep fact-source validation and outer feedback unproven, and required control-room consumption unobserved. Existing internal second-turn challenge is independently observed."
+  },
+  "sourceAnchors": [
+    "scripts/operator/lcx-universe-index.ts:changeImpactCoverage and main Promise.all",
+    "scripts/operator/lcx-commercial-acceptance-harness.ts:collectSharedOwnerSnapshots, collectOwnerSnapshots and combineCommercialAcceptanceSnapshots",
+    "src/agents/provider-council-evidence.ts:verifyProviderCouncilEvidence and commercial pipeline reader/build"
+  ],
+  "requiredProofs": [
+    "test/lcx-flow-handoff-topology.test.ts",
+    "test/lcx-flow-handoff.test.ts",
+    "test/lcx-flow-graph.test.ts",
+    "original field audit of existing whole-scene index",
+    "src/agents/provider-council-source-handoff.test.ts"
+  ],
+  "nonEffects": [
+    "no actual dispatch/owner runs",
+    "no automation or paid calls",
+    "no change of relation/state vocabulary",
+    "no cleanup, channel, provider or trading authority"
+  ]
+}

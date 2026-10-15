@@ -11,6 +11,7 @@ import { resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import { hasConfiguredSecretInput } from "../config/types.secrets.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
 import { buildGatewayConnectionDetails } from "../gateway/call.js";
+import { isLoopbackHost } from "../gateway/net.js";
 import { resolveGatewayProbeAuth } from "../gateway/probe-auth.js";
 import { probeGateway } from "../gateway/probe.js";
 import {
@@ -294,6 +295,12 @@ function collectGatewayConfigFindings(
   const findings: SecurityAuditFinding[] = [];
 
   const bind = typeof cfg.gateway?.bind === "string" ? cfg.gateway.bind : "loopback";
+  const customBindHost = cfg.gateway?.customBindHost?.trim();
+  const bindsBeyondLoopback =
+    bind === "lan" ||
+    bind === "tailnet" ||
+    (bind === "custom" && customBindHost && !isLoopbackHost(customBindHost));
+  const autoBindMayReachBeyondLoopback = bind === "auto";
   const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
   const auth = resolveGatewayAuth({ authConfig: cfg.gateway?.auth, tailscaleMode, env });
   const controlUiEnabled = cfg.gateway?.controlUi?.enabled !== false;
@@ -383,6 +390,30 @@ function collectGatewayConfigFindings(
       title: "Gateway binds beyond loopback without auth",
       detail: `gateway.bind="${bind}" but no gateway.auth token/password is configured.`,
       remediation: `Set gateway.auth (token recommended) or bind to loopback.`,
+    });
+  }
+  if (bindsBeyondLoopback && cfg.gateway?.tls?.enabled !== true) {
+    findings.push({
+      checkId: "gateway.bind_no_tls",
+      severity: "critical",
+      title: "Gateway non-loopback bind has no TLS",
+      detail:
+        `gateway.bind="${bind}" resolves beyond loopback, but gateway.tls.enabled is not true. ` +
+        "The Gateway will refuse to start because authentication credentials would otherwise cross the network in cleartext.",
+      remediation:
+        "Enable gateway.tls.enabled and configure clients or proxies to trust the Gateway certificate, or keep the Gateway on loopback behind SSH/Tailscale Serve.",
+    });
+  }
+  if (autoBindMayReachBeyondLoopback && cfg.gateway?.tls?.enabled !== true) {
+    findings.push({
+      checkId: "gateway.auto_bind_may_no_tls",
+      severity: "warn",
+      title: "Gateway auto bind may fall back beyond loopback without TLS",
+      detail:
+        "gateway.bind=auto normally prefers loopback, but falls back to 0.0.0.0 when loopback cannot bind. " +
+        "The runtime refuses that fallback without Gateway TLS; this configuration should be reviewed if the host's bind conditions change.",
+      remediation:
+        "Enable gateway.tls.enabled for a possible non-loopback fallback, or use gateway.bind=loopback to make the local-only intent explicit.",
     });
   }
 

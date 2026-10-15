@@ -60,6 +60,9 @@ describe("finance_realtime_source_refresh tool", () => {
     expect(result.details).toEqual(
       expect.objectContaining({
         status: "blocked",
+        nextTool: "finance_data_gateway_snapshot",
+        nextReviewTarget: "data_provenance_quality_review_input",
+        retryOnlyAfter: "new_or_corrected_source_observations",
         receiptPath: expect.stringContaining("memory/finance-data-gateway/realtime/"),
         missingEvidence: expect.arrayContaining(["successful_finance_source_observation"]),
         notTouched: expect.arrayContaining(["trading_execution"]),

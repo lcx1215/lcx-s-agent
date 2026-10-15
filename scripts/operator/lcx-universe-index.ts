@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   DEFAULT_WORKSPACE_DIR,
@@ -35,7 +35,9 @@ type ArtifactFile = {
 
 type ArtifactInventory = {
   path: string;
-  exists: boolean;
+  exists: boolean | null;
+  sourceStatus: "complete" | "missing" | "incomplete";
+  readErrors: Array<{ path: string; operation: string; code: string; message: string }>;
   fileCount: number;
   totalBytes: number;
   largestFiles: ArtifactFile[];
@@ -46,6 +48,8 @@ type ArtifactInventory = {
 type Options = {
   json: boolean;
   write: boolean;
+  timeoutMs?: number;
+  deadlineAtMs?: number;
 };
 
 type ExecLinesResult = {
@@ -57,7 +61,7 @@ type ExecLinesResult = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/lcx-universe-index.ts [--json] [--no-write]",
+      "Usage: node --import tsx scripts/operator/lcx-universe-index.ts [--json] [--no-write] [--timeout-ms N] [--deadline-at EPOCH_MS]",
       "",
       "Builds the read-only LCX universe index: repo files, dirty state, runtime",
       "artifacts, live sidecar inventory, owner coverage, and garbage candidates.",
@@ -68,11 +72,22 @@ function usage(): never {
 
 function parseArgs(args: string[]): Options {
   const options: Options = { json: false, write: true };
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
     if (arg === "--json") {
       options.json = true;
     } else if (arg === "--no-write") {
       options.write = false;
+    } else if (arg === "--timeout-ms" || arg === "--deadline-at") {
+      const value = Number(args[++index]);
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        usage();
+      }
+      if (arg === "--timeout-ms") {
+        options.timeoutMs = Math.min(value, 120_000);
+      } else {
+        options.deadlineAtMs = value;
+      }
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -82,25 +97,183 @@ function parseArgs(args: string[]): Options {
   return options;
 }
 
-async function execLines(
+type OwnerDeadline = ReturnType<typeof createOwnerDeadline>;
+
+/** New owner-local collection budget; caller bounds can only shorten the default. */
+function createOwnerDeadline(options: Options, startedAtMs = Date.now()) {
+  const deadlineAtMs = Math.min(
+    startedAtMs + 120_000,
+    startedAtMs + (options.timeoutMs ?? 120_000),
+    options.deadlineAtMs ?? Infinity,
+  );
+  const controller = new AbortController();
+  const pending = new Map<number, { source: string; kind: "process" | "filesystem" }>();
+  const failures = new Set<string>();
+  const children: Array<{
+    source: string;
+    pid?: number;
+    closeObserved: boolean;
+    stdioClosed: boolean;
+    cancellationRequested: boolean;
+    descendants: "not_observed";
+  }> = [];
+  let sequence = 0;
+  let settledOperations = 0;
+  const expire = () => controller.abort(new Error("Universe owner deadline exceeded"));
+  const remaining = deadlineAtMs - Date.now();
+  const timer = remaining > 0 ? setTimeout(expire, remaining) : undefined;
+  timer?.unref();
+  if (remaining <= 0) {
+    expire();
+  }
+  function check(source: string) {
+    if (!controller.signal.aborted && Date.now() >= deadlineAtMs) {
+      expire();
+    }
+    if (controller.signal.aborted) {
+      if (failures.size < 32) {
+        failures.add(source);
+      }
+      throw Object.assign(new Error(`Universe owner deadline exceeded at ${source}`), {
+        code: "UNIVERSE_OWNER_DEADLINE_EXCEEDED",
+      });
+    }
+  }
+  async function observe<T>(
+    source: string,
+    kind: "process" | "filesystem",
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    check(source);
+    const id = sequence++;
+    pending.set(id, { source, kind });
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => {
+        try {
+          check(source);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      controller.signal.addEventListener("abort", abort, { once: true });
+      Promise.resolve()
+        .then(() => {
+          check(source);
+          return operation();
+        })
+        .then(
+          (value) => {
+            pending.delete(id);
+            settledOperations++;
+            controller.signal.removeEventListener("abort", abort);
+            try {
+              check(source);
+              resolve(value);
+            } catch (error) {
+              reject(error);
+            }
+          },
+          (error: unknown) => {
+            pending.delete(id);
+            settledOperations++;
+            controller.signal.removeEventListener("abort", abort);
+            reject(error);
+          },
+        );
+    });
+  }
+  function observeChild(source: string, child: ChildProcess | undefined) {
+    const row = {
+      source,
+      pid: child?.pid,
+      closeObserved: false,
+      stdioClosed: false,
+      cancellationRequested: controller.signal.aborted,
+      descendants: "not_observed" as const,
+    };
+    children.push(row);
+    if (!child) {
+      return;
+    }
+    const abort = () => {
+      row.cancellationRequested = true;
+    };
+    controller.signal.addEventListener("abort", abort, { once: true });
+    child.once("close", () => {
+      row.closeObserved = true;
+      // Node's close event follows closure of the immediate child's stdio streams.
+      row.stdioClosed = true;
+      controller.signal.removeEventListener("abort", abort);
+    });
+  }
+  function snapshot() {
+    try {
+      check("terminal_receipt");
+    } catch {
+      // The failure remains sticky, including when a late operation resolves.
+    }
+    const timedOut = controller.signal.aborted;
+    return {
+      status: timedOut ? ("timed_out" as const) : ("completed" as const),
+      deadlineAtMs,
+      startedAtMs,
+      defaultTimeoutMs: 120_000,
+      budgetSource: "new_universe_owner_local_budget_capped_by_caller" as const,
+      reason: timedOut ? "universe_owner_deadline_exceeded" : undefined,
+      failureSources: [...failures],
+      pendingOperations: [...pending.values()].slice(0, 12),
+      settledOperations,
+      children: children.map((child) => ({ ...child })),
+      cleanupStatus: timedOut ? ("cleanup_unconfirmed" as const) : ("not_requested" as const),
+      cleanupBoundary:
+        "Immediate child close/stdio observation does not confirm descendants or uncancellable filesystem reads",
+    };
+  }
+  return {
+    signal: controller.signal,
+    deadlineAtMs,
+    check,
+    observe,
+    observeChild,
+    snapshot,
+    dispose: () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+async function runUniverseChild(
   command: string,
   args: string[],
-  cwd = repoRoot,
-  trimLines = true,
-): Promise<string[]> {
-  try {
-    const { stdout } = await execFileAsync(command, args, {
+  cwd: string,
+  deadline?: OwnerDeadline,
+) {
+  const source = `${command} ${args.join(" ")}`;
+  const execute = () => {
+    deadline?.check(source);
+    // Preserve the inherited process group: nested detached groups escape outer cleanup.
+    const result = execFileAsync(command, args, {
       cwd,
       env: process.env,
       maxBuffer: EXEC_MAX_BUFFER,
+      ...(deadline
+        ? { signal: deadline.signal, timeout: Math.max(1, deadline.deadlineAtMs - Date.now()) }
+        : {}),
     });
-    return stdout
-      .split("\n")
-      .map((line) => (trimLines ? line.trim() : line))
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+    deadline?.observeChild(source, result.child);
+    return result;
+  };
+  return deadline ? deadline.observe(source, "process", execute) : execute();
+}
+
+function readWithinDeadline<T>(
+  source: string,
+  operation: () => Promise<T>,
+  deadline?: OwnerDeadline,
+) {
+  return deadline ? deadline.observe(source, "filesystem", operation) : operation();
 }
 
 async function execLinesWithStatus(
@@ -108,13 +281,11 @@ async function execLinesWithStatus(
   args: string[],
   cwd = repoRoot,
   trimLines = true,
+  deadline?: OwnerDeadline,
 ): Promise<ExecLinesResult> {
   try {
-    const { stdout } = await execFileAsync(command, args, {
-      cwd,
-      env: process.env,
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
+    const { stdout } = await runUniverseChild(command, args, cwd, deadline);
+    deadline?.check(`${command}:inventory_readback`);
     return {
       ok: true,
       lines: stdout
@@ -160,9 +331,18 @@ function parseGitStatus(lines: readonly string[]) {
   };
 }
 
-async function readJson(filePath: string): Promise<Record<string, unknown> | undefined> {
+async function readJson(
+  filePath: string,
+  deadline?: OwnerDeadline,
+): Promise<Record<string, unknown> | undefined> {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+    const body = await readWithinDeadline(
+      `readJson:${filePath}`,
+      () => fs.readFile(filePath, "utf8"),
+      deadline,
+    );
+    deadline?.check(`readJson:parse:${filePath}`);
+    return JSON.parse(body) as Record<string, unknown>;
   } catch {
     return undefined;
   }
@@ -198,6 +378,8 @@ type GovernanceInventoryArea = {
   id: string;
   path: string;
   componentCount: number;
+  sourceStatus: ArtifactInventory["sourceStatus"];
+  readErrorCount: number;
   skippedDirs: string[];
   inventoryOwner: "lcx-universe-index";
   routeOwner: string;
@@ -213,6 +395,16 @@ type GovernanceInventoryArea = {
  * existing lane that is responsible for change/proof decisions.
  */
 const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
+  {
+    id: "generated_protocol_contract",
+    patterns: [/^dist\/protocol\.schema\.json$/u],
+    category: "generated_protocol_contract",
+    routeOwner: "scripts/protocol-gen.ts",
+    proofSurface: "pnpm protocol:check plus focused gateway protocol tests",
+    boundary:
+      "generated protocol schema records the contract; it does not prove runtime compatibility",
+    disposition: "governed_source",
+  },
   {
     id: "deployment_configuration_surface",
     patterns: [/^deploy\//u],
@@ -438,7 +630,7 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
   },
   {
     id: "documentation_surface",
-    patterns: [/^(?:docs|skills)\//u],
+    patterns: [/^(?:docs|skills)\//u, /^\.agents\/skills\//u, /^\.agents\/maintainers\.md$/u],
     category: "documentation_and_instruction",
     routeOwner: "scripts/operator/lcx-doctrine-consistency.ts",
     proofSurface: "doctrine consistency, head-tail, and lcx-change-impact-plan",
@@ -585,7 +777,11 @@ function buildRepoGovernanceCoverage(
  * property keeps that later assignment type-safe without changing what the function returns.
  */
 type RepoGovernanceCoverage = ReturnType<typeof buildRepoGovernanceCoverage> & {
-  routeOwnerValidation?: { checked: string[]; missing: string[] };
+  routeOwnerValidation?: {
+    checked: string[];
+    missing: string[];
+    readErrors?: Array<{ path: string; reason: string }>;
+  };
 };
 
 function buildGovernanceInventoryAreas(
@@ -602,6 +798,8 @@ function buildGovernanceInventoryAreas(
     id,
     path: inventory.path,
     componentCount: inventory.fileCount,
+    sourceStatus: inventory.sourceStatus,
+    readErrorCount: inventory.readErrors.length,
     skippedDirs: inventory.skippedDirs,
     inventoryOwner: "lcx-universe-index",
     routeOwner,
@@ -612,19 +810,20 @@ function buildGovernanceInventoryAreas(
   }));
 }
 
-async function changeImpactCoverage(files: readonly string[]) {
-  if (files.length === 0) {
-    return {
-      ok: true,
-      affectedLanes: [],
-      unmatchedFiles: [],
-      recommendedFastCommands: [],
-      deferredCommands: [],
-      source: "no_changed_files",
-    };
-  }
+async function changeImpactCoverage(files: readonly string[], deadline?: OwnerDeadline) {
   try {
-    const { stdout } = await execFileAsync(
+    deadline?.check("changeImpact:input");
+    if (files.length === 0) {
+      return {
+        ok: true,
+        affectedLanes: [],
+        unmatchedFiles: [],
+        recommendedFastCommands: [],
+        deferredCommands: [],
+        source: "no_changed_files",
+      };
+    }
+    const { stdout } = await runUniverseChild(
       process.execPath,
       [
         "--import",
@@ -634,12 +833,10 @@ async function changeImpactCoverage(files: readonly string[]) {
         "--files",
         ...files,
       ],
-      {
-        cwd: repoRoot,
-        env: process.env,
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
+      repoRoot,
+      deadline,
     );
+    deadline?.check("changeImpact:readback");
     const payload = JSON.parse(stdout) as Record<string, unknown>;
     return {
       ok: payload.ok === true,
@@ -666,20 +863,42 @@ async function changeImpactCoverage(files: readonly string[]) {
   }
 }
 
-async function walkArtifacts(root: string, nowMs: number): Promise<ArtifactInventory> {
+export async function walkArtifacts(
+  root: string,
+  nowMs: number,
+  deadline?: OwnerDeadline,
+): Promise<ArtifactInventory> {
   const skippedDirs: string[] = [];
   const files: ArtifactFile[] = [];
+  const readErrors: ArtifactInventory["readErrors"] = [];
+  const recordError = (file: string, operation: string, error: unknown) => {
+    const code =
+      error && typeof error === "object" && "code" in error ? String(error.code) : "unknown";
+    readErrors.push({ path: file, operation, code, message: String(error) });
+    return code;
+  };
   async function walk(current: string) {
     // `fs.readdir` is overloaded, so `ReturnType<typeof fs.readdir>` resolves to the
     // buffer-encoding overload whose `Dirent<Buffer>` names are buffers. This call passes no
     // encoding, so it really yields `Dirent<string>` and every `entry.name` below is a string.
     let entries: Dirent[];
     try {
-      entries = await fs.readdir(current, { withFileTypes: true });
-    } catch {
+      entries = await readWithinDeadline(
+        `readdir:${current}`,
+        () => fs.readdir(current, { withFileTypes: true }),
+        deadline,
+      );
+    } catch (error) {
+      recordError(current, "readdir", error);
       return;
     }
     for (const entry of entries) {
+      try {
+        deadline?.check(`scan:${current}`);
+      } catch (error) {
+        recordError(current, "scan", error);
+        return;
+      }
       const absolutePath = path.join(current, entry.name);
       if (entry.isDirectory()) {
         if (
@@ -694,7 +913,14 @@ async function walkArtifacts(root: string, nowMs: number): Promise<ArtifactInven
       if (!entry.isFile()) {
         continue;
       }
-      const stat = await fs.stat(absolutePath).catch(() => undefined);
+      const stat = await readWithinDeadline(
+        `stat:${absolutePath}`,
+        () => fs.stat(absolutePath),
+        deadline,
+      ).catch((error: unknown) => {
+        recordError(absolutePath, "stat", error);
+        return undefined;
+      });
       if (!stat) {
         continue;
       }
@@ -708,14 +934,24 @@ async function walkArtifacts(root: string, nowMs: number): Promise<ArtifactInven
     }
   }
 
-  const exists = await fs
-    .access(root)
-    .then(() => true)
-    .catch(() => false);
+  let exists: boolean | null = true;
+  try {
+    await readWithinDeadline(`access:${root}`, () => fs.access(root), deadline);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") {
+      exists = false;
+    } else {
+      exists = null;
+      recordError(root, "access", error);
+    }
+  }
   if (!exists) {
     return {
       path: root,
-      exists: false,
+      exists,
+      sourceStatus: exists === false ? "missing" : "incomplete",
+      readErrors,
       fileCount: 0,
       totalBytes: 0,
       largestFiles: [],
@@ -727,6 +963,8 @@ async function walkArtifacts(root: string, nowMs: number): Promise<ArtifactInven
   return {
     path: root,
     exists: true,
+    sourceStatus: readErrors.length === 0 ? "complete" : "incomplete",
+    readErrors,
     fileCount: files.length,
     totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
     largestFiles: files.toSorted((a, b) => b.bytes - a.bytes).slice(0, 12),
@@ -751,244 +989,313 @@ function staleLatestSnapshot(latest: Record<string, unknown> | undefined, maxAge
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const nowMs = Date.now();
-  const [trackedInventory, rgFilesRaw, gitStatusInventory] = await Promise.all([
-    execLinesWithStatus("git", ["ls-files"]),
-    execLines("rg", ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"]),
-    execLinesWithStatus(
-      "git",
-      ["status", "--short", "--branch", "--untracked-files=all"],
-      repoRoot,
-      false,
-    ),
-  ]);
-  const trackedFiles = trackedInventory.lines;
-  const rgFiles = rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles;
-  const repoComponentFiles = [...new Set([...trackedFiles, ...rgFiles])].toSorted();
-  const gitStatus = parseGitStatus(gitStatusInventory.lines);
-  const [
-    changeImpact,
-    workspaceState,
-    workspaceLogs,
-    workspaceMemory,
-    workspaceTmp,
-    liveSidecar,
-    latestGovernance,
-    latestOperator,
-  ] = await Promise.all([
-    changeImpactCoverage(gitStatus.changedFiles),
-    walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "state"), nowMs),
-    walkArtifacts(DEFAULT_WORKSPACE_LOG_DIR, nowMs),
-    walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "memory"), nowMs),
-    walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "tmp"), nowMs),
-    walkArtifacts(EXTERNAL_CHANNEL_RUNTIME_ROOT, nowMs),
-    readJson(path.join(DEFAULT_WORKSPACE_DIR, "state", "lcx-governance-autopilot-latest.json")),
-    readJson(resolveLocalOperatorLatestPath(repoRoot)),
-  ]);
-
-  const staleSnapshots = [
-    {
-      id: "lcx-governance-autopilot-latest",
-      ...staleLatestSnapshot(latestGovernance, 2 * 60 * 60 * 1000),
-    },
-    {
-      id: "lcx-local-operator-latest",
-      ...staleLatestSnapshot(latestOperator, 2 * 60 * 60 * 1000),
-    },
-  ].filter((snapshot) => snapshot.stale);
-  const artifactInventories = [workspaceState, workspaceLogs, workspaceMemory, workspaceTmp];
-  const largeRuntimeFiles = artifactInventories.flatMap((inventory) =>
-    inventory.largestFiles
-      .filter((file) => file.bytes >= LARGE_ARTIFACT_BYTES)
-      .map((file) => ({ area: inventory.path, ...file })),
-  );
-  const staleRuntimeFiles = artifactInventories.flatMap((inventory) =>
-    inventory.staleFiles.map((file) => ({ area: inventory.path, ...file })),
-  );
-  const governanceInventoryAreas = buildGovernanceInventoryAreas([
-    {
-      id: "workspace_state",
-      inventory: workspaceState,
-      routeOwner: "scripts/operator/lcx-universe-index.ts",
-      category: "workspace_state_inventory",
-      proofSurface: "lcx-universe-index plus governance-autopilot owner receipts",
-      boundary: "workspace state is evidence inventory, not a second runtime authority",
-    },
-    {
-      id: "workspace_logs",
-      inventory: workspaceLogs,
-      routeOwner: "scripts/operator/lcx-universe-index.ts",
-      category: "workspace_log_inventory",
-      proofSurface: "lcx-universe-index plus the log-owning operator",
-      boundary: "logs are evidence and diagnostics, not current truth without owner verification",
-    },
-    {
-      id: "workspace_memory",
-      inventory: workspaceMemory,
-      routeOwner: "scripts/operator/lcx-universe-index.ts",
-      category: "workspace_memory_inventory",
-      proofSurface: "lcx-universe-index plus memory-sedimentation owners",
-      boundary: "stored memory is not learned capability or protected-memory authorization",
-    },
-    {
-      id: "workspace_tmp",
-      inventory: workspaceTmp,
-      routeOwner: "scripts/operator/lcx-universe-index.ts",
-      category: "workspace_temporary_inventory",
-      proofSurface: "lcx-universe-index plus exact artifact reference review",
-      boundary: "temporary files are not source, runtime, training, or delivery authority",
-    },
-    {
-      id: "live_sidecar",
-      inventory: liveSidecar,
-      routeOwner: "scripts/operator/lcx-external-channel-status.ts",
-      category: "external_channel_runtime_inventory",
-      proofSurface: "lcx-universe-index plus lcx-external-channel-status/binding",
-      boundary: "sidecar inventory does not prove external-channel-bound or user-visible-observed",
-    },
-  ]);
-  const governanceOwners = arrayValue(latestGovernance?.autoTriggeredOwnerCommands).filter(
-    (item): item is string => typeof item === "string",
-  );
-  const unmatchedChangedFiles = arrayValue(changeImpact.unmatchedFiles);
-  const governanceCoverage: RepoGovernanceCoverage = buildRepoGovernanceCoverage(
-    repoComponentFiles,
-    governanceInventoryAreas,
-  );
-  const routeOwnerPaths = [
-    ...new Set([
-      ...governanceCoverage.components.flatMap((component) =>
-        component.routeOwner ? [component.routeOwner] : [],
+  const deadline = createOwnerDeadline(options, nowMs);
+  try {
+    const [trackedInventory, visibleInventory, gitStatusInventory] = await Promise.all([
+      execLinesWithStatus("git", ["ls-files"], repoRoot, true, deadline),
+      execLinesWithStatus(
+        "rg",
+        ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"],
+        repoRoot,
+        true,
+        deadline,
       ),
-      ...governanceInventoryAreas.map((area) => area.routeOwner),
-    ]),
-  ];
-  const missingRouteOwners = (
-    await Promise.all(
-      routeOwnerPaths.map(async (routeOwner) => {
-        const exists = await fs
-          .access(path.join(repoRoot, routeOwner))
-          .then(() => true)
-          .catch(() => false);
-        return exists ? undefined : routeOwner;
-      }),
-    )
-  ).filter((routeOwner): routeOwner is string => typeof routeOwner === "string");
-  governanceCoverage.routeOwnerValidation = {
-    checked: routeOwnerPaths,
-    missing: missingRouteOwners,
-  };
-  governanceCoverage.status =
-    governanceCoverage.status === "complete" && missingRouteOwners.length === 0
-      ? "complete"
-      : "incomplete";
-  const reviewRequiredComponents = governanceCoverage.summary.reviewRequiredComponents;
-  const result = {
-    ok:
-      trackedInventory.ok &&
-      gitStatusInventory.ok &&
-      changeImpact.ok &&
-      unmatchedChangedFiles.length === 0 &&
-      governanceCoverage.status === "complete",
-    boundary: "local_universe_index_only",
-    checkedAt: new Date().toISOString(),
-    repoRoot,
-    latestStatePath: UNIVERSE_INDEX_LATEST_PATH,
-    summary: {
-      trackedFiles: trackedFiles.length,
-      visibleFiles: rgFiles.length,
-      trackedAndVisibleFiles: repoComponentFiles.length,
-      dirtyFiles: gitStatus.changedFiles.length,
-      untrackedFiles: gitStatus.untrackedFiles.length,
-      workspaceArtifactFiles: artifactInventories.reduce(
-        (sum, inventory) => sum + inventory.fileCount,
-        0,
+      execLinesWithStatus(
+        "git",
+        ["status", "--short", "--branch", "--untracked-files=all"],
+        repoRoot,
+        false,
+        deadline,
       ),
-      liveSidecarFiles: liveSidecar.fileCount,
-      unmatchedChangedFiles: unmatchedChangedFiles.length,
-      staleRuntimeCandidates: staleRuntimeFiles.length,
-      largeRuntimeCandidates: largeRuntimeFiles.length,
-      staleSnapshots: staleSnapshots.length,
-      governedRepoComponents: governanceCoverage.summary.governedComponents,
-      inventoryOnlyRepoComponents: governanceCoverage.summary.inventoryOnlyComponents,
-      reviewRequiredRepoComponents: reviewRequiredComponents,
-    },
-    repo: {
-      branch: gitStatus.branch,
-      trackedFileCount: trackedFiles.length,
-      trackedInventory: trackedInventory.ok
-        ? { ok: true }
-        : { ok: false, error: trackedInventory.error },
-      gitStatusInventory: gitStatusInventory.ok
-        ? { ok: true }
-        : { ok: false, error: gitStatusInventory.error },
-      visibleFileCount: rgFiles.length,
-      trackedAndVisibleFileCount: repoComponentFiles.length,
-      dirtyFileCount: gitStatus.changedFiles.length,
-      untrackedFileCount: gitStatus.untrackedFiles.length,
-      topLevelCounts: countByTopLevel(repoComponentFiles),
-      changedFiles: gitStatus.changedFiles,
-      untrackedFiles: gitStatus.untrackedFiles,
-    },
-    ownerCoverage: {
+    ]);
+    const trackedFiles = trackedInventory.lines;
+    const rgFiles = visibleInventory.ok ? visibleInventory.lines : trackedFiles;
+    const repoComponentFiles = [...new Set([...trackedFiles, ...rgFiles])].toSorted();
+    const gitStatus = parseGitStatus(gitStatusInventory.lines);
+    const [
       changeImpact,
-      governanceCoverage,
-      governanceOwners,
-      governanceOwnerCount: governanceOwners.length,
-      latestGovernanceBoundary: latestGovernance?.boundary,
-      latestOperatorBoundary: latestOperator?.boundary,
-    },
-    artifacts: {
       workspaceState,
       workspaceLogs,
       workspaceMemory,
       workspaceTmp,
       liveSidecar,
-    },
-    garbageCandidates: {
-      untrackedRepoFiles: gitStatus.untrackedFiles,
-      unmatchedChangedFiles,
-      staleRuntimeFiles,
-      largeRuntimeFiles,
-      staleSnapshots,
-    },
-    nextSafeCommands: !trackedInventory.ok
-      ? ["repair Git access, verify git ls-files succeeds, then rerun universe index"]
-      : !gitStatusInventory.ok
-        ? ["repair Git access, verify git status succeeds, then rerun universe index"]
-        : unmatchedChangedFiles.length > 0
-          ? [
-              "extend scripts/operator/lcx-change-impact-plan.ts for unmatched files, then rerun universe index",
-            ]
-          : reviewRequiredComponents > 0
+      latestGovernance,
+      latestOperator,
+    ] = await Promise.all([
+      changeImpactCoverage(gitStatus.changedFiles, deadline),
+      walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "state"), nowMs, deadline),
+      walkArtifacts(DEFAULT_WORKSPACE_LOG_DIR, nowMs, deadline),
+      walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "memory"), nowMs, deadline),
+      walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "tmp"), nowMs, deadline),
+      walkArtifacts(EXTERNAL_CHANNEL_RUNTIME_ROOT, nowMs, deadline),
+      readJson(
+        path.join(DEFAULT_WORKSPACE_DIR, "state", "lcx-governance-autopilot-latest.json"),
+        deadline,
+      ),
+      readJson(resolveLocalOperatorLatestPath(repoRoot), deadline),
+    ]);
+
+    const staleSnapshots = [
+      {
+        id: "lcx-governance-autopilot-latest",
+        ...staleLatestSnapshot(latestGovernance, 2 * 60 * 60 * 1000),
+      },
+      {
+        id: "lcx-local-operator-latest",
+        ...staleLatestSnapshot(latestOperator, 2 * 60 * 60 * 1000),
+      },
+    ].filter((snapshot) => snapshot.stale);
+    const artifactInventories = [workspaceState, workspaceLogs, workspaceMemory, workspaceTmp];
+    const unreadableArtifactInventories = [...artifactInventories, liveSidecar].filter(
+      (inventory) => inventory.sourceStatus === "incomplete",
+    );
+    const artifactInventoryComplete = unreadableArtifactInventories.length === 0;
+    const largeRuntimeFiles = artifactInventories.flatMap((inventory) =>
+      inventory.largestFiles
+        .filter((file) => file.bytes >= LARGE_ARTIFACT_BYTES)
+        .map((file) => ({ area: inventory.path, ...file })),
+    );
+    const staleRuntimeFiles = artifactInventories.flatMap((inventory) =>
+      inventory.staleFiles.map((file) => ({ area: inventory.path, ...file })),
+    );
+    const governanceInventoryAreas = buildGovernanceInventoryAreas([
+      {
+        id: "workspace_state",
+        inventory: workspaceState,
+        routeOwner: "scripts/operator/lcx-universe-index.ts",
+        category: "workspace_state_inventory",
+        proofSurface: "lcx-universe-index plus governance-autopilot owner receipts",
+        boundary: "workspace state is evidence inventory, not a second runtime authority",
+      },
+      {
+        id: "workspace_logs",
+        inventory: workspaceLogs,
+        routeOwner: "scripts/operator/lcx-universe-index.ts",
+        category: "workspace_log_inventory",
+        proofSurface: "lcx-universe-index plus the log-owning operator",
+        boundary: "logs are evidence and diagnostics, not current truth without owner verification",
+      },
+      {
+        id: "workspace_memory",
+        inventory: workspaceMemory,
+        routeOwner: "scripts/operator/lcx-universe-index.ts",
+        category: "workspace_memory_inventory",
+        proofSurface: "lcx-universe-index plus memory-sedimentation owners",
+        boundary: "stored memory is not learned capability or protected-memory authorization",
+      },
+      {
+        id: "workspace_tmp",
+        inventory: workspaceTmp,
+        routeOwner: "scripts/operator/lcx-universe-index.ts",
+        category: "workspace_temporary_inventory",
+        proofSurface: "lcx-universe-index plus exact artifact reference review",
+        boundary: "temporary files are not source, runtime, training, or delivery authority",
+      },
+      {
+        id: "live_sidecar",
+        inventory: liveSidecar,
+        routeOwner: "scripts/operator/lcx-external-channel-status.ts",
+        category: "external_channel_runtime_inventory",
+        proofSurface: "lcx-universe-index plus lcx-external-channel-status/binding",
+        boundary:
+          "sidecar inventory does not prove external-channel-bound or user-visible-observed",
+      },
+    ]);
+    const governanceOwners = arrayValue(latestGovernance?.autoTriggeredOwnerCommands).filter(
+      (item): item is string => typeof item === "string",
+    );
+    const unmatchedChangedFiles = arrayValue(changeImpact.unmatchedFiles);
+    const governanceCoverage: RepoGovernanceCoverage = buildRepoGovernanceCoverage(
+      repoComponentFiles,
+      governanceInventoryAreas,
+    );
+    const routeOwnerPaths = [
+      ...new Set([
+        ...governanceCoverage.components.flatMap((component) =>
+          component.routeOwner ? [component.routeOwner] : [],
+        ),
+        ...governanceInventoryAreas.map((area) => area.routeOwner),
+      ]),
+    ];
+    const routeReadErrors: Array<{ path: string; reason: string }> = [];
+    const missingRouteOwners = (
+      await Promise.all(
+        routeOwnerPaths.map(async (routeOwner) => {
+          const exists = await readWithinDeadline(
+            `routeOwner:${routeOwner}`,
+            () => fs.access(path.join(repoRoot, routeOwner)),
+            deadline,
+          )
+            .then(() => true)
+            .catch((error: unknown) => {
+              routeReadErrors.push({ path: routeOwner, reason: String(error) });
+              return false;
+            });
+          return exists ? undefined : routeOwner;
+        }),
+      )
+    ).filter((routeOwner): routeOwner is string => typeof routeOwner === "string");
+    governanceCoverage.routeOwnerValidation = {
+      checked: routeOwnerPaths,
+      missing: missingRouteOwners,
+      readErrors: routeReadErrors,
+    };
+    governanceCoverage.status =
+      governanceCoverage.status === "complete" &&
+      missingRouteOwners.length === 0 &&
+      trackedInventory.ok &&
+      visibleInventory.ok &&
+      gitStatusInventory.ok &&
+      artifactInventoryComplete
+        ? "complete"
+        : "incomplete";
+    const ownerDeadline = deadline.snapshot();
+    if (ownerDeadline.status === "timed_out") {
+      governanceCoverage.status = "incomplete";
+    }
+    const reviewRequiredComponents = governanceCoverage.summary.reviewRequiredComponents;
+    const result = {
+      ok:
+        ownerDeadline.status === "completed" &&
+        trackedInventory.ok &&
+        visibleInventory.ok &&
+        gitStatusInventory.ok &&
+        artifactInventoryComplete &&
+        changeImpact.ok &&
+        unmatchedChangedFiles.length === 0 &&
+        governanceCoverage.status === "complete",
+      boundary: "local_universe_index_only",
+      ownerDeadline,
+      checkedAt: new Date().toISOString(),
+      repoRoot,
+      latestStatePath: UNIVERSE_INDEX_LATEST_PATH,
+      summary: {
+        trackedFiles: trackedFiles.length,
+        visibleFiles: rgFiles.length,
+        trackedAndVisibleFiles: repoComponentFiles.length,
+        dirtyFiles: gitStatus.changedFiles.length,
+        untrackedFiles: gitStatus.untrackedFiles.length,
+        workspaceArtifactFiles: artifactInventories.reduce(
+          (sum, inventory) => sum + inventory.fileCount,
+          0,
+        ),
+        liveSidecarFiles: liveSidecar.fileCount,
+        artifactInventoryComplete,
+        unreadableArtifactAreas: unreadableArtifactInventories.length,
+        artifactReadFailures: unreadableArtifactInventories.reduce(
+          (sum, inventory) => sum + inventory.readErrors.length,
+          0,
+        ),
+        unmatchedChangedFiles: unmatchedChangedFiles.length,
+        staleRuntimeCandidates: staleRuntimeFiles.length,
+        largeRuntimeCandidates: largeRuntimeFiles.length,
+        staleSnapshots: staleSnapshots.length,
+        governedRepoComponents: governanceCoverage.summary.governedComponents,
+        inventoryOnlyRepoComponents: governanceCoverage.summary.inventoryOnlyComponents,
+        reviewRequiredRepoComponents: reviewRequiredComponents,
+      },
+      repo: {
+        branch: gitStatus.branch,
+        trackedFileCount: trackedFiles.length,
+        trackedInventory: trackedInventory.ok
+          ? { ok: true }
+          : { ok: false, error: trackedInventory.error },
+        visibleInventory: visibleInventory.ok
+          ? { ok: true }
+          : { ok: false, error: visibleInventory.error, fallback: "tracked_files_only" },
+        gitStatusInventory: gitStatusInventory.ok
+          ? { ok: true }
+          : { ok: false, error: gitStatusInventory.error },
+        visibleFileCount: rgFiles.length,
+        trackedAndVisibleFileCount: repoComponentFiles.length,
+        dirtyFileCount: gitStatus.changedFiles.length,
+        untrackedFileCount: gitStatus.untrackedFiles.length,
+        topLevelCounts: countByTopLevel(repoComponentFiles),
+        changedFiles: gitStatus.changedFiles,
+        untrackedFiles: gitStatus.untrackedFiles,
+      },
+      ownerCoverage: {
+        changeImpact,
+        governanceCoverage,
+        governanceOwners,
+        governanceOwnerCount: governanceOwners.length,
+        latestGovernanceBoundary: latestGovernance?.boundary,
+        latestOperatorBoundary: latestOperator?.boundary,
+      },
+      artifacts: {
+        workspaceState,
+        workspaceLogs,
+        workspaceMemory,
+        workspaceTmp,
+        liveSidecar,
+      },
+      garbageCandidates: {
+        untrackedRepoFiles: gitStatus.untrackedFiles,
+        unmatchedChangedFiles,
+        staleRuntimeFiles,
+        largeRuntimeFiles,
+        staleSnapshots,
+      },
+      nextSafeCommands: !trackedInventory.ok
+        ? ["repair Git access, verify git ls-files succeeds, then rerun universe index"]
+        : !gitStatusInventory.ok
+          ? ["repair Git access, verify git status succeeds, then rerun universe index"]
+          : !visibleInventory.ok
             ? [
-                "add an explicit governance component rule for every review-required repo component, then rerun universe index",
+                "repair visible-file inventory access, verify rg --files succeeds, then rerun universe index --no-write",
               ]
-            : [
-                "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
-                "node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json",
-              ],
-    note: "Inventory and governance coverage only: this owner finds files, classifies every repo-visible component, records artifacts, coverage gaps, and cleanup candidates; it never deletes, migrates live runtime, changes provider config, or touches protected memory.",
-    liveTouched: false,
-    providerConfigTouched: false,
-    protectedMemoryTouched: false,
-  };
+            : !artifactInventoryComplete
+              ? unreadableArtifactInventories.map(
+                  (inventory) =>
+                    `restore readable artifact inventory at ${inventory.path}; inspect readErrors, then rerun universe index --no-write`,
+                )
+              : unmatchedChangedFiles.length > 0
+                ? [
+                    "extend scripts/operator/lcx-change-impact-plan.ts for unmatched files, then rerun universe index",
+                  ]
+                : reviewRequiredComponents > 0
+                  ? [
+                      "add an explicit governance component rule for every review-required repo component, then rerun universe index",
+                    ]
+                  : [
+                      "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
+                      "node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json",
+                    ],
+      note: "Inventory and governance coverage only: this owner finds files, classifies every repo-visible component, records artifacts, coverage gaps, and cleanup candidates; it never deletes, migrates live runtime, changes provider config, or touches protected memory.",
+      liveTouched: false,
+      providerConfigTouched: false,
+      protectedMemoryTouched: false,
+    };
 
-  if (options.write) {
-    await fs.mkdir(path.dirname(UNIVERSE_INDEX_LATEST_PATH), { recursive: true });
-    await fs.writeFile(UNIVERSE_INDEX_LATEST_PATH, `${JSON.stringify(result, null, 2)}\n`);
+    // Collection is sealed before the existing, independently fallible persistence layer.
+    // A late uncancellable read cannot change this terminal verdict or trigger another phase.
+    result.ownerDeadline = deadline.snapshot();
+    if (result.ownerDeadline.status === "timed_out") {
+      result.ok = false;
+      governanceCoverage.status = "incomplete";
+    }
+    deadline.dispose();
+    if (options.write) {
+      await fs.mkdir(path.dirname(UNIVERSE_INDEX_LATEST_PATH), { recursive: true });
+      await fs.writeFile(UNIVERSE_INDEX_LATEST_PATH, `${JSON.stringify(result, null, 2)}\n`);
+    }
+
+    process.stdout.write(
+      options.json
+        ? `${JSON.stringify(result, null, 2)}\n`
+        : [
+            `LCX universe index: ok=${result.ok}`,
+            `tracked=${result.summary.trackedFiles} visible=${result.summary.visibleFiles} dirty=${result.summary.dirtyFiles}`,
+            `artifacts=${result.summary.workspaceArtifactFiles} liveSidecar=${result.summary.liveSidecarFiles}`,
+            `unmatchedChangedFiles=${result.summary.unmatchedChangedFiles}`,
+          ].join("\n") + "\n",
+    );
+    process.exitCode = result.ok ? 0 : 1;
+  } finally {
+    deadline.dispose();
   }
-
-  process.stdout.write(
-    options.json
-      ? `${JSON.stringify(result, null, 2)}\n`
-      : [
-          `LCX universe index: ok=${result.ok}`,
-          `tracked=${result.summary.trackedFiles} visible=${result.summary.visibleFiles} dirty=${result.summary.dirtyFiles}`,
-          `artifacts=${result.summary.workspaceArtifactFiles} liveSidecar=${result.summary.liveSidecarFiles}`,
-          `unmatchedChangedFiles=${result.summary.unmatchedChangedFiles}`,
-        ].join("\n") + "\n",
-  );
-  process.exitCode = result.ok ? 0 : 1;
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

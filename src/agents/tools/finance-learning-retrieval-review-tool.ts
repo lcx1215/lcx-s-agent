@@ -346,7 +346,7 @@ export function createFinanceLearningRetrievalReviewTool(options?: {
       const params = args as Record<string, unknown>;
       const dateKey = normalizeDateKey(readStringParam(params, "dateKey"));
       const maxFiles = readNumberParam(params, "maxFiles", { integer: true });
-      const writeReview = params.writeReview !== false;
+      const writeReview = params.writeReview === true;
       const writeResult = writeReview
         ? await writeFinanceLearningRetrievalReview({
             workspaceDir,

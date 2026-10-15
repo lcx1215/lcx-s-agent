@@ -120,7 +120,9 @@ WebChat 不使用单独的 HTTP 端口。聊天 UI 直接连接到 Gateway WebSo
 简短版本：**保持 Gateway 网关仅 loopback**，除非你确定需要绑定。
 
 - **Loopback + SSH/Tailscale Serve** 是最安全的默认设置（无公开暴露）。
-- **非 loopback 绑定**（`lan`/`tailnet`/`custom`，或当 loopback 不可用时的 `auto`）必须使用身份验证令牌/密码。
+- 直接 `lan`、`custom`、`tailnet`，以及解析到非 loopback 地址的 `auto` 绑定，必须同时配置认证和 `gateway.tls.enabled: true`；客户端使用 `wss://`，并信任或固定 Gateway 证书。
+- `tailnet` IP 绑定不保证每个入站数据包都经 WireGuard 到达，因此不豁免 Gateway TLS。若由 Tailscale Serve 终止 TLS，请让 Gateway 保持 loopback 绑定。
+- `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1` 只影响客户端的明文 WS 紧急覆盖，不会解除服务端对任何非 loopback 绑定的 TLS 门禁。
 - `gateway.remote.token` **仅**用于远程 CLI 调用——它**不**启用本地身份验证。
 - `gateway.remote.tlsFingerprint` 在使用 `wss://` 时固定远程 TLS 证书。
 - 当 `gateway.auth.allowTailscale: true` 时，**Tailscale Serve** 可以通过身份标头进行身份验证。如果你想使用令牌/密码，请将其设置为 `false`。

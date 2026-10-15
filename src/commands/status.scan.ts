@@ -80,6 +80,7 @@ async function resolveGatewayProbeSnapshot(params: {
     : await probeGateway({
         url: gatewayConnection.url,
         auth: resolveGatewayProbeAuth(params.cfg),
+        config: params.cfg,
         timeoutMs: Math.min(params.opts.all ? 5000 : 2500, params.opts.timeoutMs ?? 10_000),
       }).catch(() => null);
   return { gatewayConnection, remoteUrlMissing, gatewayMode, gatewayProbe };

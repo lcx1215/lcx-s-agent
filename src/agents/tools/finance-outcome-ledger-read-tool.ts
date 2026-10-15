@@ -290,7 +290,8 @@ export function createFinanceOutcomeLedgerReadTool(): AnyAgentTool {
             ? null
             : summaries.some((item) => item.gapCount > 0)
               ? "no outcome has been recorded, and the cases carry unresolved gaps: read gapKinds " +
-                "per case for the upstream failure that kept a claim from being produced"
+                "per case for the upstream failure that kept a claim from being produced; nothing " +
+                "here says a forecast was right"
               : "no outcome has been recorded for these cases, so nothing here says a forecast was " +
                 "right; check assessmentBlockedBy per case for why one cannot be recorded yet",
         cases: summaries,

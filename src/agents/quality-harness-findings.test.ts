@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { createFinanceModelWorkflow } from "./finance-model-workflow.js";
-import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
+import {
+  buildQualityHarnessModelPrompt,
+  buildQualityHarnessModelPromptWithCoverage,
+} from "./local-text-model-adapter.js";
 import { runQualityHarness, type QualityHarnessModelRequest } from "./quality-harness.js";
 
 type Variant =
@@ -21,9 +24,22 @@ type Variant =
   | "reject"
   | "unattested"
   | "self-review"
-  | "evidence-audit";
+  | "evidence-audit"
+  | "batch-context-valid"
+  | "batch-context-unresolved"
+  | "batch-context-missing-id";
 async function run(variant: Variant) {
   const requests: QualityHarnessModelRequest[] = [];
+  const requestsByCallId = new Map<string, QualityHarnessModelRequest>();
+  const evidence = [
+    { id: "window", text: "SP500 March 10; other sample March 9. Feed unavailable." },
+    ...(variant.startsWith("batch-context-")
+      ? Array.from({ length: 16 }, (_, index) => ({
+          id: `other-${index}`,
+          text: "Additional context; missing feed excluded.",
+        }))
+      : []),
+  ];
   const workflow = createFinanceModelWorkflow(
     {
       agents: { defaults: { model: { primary: "a/fast", fallbacks: ["a/author", "b/reviewer"] } } },
@@ -42,16 +58,49 @@ async function run(variant: Variant) {
           observe:
             variant === "unattested"
               ? undefined
-              : (call) => ({
-                  callId: call.callId,
-                  provider,
-                  modelId,
-                  kind: "model_inference",
-                  transportRequestId: `test:${call.callId}`,
-                }),
+              : (call) => {
+                  const payload = requestsByCallId.get(call.callId);
+                  return {
+                    callId: call.callId,
+                    provider,
+                    modelId,
+                    kind: "model_inference",
+                    transportRequestId: `test:${call.callId}`,
+                    ...(variant.startsWith("batch-context-") && payload
+                      ? {
+                          evidenceCoverage:
+                            buildQualityHarnessModelPromptWithCoverage(payload).evidenceCoverage,
+                        }
+                      : {}),
+                  };
+                },
           invoke: async (call) => {
             const req = call.payload as QualityHarnessModelRequest;
             requests.push(req);
+            requestsByCallId.set(call.callId, req);
+            if (variant.startsWith("batch-context-") && req.evidenceBatchMode) {
+              return {
+                kind: "review",
+                review: {
+                  verdict: req.evidenceBatchMode === "context_extraction" ? "revise" : "pass",
+                  criticalFindings: [],
+                  evidenceGaps:
+                    req.evidenceBatchMode === "context_extraction"
+                      ? ["The missing feed cannot support a claim."]
+                      : [],
+                  notes: req.evidence
+                    .filter(
+                      (entry, index) =>
+                        !(
+                          variant === "batch-context-missing-id" &&
+                          req.evidenceBatchMode === "context_extraction" &&
+                          index === 0
+                        ),
+                    )
+                    .map((entry) => `[${entry.id}] Reviewed with the missing feed excluded.`),
+                },
+              };
+            }
             if (req.stage === "draft" || req.stage === "format") {
               return {
                 kind: "artifact",
@@ -96,7 +145,12 @@ async function run(variant: Variant) {
             ) {
               let resolutions = packet.findings.map((finding) => ({
                 findingId: finding.id,
-                status: variant === "unresolved" ? "unresolved" : "resolved",
+                status:
+                  variant === "unresolved" ||
+                  (variant === "batch-context-unresolved" &&
+                    finding.role.startsWith("evidence_batch_extract_"))
+                    ? "unresolved"
+                    : "resolved",
                 evidenceIds: [variant === "unknown-evidence" ? "invented" : "window"],
                 artifactClaimId: variant === "unknown-anchor" ? "invented" : "c1",
                 artifactQuote:
@@ -166,8 +220,19 @@ async function run(variant: Variant) {
   const result = await runQualityHarness({
     request: {
       task: "Compare frozen windows.",
-      evidence: [{ id: "window", text: "SP500 March 10; other sample March 9. Feed unavailable." }],
+      evidence,
     },
+    ...(variant.startsWith("batch-context-")
+      ? {
+          requireEvidenceCoverage: true,
+          evidenceCoverage: {
+            sourceEvidenceIds: evidence.map((entry) => entry.id),
+            selectedEvidenceIds: evidence.map((entry) => entry.id),
+            runnerOmittedEvidenceIds: [],
+            runnerClippedEvidenceIds: [],
+          },
+        }
+      : {}),
     modelRouting: routing,
     maxAttempts: 1,
     verify: async () => ({ status: "passed", summary: "Fixture checked", details: [] }),
@@ -176,6 +241,26 @@ async function run(variant: Variant) {
 }
 
 describe("version-bound finding closure", () => {
+  it("closes a batch extraction finding only after independent version-bound resolution", async () => {
+    const { result, requests } = await run("batch-context-valid");
+    expect(result.status, JSON.stringify(result.attempts)).toBe("verified");
+    const finding = result.attempts[0].findings?.find(
+      (finding) => finding.role === "evidence_batch_extract_2",
+    );
+    expect(finding).toMatchObject({ status: "resolved", reviewer: "b/reviewer" });
+    expect(requests.find((req) => req.stage === "precheck")?.findingPacket?.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: finding?.id, role: "evidence_batch_extract_2" }),
+      ]),
+    );
+    for (const variant of ["batch-context-unresolved", "batch-context-missing-id"] as const) {
+      const { result: refused } = await run(variant);
+      expect(refused.status, variant).toBe("quality-failed");
+      expect(
+        refused.attempts[0].gates.find((gate) => gate.id === "evidence_batch_reviews")?.passed,
+      ).toBe(false);
+    }
+  });
   it("closes original date and adjacent evidence-gap/adversarial findings with retained provenance", async () => {
     const { result, requests } = await run("valid");
     expect(result.status, JSON.stringify(result.attempts)).toBe("verified");
@@ -195,7 +280,9 @@ describe("version-bound finding closure", () => {
       expect(prompt).toContain(finding.id);
     }
     expect(prompt).toContain(precheck.findingPacket!.artifactSha256);
-    expect(prompt).toContain("closure_evidence=");
+    expect(prompt).toContain("finding_packet=");
+    expect(prompt).toContain(precheck.findingPacket!.evidenceSha256);
+    expect(prompt).toContain("the full normalized evidence set");
   });
   it("falls back from a structurally incomplete review to another non-author model", async () => {
     const { result } = await run("fallback-review");
@@ -203,8 +290,24 @@ describe("version-bound finding closure", () => {
     const calls = result.attempts[0].stages.find(
       (stage) => stage.agentId === "final_precheck",
     )!.modelCalls!;
-    expect(calls[0]).toMatchObject({ provider: "b", outcome: "failed", reason: "output_contract" });
-    expect(calls[1]).toMatchObject({ provider: "a", modelId: "fast", outcome: "completed" });
+    const contractFailures = calls.filter(
+      (call) => call.outcome === "failed" && call.reason === "output_contract",
+    );
+    expect(contractFailures).toHaveLength(2);
+    expect(
+      contractFailures.every((call) => call.provider === "b" && call.modelId === "reviewer"),
+    ).toBe(true);
+    const repairRetryIndex = calls.findIndex(
+      (call, index) =>
+        index > 0 &&
+        call.provider === contractFailures[0].provider &&
+        call.modelId === contractFailures[0].modelId,
+    );
+    const fallbackIndex = calls.findIndex(
+      (call) => call.provider === "a" && call.modelId === "fast" && call.outcome === "completed",
+    );
+    expect(repairRetryIndex).toBeGreaterThan(0);
+    expect(fallbackIndex).toBeGreaterThan(repairRetryIndex);
     expect(result.attempts[0].findings?.every((finding) => finding.reviewer === "a/fast")).toBe(
       true,
     );

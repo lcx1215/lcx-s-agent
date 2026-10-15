@@ -23,6 +23,8 @@ async function fixture() {
     asOf,
     useCase: "checkpoint-acceptance",
     maxApiCalls: 3,
+    // This fixture models one endpoint per source; production reserves two by default.
+    maxHttpCallsPerSource: 1,
     maxConcurrency: 1,
     checkpoint: {
       path: path.join(dir, "source.sqlite"),
@@ -112,6 +114,19 @@ describe("finance batch restart", () => {
     ).rejects.toThrow("mismatch");
     expect(calls).toHaveLength(3);
   });
+  it("retains the default two-call reservation across a restart", async () => {
+    const { options, calls } = await fixture();
+    const defaults = { ...options, maxHttpCallsPerSource: undefined };
+    const first = await runFinanceResearchBatch(defaults);
+    const resumed = await runFinanceResearchBatch(defaults);
+    expect(calls).toEqual(["SPY"]);
+    expect(resumed.jobs[0]).toEqual(first.jobs[0]);
+    expect(first.budget.reservedCallBudget).toBe(2);
+    expect(resumed.checkpoint?.reusedJobIds).toEqual([first.jobs[0].jobId]);
+    expect(resumed.budget.reservedCallBudget).toBe(2);
+    expect(resumed.jobs[1].missingEvidence).toContain("api_call_budget_exhausted");
+    expect(resumed.jobs[2].missingEvidence).toContain("api_call_budget_exhausted");
+  });
   it("does not recover exhausted budget by restarting", async () => {
     const { options, calls } = await fixture();
     await runFinanceResearchBatch({ ...options, maxApiCalls: 1 });
@@ -146,4 +161,31 @@ describe("finance batch restart", () => {
     expect(resumed.budget.reservedCallBudget).toBe(3);
     expect(resumed.status).toBe("partial");
   });
+});
+
+it("allocates bounded calls across targets before their additional collection jobs", async () => {
+  const { options, calls } = await fixture();
+  const bounded = {
+    ...options,
+    targets: options.targets.map((target) => ({
+      ...target,
+      collections: [
+        { collection: "news" as const, freshnessMaxMinutes: 60 },
+        { collection: "news" as const, freshnessMaxMinutes: 120 },
+      ],
+    })),
+  };
+  const result = await runFinanceResearchBatch(bounded);
+  expect(calls).toEqual(["SPY", "QQQ", "IWM"]);
+  expect(result.jobs.filter((job) => job.status === "ready").map((job) => job.targetId)).toEqual([
+    "SPY",
+    "QQQ",
+    "IWM",
+  ]);
+  expect(result.jobs.filter((job) => job.error === "api_call_budget_exhausted")).toHaveLength(3);
+  expect(result.budget.reservedCallBudget).toBe(3);
+  const resumed = await runFinanceResearchBatch(bounded);
+  expect(calls).toHaveLength(3);
+  expect(resumed.checkpoint?.reusedJobIds).toHaveLength(3);
+  expect(resumed.budget.reservedCallBudget).toBe(3);
 });

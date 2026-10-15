@@ -1,0 +1,337 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  boundPerception,
+  compactReceipts,
+  nextCycleContinuation,
+  runCentralHarnessCycle,
+  type CompactBacklogEntry,
+} from "./harness-loop.js";
+import { buildCentralBrainPrompt, type CentralBrain } from "./model-brain.js";
+import { createCentralToolRegistry } from "./tool-registry.js";
+import type {
+  CentralActionPlan,
+  CentralPerception,
+  CentralProposedAction,
+  CentralRunReceipt,
+} from "./types.js";
+
+const roots: string[] = [];
+const capabilities = new Set(["quant_math", "learning_distill"]);
+const observedAt = "2026-10-03T00:00:00.000Z";
+const reviewNote = [
+  "# Learning Review: 2026-10-02 12:00:00 UTC",
+  "- **Session Key**: generic-feedback-fixture",
+  "- **Session ID**: generic-feedback-fixture",
+  "- **Topic**: coding-and-systems",
+  "## Problem",
+  "Dispatch was mistaken for a consumed latency experiment.",
+  "## Working Answer",
+  "Preserve the original measured series and benchmark for follow-up regression; task labels cannot replace inputs.",
+  "## Review Note",
+  "- mistake_pattern: Counting a successful dispatch as completion without consuming its facts.",
+  "- core_principle: Keep the evidence and exact input scope until the dependent decision is made.",
+  "- micro_drill: Compare measured request latency slopes rather than guessing from task labels.",
+  "- transfer_hint: Account identifiers and engineering experiment inputs both delimit evidence.",
+  "",
+].join("\n");
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+});
+
+async function fixture() {
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "central-generic-feedback-"));
+  roots.push(workspaceDir);
+  const memoryDir = path.join(workspaceDir, "memory");
+  await fs.mkdir(memoryDir);
+  const notePath = path.join(memoryDir, "2026-10-02-review-feedback.md");
+  await fs.writeFile(notePath, reviewNote);
+  const fullRegistry = createCentralToolRegistry({ workspaceDir });
+  const registry = new Map([...fullRegistry].filter(([ownerId]) => capabilities.has(ownerId)));
+  const receipts: CentralRunReceipt[] = [];
+  const cycle = async (
+    decide: (perception: CentralPerception) => CentralActionPlan,
+  ): Promise<CentralRunReceipt> => {
+    const perception: CentralPerception = {
+      task: {
+        objective: "Resolve the engineering or learning evidence gap using declared local facts.",
+        focus: "general",
+      },
+      observedAt: new Date(Date.parse(observedAt) + receipts.length * 1_000).toISOString(),
+      ownerTotals: {},
+      controlRoom: {
+        genericTask: {
+          objective: "Resolve the declared engineering or learning evidence gap using local facts.",
+          evidenceKind: "offline_scripted_replay",
+        },
+      },
+      backlog: compactReceipts(receipts, 10, capabilities),
+      boundaries: ["synthetic_data_only", "local_tools_only", "no_execution_authority"],
+    };
+    const brain: CentralBrain = {
+      propose: async (observed) => {
+        // This is scripted replay evidence, never a claim of model reasoning or provider use.
+        expect(boundPerception(observed).report.overBudget).toBe(false);
+        expect(buildCentralBrainPrompt(observed)).toContain("offline_scripted_replay");
+        return {
+          kind: "proposed",
+          provider: "offline-fixture",
+          modelId: "scripted-feedback",
+          plan: decide(observed),
+        };
+      },
+    };
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      registry,
+      brain,
+      planOnly: true,
+      capabilityOwnerIds: capabilities,
+    });
+    receipts.push(receipt);
+    expect(receipt.task).toEqual(perception.task);
+    expect(receipt.contextBudget?.overBudget).toBe(false);
+    expect(receipt.brainCall.modelCall).toBeUndefined();
+    expect(receipt.liveTouched).toBe(false);
+    expect(receipt.providerConfigTouched).toBe(false);
+    expect(receipt.protectedMemoryTouched).toBe(false);
+    return receipt;
+  };
+  const act = (action: CentralProposedAction) =>
+    cycle(() => ({ actions: [action], note: "offline scripted local-tool step" }));
+  return { workspaceDir, notePath, receipts, cycle, act };
+}
+
+function retained(perception: CentralPerception, ownerId: string) {
+  return (perception.backlog as readonly CompactBacklogEntry[])
+    .flatMap((entry) => entry.outcomes)
+    .filter((entry) => entry.ownerId === ownerId && entry.outcome !== undefined);
+}
+
+function regressionArgs(scale: number) {
+  return {
+    action: "linear_regression",
+    series: [scale, scale * 2, scale * 3],
+    benchmark: [1, 2, 3],
+  };
+}
+
+describe("generic capability feedback through the production loop (offline scripted replay)", () => {
+  it("consumes actual calculation results after twenty unrelated completed decisions", async () => {
+    const run = await fixture();
+    const args = regressionArgs(7);
+    const read = await run.act({ ownerId: "quant_math", args });
+    await run.act({
+      ownerId: "learning_distill",
+      args: { since: "2026-10-01T00:00:00.000Z" },
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await run.cycle(() => ({ actions: [], note: "no changed input" }));
+    }
+    const final = await run.cycle((perception) => {
+      const [evidence] = retained(perception, "quant_math");
+      expect(evidence?.args).toEqual(args);
+      expect(evidence?.sourceObservedAt).toBe(read.observedAt);
+      expect((perception.backlog as readonly CompactBacklogEntry[]).length).toBeLessThanOrEqual(10);
+      return {
+        actions: [],
+        note: JSON.stringify({
+          status: evidence?.outcome ? "resolved" : "unknown",
+          beta: evidence?.outcome?.beta,
+          evidenceKind: "offline_scripted_replay",
+        }),
+      };
+    });
+    expect(JSON.parse(final.brainCall.note ?? "{}")).toEqual({
+      status: "resolved",
+      beta: 7,
+      evidenceKind: "offline_scripted_replay",
+    });
+  });
+
+  it.each([2, 7])(
+    "consumes actual engineering calculation after a stopped cycle and unrelated learning work (scale=%s)",
+    async (scale) => {
+      const run = await fixture();
+      const args = regressionArgs(scale);
+      const read = await run.act({ ownerId: "quant_math", args });
+      expect(read.steps[0]).toMatchObject({
+        status: "ran_ok",
+        outcome: { action: "linear_regression", beta: scale, observations: 3 },
+      });
+      expect(nextCycleContinuation(read, 1, 4).run).toBe(true);
+
+      const stopped = await run.cycle(() => ({ actions: [], note: "no changed input" }));
+      expect(nextCycleContinuation(stopped, 2, 4, read)).toEqual({
+        run: false,
+        because: "nothing_left_to_follow_up",
+      });
+      // A later bounded invocation resumes the same receipts; a no-op is not new evidence.
+      const unrelated = await run.act({
+        ownerId: "learning_distill",
+        args: { since: "2026-10-01T00:00:00.000Z" },
+      });
+      expect(unrelated.steps[0].outcome).toMatchObject({ status: "distilled", pending: 1 });
+
+      const final = await run.cycle((perception) => {
+        const [evidence] = retained(perception, "quant_math");
+        expect(evidence?.args).toEqual(args);
+        expect(evidence?.sourceObservedAt).toBe(read.observedAt);
+        expect(evidence?.argsSha256).toMatch(/^[a-f0-9]{64}$/u);
+        return {
+          actions: [],
+          note: JSON.stringify({
+            status: evidence?.outcome ? "resolved" : "unknown",
+            beta: evidence?.outcome?.beta,
+            evidenceSource: evidence?.ownerId,
+            sourceObservedAt: evidence?.sourceObservedAt,
+            inputRef: evidence?.argsSha256,
+            evidenceKind: "offline_scripted_replay",
+          }),
+        };
+      });
+      expect(JSON.parse(final.brainCall.note ?? "{}")).toMatchObject({
+        status: "resolved",
+        beta: scale,
+        evidenceSource: "quant_math",
+        evidenceKind: "offline_scripted_replay",
+      });
+      expect(nextCycleContinuation(final, 4, 4, unrelated)).toEqual({
+        run: false,
+        because: "nothing_left_to_follow_up",
+      });
+      expect(await fs.readFile(run.notePath, "utf8")).toBe(reviewNote);
+    },
+  );
+
+  it("keeps distinct actual calculation scopes apart and canonicalizes reordered arguments", async () => {
+    const run = await fixture();
+    const firstArgs = regressionArgs(2);
+    const secondArgs = regressionArgs(9);
+    const first = await run.act({ ownerId: "quant_math", args: firstArgs });
+    const second = await run.act({ ownerId: "quant_math", args: secondArgs });
+    const repeated = await run.act({
+      ownerId: "quant_math",
+      args: {
+        benchmark: secondArgs.benchmark,
+        series: secondArgs.series,
+        action: secondArgs.action,
+      },
+    });
+    expect(nextCycleContinuation(repeated, 3, 6, second)).toEqual({
+      run: false,
+      because: "unchanged_result",
+    });
+    await run.act({
+      ownerId: "learning_distill",
+      args: { since: "2026-10-01T00:00:00.000Z" },
+    });
+    const final = await run.cycle((perception) => {
+      const results = retained(perception, "quant_math");
+      expect(results).toHaveLength(2);
+      const inputRefs = results.map((entry) => entry.argsSha256);
+      expect(new Set(inputRefs).size).toBe(2);
+      const selected = [firstArgs, secondArgs].map((args) => {
+        const match = results.find(
+          (entry) => JSON.stringify(entry.args?.series) === JSON.stringify(args.series),
+        );
+        expect(match?.args).toEqual(args);
+        expect(match?.sourceObservedAt).toBe(
+          args === firstArgs ? first.observedAt : repeated.observedAt,
+        );
+        return { beta: match?.outcome?.beta, inputRef: match?.argsSha256 };
+      });
+      return { actions: [], note: JSON.stringify({ status: "resolved", selected }) };
+    });
+    expect(JSON.parse(final.brainCall.note ?? "{}")).toMatchObject({
+      status: "resolved",
+      selected: [{ beta: 2 }, { beta: 9 }],
+    });
+    const allOutcomes = compactReceipts(run.receipts, 10, capabilities).flatMap(
+      (entry) => entry.outcomes,
+    );
+    expect(
+      allOutcomes.some((entry) =>
+        entry.outcomeDroppedKeys?.includes("outcome_superseded_in_backlog"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reads an omitted learning lesson through its existing owner and consumes it in the next scoped calculation", async () => {
+    const run = await fixture();
+    const learning = await run.act({
+      ownerId: "learning_distill",
+      args: { since: "2026-10-01T00:00:00.000Z" },
+    });
+    expect(learning.steps[0].outcomeDroppedKeys).toContain("cards");
+    await run.act({ ownerId: "learning_distill", args: { since: "2026-10-01T00:00:00.000Z" } });
+    const statePath = path.join(run.workspaceDir, "state", "lcx-learning-workflow-latest.json");
+    const bytes = await fs.readFile(statePath);
+    const calculation = await run.act({ ownerId: "quant_math", args: regressionArgs(5) });
+    const scopedRead = await run.cycle((perception) => {
+      const learningSteps = (perception.backlog as readonly CompactBacklogEntry[])
+        .flatMap((entry) => entry.outcomes)
+        .filter((entry) => entry.ownerId === "learning_distill");
+      expect(learningSteps.some((step) => step.outcomeDroppedKeys?.includes("cards"))).toBe(true);
+      const discoverable = learningSteps.find((entry) => entry.outcome?.latestRetainedCardName);
+      const cardName = discoverable?.outcome?.latestRetainedCardName;
+      expect(cardName).toBe("2026-10-02-review-feedback.md");
+      expect(discoverable?.outcome?.retainedCardCount).toBe(1);
+      return {
+        actions: [
+          {
+            ownerId: "learning_distill",
+            args: { action: "read", cardName, field: "workingAnswer" },
+          },
+        ],
+        note: "The card body was omitted; read the exact declared fixture lesson through its owner.",
+      };
+    });
+    expect(scopedRead.steps[0]).toMatchObject({
+      status: "ran_ok",
+      outcome: {
+        status: "read",
+        workingAnswer: expect.stringContaining("original measured series"),
+      },
+    });
+    expect(await fs.readFile(statePath)).toEqual(bytes);
+    const next = await run.cycle((perception) => {
+      const lesson = retained(perception, "learning_distill").find(
+        (entry) => entry.args?.action === "read",
+      );
+      expect(lesson?.outcome?.workingAnswer).toContain("original measured series");
+      expect(lesson?.outcome?.sourceSha256).toMatch(/^[a-f0-9]{64}$/u);
+      const original = retained(perception, "quant_math").find(
+        (entry) => entry.sourceObservedAt === calculation.observedAt,
+      );
+      expect(original?.args).toEqual(regressionArgs(5));
+      const scope = String(lesson?.outcome?.workingAnswer).includes(
+        "Preserve the original measured series",
+      )
+        ? original?.args
+        : undefined;
+      return {
+        actions: scope ? [{ ownerId: "quant_math", args: scope }] : [],
+        note: JSON.stringify({
+          status: scope ? "lesson_applied" : "unresolved",
+          workingAnswer: lesson?.outcome?.workingAnswer,
+          lessonSourceSha256: lesson?.outcome?.sourceSha256,
+          inputRef: original?.argsSha256,
+          evidenceKind: "offline_scripted_replay",
+        }),
+      };
+    });
+    expect(JSON.parse(next.brainCall.note ?? "{}")).toMatchObject({
+      status: "lesson_applied",
+      workingAnswer: expect.stringContaining("original measured series"),
+      evidenceKind: "offline_scripted_replay",
+    });
+    expect(next.steps[0].args).toEqual(regressionArgs(5));
+    expect(next.steps[0].outcome).toMatchObject({ beta: 5 });
+    expect(await fs.readFile(run.notePath, "utf8")).toBe(reviewNote);
+    expect(await fs.readFile(statePath)).toEqual(bytes);
+  });
+});

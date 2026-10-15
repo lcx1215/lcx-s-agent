@@ -1,5 +1,18 @@
+import { withTimeout } from "../utils/with-timeout.js";
+import { readFinanceAccountEconomicFeedback } from "./finance-account-economic-feedback.js";
+import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
+import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
+import {
+  fetchAlpacaVenueState,
+  runFinanceAlpacaOrder,
+  type AlpacaVenueState,
+} from "./finance-alpaca-run.js";
+import { isAlpacaSafetyFailureCode } from "./finance-alpaca-safety-provider.js";
+import { appendFinanceBars } from "./finance-bar-ledger.js";
 /**
- * The daytime cycle: everything that can be done without a model.
+ * The daytime cycle computes strategy targets deterministically. For an authorized Alpaca Paper
+ * placement, a configured model can veto exact candidates; approval only lets TypeScript's
+ * reconciliation, risk, deduplication, and execution gates continue.
  *
  * Two properties are load-bearing here, and both exist because the naive version is wrong:
  *
@@ -15,25 +28,53 @@
  *    band. "Daytime must do work" is satisfied by checking every day; it is not satisfied by
  *    inventing a fresh signal every day.
  *
- * There is no model call anywhere in this file. That is deliberate: the answer to
- * "will an LLM-driven day be expensive?" is that the daytime does not need one.
+ * Model review is bounded to one call per eligible placement run. Preview, non-Alpaca placement,
+ * empty-candidate, and blocked-readiness runs do not call a model. A valid model veto or a
+ * completed response that breaks exact-candidate binding blocks the affected order. An
+ * unavailable/failed advisory review is recorded but does not itself approve or veto a
+ * deterministic candidate; the shared TypeScript execution gates remain authoritative.
  *
  * One side effect is not about trading: every run files the OHLC bars it already fetched into the
  * bar book. The cycle needs closes to trade; range measures (readiness, true drawdown, ATR) need
  * the high/low of the same bars and have no other supply, so discarding them after one use makes
  * those measures permanently unavailable for rules nobody backfilled by hand.
  */
-
+import type { FinanceExecutionReconciliation } from "./finance-broker-reconciliation.js";
+import { financeUsEquityRegularCloseInstant } from "./finance-cycle-schedule.js";
 import {
-  fetchAlpacaVenueState,
-  runFinanceAlpacaOrder,
-  type AlpacaVenueState,
-} from "./finance-alpaca-run.js";
-import { appendFinanceBars } from "./finance-bar-ledger.js";
-import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+  annualisedVol,
+  FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
+  financeMonthlyTrendReturn,
+} from "./finance-daily-strategy.js";
+export { annualisedVol } from "./finance-daily-strategy.js";
+import {
+  financeExecutionResearchLineageSchema,
+  financeExecutionTargetWeightAuthorizationSchema,
+  type FinanceExecutionResearchLineage,
+} from "./finance-execution-adapter.js";
+import type {
+  FinanceExecutionIntent,
+  FinanceExecutionReceipt,
+} from "./finance-execution-adapter.js";
+import {
+  FinanceExecutionSafetyUncertainError,
+  type FinanceExecutionSafetyFailure,
+  type FinanceExecutionSafetyContextFactory,
+} from "./finance-execution-safety.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
-import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import {
+  createFinanceMarketCollectionRegistry,
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv,
+  type FinanceMarketCollectionAdapter,
+  type FinanceMarketCollectionItem,
+} from "./finance-market-collection-registry.js";
 import { runFinancePaperOrder } from "./finance-paper-run.js";
+import {
+  composeFinancePortfolioTargets,
+  validateFinancePortfolioPlan,
+  type FinancePortfolioPlan,
+  type FinancePortfolioCandidate,
+} from "./finance-portfolio-composition.js";
 import type { FinancePosition } from "./finance-position-ledger.js";
 import {
   appendFinanceExecutionReceipt,
@@ -42,6 +83,16 @@ import {
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { resolveFinanceStateDir } from "./finance-state-dir.js";
+import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
+import {
+  FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+  FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
+  isValidFinanceTradeDecisionReviewResult,
+  type FinanceTradeDecisionCandidate,
+  type FinanceTradeDecisionReviewReceipt,
+  type FinanceTradeDecisionReviewResult,
+  type FinanceTradeDecisionReviewer,
+} from "./finance-trade-decision-review.js";
 
 export const FINANCE_DAILY_CYCLE_SCHEMA = "lcx_finance_daily_cycle_v1" as const;
 
@@ -51,7 +102,8 @@ export const FINANCE_DAILY_CYCLE_SCHEMA = "lcx_finance_daily_cycle_v1" as const;
  */
 type FinanceCycleOrderOutcome =
   | Awaited<ReturnType<typeof runFinanceAlpacaOrder>>
-  | Awaited<ReturnType<typeof runFinancePaperOrder>>;
+  | Awaited<ReturnType<typeof runFinancePaperOrder>>
+  | Readonly<{ ok: false; stage: "place"; refusals: readonly string[]; uncertain: true }>;
 
 export type FinanceDailyCycleCaps = Readonly<{
   maxOrderNotional: number;
@@ -59,7 +111,112 @@ export type FinanceDailyCycleCaps = Readonly<{
   maxOrdersPerRun: number;
 }>;
 
+/** A trusted caller supplies an execution quote independently of research history. */
+export type FinanceDailyCycleExecutionQuote = Readonly<
+  Pick<FinanceExecutionIntent, "referencePrice" | "referencePriceAt"> & {
+    sourceUrlOrArtifact: string;
+    bidPrice?: number;
+    askPrice?: number;
+    feed?: string;
+    /** Risk reference only; neither bid nor ask guarantees an eventual market fill. */
+    priceBasis?: "bid" | "ask" | "reference";
+    /** Maximum age authorized by the caller for this quote, not a universal market policy. */
+    maxAgeMs: number;
+  }
+>;
+
+export type FinanceDailyCycleExecutionQuoteProvider = (
+  request: { instrument: string; assetClass: string; side: "buy" | "sell" },
+  signal: AbortSignal,
+) => Promise<FinanceDailyCycleExecutionQuote>;
+
+export function executionQuoteIssue(
+  quote: FinanceDailyCycleExecutionQuote | undefined,
+  nowMs: number,
+): string | null {
+  if (!quote) {
+    return "no execution quote; research EOD bars cannot authorize venue placement";
+  }
+  if (quote.bidPrice !== undefined || quote.askPrice !== undefined) {
+    if (
+      typeof quote.bidPrice !== "number" ||
+      !Number.isFinite(quote.bidPrice) ||
+      quote.bidPrice <= 0 ||
+      typeof quote.askPrice !== "number" ||
+      !Number.isFinite(quote.askPrice) ||
+      quote.askPrice < quote.bidPrice
+    ) {
+      return "execution quote requires valid noncrossed bid/ask";
+    }
+  }
+  const timestamp = Date.parse(quote.referencePriceAt);
+  if (
+    !Number.isFinite(quote.referencePrice) ||
+    quote.referencePrice <= 0 ||
+    !quote.sourceUrlOrArtifact.trim() ||
+    !Number.isFinite(timestamp) ||
+    !Number.isFinite(quote.maxAgeMs) ||
+    quote.maxAgeMs < 0 ||
+    !Number.isFinite(nowMs)
+  ) {
+    return "execution quote has invalid price, source, timestamp or age policy";
+  }
+  if (timestamp > nowMs) {
+    return "execution quote is in the future";
+  }
+  if (nowMs - timestamp > quote.maxAgeMs) {
+    return "execution quote is stale";
+  }
+  return null;
+}
+
+function executionQuoteProviderFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "timeout") {
+    return "execution quote timeout";
+  }
+  if (error instanceof AlpacaExecutionQuoteError) {
+    const status = error.httpStatus === undefined ? "" : `_http_${error.httpStatus}`;
+    return `execution quote unavailable (${error.failureCode}${status})`;
+  }
+  if (isAlpacaSafetyFailureCode(message)) {
+    return `execution quote unavailable (${message})`;
+  }
+  return "execution quote unavailable";
+}
+
+export type FinanceDailyAccountBook = Readonly<{
+  reconciliation?: FinanceExecutionReconciliation;
+  accountId: string;
+  venue: "alpaca:paper";
+  observedAt: string;
+  expiresAt: string;
+  equity: number;
+  positions: readonly { instrument: string; quantity: number; marketValue: number }[];
+  /** Read-only early screening evidence, never execution authority or a reserved claim. */
+  executionCapacity?: Readonly<{
+    source: "controller_account_safety_facts";
+    accountId: string;
+    venue: "alpaca:paper";
+    observedAt: string;
+    expiresAt: string;
+    policyPlanId: string;
+    policyRevision: string;
+    grossExposure: number;
+    maxGrossExposure: number;
+    uncertaintyReserve: number;
+    /** Fresh fully-funded cash; omitted only by legacy read-only callers. */
+    availableCash?: number;
+  }>;
+}>;
+
 export type FinanceDailyCycleParams = Readonly<{
+  createSafetyContext?: FinanceExecutionSafetyContextFactory;
+  accountId?: string;
+  accountBookProvider?: (
+    signal: AbortSignal,
+    candidate?: { instrument: string; side: "buy" | "sell" },
+  ) => Promise<FinanceDailyAccountBook>;
   instruments: readonly string[];
   equity: number;
   asOf: string;
@@ -67,6 +224,17 @@ export type FinanceDailyCycleParams = Readonly<{
   runAuthorizationId: string;
   /** Absolute weight difference that must be exceeded before a position is touched. */
   rebalanceBand?: number;
+  /** Signal horizon from the bound strategy; direct legacy callers retain 12 months. */
+  lookbackMonths?: number;
+  /** Fraction kept in the inverse-volatility core sleeve; the remainder is tactical trend. */
+  coreWeightFraction?: number;
+  /** Controller-declared account budgets and reviewed research targets. Never model authority. */
+  portfolioPlan?: FinancePortfolioPlan;
+  trendStrategies?: readonly {
+    ruleId: string;
+    lookbackMonths: number;
+    instruments: readonly string[];
+  }[];
   /**
    * Actually place orders. Off by default: a plan is not an order.
    *
@@ -78,10 +246,18 @@ export type FinanceDailyCycleParams = Readonly<{
   venue?: "paper" | "alpaca";
   directory?: string;
   slippageBps?: number;
+  /** Internal caller seam; no default feed and no promotion of EOD data to an execution quote. */
+  executionQuotes?: ReadonlyMap<string, FinanceDailyCycleExecutionQuote>;
+  executionQuoteProvider?: FinanceDailyCycleExecutionQuoteProvider;
+  /** Configured-model veto review for exact Alpaca Paper candidates; never creates orders. */
+  tradeDecisionReviewer?: FinanceTradeDecisionReviewer;
+  /** Trusted control-layer clock; never use the strategy's historical asOf for live quote age. */
+  executionNow?: () => number;
 }>;
 
 export type FinanceDailyCycleTarget = Readonly<{
   instrument: string;
+  /** Tactical trend state; `cash` leaves the core sleeve intact. */
   signal: "hold" | "cash";
   weight: number;
   annualisedVol: number;
@@ -104,12 +280,30 @@ export type FinanceDailyCycleReport = Readonly<{
   asOf: string;
   /** Month end the signal was computed from. Constant within a calendar month. */
   signalAnchor: string;
-  modelCalls: 0;
+  /** Configured buy-and-hold core fraction; zero lets the declared strategy set full target weights. */
+  coreWeightFraction: number;
+  /** Count of bounded model reviews; approval alone never authorizes an order. */
+  modelCalls: number;
+  tradeDecisionReview: FinanceTradeDecisionReviewReceipt;
+  positionBook?: {
+    source: "controller_account" | "receipt_ledger";
+    accountId?: string;
+    observedAt?: string;
+    sizingEquity: number;
+    reconciliation?: FinanceExecutionReconciliation;
+  };
+  portfolio?: ReturnType<typeof composeFinancePortfolioTargets>;
   targets: readonly FinanceDailyCycleTarget[];
   drift: readonly FinanceDailyCycleDrift[];
   dataIssues: readonly string[];
   placed: readonly { instrument: string; quantity: number; notional: number }[];
   refusals: readonly string[];
+  executionFailures: readonly {
+    instrument: string;
+    orderStage: "compile" | "place";
+    refusalReasons: readonly string[];
+    safetyFailure?: FinanceExecutionSafetyFailure;
+  }[];
   /**
    * What this run filed into the bar book.
    *
@@ -158,22 +352,48 @@ type Bar = Readonly<{ date: string; close: number }>;
 /**
  * The instant a bar's close is true of, as a mark timestamp.
  *
- * A US cash session closes 16:00 New York, which is 20:00 UTC in the months it matters here. The
- * mark store rejects an instant in the future, so a bar dated today — filed by a cycle that runs
- * before the close — falls back to the instant the cycle is running at rather than being rejected
- * and leaving the position priced with yesterday's number.
+ * A US cash session closes at 16:00 New York (20:00 UTC in daylight time, 21:00 UTC in standard
+ * time). A bar whose close is still in the future is not a completed EOD observation, so it has
+ * no valid mark instant yet. Relabelling it with the run time would create false source chronology.
  */
-export function markInstantForBarDate(date: string, asOf: string): string {
-  const close = `${date}T20:00:00.000Z`;
-  const closeMs = Date.parse(close);
+export function markInstantForBarDate(date: string, asOf: string): string | undefined {
+  const close = financeUsEquityRegularCloseInstant(date);
+  const closeMs = close === undefined ? Number.NaN : Date.parse(close);
   const asOfMs = Date.parse(asOf);
-  if (!Number.isFinite(closeMs)) {
-    return asOf;
+  if (!Number.isFinite(closeMs) || !Number.isFinite(asOfMs)) {
+    return undefined;
   }
-  if (Number.isFinite(asOfMs) && closeMs > asOfMs) {
-    return asOf;
+  if (closeMs > asOfMs) {
+    return undefined;
   }
   return close;
+}
+
+/**
+ * A position mark used for EOD portfolio sizing must describe the same observation as the
+ * newest completed bar. A later fill/quote mark may be real, but mixing it with an older bar
+ * silently changes the denominator of the strategy, so venue execution must wait for a
+ * same-source refresh instead of treating the two clocks as interchangeable.
+ */
+export function markBarConsistencyIssue(
+  mark: Readonly<{ price: number; at: string }> | undefined,
+  bar: Bar | undefined,
+  asOf: string,
+): string | null {
+  if (!mark || !bar) {
+    return null;
+  }
+  const expectedAt = markInstantForBarDate(bar.date, asOf);
+  if (expectedAt === undefined) {
+    return `latest EOD bar ${bar.date} is not closed at ${asOf}`;
+  }
+  if (mark.at !== expectedAt) {
+    return `latest position mark ${mark.at} does not match latest EOD bar close ${expectedAt}`;
+  }
+  if (Math.abs(mark.price - bar.close) > 1e-9) {
+    return `latest position mark price ${mark.price} does not match latest EOD bar close ${bar.close}`;
+  }
+  return null;
 }
 
 /** The last month end whose month is strictly before `asOf`'s month. */
@@ -214,34 +434,18 @@ function monthEnds(series: readonly Bar[]): Bar[] {
  * trend strategy can actually survive. Inside the band the sizing is exact; outside it the cap
  * still binds and the residual is carried to the next session.
  */
-export function solveInvalidationPrice(close: number, notional: number, equity: number): number {
+export function solveInvalidationPrice(
+  close: number,
+  notional: number,
+  equity: number,
+  side: "buy" | "sell" = "buy",
+): number {
   const RISK_FRACTION = 0.01;
   const MIN_STOP = 0.05;
   const MAX_STOP = 0.3;
   const raw = notional > 0 && equity > 0 ? (equity * RISK_FRACTION) / notional : MAX_STOP;
   const stop = Math.min(Math.max(raw, MIN_STOP), MAX_STOP);
-  return Number((close * (1 - stop)).toFixed(2));
-}
-
-export function annualisedVol(dailyCloses: readonly number[]): number {
-  if (dailyCloses.length < 30) {
-    return Number.NaN;
-  }
-  const returns: number[] = [];
-  for (let index = 1; index < dailyCloses.length; index += 1) {
-    const previous = dailyCloses[index - 1];
-    const current = dailyCloses[index];
-    if (previous && current && previous > 0) {
-      returns.push(Math.log(current / previous));
-    }
-  }
-  if (returns.length < 30) {
-    return Number.NaN;
-  }
-  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
-  const variance =
-    returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1);
-  return Math.sqrt(variance * 252);
+  return Number((close * (side === "buy" ? 1 - stop : 1 + stop)).toFixed(2));
 }
 
 /**
@@ -438,9 +642,8 @@ export async function recordCycleFill(params: {
  * One instrument's order attempt, with the failure contained to that instrument.
  *
  * The order path throws for reasons that say nothing about the rest of the book: a symbol the
- * venue will not accept, a transport error, or a refusal to report an unknown fill state.
- * Letting one of those escape would abort the cycle mid-book, so the remaining targets would
- * never even be considered — and the run would report nothing about them at all.
+ * venue will not accept. An uncertain submitted order is different: it may already consume
+ * exposure, so the caller must stop the remaining book until reconciliation.
  */
 export async function attemptCycleOrder(
   attempt: () => Promise<FinanceCycleOrderOutcome>,
@@ -451,6 +654,9 @@ export async function attemptCycleOrder(
     return Object.freeze({
       ok: false as const,
       stage: "place" as const,
+      ...(isAlpacaOrderUncertain(error) || error instanceof FinanceExecutionSafetyUncertainError
+        ? { uncertain: true as const }
+        : {}),
       refusals: Object.freeze([
         `order path threw — ${error instanceof Error ? error.message : String(error)}`,
       ]),
@@ -488,6 +694,7 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
     close: number;
     volume?: number;
   }[] = [];
+  const acceptedRows: FinanceMarketCollectionItem[] = [];
   for (const row of rows) {
     const date = typeof row.data.date === "string" ? row.data.date.slice(0, 10) : "";
     const open = Number(row.data.open);
@@ -495,7 +702,11 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
     const low = Number(row.data.low);
     const close = Number(row.data.close);
     const volume = Number(row.data.volume);
-    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/u.test(date) ||
+      !Number.isFinite(Date.parse(row.sourceTimestamp)) ||
+      !Number.isFinite(Date.parse(row.observedAt))
+    ) {
       continue;
     }
     if (![open, high, low, close].every((value) => Number.isFinite(value) && value > 0)) {
@@ -512,23 +723,24 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
       close,
       ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
     });
+    acceptedRows.push(row);
   }
   if (bars.length === 0) {
     return null;
   }
   bars.sort((left, right) => left.date.localeCompare(right.date));
-  // The batch's clock is the newest observation it carries, not the moment this run happened:
-  // a replay to an earlier `asOf` must still see the history, or "no bars in the window" gets
-  // read as "no history existed".
-  const observedAt = rows.reduce(
-    (latest, row) => (row.sourceTimestamp > latest ? row.sourceTimestamp : latest),
-    rows[0]?.sourceTimestamp ?? "",
+  // Preserve when the source was actually observed. Alpaca timestamps label the New York session
+  // date rather than the close instant, so using sourceTimestamp here would backdate a completed
+  // bar to midnight and let an earlier as-of read see data that had not yet been collected.
+  const observedAt = acceptedRows.reduce(
+    (latest, row) => (row.observedAt > latest ? row.observedAt : latest),
+    acceptedRows[0]?.observedAt ?? "",
   );
   return {
     bars,
     observedAt,
-    providerName: rows[0]?.providerName ?? "unknown",
-    sourceUrlOrArtifact: rows[0]?.sourceUrlOrArtifact ?? "",
+    providerName: acceptedRows[0]?.providerName ?? "unknown",
+    sourceUrlOrArtifact: acceptedRows[0]?.sourceUrlOrArtifact ?? "",
   };
 }
 
@@ -536,10 +748,47 @@ export async function runFinanceDailyCycle(
   params: FinanceDailyCycleParams,
 ): Promise<FinanceDailyCycleReport> {
   const asOf = params.asOf;
+  if (params.trendStrategies && !params.portfolioPlan) {
+    throw new Error("multiple strategy inputs require an explicit portfolio budget");
+  }
+
+  const lookbackMonths = params.lookbackMonths ?? 12;
+  if (!Number.isSafeInteger(lookbackMonths) || lookbackMonths < 1 || lookbackMonths > 120) {
+    throw new Error("invalid monthly trend lookback");
+  }
+  const coreWeightFraction = params.coreWeightFraction ?? 0;
+  if (!Number.isFinite(coreWeightFraction) || coreWeightFraction < 0 || coreWeightFraction > 1) {
+    throw new Error("coreWeightFraction must be between 0 and 1");
+  }
+  if (params.portfolioPlan) {
+    validateFinancePortfolioPlan(params.portfolioPlan, asOf, params.venue ?? "paper");
+    // The existing live account seam does not yet carry a controller-bound portfolio account.
+    if (
+      params.place &&
+      params.venue === "alpaca" &&
+      (!params.accountId || !params.accountBookProvider || !params.createSafetyContext)
+    ) {
+      throw new Error(
+        "portfolio Alpaca placement requires account-bound controller integration; preview only",
+      );
+    }
+    if (
+      params.place &&
+      params.venue === "alpaca" &&
+      params.portfolioPlan.accountId !== params.accountId
+    ) {
+      throw new Error("portfolio plan account does not match Alpaca execution account");
+    }
+  }
   const band = params.rebalanceBand ?? 0.05;
+  if (!Number.isFinite(band) || band < 0 || band > 1) {
+    throw new Error("rebalanceBand must be between 0 and 1");
+  }
   const instruments = params.instruments.map((item) => item.toUpperCase());
   const dataIssues: string[] = [];
   const refusals: string[] = [];
+  const executionFailures: FinanceDailyCycleReport["executionFailures"][number][] = [];
+  let modelVetoCount = 0;
   const placed: { instrument: string; quantity: number; notional: number }[] = [];
 
   const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
@@ -627,12 +876,60 @@ export async function runFinanceDailyCycle(
       monthSeries.set(instrument, monthEnds(series));
       closes.set(
         instrument,
-        series.slice(-253).map((row) => row.close),
+        series.slice(-FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES).map((row) => row.close),
       );
       lastBar.set(instrument, series[series.length - 1]);
     } catch (error) {
       dataIssues.push(`${instrument}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  let equity = params.equity;
+  let accountBook: FinanceDailyAccountBook | undefined;
+  if (params.accountBookProvider) {
+    accountBook = await withTimeout(
+      params.accountBookProvider(AbortSignal.timeout(120000)),
+      120000,
+    );
+    const now = (params.executionNow ?? Date.now)();
+    const symbols = new Set<string>();
+    if (
+      params.venue !== "alpaca" ||
+      !params.accountId ||
+      accountBook.accountId !== params.accountId ||
+      accountBook.venue !== "alpaca:paper" ||
+      !Number.isFinite(accountBook.equity) ||
+      accountBook.equity <= 0 ||
+      !Number.isFinite(Date.parse(accountBook.observedAt)) ||
+      Date.parse(accountBook.observedAt) > now ||
+      !(Date.parse(accountBook.expiresAt) > now)
+    ) {
+      throw new Error("account-bound position snapshot invalid or expired");
+    }
+    for (const position of accountBook.positions) {
+      if (
+        !position.instrument ||
+        position.instrument !== position.instrument.toUpperCase() ||
+        symbols.has(position.instrument) ||
+        !Number.isFinite(position.quantity) ||
+        position.quantity <= 0 ||
+        !Number.isFinite(position.marketValue) ||
+        position.marketValue < 0
+      ) {
+        throw new Error("invalid account-bound position");
+      }
+      symbols.add(position.instrument);
+    }
+    const reserve = accountBook.reconciliation?.uncertaintyReserve ?? 0;
+    if (
+      accountBook.reconciliation?.status === "blocked" ||
+      !Number.isFinite(reserve) ||
+      reserve < 0 ||
+      reserve >= accountBook.equity
+    ) {
+      throw new Error("account reconciliation cannot support execution sizing");
+    }
+    equity = Math.min(equity, accountBook.equity - reserve);
   }
 
   // Marks: price the book with the bars this run just measured.
@@ -647,7 +944,9 @@ export async function runFinanceDailyCycle(
   const marksFiled: { instrument: string; price: number; at: string; appended: boolean }[] = [];
   const unpricedHoldings: string[] = [];
   try {
-    const held = await readFinancePositionLedger(directory);
+    const held = accountBook
+      ? { ledger: { positions: [] } }
+      : await readFinancePositionLedger(directory);
     for (const position of held.ledger.positions) {
       if (position.quantity === 0) {
         continue;
@@ -661,6 +960,12 @@ export async function runFinanceDailyCycle(
         continue;
       }
       const at = markInstantForBarDate(bar.date, asOf);
+      if (at === undefined) {
+        dataIssues.push(
+          `${position.instrument}: latest EOD bar ${bar.date} has not closed; mark not filed`,
+        );
+        continue;
+      }
       try {
         const result = await appendFinancePositionMark(directory, {
           instrument: position.instrument,
@@ -681,8 +986,13 @@ export async function runFinanceDailyCycle(
       }
     }
   } catch (error) {
-    // An unreadable position book must not abort the run for the same reason an unwritable bar
-    // book must not: the cycle's job is the book it trades, and a missing price is reported.
+    if (params.place === true || params.portfolioPlan) {
+      throw new Error(
+        "position ledger unreadable; unknown holdings cannot be treated as flat for execution",
+        { cause: error },
+      );
+    }
+    // Research previews may retain partial data; execution requires a readable book.
     dataIssues.push(
       `position book unreadable, nothing was re-priced: ` +
         (error instanceof Error ? error.message : String(error)),
@@ -704,71 +1014,185 @@ export async function runFinanceDailyCycle(
   }
   const signalAnchor = [...anchors].toSorted().at(-1) ?? "";
 
-  const raw: { instrument: string; signal: "hold" | "cash"; inverseVol: number; vol: number }[] =
-    [];
-  for (const instrument of instruments) {
-    const months = monthSeries.get(instrument);
-    const anchor = anchorMonthEnds.get(instrument);
-    const priceSeries = closes.get(instrument);
-    if (!months || !anchor || !priceSeries) {
+  const strategyDefinitions = params.trendStrategies ?? [
+    { ruleId: "daily-trend", lookbackMonths, instruments },
+  ];
+  const candidates: FinancePortfolioCandidate[] = [];
+  const metadata = new Map<string, FinanceDailyCycleTarget>();
+  for (const strategy of strategyDefinitions) {
+    if (
+      params.portfolioPlan?.allocations.some(
+        (allocation) =>
+          allocation.strategyId === strategy.ruleId && allocation.budgetFraction === 0,
+      )
+    ) {
       continue;
     }
-    const anchorIndex = months.findIndex((row) => row.date === anchor.date);
-    const prior = months[anchorIndex - 12];
-    if (!prior) {
-      dataIssues.push(`${instrument}: fewer than 13 month ends before anchor`);
-      continue;
+    const raw: { instrument: string; signal: "hold" | "cash"; inverseVol: number; vol: number }[] =
+      [];
+    for (const instrument of strategy.instruments) {
+      const months = monthSeries.get(instrument);
+      const anchor = anchorMonthEnds.get(instrument);
+      const priceSeries = closes.get(instrument);
+      if (!months || !anchor || !priceSeries) {
+        continue;
+      }
+      const totalReturn = financeMonthlyTrendReturn(months, anchor, strategy.lookbackMonths);
+      const vol = annualisedVol(priceSeries);
+      if (totalReturn === undefined || !Number.isFinite(vol) || vol <= 0) {
+        dataIssues.push(
+          `${strategy.ruleId}/${instrument}: missing calendar lookback or volatility`,
+        );
+        continue;
+      }
+      raw.push({ instrument, signal: totalReturn > 0 ? "hold" : "cash", inverseVol: 1 / vol, vol });
     }
-    const vol = annualisedVol(priceSeries);
-    if (!Number.isFinite(vol) || vol <= 0) {
-      dataIssues.push(`${instrument}: volatility could not be estimated`);
-      continue;
+    const inverseSum = raw
+      .filter((r) => r.signal === "hold")
+      .reduce((sum, r) => sum + r.inverseVol, 0);
+    const coreInverseSum = raw.reduce((sum, r) => sum + r.inverseVol, 0);
+    const targets = raw.map(
+      (row): FinanceDailyCycleTarget => ({
+        instrument: row.instrument,
+        signal: row.signal,
+        // The trend signal controls only the tactical sleeve. The core sleeve is a
+        // buy-and-hold baseline, so a negative trend no longer liquidates the whole name.
+        weight:
+          (coreInverseSum > 0 ? (coreWeightFraction * row.inverseVol) / coreInverseSum : 0) +
+          (row.signal === "hold" && inverseSum > 0
+            ? ((1 - coreWeightFraction) * row.inverseVol) / inverseSum
+            : 0),
+        annualisedVol: row.vol,
+        lastBarDate: lastBar.get(row.instrument)?.date ?? "",
+        close: lastBar.get(row.instrument)?.close ?? Number.NaN,
+      }),
+    );
+    for (const target of targets) {
+      metadata.set(target.instrument, target);
     }
-    const totalReturn = anchor.close / prior.close - 1;
-    raw.push({
-      instrument,
-      signal: totalReturn > 0 ? "hold" : "cash",
-      inverseVol: 1 / vol,
-      vol,
+    if (params.portfolioPlan && targets.length !== strategy.instruments.length) {
+      throw new Error(
+        `strategy ${strategy.ruleId}: incomplete evidence cannot redistribute its budget`,
+      );
+    }
+    candidates.push({
+      strategyId: strategy.ruleId,
+      basis: "price_strategy",
+      evidenceReceiptId: `trend:${strategy.ruleId}:${signalAnchor}:${strategy.lookbackMonths}`,
+      targets: targets.map((t) => ({
+        instrument: t.instrument,
+        weight: t.weight,
+        stance: t.signal === "hold" ? "accumulate" : "reduce",
+      })),
     });
   }
+  const portfolio = params.portfolioPlan
+    ? composeFinancePortfolioTargets(params.portfolioPlan, [
+        ...candidates,
+        ...params.portfolioPlan.candidates,
+      ])
+    : undefined;
+  const targets: FinanceDailyCycleTarget[] = portfolio
+    ? portfolio.targets.map((t) => ({
+        instrument: t.instrument,
+        weight: t.weight,
+        signal: t.weight > 0 ? "hold" : "cash",
+        annualisedVol:
+          metadata.get(t.instrument)?.annualisedVol ??
+          annualisedVol(closes.get(t.instrument) ?? []),
+        lastBarDate: lastBar.get(t.instrument)?.date ?? "",
+        close: lastBar.get(t.instrument)?.close ?? Number.NaN,
+      }))
+    : [...metadata.values()];
+  const blockedInstruments = new Set(
+    portfolio?.targets.filter((t) => t.blocked).map((t) => t.instrument),
+  );
+  for (const instrument of blockedInstruments) {
+    refusals.push(`${instrument}: conflicting strategy intentions require controller resolution`);
+  }
 
-  const eligible = raw.filter((row) => row.signal === "hold");
-  const inverseSum = eligible.reduce((sum, row) => sum + row.inverseVol, 0);
-  const targets: FinanceDailyCycleTarget[] = raw.map((row) => ({
-    instrument: row.instrument,
-    signal: row.signal,
-    weight: row.signal === "hold" && inverseSum > 0 ? row.inverseVol / inverseSum : 0,
-    annualisedVol: row.vol,
-    lastBarDate: lastBar.get(row.instrument)?.date ?? "",
-    close: lastBar.get(row.instrument)?.close ?? Number.NaN,
-  }));
+  for (const instrument of accountBook?.reconciliation?.quarantinedInstruments ?? []) {
+    if (targets.some((target) => target.instrument === instrument)) {
+      blockedInstruments.add(instrument);
+      refusals.push(`${instrument}: historical quantity difference quarantined; no order proposed`);
+    }
+  }
 
   // Current weights from the actual ledger, not from an assumed book.
   let currentWeight: ReadonlyMap<string, number> = new Map();
   const unpricedPositions = new Set<string>();
+  const inconsistentMarkBars = new Map<string, string>();
   const ledgerQuantity = new Map<string, number>();
   try {
-    const ledger = await readFinancePositionLedger(directory, { asOf });
-    // Sizing and reconciliation both have to see the book this run trades, not every fill the
-    // ledger has ever seen. See `receiptsForVenue`.
-    const book = projectFinancePositions({
-      receipts: receiptsForVenue(ledger.receipts, params.venue ?? "paper"),
-      marks: ledger.marks,
-    });
-    const derived = currentWeightsFromPositions(book.positions, params.equity);
-    currentWeight = derived.weights;
-    for (const symbol of derived.unpriced) {
-      unpricedPositions.add(symbol);
-    }
-    for (const position of book.positions) {
-      ledgerQuantity.set(position.instrument.toUpperCase(), position.quantity);
+    if (accountBook) {
+      currentWeight = new Map(
+        accountBook.positions.map((p) => [p.instrument, p.marketValue / equity]),
+      );
+      for (const position of accountBook.positions) {
+        ledgerQuantity.set(position.instrument, position.quantity);
+      }
+    } else {
+      const ledger = await readFinancePositionLedger(directory, { asOf });
+      // Sizing and reconciliation both have to see the book this run trades, not every fill the
+      // ledger has ever seen. See `receiptsForVenue`.
+      const book = projectFinancePositions({
+        receipts: receiptsForVenue(ledger.receipts, params.venue ?? "paper"),
+        marks: ledger.marks,
+      });
+      const derived = currentWeightsFromPositions(book.positions, equity);
+      currentWeight = derived.weights;
+      for (const symbol of derived.unpriced) {
+        unpricedPositions.add(symbol);
+      }
+      for (const position of book.positions) {
+        const instrument = position.instrument.toUpperCase();
+        ledgerQuantity.set(instrument, position.quantity);
+        if (position.quantity !== 0) {
+          const latestMark = ledger.marks
+            .filter((mark) => mark.instrument.toUpperCase() === instrument)
+            .at(-1);
+          const issue = markBarConsistencyIssue(latestMark, lastBar.get(instrument), asOf);
+          if (issue !== null) {
+            inconsistentMarkBars.set(instrument, issue);
+          }
+        }
+      }
     }
   } catch {
+    if (portfolio || params.place === true) {
+      throw new Error(
+        "position ledger unreadable; unknown holdings cannot be treated as flat for execution",
+      );
+    }
     dataIssues.push("position ledger unreadable; treating book as flat");
   }
   if (unpricedPositions.size > 0) {
     dataIssues.push(`held but unpriced (no mark): ${[...unpricedPositions].toSorted().join(", ")}`);
+  }
+  for (const [instrument, issue] of inconsistentMarkBars) {
+    dataIssues.push(`${instrument}: ${issue}`);
+  }
+
+  if (portfolio) {
+    const managed = new Set(targets.map((t) => t.instrument));
+    const retainedExposure = [...currentWeight]
+      .filter(([symbol]) => !managed.has(symbol))
+      .reduce((sum, [, weight]) => sum + Math.abs(weight), 0);
+    const effectiveTarget = targets.reduce(
+      (sum, target) =>
+        sum +
+        (blockedInstruments.has(target.instrument)
+          ? Math.abs(currentWeight.get(target.instrument) ?? 0)
+          : target.weight),
+      0,
+    );
+    if (
+      unpricedPositions.size ||
+      [...currentWeight.values()].some((w) => w < 0) ||
+      retainedExposure + effectiveTarget > 1 + 1e-12
+    ) {
+      throw new Error("portfolio cannot fund targets alongside retained/unknown/short positions");
+    }
   }
 
   // Only the part OUTSIDE the band is traded, and never more than the declared cap.
@@ -780,8 +1204,10 @@ export async function runFinanceDailyCycle(
   const drift: FinanceDailyCycleDrift[] = targets.map((target) => {
     const current = currentWeight.get(target.instrument) ?? 0;
     const delta = target.weight - current;
-    const excess = Math.max(0, Math.abs(delta) - band);
-    const desiredNotional = excess * params.equity;
+    const excess = blockedInstruments.has(target.instrument)
+      ? 0
+      : Math.max(0, Math.abs(delta) - band);
+    const desiredNotional = excess * equity;
     const notional = Math.min(desiredNotional, params.caps.maxOrderNotional);
     const action = excess <= 0 ? "none" : delta > 0 ? "buy" : "sell";
     return {
@@ -803,13 +1229,253 @@ export async function runFinanceDailyCycle(
   // a fill the local ledger missed shows up here and nowhere else.
   let venueState: AlpacaVenueState | null = null;
   let venueUnverified: string | null = null;
-  if (params.place === true && params.venue === "alpaca") {
+  if (params.place === true && params.venue === "alpaca" && !accountBook) {
     const read = await fetchAlpacaVenueState();
     if (read.ok) {
       venueState = read.state;
     } else {
       venueUnverified = read.reason;
       dataIssues.push(`venue state unreadable: ${read.reason}`);
+    }
+  }
+
+  const reviewCandidateId = (item: FinanceDailyCycleDrift) =>
+    [params.runAuthorizationId, signalAnchor, item.instrument, item.action].join(":");
+  const potentialReviewCandidates =
+    params.place === true && params.venue === "alpaca"
+      ? drift.flatMap((item) => {
+          if (
+            item.action === "none" ||
+            venueUnverified !== null ||
+            unpricedPositions.has(item.instrument) ||
+            inconsistentMarkBars.has(item.instrument)
+          ) {
+            return [];
+          }
+          const target = targets.find((row) => row.instrument === item.instrument);
+          if (!target || !Number.isFinite(target.close) || target.close <= 0) {
+            return [];
+          }
+          if (
+            venueState !== null &&
+            venueReconciliationIssue({
+              instrument: item.instrument,
+              openOrders: venueState.openOrders.get(item.instrument) ?? 0,
+              venueQuantity: venueState.positions.get(item.instrument) ?? 0,
+              ledgerQuantity: ledgerQuantity.get(item.instrument) ?? 0,
+            }) !== null
+          ) {
+            return [];
+          }
+          return [
+            {
+              candidateId: reviewCandidateId(item),
+              instrument: item.instrument,
+              side: item.action,
+              targetWeight: item.target,
+              currentWeight: item.current,
+              weightDelta: item.delta,
+              notional: item.notional,
+              strategySignal: target.signal,
+              annualisedVol: target.annualisedVol,
+              researchClose: target.close,
+              lastBarDate: target.lastBarDate,
+            },
+          ];
+        })
+      : [];
+  const accountEconomics =
+    params.accountId && params.venue === "alpaca" && potentialReviewCandidates.length > 0
+      ? await readFinanceAccountEconomicFeedback(directory, params.accountId, asOf)
+      : undefined;
+  const executionQuotesByInstrument = new Map<
+    string,
+    FinanceDailyCycleExecutionQuote | undefined
+  >();
+  const executionQuoteErrors = new Map<string, string>();
+  const reviewCandidates: FinanceTradeDecisionCandidate[] = [];
+  const readExecutionQuote = async (candidate: {
+    instrument: string;
+    side: "buy" | "sell";
+  }): Promise<FinanceDailyCycleExecutionQuote | undefined> => {
+    let executionQuote = params.executionQuotes?.get(candidate.instrument);
+    executionQuoteErrors.delete(candidate.instrument);
+    if (params.executionQuoteProvider) {
+      try {
+        executionQuote = await withTimeout(
+          params.executionQuoteProvider(
+            { instrument: candidate.instrument, assetClass: "us_equity", side: candidate.side },
+            AbortSignal.timeout(20_000),
+          ),
+          20_000,
+        );
+        if (executionQuote.bidPrice === undefined || executionQuote.askPrice === undefined) {
+          executionQuoteErrors.set(
+            candidate.instrument,
+            "execution quote unavailable: provider must supply bid and ask",
+          );
+          executionQuote = undefined;
+        } else {
+          executionQuote = {
+            ...executionQuote,
+            referencePrice:
+              candidate.side === "buy" ? executionQuote.askPrice : executionQuote.bidPrice,
+            priceBasis: candidate.side === "buy" ? "ask" : "bid",
+          };
+        }
+      } catch (error) {
+        executionQuoteErrors.set(candidate.instrument, executionQuoteProviderFailure(error));
+        executionQuote = undefined;
+      }
+    }
+    executionQuotesByInstrument.set(candidate.instrument, executionQuote);
+    return executionQuote;
+  };
+  for (const candidate of potentialReviewCandidates) {
+    const executionQuote = await readExecutionQuote(candidate);
+    const quoteObservedAt = (params.executionNow ?? Date.now)();
+    if (executionQuoteIssue(executionQuote, quoteObservedAt) !== null || !executionQuote) {
+      continue;
+    }
+    reviewCandidates.push({
+      ...candidate,
+      executionQuote: {
+        referencePrice: executionQuote.referencePrice,
+        referencePriceAt: executionQuote.referencePriceAt,
+        ...(executionQuote.bidPrice !== undefined ? { bidPrice: executionQuote.bidPrice } : {}),
+        ...(executionQuote.askPrice !== undefined ? { askPrice: executionQuote.askPrice } : {}),
+        ...(executionQuote.feed !== undefined ? { feed: executionQuote.feed } : {}),
+        ...(executionQuote.priceBasis !== undefined
+          ? { priceBasis: executionQuote.priceBasis }
+          : {}),
+        ageMs: Math.max(0, quoteObservedAt - Date.parse(executionQuote.referencePriceAt)),
+        maxAgeMs: executionQuote.maxAgeMs,
+      },
+    });
+  }
+  const reviewCandidateById = new Map(
+    reviewCandidates.map((candidate) => [candidate.candidateId, candidate]),
+  );
+  let tradeDecisionReview: FinanceTradeDecisionReviewReceipt = {
+    status: "not_needed",
+    candidateCount: 0,
+    modelCalls: 0,
+    reasonCode:
+      params.place === true && params.venue === "alpaca"
+        ? "no_executable_candidates"
+        : "not_alpaca_paper_placement",
+  };
+  const tradeDecisions = new Map<
+    string,
+    { candidateId: string; decision: "approve" | "veto"; rationale: string }
+  >();
+  let reviewContractAnomaly = false;
+  if (reviewCandidates.length > 0) {
+    const reconciliation = accountBook?.reconciliation;
+    const decisionContext = await buildFinanceThesisDecisionContext({
+      directory,
+      asOf,
+      instruments: reviewCandidates.map((candidate) => candidate.instrument),
+    });
+    const reviewRequest = {
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      ...(accountEconomics ? { accountEconomics } : {}),
+      venue: "alpaca:paper",
+      asOf,
+      signalAnchor,
+      ruleIds: strategyDefinitions.map((strategy) => strategy.ruleId),
+      equity,
+      rebalanceBand: band,
+      caps: params.caps,
+      ...(accountBook ? { positionBookObservedAt: accountBook.observedAt } : {}),
+      reconciliation: {
+        status: reconciliation?.status ?? "unverified",
+        ...(reconciliation
+          ? {
+              historyStatus: reconciliation.historyStatus,
+              uncertaintyReserve: reconciliation.uncertaintyReserve,
+              quarantinedInstruments: reconciliation.quarantinedInstruments,
+            }
+          : {}),
+      },
+      positions: [...currentWeight].map(([instrument, weight]) => ({
+        instrument,
+        quantity: ledgerQuantity.get(instrument) ?? 0,
+        marketValue: Number((weight * equity).toFixed(2)),
+      })),
+      decisionContext,
+      candidates: reviewCandidates,
+    } as const;
+    const failedReview = (
+      failureCode: "reviewer_unavailable" | "output_invalid" | "runtime_timeout" | "process_error",
+      attempted: boolean,
+    ) => ({
+      status: "failed" as const,
+      attempted,
+      provider: "unavailable",
+      modelId: "unavailable",
+      latencyMs: 0,
+      providerCallObserved: false,
+      adapterAttested: false,
+      failureCode,
+    });
+    let rawReview: unknown;
+    if (!params.tradeDecisionReviewer) {
+      rawReview = failedReview("reviewer_unavailable", false);
+    } else {
+      try {
+        rawReview = await withTimeout(
+          params.tradeDecisionReviewer(
+            reviewRequest,
+            AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
+          ),
+          FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS + 5_000,
+        );
+      } catch (error) {
+        rawReview = failedReview(
+          error instanceof Error && error.message === "timeout"
+            ? "runtime_timeout"
+            : "process_error",
+          true,
+        );
+      }
+    }
+    let result: FinanceTradeDecisionReviewResult;
+    if (isValidFinanceTradeDecisionReviewResult(rawReview, reviewRequest)) {
+      result = rawReview;
+    } else {
+      reviewContractAnomaly =
+        rawReview !== null &&
+        typeof rawReview === "object" &&
+        "status" in rawReview &&
+        rawReview.status === "completed";
+      result = failedReview("output_invalid", true);
+    }
+    tradeDecisionReview = {
+      status: result.status,
+      candidateCount: reviewCandidates.length,
+      modelCalls: result.modelCalls ?? (result.attempted ? 1 : 0),
+      candidateInputs: reviewCandidates,
+      decisionContext,
+      ...(accountEconomics ? { accountEconomics } : {}),
+      ...(result.status === "failed" ? { failureCode: result.failureCode } : {}),
+      provider: result.provider,
+      modelId: result.modelId,
+      latencyMs: result.latencyMs,
+      providerCallObserved: result.providerCallObserved,
+      adapterAttested: result.adapterAttested,
+      ...(result.requestIdSha256 ? { requestIdSha256: result.requestIdSha256 } : {}),
+      ...(result.toolEvidence ? { toolEvidence: result.toolEvidence } : {}),
+      ...(result.modelCallEvidence ? { modelCallEvidence: result.modelCallEvidence } : {}),
+      ...(result.outputContractStage ? { outputContractStage: result.outputContractStage } : {}),
+      ...(result.transport ? { transport: result.transport } : {}),
+      ...(result.taskObjectiveSha256 ? { taskObjectiveSha256: result.taskObjectiveSha256 } : {}),
+      ...(result.status === "completed" ? { decisions: result.decisions } : {}),
+    };
+    if (result.status === "completed") {
+      for (const decision of result.decisions ?? []) {
+        tradeDecisions.set(decision.candidateId, decision);
+      }
     }
   }
 
@@ -850,26 +1516,147 @@ export async function runFinanceDailyCycle(
         );
         continue;
       }
+      const markBarIssue = inconsistentMarkBars.get(item.instrument);
+      if (markBarIssue !== undefined) {
+        refusals.push(
+          `${item.instrument}: mark/bar consistency gate failed (${markBarIssue}); refusing venue execution`,
+        );
+        continue;
+      }
+      let executionQuote =
+        params.venue === "alpaca"
+          ? executionQuotesByInstrument.get(item.instrument)
+          : params.executionQuotes?.get(item.instrument);
+      if (params.venue === "alpaca") {
+        let quoteError = executionQuoteErrors.get(item.instrument);
+        let issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
+        if ((quoteError || issue !== null) && params.executionQuoteProvider) {
+          executionQuote = await readExecutionQuote({
+            instrument: item.instrument,
+            side: item.action,
+          });
+          quoteError = executionQuoteErrors.get(item.instrument);
+          issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
+        }
+        if (quoteError) {
+          refusals.push(`${item.instrument}: ${quoteError}`);
+          continue;
+        }
+        if (issue !== null) {
+          refusals.push(`${item.instrument}: ${issue}`);
+          continue;
+        }
+        const candidateId = reviewCandidateId(item);
+        if (tradeDecisionReview.status === "completed" && !reviewCandidateById.has(candidateId)) {
+          refusals.push(
+            item.instrument +
+              ": candidate was not eligible for model review; refusing venue placement",
+          );
+          continue;
+        }
+        if (reviewContractAnomaly) {
+          refusals.push(
+            item.instrument +
+              ": completed model review violated candidate binding; refusing venue placement",
+          );
+          continue;
+        }
+        if (tradeDecisionReview.status === "completed") {
+          const decision = tradeDecisions.get(candidateId);
+          if (!decision) {
+            refusals.push(
+              item.instrument + ": model review omitted this candidate; refusing venue placement",
+            );
+            continue;
+          }
+          if (decision.decision === "veto") {
+            modelVetoCount += 1;
+            refusals.push(
+              item.instrument + ": model vetoed the proposed candidate: " + decision.rationale,
+            );
+            continue;
+          }
+        }
+      }
+      const referencePrice =
+        params.venue === "alpaca" && executionQuote ? executionQuote.referencePrice : target.close;
+      const referencePriceAt =
+        params.venue === "alpaca" && executionQuote
+          ? executionQuote.referencePriceAt
+          : `${target.lastBarDate}T20:00:00.000Z`;
+      if (!params.createSafetyContext) {
+        refusals.push(
+          `${item.instrument}: execution_safety_context_required: trusted controller facts unavailable`,
+        );
+        continue;
+      }
+      const portfolioTarget = portfolio?.targets.find(
+        (portfolioCandidate) => portfolioCandidate.instrument === item.instrument,
+      );
+      const researchLineage: FinanceExecutionResearchLineage | undefined =
+        portfolio && portfolioTarget
+          ? financeExecutionResearchLineageSchema.parse({
+              portfolioPlan: {
+                asOf: portfolio.asOf,
+                validUntil: portfolio.validUntil,
+                accountId: portfolio.accountId,
+                venue: portfolio.venue,
+                ...(portfolio.provenance === undefined ? {} : { provenance: portfolio.provenance }),
+              },
+              targetWeight: portfolioTarget.weight,
+              contributions: portfolioTarget.contributions.map((contribution) => ({
+                strategyId: contribution.strategyId,
+                evidenceReceiptId: contribution.evidenceReceiptId,
+                stance: contribution.stance,
+                sleeveWeight: contribution.sleeveWeight,
+                accountWeight: contribution.accountWeight,
+                ...(contribution.evidenceIds === undefined
+                  ? {}
+                  : { evidenceIds: contribution.evidenceIds }),
+              })),
+            })
+          : undefined;
+      const targetWeightAuthorization = financeExecutionTargetWeightAuthorizationSchema.parse({
+        targetWeight: target.weight,
+        driftBandFraction: band,
+        maxOrderNotional: item.notional,
+      });
       const shared = {
+        credentialStateDirectory: directory,
+        createSafetyContext: params.createSafetyContext,
         conclusion: {
           conclusionId: `daily_cycle:${signalAnchor}:${item.instrument}`,
+          decisionRef: {
+            source: "daily_cycle_candidate",
+            id: [params.runAuthorizationId, signalAnchor, item.instrument, item.action].join(":"),
+          },
           instrument: item.instrument,
           direction: item.action,
           conviction: 1,
           assetClass: "us_equity",
           horizonDays: 30,
-          invalidationPrice: solveInvalidationPrice(target.close, item.notional, params.equity),
+          invalidationPrice: solveInvalidationPrice(
+            referencePrice,
+            item.notional,
+            equity,
+            item.action,
+          ),
           thesis:
             `Daily drift rebalance against frozen monthly target (anchor ${signalAnchor}). ` +
-            `target=${item.target} current=${item.current} band=${band}.`,
+            `target=${item.target} current=${item.current} band=${band}.` +
+            (params.venue === "alpaca" && executionQuote
+              ? ` Execution quote source: ${executionQuote.sourceUrlOrArtifact}; feed=${executionQuote.feed ?? "caller-supplied"}; basis=${executionQuote.priceBasis ?? "reference"}; bid=${executionQuote.bidPrice ?? "unknown"}; ask=${executionQuote.askPrice ?? "unknown"}; risk reference, not a guaranteed fill.`
+              : ""),
           invalidationCondition: "monthly signal flips to cash, or drift returns inside band",
         },
         market: {
-          referencePrice: target.close,
-          referencePriceAt: `${target.lastBarDate}T20:00:00.000Z`,
+          referencePrice,
+          referencePriceAt,
         },
-        equity: params.equity,
+        equity,
         runAuthorizationId: params.runAuthorizationId,
+        ...(researchLineage === undefined ? {} : { researchLineage }),
+        targetWeightAuthorization,
         budget: {
           automation: "unattended",
           allowedInstruments: instruments,
@@ -895,6 +1682,20 @@ export async function runFinanceDailyCycle(
       );
       if (!result.ok) {
         refusals.push(`${item.instrument}: ${result.refusals.join("; ")}`);
+        executionFailures.push({
+          instrument: item.instrument,
+          orderStage: result.stage,
+          refusalReasons: [...result.refusals],
+          ...("safetyFailure" in result && result.safetyFailure
+            ? { safetyFailure: result.safetyFailure }
+            : {}),
+        });
+        if ("uncertain" in result && result.uncertain) {
+          dataIssues.push(
+            "execution outcome uncertain; stopped remaining orders pending reconciliation",
+          );
+          break;
+        }
         continue;
       }
       const record = await recordCycleFill({
@@ -919,17 +1720,195 @@ export async function runFinanceDailyCycle(
 
   return Object.freeze({
     schemaVersion: FINANCE_DAILY_CYCLE_SCHEMA,
-    ok: dataIssues.length === 0,
+    ok: dataIssues.length === 0 && (refusals.length === 0 || refusals.length === modelVetoCount),
     asOf,
     signalAnchor,
-    modelCalls: 0,
+    coreWeightFraction,
+    modelCalls: tradeDecisionReview.modelCalls,
+    tradeDecisionReview,
+    positionBook: {
+      source: accountBook ? ("controller_account" as const) : ("receipt_ledger" as const),
+      ...(accountBook
+        ? { accountId: accountBook.accountId, observedAt: accountBook.observedAt }
+        : {}),
+      sizingEquity: equity,
+      ...(accountBook?.reconciliation ? { reconciliation: accountBook.reconciliation } : {}),
+    },
+    ...(portfolio ? { portfolio } : {}),
     targets,
     drift,
     dataIssues,
     placed,
     refusals,
+    executionFailures,
     barsFiled,
     marksFiled,
     unpricedHoldings,
+  });
+}
+
+export type FinanceEodRefreshResult = Readonly<{
+  barsFiled: readonly {
+    instrument: string;
+    marketDate: string;
+    providerName: string;
+    sourceObservedAt: string;
+    barCount: number;
+    newBarCount: number;
+    appended: boolean;
+  }[];
+  marksFiled: readonly { instrument: string; price: number; at: string; appended: boolean }[];
+  unpricedHoldings: readonly string[];
+  dataIssues: readonly string[];
+}>;
+
+/**
+ * Refresh the latest completed daily bars and marks before readiness or settlement decisions.
+ *
+ * The day slot runs inside the cash session, so its refresh can only reach the previous completed
+ * session. The night slot repeats the same bounded collection after the close to pick up the
+ * current session. `markInstantForBarDate` prevents an in-progress bar from being filed as a close.
+ *
+ * Fail-open by design: a data source that returns nothing must not stop settlement or a research
+ * cycle, so collection errors are reported in `dataIssues` instead of being thrown.
+ */
+export async function refreshFinanceEodBarsAndMarks(params: {
+  directory: string;
+  asOf: string;
+  instruments: readonly string[];
+}): Promise<FinanceEodRefreshResult> {
+  const directory = params.directory;
+  const collectionAdapters = createFinanceMarketCollectionRegistry(
+    resolveFinanceMarketCollectionRegistryOptionsFromEnv(),
+  );
+  const eodAdapters: FinanceMarketCollectionAdapter[] = [
+    "alpaca_daily_history",
+    "china_reachable_us_eod_history",
+  ].flatMap((id) => {
+    const adapter = collectionAdapters.find((candidate) => candidate.id === id);
+    return adapter ? [adapter] : [];
+  });
+  const barsFiled: {
+    instrument: string;
+    barCount: number;
+    newBarCount: number;
+    appended: boolean;
+    marketDate: string;
+    providerName: string;
+    sourceObservedAt: string;
+  }[] = [];
+  const dataIssues: string[] = [];
+  const lastBar = new Map<string, Bar>();
+  for (const instrument of params.instruments) {
+    try {
+      const request = {
+        instrument,
+        assetClass: "us_equity",
+        collection: "eod_history",
+        asOf: params.asOf,
+        // This post-close pass only needs the newest completed session to refresh open marks.
+        // Historical bars are owned by the daytime research cycle; refetching thousands here
+        // needlessly imports cross-provider revisions when the adapter has to use its fallback.
+        limit: 1,
+      } as const;
+      let batch: ReturnType<typeof toOhlcvBatch> = null;
+      for (const adapter of eodAdapters) {
+        try {
+          const rows = await adapter.collect(request, AbortSignal.timeout(60_000));
+          const candidate = toOhlcvBatch(rows);
+          if (candidate !== null) {
+            batch = candidate;
+            break;
+          }
+        } catch {
+          // Try the existing regional source when the configured broker history feed is unavailable.
+        }
+      }
+      if (batch === null) {
+        dataIssues.push(`${instrument}: no complete OHLC row from configured EOD sources`);
+        continue;
+      }
+      const latest = batch.bars.at(-1);
+      if (latest === undefined) {
+        dataIssues.push(`${instrument}: no complete OHLC row to file in the bar book`);
+        continue;
+      }
+      const result = await appendFinanceBars(directory, {
+        instrument,
+        derivation: "ohlcv",
+        provenance: {
+          origin: batch.providerName,
+          sourceUrlOrArtifact: batch.sourceUrlOrArtifact,
+          note: "latest completed daily bar collected after the cash close; end-of-day, research-only, not execution-grade",
+        },
+        observedAt: batch.observedAt,
+        bars: [latest],
+      });
+      barsFiled.push({
+        instrument,
+        marketDate: latest.date,
+        providerName: batch.providerName,
+        sourceObservedAt: batch.observedAt,
+        barCount: 1,
+        newBarCount: 1 - result.repeatsSkipped,
+        appended: result.appended,
+      });
+      lastBar.set(instrument, latest);
+    } catch (error) {
+      dataIssues.push(`${instrument}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const marksFiled: { instrument: string; price: number; at: string; appended: boolean }[] = [];
+  const unpricedHoldings: string[] = [];
+  try {
+    const book = await readFinancePositionLedger(directory);
+    for (const position of book.ledger.positions) {
+      if (position.quantity === 0) {
+        continue;
+      }
+      const bar = lastBar.get(position.instrument);
+      if (bar === undefined) {
+        unpricedHoldings.push(position.instrument);
+        continue;
+      }
+      const at = markInstantForBarDate(bar.date, params.asOf);
+      if (at === undefined) {
+        dataIssues.push(
+          `${position.instrument}: latest EOD bar ${bar.date} has not closed; mark not filed`,
+        );
+        continue;
+      }
+      try {
+        const result = await appendFinancePositionMark(directory, {
+          instrument: position.instrument,
+          price: bar.close,
+          at,
+        });
+        marksFiled.push({
+          instrument: position.instrument,
+          price: bar.close,
+          at,
+          appended: result.appended,
+        });
+      } catch (error) {
+        dataIssues.push(
+          `${position.instrument}: mark write failed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
+  } catch (error) {
+    dataIssues.push(
+      `position book unreadable, nothing was re-priced: ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+
+  return Object.freeze({
+    barsFiled: Object.freeze(barsFiled),
+    marksFiled: Object.freeze(marksFiled),
+    unpricedHoldings: Object.freeze(unpricedHoldings),
+    dataIssues: Object.freeze(dataIssues),
   });
 }

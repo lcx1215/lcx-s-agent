@@ -109,12 +109,19 @@ lcx gateway --tailscale serve
 ### 绑定到 tailnet + token
 
 ```bash
-lcx gateway --bind tailnet --token "$(openssl rand -hex 32)"
+lcx config set gateway.bind tailnet
+lcx config set gateway.tls.enabled true
+lcx config set gateway.auth.mode token
+lcx config set gateway.auth.token "$(openssl rand -hex 32)"
+lcx gateway
 ```
 
 然后打开：
 
-- `http://<tailscale-ip>:18789/`（或你配置的 `gateway.controlUi.basePath`）
+- `https://<tailscale-ip>:18789/`（或你配置的 `gateway.controlUi.basePath`）
+
+证书必须受客户端信任，并在 SAN 中包含 Tailnet IP 或 MagicDNS 名称。
+LCX Agent 自动生成的 Gateway 自签证书会在生成时把 `localhost`、本机主机名和进程可见的本地网卡 IP 写入 SAN；浏览器仍需要信任该证书，自动生成还要求 `PATH` 中有 `openssl`。地址变更、容器发布的宿主机 IP 或自定义 DNS 名称不一定出现在容器网卡中，应安装 SAN 覆盖浏览器访问地址的证书。程序不会静默替换已有证书，因为客户端可能固定了证书指纹。
 
 将 token 粘贴到 UI 设置中（作为 `connect.params.auth.token` 发送）。
 
@@ -122,9 +129,10 @@ lcx gateway --bind tailnet --token "$(openssl rand -hex 32)"
 
 如果你通过普通 HTTP 打开仪表板（`http://<lan-ip>` 或 `http://<tailscale-ip>`），浏览器在**非安全上下文**中运行并阻止 WebCrypto。默认情况下，LCX Agent **阻止**没有设备身份的控制 UI 连接。
 
-**推荐修复：** 使用 HTTPS（Tailscale Serve）或在本地打开 UI：
+**推荐修复：** 使用 HTTPS（Tailscale Serve 或 Gateway TLS）或在本地打开 UI：
 
 - `https://<magicdns>/`（Serve）
+- `https://<tailscale-ip>:18789/`（直接绑定并配置 Gateway TLS 和受信任证书）
 - `http://127.0.0.1:18789/`（在 Gateway 网关主机上）
 
 **降级示例（仅通过 HTTP 使用 token）：**
@@ -134,6 +142,7 @@ lcx gateway --bind tailnet --token "$(openssl rand -hex 32)"
   gateway: {
     controlUi: { allowInsecureAuth: true },
     bind: "tailnet",
+    tls: { enabled: true },
     auth: { mode: "token", token: "replace-me" },
   },
 }

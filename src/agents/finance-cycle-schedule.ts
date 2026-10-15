@@ -59,6 +59,96 @@ export function financeEtClock(at: Date, timeZone: string = FINANCE_MARKET_TZ): 
 }
 
 /**
+ * The regular US equity session close as a UTC instant for a market-local calendar day.
+ *
+ * Daily history is sometimes available for the current date while its bar is still forming. A
+ * consumer must not label that partial bar as a completed close; resolve 16:00 New York with the
+ * IANA timezone database rather than assuming a fixed UTC offset across daylight-saving time.
+ * Early-close holidays are intentionally not inferred here; callers that need an exact holiday
+ * close need an exchange calendar.
+ */
+export function financeUsEquityLocalTimeInstant(date: string, minutes: number): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+    return undefined;
+  }
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes >= 24 * 60) {
+    return undefined;
+  }
+  const midnight = Date.parse(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(midnight) || new Date(midnight).toISOString().slice(0, 10) !== date) {
+    return undefined;
+  }
+  const [year, month, day] = date.split("-").map(Number);
+  const utcNoon = Date.UTC(year, month - 1, day, 12);
+  const easternAtNoon = financeEtClock(new Date(utcNoon));
+  if (easternAtNoon.date !== date) {
+    return undefined;
+  }
+  const easternAsUtc = Date.UTC(
+    year,
+    month - 1,
+    day,
+    Math.floor(easternAtNoon.minutes / 60),
+    easternAtNoon.minutes % 60,
+  );
+  const easternOffsetMs = easternAsUtc - utcNoon;
+  const timestamp =
+    Date.UTC(year, month - 1, day, Math.floor(minutes / 60), minutes % 60) - easternOffsetMs;
+  const resolved = financeEtClock(new Date(timestamp));
+  if (resolved.date !== date || resolved.minutes !== minutes) {
+    return undefined;
+  }
+  return new Date(timestamp).toISOString();
+}
+
+export function financeUsEquityRegularCloseInstant(date: string): string | undefined {
+  return financeUsEquityLocalTimeInstant(date, 16 * 60);
+}
+
+/** Whether a US equity EOD bar may be treated as complete at the supplied instant. */
+export function isFinanceUsEquityDailyBarComplete(date: string, asOf: string): boolean {
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs) || financeUsEquityRegularCloseInstant(date) === undefined) {
+    return false;
+  }
+  const marketDate = financeEtClock(new Date(asOfMs)).date;
+  if (date < marketDate) {
+    return true;
+  }
+  if (date > marketDate) {
+    return false;
+  }
+  const close = financeUsEquityRegularCloseInstant(date);
+  return close !== undefined && Date.parse(close) <= asOfMs;
+}
+
+/**
+ * Resolve the latest completed weekday session using the same weekday/16:00 ET contract used by
+ * universe snapshot consumers. Exchange holidays and early closes are intentionally not inferred.
+ */
+export function latestCompletedWeekdaySessionDate(asOf: string): string {
+  const asOfMs = Date.parse(asOf.trim());
+  if (!asOf.trim() || !Number.isFinite(asOfMs)) {
+    throw new Error("referenceAsOf must be an ISO timestamp");
+  }
+  const clock = financeEtClock(new Date(asOfMs));
+  const isWeekday = FINANCE_TRADING_WEEKDAYS.includes(clock.weekday);
+  const regularSessionClosed = clock.minutes >= 16 * 60;
+  let cursor = Date.parse(`${clock.date}T00:00:00.000Z`);
+  if (!isWeekday || !regularSessionClosed) {
+    cursor -= 86_400_000;
+  }
+  for (let attempts = 0; attempts < 7; attempts += 1) {
+    const candidate = new Date(cursor);
+    if (candidate.getUTCDay() !== 0 && candidate.getUTCDay() !== 6) {
+      return candidate.toISOString().slice(0, 10);
+    }
+    cursor -= 86_400_000;
+  }
+  throw new Error("unable to resolve latest completed weekday session");
+}
+
+/**
  * A slot is due when it is a trading weekday, the market's wall clock has reached the slot, and
  * the slot has not already fired on that market date.
  *

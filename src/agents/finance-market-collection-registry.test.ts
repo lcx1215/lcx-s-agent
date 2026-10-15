@@ -291,6 +291,26 @@ describe("finance market collection registry", () => {
     expect(news[0]?.providerRole).toBe("cross_check_market_data");
   });
 
+  it("does not send Treasury or BLS identifiers to FRED", async () => {
+    let calls = 0;
+    const adapter = createFredMacroSeriesCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async () => {
+        calls++;
+        throw new Error("must not fetch");
+      },
+    });
+    for (const seriesId of ["debt_to_penny", "avg_interest_rates", "CUUR0000SA0", "CUSR0000SA0"]) {
+      const request = { ...MACRO_REQUEST, seriesId, instrument: seriesId };
+      expect(adapter.supports(request)).toBe(false);
+      await expect(adapter.collect(request, new AbortController().signal)).rejects.toThrow(
+        "source-native series",
+      );
+    }
+    expect(calls).toBe(0);
+    expect(adapter.supports({ ...MACRO_REQUEST, seriesId: "FEDFUNDS" })).toBe(true);
+  });
+
   it("collects official BLS, Treasury, and keyed FRED macro records", async () => {
     const adapters = [
       createBlsMacroSeriesCollectionAdapter({ fetchImpl: fakeFetch }),
@@ -302,7 +322,10 @@ describe("finance market collection registry", () => {
       { ...MACRO_REQUEST, instrument: "debt_to_penny", seriesId: "debt_to_penny" },
       new AbortController().signal,
     );
-    const fred = await adapters[2].collect(MACRO_REQUEST, new AbortController().signal);
+    const fred = await adapters[2].collect(
+      { ...MACRO_REQUEST, instrument: "FEDFUNDS", seriesId: "FEDFUNDS" },
+      new AbortController().signal,
+    );
     expect(bls[0]?.sourceFamily).toBe("official_macro_data");
     expect(treasury[0]?.data).toEqual(expect.objectContaining({ record_date: "2026-09-04" }));
     expect(fred[0]?.sourceUrlOrArtifact).not.toContain("fred-secret");
@@ -494,6 +517,42 @@ describe("finance market collection registry", () => {
       }),
     );
     expect(bars[0]?.sourceUrlOrArtifact).toContain("period1=");
+  });
+
+  it("keeps a same-day Yahoo bar out before the close and admits it after the close", async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          chart: {
+            result: [
+              {
+                timestamp: [Date.parse("2026-09-08T00:00:00.000Z") / 1_000],
+                indicators: {
+                  quote: [{ open: [100], high: [102], low: [99], close: [101], volume: [10] }],
+                },
+              },
+            ],
+          },
+        }),
+    });
+    const adapter = createYahooPublicEodHistoryCollectionAdapter({ fetchImpl });
+    const base = { ...EQUITY_REQUEST, collection: "eod_history" as const };
+
+    await expect(
+      adapter.collect({ ...base, asOf: "2026-09-08T19:59:59.000Z" }, new AbortController().signal),
+    ).rejects.toThrow(/no usable OHLCV rows/);
+    const afterClose = await adapter.collect(
+      { ...base, asOf: "2026-09-08T20:00:00.000Z" },
+      new AbortController().signal,
+    );
+
+    expect(afterClose).toHaveLength(1);
+    expect(afterClose[0]?.sourceTimestamp).toBe("2026-09-08T20:00:00.000Z");
+    expect(afterClose[0]?.data).toEqual(
+      expect.objectContaining({ date: "2026-09-08", close: 101 }),
+    );
   });
 
   it("keeps collection failures visible while still allowing a partial run to be ready", async () => {
@@ -806,4 +865,99 @@ it("uses the FRED v1 api_key parameter and excludes it from provenance", async (
   expect(requested?.searchParams.get("api_key")).toBe("fixture-fred-key");
   expect(requested?.searchParams.has("apiKey")).toBe(false);
   expect(records[0].sourceUrlOrArtifact).not.toContain("fixture-fred-key");
+  expect(records[0].observedAt).not.toBe(MACRO_REQUEST.asOf);
+  expect(Math.abs(Date.now() - Date.parse(records[0].observedAt))).toBeLessThan(10_000);
+});
+
+it("pins historical FRED queries to a completed vintage day and observation window", async () => {
+  let requested: URL | undefined;
+  const adapter = createFredMacroSeriesCollectionAdapter({
+    apiKey: "fixture",
+    fetchImpl: async (url) => {
+      requested = new URL(String(url));
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            observations: [
+              {
+                date: "2020-01-01",
+                value: "3.5",
+                realtime_start: "2020-02-06",
+                realtime_end: "2020-02-06",
+              },
+            ],
+          }),
+      };
+    },
+  });
+  await adapter.collect(
+    {
+      ...MACRO_REQUEST,
+      instrument: "FEDFUNDS",
+      seriesId: "FEDFUNDS",
+      asOf: "2020-02-07T14:00:00Z",
+      fromDate: "2019-01-01",
+      toDate: "2020-01-31",
+    },
+    new AbortController().signal,
+  );
+  expect(requested?.searchParams.get("realtime_start")).toBe("2020-02-06");
+  expect(requested?.searchParams.get("realtime_end")).toBe("2020-02-06");
+  expect(requested?.searchParams.get("observation_start")).toBe("2019-01-01");
+  expect(requested?.searchParams.get("observation_end")).toBe("2020-01-31");
+});
+
+it.each(["missing", "future", "valid", "live_now"])(
+  "keeps %s macro vintage evidence honest",
+  async (mode) => {
+    const request = {
+      ...MACRO_REQUEST,
+      instrument: "FEDFUNDS",
+      seriesId: "FEDFUNDS",
+      asOf: "2020-02-07T14:00:00Z",
+      ...(mode === "live_now" ? { asOfMode: "live_now" as const } : {}),
+    };
+    const adapter = createFredMacroSeriesCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            observations: [
+              {
+                date: "2020-01-01",
+                value: "3.5",
+                ...(mode === "missing"
+                  ? {}
+                  : {
+                      realtime_start: mode === "future" ? "2021-01-01" : "2020-02-06",
+                      realtime_end: mode === "future" ? "2021-01-01" : "2020-02-06",
+                    }),
+              },
+            ],
+          }),
+      }),
+    });
+    const result = await runFinanceMarketCollectionRefresh({ request, adapters: [adapter] });
+    expect(result.status).toBe(mode === "valid" || mode === "live_now" ? "ready" : "needs_review");
+    if (mode === "missing" || mode === "future") {
+      expect(result.missingEvidence).toContain("point_in_time_macro_vintage");
+    }
+  },
+);
+
+it("does not trust a legacy backdated capture as proof of historical availability", async () => {
+  const adapter = createBlsMacroSeriesCollectionAdapter({ fetchImpl: fakeFetch });
+  const legacyRows = (await adapter.collect(MACRO_REQUEST, new AbortController().signal)).map(
+    (row) => ({ ...row, observedAt: MACRO_REQUEST.asOf }),
+  );
+  const result = await runFinanceMarketCollectionRefresh({
+    request: MACRO_REQUEST,
+    adapters: [{ ...adapter, collect: async () => legacyRows }],
+  });
+  expect(result.status).toBe("needs_review");
+  expect(result.missingEvidence).toContain("point_in_time_macro_vintage");
 });

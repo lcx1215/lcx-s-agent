@@ -46,6 +46,7 @@ vi.mock("./subagent-registry.js", async (importOriginal) => {
     ...actual,
     countActiveRunsForSession: () => 0,
     registerSubagentRun: () => {},
+    confirmSubagentDispatch: () => true,
   };
 });
 

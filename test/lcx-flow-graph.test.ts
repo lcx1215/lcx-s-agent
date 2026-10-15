@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -29,6 +30,181 @@ async function runJsonScript(script: string) {
 }
 
 describe("LCX flow graph exam", () => {
+  it("describes acceptance dispatch separately from child result consumption", async () => {
+    const { FLOW_SCENARIOS, workflowControlEdges, workflowProcessEdges } =
+      await import("../scripts/operator/lcx-flow-graph.js");
+    const scene = FLOW_SCENARIOS.find(
+      (entry) => entry.id === "commercial_acceptance_harness_waterflow",
+    )!;
+    const controls = workflowControlEdges(scene);
+    expect(controls).toEqual([
+      ["local_operator_loop", "system_doctor"],
+      ["local_operator_loop", "training_plan"],
+      ["local_operator_loop", "mind_model"],
+      ["local_operator_loop", "flow_graph"],
+      ["local_operator_loop", "external_channel_binding"],
+    ]);
+    const relations = workflowProcessEdges(scene);
+    for (const [from, to] of controls) {
+      expect(relations).toContainEqual({
+        relation: "requires",
+        subject: { type: "workflow", id: `${scene.id}:${to}` },
+        object: { type: "policy", id: `${scene.id}:${from}:dispatch_contract:${to}` },
+      });
+      expect(relations).not.toContainEqual({
+        relation: "requires",
+        subject: { type: "workflow", id: `${scene.id}:${to}` },
+        object: { type: "artifact", id: `${scene.id}:${from}:output_contract` },
+      });
+    }
+    expect(relations).toContainEqual({
+      relation: "requires",
+      subject: { type: "workflow", id: `${scene.id}:commercial_acceptance_harness` },
+      object: { type: "artifact", id: `${scene.id}:training_plan:output_contract` },
+    });
+    expect(scene.requiredNodes).toHaveLength(12);
+    expect(scene.edges).toHaveLength(16);
+    expect(scene.requiredFilters).toHaveLength(9);
+    expect(scene.feedbackEdges).toEqual([
+      ["acceptance_eval", "commercial_acceptance_harness"],
+      ["commercial_acceptance_harness", "training_plan"],
+    ]);
+  });
+
+  it("rejects equal data fields as proof of acceptance control dispatch", async () => {
+    const { createHash } = await import("node:crypto");
+    const { FLOW_SCENARIOS, auditWorkflowHandoffs } =
+      await import("../scripts/operator/lcx-flow-graph.js");
+    const scene = FLOW_SCENARIOS.find(
+      (entry) => entry.id === "commercial_acceptance_harness_waterflow",
+    )!;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-control-edge-negative-"));
+    try {
+      // Deliberately fabricated equal fields challenge the audit; no owner execution is asserted.
+      const body = JSON.stringify({
+        scope: "negative_test_no_business_identity",
+        producer: "same_data_does_not_prove_dispatch",
+        consumer: "same_data_does_not_prove_dispatch",
+      });
+      const file = path.join(root, "equal-data-only.json");
+      await fs.writeFile(file, body);
+      const sha256 = createHash("sha256").update(body).digest("hex");
+      const ref = (pointer: string) => ({ path: file, sha256, pointer });
+      const rows = await auditWorkflowHandoffs([
+        {
+          scenarioId: scene.id,
+          environment: "offline_fixture",
+          nodes: scene.requiredNodes.map((nodeId) => ({
+            nodeId,
+            scope: ref("/scope"),
+            output: ref("/producer"),
+            inputs: [...scene.edges, ...(scene.feedbackEdges ?? [])]
+              .filter(([, to]) => to === nodeId)
+              .map(([from]) => ({ from, value: ref("/consumer") })),
+          })),
+        },
+      ]);
+      const row = rows.find((entry) => entry.scenarioId === scene.id)!;
+      expect(row.status).toBe("handoff_gap");
+      expect(
+        row.gaps.filter(
+          (gap) => gap.reason === "control_dispatch_not_observed:local_operator_loop",
+        ),
+      ).toHaveLength(5);
+      expect(row.gaps).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            reason: "consumer_did_not_receive_output:local_operator_loop",
+          }),
+        ]),
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps repair execution obligations separate from read-only impact recommendations", async () => {
+    const { LCX_WORKFLOW_PROCESS_CONTRACTS } =
+      await import("../src/shared/lcx-workflow-process-contracts.js");
+    const { FLOW_SCENARIOS } = await import("../scripts/operator/lcx-flow-graph.js");
+    const contract = LCX_WORKFLOW_PROCESS_CONTRACTS.automation_repair_lock_waterflow;
+    const scene = FLOW_SCENARIOS.find((entry) => entry.id === "automation_repair_lock_waterflow")!;
+    expect(scene.requiredNodes).toEqual([
+      "training_plan",
+      "schedule_gate",
+      "repair_lock",
+      "local_change",
+      "local_tests",
+      "system_doctor",
+      "operator_latest_receipt",
+    ]);
+    expect(scene.edges).toEqual([
+      ["training_plan", "schedule_gate"],
+      ["schedule_gate", "repair_lock"],
+      ["repair_lock", "local_change"],
+      ["local_change", "local_tests"],
+      ["local_tests", "system_doctor"],
+      ["system_doctor", "operator_latest_receipt"],
+    ]);
+    expect(scene.feedbackEdges).toEqual([["system_doctor", "training_plan"]]);
+    expect(scene.requiredFilters).toEqual([
+      "automation_schedule_gate",
+      "repair_lock_required",
+      "single_digest_only",
+      "training_overlap_guard",
+      "error_receipt_required",
+    ]);
+    expect(contract.stages[1].preconditions).toContain(
+      "not an implemented automation due/scheduling caller",
+    );
+    expect(contract.stages[1].preconditions).toContain("rejectedPlanningInput");
+    expect(contract.stages[2]).toMatchObject({
+      owner: "scripts/operator/lcx-change-impact-plan.ts",
+      nodes: ["local_change", "local_tests"],
+      implementationStatus: "required_not_implemented",
+    });
+    expect(contract.stages[2].output).toContain("recommendations only");
+    expect(contract.stages[3].implementationStatus).toBe("required_unobserved");
+  });
+
+  it("describes direct commercial audit inputs and diagnostic budget consumption", async () => {
+    const { FLOW_SCENARIOS, workflowProcessEdges } =
+      await import("../scripts/operator/lcx-flow-graph.js");
+    const { buildPipelineResult } =
+      await import("../scripts/operator/lcx-commercial-answer-pipeline.js");
+    const scenario = FLOW_SCENARIOS.find(
+      (entry) => entry.id === "commercial_answer_pipeline_waterflow",
+    )!;
+    const result = buildPipelineResult("计算 2 + 2", "4");
+    expect(result.processEvidence.answerAuditBudget.inputQwenChallengeRequested).toBe(
+      result.processEvidence.localPlanner.qwenChallengeRequested,
+    );
+    expect(result.controlRoomSummary.reviewBudget.maxTotalReviewRounds).toBe(
+      result.maxTotalReviewRounds,
+    );
+    expect(result.controlRoomSummary.reviewBudget.scope).toBe(
+      "original_local_review_policy_diagnostic_not_external_quota",
+    );
+    expect(scenario.edges).toEqual(
+      expect.arrayContaining([
+        ["local_brain_planner", "answer_audit_budget"],
+        ["model_candidate_answer", "display_text_normalizer"],
+        ["display_text_normalizer", "local_contract_audit"],
+        ["provider_evidence", "local_contract_audit"],
+        ["answer_audit_budget", "control_room_summary"],
+        ["local_brain_planner", "model_council"],
+        ["local_contract_audit", "review_panel"],
+      ]),
+    );
+    expect(scenario.edges).not.toContainEqual(["model_candidate_answer", "answer_audit_budget"]);
+    expect(scenario.edges).not.toContainEqual(["answer_audit_budget", "local_contract_audit"]);
+    expect(workflowProcessEdges(scenario)).toContainEqual({
+      relation: "requires",
+      subject: { type: "workflow", id: `${scenario.id}:control_room_summary` },
+      object: { type: "artifact", id: `${scenario.id}:answer_audit_budget:output_contract` },
+    });
+  });
+
   it("passes current task waterflow contracts", async () => {
     const { stdout } = await runJsonScript("scripts/operator/lcx-flow-graph.ts");
     const payload = JSON.parse(stdout) as {
@@ -85,6 +261,22 @@ describe("LCX flow graph exam", () => {
         failureSignals: string[];
         boundary: string;
       }>;
+      financeRuleHandoff: {
+        proofLevel: string;
+        stages: Array<{
+          node: string;
+          owner: string;
+          input: string;
+          output: string;
+          blockedBy: string;
+        }>;
+      };
+      financeAutomaticLifecycleAudit: {
+        complete: boolean;
+        owner: string;
+        handoffs: Record<string, boolean>;
+        missingHandoffs: string[];
+      };
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -99,7 +291,15 @@ describe("LCX flow graph exam", () => {
         protectedMemoryTouched: false,
       }),
     );
+    expect(payload.financeRuleHandoff.proofLevel).toBe("structure_only");
+    expect(payload.financeRuleHandoff.stages).toHaveLength(5);
     expect(payload.summary.failed).toBe(0);
+    expect(payload.summary).toMatchObject({ proofLevel: "structure_only" });
+    expect(
+      payload.diagnosticIndex.find(
+        (entry) => entry.scenarioId === "central_agent_decision_waterflow",
+      )?.ownerEntrypoint,
+    ).toBe("scripts/operator/lcx-central-agent.ts");
     expect(payload.summary.total).toBeGreaterThanOrEqual(8);
     expect(payload.summary.scenarios).toBeGreaterThanOrEqual(16);
     expect(payload.summary.nodes).toBeGreaterThanOrEqual(70);
@@ -108,6 +308,28 @@ describe("LCX flow graph exam", () => {
     expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(9);
     expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
     expect(payload.summary.diagnosticEntries).toBe(payload.summary.scenarios);
+    expect(payload.financeAutomaticLifecycleAudit).toMatchObject({
+      complete: true,
+      proofLevel: "source_structure_only",
+      owner: "scripts/operator/lcx-finance-scheduler.ts",
+      handoffs: {
+        researchCanProducePortfolioCandidate: true,
+        schedulerCanConsumePortfolioPlan: true,
+        scheduledResearchFeedsPortfolioPlan: true,
+        scheduledResearchExecutesModuleDag: true,
+        intradayRunsUnderFinanceScheduler: true,
+        schedulerOwnsNightSettlement: true,
+        nightSettlementFeedsReviewedModuleResearch: true,
+        nightFeedbackDispatchesTuning: true,
+        directionalCalibrationIsolatedFromPaperExecution: true,
+        tradingEconomicsUsesLedgerAndQuantMath: true,
+        brokerHistoryFeesReachTradeEconomics: true,
+        centralHarnessHasAutomaticFinanceTaskFeed: true,
+        producerDecisionReferencesReachReceiptDiagnostics: true,
+        centralHarnessUsesReadOnlyFinanceSnapshots: true,
+      },
+      missingHandoffs: [],
+    });
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "flow_graph_integrity", ok: true }),
@@ -132,6 +354,35 @@ describe("LCX flow graph exam", () => {
     expect(entrypointCheck?.evidence?.orphanEntrypoints).toEqual([]);
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: "finance_intraday_paper_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "closed_bar_only_required",
+            "next_bar_fill_required",
+            "same_cost_baseline_required",
+            "paper_replay_not_execution_receipt",
+            "multi_regime_validation_required",
+          ]),
+          receipts: expect.arrayContaining(["finance-intraday-paper-receipt"]),
+        }),
+        expect.objectContaining({
+          id: "finance_automatic_paper_trading_waterflow",
+          feedbackEdgeCount: 4,
+          requiredFilters: expect.arrayContaining([
+            "llm_proposes_ts_gate_approves",
+            "single_finance_scheduler_owner_required",
+            "paper_venue_only_for_autonomous_cycle",
+            "night_feedback_requires_scored_outcomes",
+            "deterministic_promotion_gate_required",
+          ]),
+          receipts: expect.arrayContaining([
+            "lcx-finance-research-run-latest",
+            "finance-portfolio-plan",
+            "daily-cycle-runs",
+            "research-scored",
+            "tuning-proposals",
+          ]),
+        }),
         expect.objectContaining({
           id: "external_finance_research_waterflow",
           requiredFilters: expect.arrayContaining([
@@ -460,6 +711,7 @@ describe("LCX flow graph exam", () => {
           allowedPaths: expect.arrayContaining([
             "scripts/operator/lcx-universe-index.ts",
             "test/lcx-universe-index.test.ts",
+            "test/lcx-universe-index-source.test.ts",
           ]),
         }),
         expect.objectContaining({
@@ -536,6 +788,13 @@ describe("LCX flow graph exam", () => {
     );
     expect(payload.sharedEntrypointOwnerRules).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          path: "test/lcx-universe-index-source.test.ts",
+          familyIds: expect.arrayContaining([
+            "architecture_supervision_entrypoints",
+            "universe_inventory_entrypoints",
+          ]),
+        }),
         expect.objectContaining({
           path: "scripts/operator/lcx-external-channel-status.ts",
           familyIds: expect.arrayContaining([

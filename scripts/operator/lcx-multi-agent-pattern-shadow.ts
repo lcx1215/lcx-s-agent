@@ -512,6 +512,8 @@ export type ShadowRunReceipt = {
   metrics: ShadowMetrics;
   error?: { code: string; message: string };
   reused?: boolean;
+  /** Matched original recovery evidence; never a builtin fixture presented as executor proof. */
+  recoveryReplaySource?: { runId: string; idempotencyKey: string; deliveryKey: string };
   retry?: { reason: string; attempt: number; retryOfRunId?: string };
   boundary: "local_multi_agent_pattern_shadow_only";
   liveTouched: false;
@@ -581,6 +583,13 @@ export type ShadowExperimentReceipt = {
   executionPhase?: ShadowExecutionPhase;
   case: typeof SHADOW_CASE;
   executorFingerprint: string;
+  replayPreflight?: {
+    caseId: ShadowCaseId;
+    receiptSha256: string;
+    passed: boolean;
+    normalPasses: number;
+    patternCount: number;
+  };
   createdAt: string;
   completedAt: string;
   summary: ShadowExperimentSummary;
@@ -597,6 +606,26 @@ export type ShadowExperimentReceipt = {
   providerConfigTouched: false;
   protectedMemoryTouched: false;
 };
+
+export type ShadowOwnerObservation = Readonly<{
+  stage: "intake" | "replay" | "isolated" | "recovery" | "comparison" | "review" | "acceptance";
+  experimentId: string;
+  input?: unknown;
+  output?: unknown;
+}>;
+type ShadowObserver = (observation: ShadowOwnerObservation) => void;
+
+/** Optional diagnostics see detached values and never become workflow or execution authority. */
+function observeShadow(observer: ShadowObserver | undefined, observation: ShadowOwnerObservation) {
+  if (!observer) {
+    return;
+  }
+  try {
+    observer(structuredClone(observation));
+  } catch {
+    // An unavailable diagnostic sink must not change the original owner verdict.
+  }
+}
 
 export const SHADOW_LATEST_FRESHNESS_MS = 7 * 24 * 60 * 60 * 1000;
 export type ShadowLatestStatus = "fresh" | "stale" | "missing" | "blocked";
@@ -756,6 +785,9 @@ function latestReceiptIntegrityErrors(
       if (run.intakeId !== INTAKE_ID) {
         errors.push(`run ${index} intake id is incompatible`);
       }
+      if (run.caseId !== SHADOW_CASE.id || run.experimentId !== receipt.experimentId) {
+        errors.push(`run ${index} case or experiment identity disagrees with receipt`);
+      }
       if (run.mode !== mode) {
         errors.push(`run ${index} mode disagrees with receipt`);
       }
@@ -803,6 +835,45 @@ function latestReceiptIntegrityErrors(
       }
       const qualityChecks = asLatestRecord(asLatestRecord(run.quality)?.checks);
       const recovery = asLatestRecord(run.recovery);
+      const replaySource = asLatestRecord(run.recoveryReplaySource);
+      const presentProofs = asLatestRecord(run.proofCoverage)?.present;
+      if (
+        mode === "live" &&
+        isNormal &&
+        Array.isArray(presentProofs) &&
+        presentProofs.includes("replay") &&
+        recovery?.state === "not_injected"
+      ) {
+        const linked =
+          replaySource &&
+          runs.some((candidate) => {
+            const source = asLatestRecord(candidate),
+              recovered = asLatestRecord(source?.recovery);
+            return (
+              source?.runId === replaySource.runId &&
+              source?.idempotencyKey === replaySource.idempotencyKey &&
+              source?.deliveryKey === replaySource.deliveryKey &&
+              source?.caseId === run.caseId &&
+              source?.experimentId === run.experimentId &&
+              source?.pattern === run.pattern &&
+              source?.mode === run.mode &&
+              source?.executionPhase === run.executionPhase &&
+              source?.fixture === "interruption" &&
+              (source?.status === "completed" || source?.status === "resumed") &&
+              recovered?.state === "resumed" &&
+              recovered?.passed === true &&
+              recovered.lostWork === 0 &&
+              recovered.duplicateFinalOutputs === 0 &&
+              asLatestRecord(source?.proofCoverage)?.complete === true &&
+              typeof source?.idempotencyKey === "string" &&
+              typeof run.idempotencyKey === "string" &&
+              source.idempotencyKey.split("|").at(-1) === run.idempotencyKey.split("|").at(-1)
+            );
+          });
+        if (!linked) {
+          errors.push(`run ${index} replay proof lacks its matching original recovery source`);
+        }
+      }
       if (
         (isNormal &&
           (isPositiveMetric(escapedPermissionViolations) ||
@@ -832,6 +903,25 @@ function latestReceiptIntegrityErrors(
     }
   }
   if (summary) {
+    if (Array.isArray(runs) && errors.length === 0 && summary.patternComparisons !== undefined) {
+      const original = compareShadowPatterns(runs as ShadowRunReceipt[], [...projected.patterns]);
+      const retained = asLatestRecord(summary.patternComparisons);
+      for (const [pattern, expected] of Object.entries(original)) {
+        const actual = retained?.[pattern];
+        const actualComparison = asLatestRecord(actual);
+        const matches =
+          expected === null
+            ? actual === null
+            : actualComparison &&
+              Object.entries(expected).every(
+                ([field, value]) =>
+                  JSON.stringify(actualComparison[field]) === JSON.stringify(value),
+              );
+        if (!matches) {
+          errors.push(`summary patternComparisons ${pattern} disagrees with original runs`);
+        }
+      }
+    }
     for (const [field, expected] of [
       ["patternCount", projected.patterns.size],
       ["normalRuns", projected.normalRuns],
@@ -852,6 +942,26 @@ function latestReceiptIntegrityErrors(
         errors.push("summary trialDecision misses a hard run boundary");
       } else if (incompleteProof && summary.trialDecision === "pass") {
         errors.push("summary trialDecision passes despite incomplete proof coverage");
+      }
+      if (errors.length === 0 && summary.trialDecision === "pass") {
+        try {
+          const retained = runs as ShadowRunReceipt[];
+          const verdict = decisionForSummary({
+            mode,
+            runs: retained,
+            normalRuns: retained.filter((run) => !run.fixture || run.fixture === "normal_quality"),
+            recoveryRuns: retained.filter((run) => run.recovery.state !== "not_injected"),
+            patterns: [...projected.patterns],
+            comparisons: compareShadowPatterns(retained, [...projected.patterns]),
+          });
+          if (verdict.decision !== "pass") {
+            errors.push(
+              `summary trialDecision passes despite original wide-trial gate: ${verdict.reason}`,
+            );
+          }
+        } catch {
+          errors.push("summary trialDecision cannot be verified from original runs");
+        }
       }
     }
   }
@@ -980,16 +1090,25 @@ function latestSnapshotFromReceipt(
 export function classifyShadowLatestReceipt(
   value: unknown,
   checkedAt = new Date().toISOString(),
+  observer?: ShadowObserver,
 ): ShadowLatestSnapshot {
-  return latestSnapshotFromReceipt(value, checkedAt);
+  const result = latestSnapshotFromReceipt(value, checkedAt);
+  observeShadow(observer, {
+    stage: "acceptance",
+    experimentId: result.experimentId ?? "missing",
+    input: value,
+    output: result,
+  });
+  return result;
 }
 
 export async function readLatestShadowSnapshot(
   checkedAt = new Date().toISOString(),
+  observer?: ShadowObserver,
 ): Promise<ShadowLatestSnapshot> {
   try {
     const content = await fs.readFile(MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH, "utf8");
-    return latestSnapshotFromReceipt(JSON.parse(content), checkedAt);
+    return classifyShadowLatestReceipt(JSON.parse(content), checkedAt, observer);
   } catch (error) {
     const reason =
       error instanceof SyntaxError
@@ -2513,6 +2632,7 @@ function decisionForSummary(params: {
   normalRuns: readonly ShadowRunReceipt[];
   recoveryRuns: readonly ShadowRunReceipt[];
   patterns: readonly ShadowPattern[];
+  comparisons: Record<ShadowPattern, ShadowPatternComparison | null>;
 }): { decision: ShadowDecision; reason: string } {
   if (params.mode === "replay") {
     return {
@@ -2560,22 +2680,34 @@ function decisionForSummary(params: {
       reason: `required proof coverage incomplete or unknown (${[...incompleteProofKinds].join(", ")}); keep the topology in shadow`,
     };
   }
+  if (
+    params.patterns.some(
+      (pattern) =>
+        !params.comparisons[pattern] || params.comparisons[pattern]?.usageBasis === "missing",
+    )
+  ) {
+    return {
+      decision: "unverified",
+      reason:
+        "explicit cost basis is missing; keep the topology in shadow without claiming a comparable trial",
+    };
+  }
   const qualityAndEvidenceByPattern = params.patterns.map((pattern) => {
-    const patternRuns = params.normalRuns.filter((run) => run.pattern === pattern);
-    const passCount = patternRuns.filter((run) => run.quality?.pass).length;
-    const evidenceMedian = percentile(
-      patternRuns.map((run) => run.quality?.evidenceCoverage.ratio ?? 0),
-      0.5,
+    const comparison = params.comparisons[pattern];
+    if (!comparison) {
+      return false;
+    }
+    const enoughRuns = comparison.normalRuns >= DEFAULT_REPETITIONS;
+    const requiredPasses = Math.max(3, Math.ceil(comparison.normalRuns * 0.6));
+    return (
+      enoughRuns &&
+      comparison.normalPasses >= requiredPasses &&
+      (comparison.medianEvidenceCoverage ?? 0) >= 0.75
     );
-    const enoughRuns = patternRuns.length >= DEFAULT_REPETITIONS;
-    const requiredPasses = Math.max(3, Math.ceil(patternRuns.length * 0.6));
-    return enoughRuns && passCount >= requiredPasses && (evidenceMedian ?? 0) >= 0.75;
   });
   const recoveryPassed =
     params.patterns.length > 0 &&
-    params.patterns.every((pattern) =>
-      params.recoveryRuns.some((run) => run.pattern === pattern && run.recovery.passed === true),
-    );
+    params.patterns.every((pattern) => params.comparisons[pattern]?.recoveryPassed === true);
   if (qualityAndEvidenceByPattern.some((passed) => !passed) || !recoveryPassed) {
     return {
       decision: "downrank",
@@ -2589,33 +2721,12 @@ function decisionForSummary(params: {
   };
 }
 
-function summarizeExperiment(
-  mode: ShadowMode,
+function compareShadowPatterns(
   runs: readonly ShadowRunReceipt[],
-  requestedRootRuns: number,
   patterns: readonly ShadowPattern[],
-): ShadowExperimentSummary {
+): Record<ShadowPattern, ShadowPatternComparison | null> {
   const normalRuns = runs.filter((run) => !run.fixture || run.fixture === "normal_quality");
-  const fixtureRuns = runs.filter(
-    (run) => run.fixture && run.fixture !== "normal_quality" && run.fixture !== "interruption",
-  );
   const recoveryRuns = runs.filter((run) => run.recovery.state !== "not_injected");
-  const passByPattern = Object.fromEntries(
-    SHADOW_PATTERNS.map((pattern) => [
-      pattern,
-      patterns.includes(pattern)
-        ? normalRuns.filter((run) => run.pattern === pattern && run.quality?.pass).length
-        : 0,
-    ]),
-  ) as Record<ShadowPattern, number>;
-  const recoveryPassByPattern = Object.fromEntries(
-    SHADOW_PATTERNS.map((pattern) => [
-      pattern,
-      patterns.includes(pattern)
-        ? (recoveryRuns.find((run) => run.pattern === pattern)?.recovery.passed ?? null)
-        : null,
-    ]),
-  ) as Record<ShadowPattern, boolean | null>;
   const patternComparisons = Object.fromEntries(
     SHADOW_PATTERNS.map((pattern) => {
       if (!patterns.includes(pattern)) {
@@ -2705,6 +2816,38 @@ function summarizeExperiment(
       ];
     }),
   ) as Record<ShadowPattern, ShadowPatternComparison | null>;
+  return patternComparisons;
+}
+
+function summarizeExperiment(
+  mode: ShadowMode,
+  runs: readonly ShadowRunReceipt[],
+  requestedRootRuns: number,
+  patterns: readonly ShadowPattern[],
+  observer?: ShadowObserver,
+): ShadowExperimentSummary {
+  const normalRuns = runs.filter((run) => !run.fixture || run.fixture === "normal_quality");
+  const fixtureRuns = runs.filter(
+    (run) => run.fixture && run.fixture !== "normal_quality" && run.fixture !== "interruption",
+  );
+  const recoveryRuns = runs.filter((run) => run.recovery.state !== "not_injected");
+  const passByPattern = Object.fromEntries(
+    SHADOW_PATTERNS.map((pattern) => [
+      pattern,
+      patterns.includes(pattern)
+        ? normalRuns.filter((run) => run.pattern === pattern && run.quality?.pass).length
+        : 0,
+    ]),
+  ) as Record<ShadowPattern, number>;
+  const recoveryPassByPattern = Object.fromEntries(
+    SHADOW_PATTERNS.map((pattern) => [
+      pattern,
+      patterns.includes(pattern)
+        ? (recoveryRuns.find((run) => run.pattern === pattern)?.recovery.passed ?? null)
+        : null,
+    ]),
+  ) as Record<ShadowPattern, boolean | null>;
+  const patternComparisons = compareShadowPatterns(runs, patterns);
   const wallClock = normalRuns
     .map((run) => run.metrics.wallClockMs)
     .filter((value): value is number => value !== null);
@@ -2717,7 +2860,20 @@ function summarizeExperiment(
     : usageBases.has("estimated")
       ? "estimated"
       : "exact";
-  const decision = decisionForSummary({ mode, runs, normalRuns, recoveryRuns, patterns });
+  const decision = decisionForSummary({
+    mode,
+    runs,
+    normalRuns,
+    recoveryRuns,
+    patterns,
+    comparisons: patternComparisons,
+  });
+  observeShadow(observer, {
+    stage: "review",
+    experimentId: runs[0]?.experimentId ?? "missing",
+    input: patternComparisons,
+    output: decision.decision,
+  });
   return {
     patternCount: patterns.length,
     requestedRootRuns,
@@ -2786,6 +2942,7 @@ export function buildReplayExperiment(
   params: {
     experimentId?: string;
     patterns?: readonly ShadowPattern[];
+    observer?: ShadowObserver;
   } = {},
 ): ShadowExperimentReceipt {
   const experimentId = params.experimentId ?? "multi-agent-pattern-shadow-replay";
@@ -2794,7 +2951,7 @@ export function buildReplayExperiment(
   assertKnownPatterns(patterns);
   const runs = patterns.flatMap((pattern) => replayPattern(pattern, experimentId));
   const now = new Date().toISOString();
-  return {
+  const receipt: ShadowExperimentReceipt = {
     receiptSchemaVersion: RECEIPT_SCHEMA_VERSION,
     executorSchemaVersion: EXECUTOR_SCHEMA_VERSION,
     metricsSchemaVersion: METRICS_SCHEMA_VERSION,
@@ -2820,6 +2977,13 @@ export function buildReplayExperiment(
     providerConfigTouched: false,
     protectedMemoryTouched: false,
   };
+  observeShadow(params.observer, {
+    stage: "replay",
+    experimentId,
+    input: patterns,
+    output: receipt,
+  });
+  return receipt;
 }
 
 async function isolatedExecutorPattern(
@@ -3222,6 +3386,103 @@ function canReuseReplayReceipt(
   );
 }
 
+/** Completion is scoped to the original case, phase and executor identity, not a status label. */
+export function canReuseCompletedIsolatedShadowReceipt(
+  prior: ShadowRunReceipt | undefined,
+  expected: {
+    experimentId: string;
+    pattern: ShadowPattern;
+    repetition: number;
+    executorFingerprint: string;
+    recoveryProbe?: boolean;
+  },
+): boolean {
+  const topology = getShadowTopology(expected.pattern);
+  return (
+    prior !== undefined &&
+    (prior.status === "completed" || prior.status === "resumed") &&
+    prior.receiptSchemaVersion === RECEIPT_SCHEMA_VERSION &&
+    prior.executorSchemaVersion === EXECUTOR_SCHEMA_VERSION &&
+    prior.metricsSchemaVersion === METRICS_SCHEMA_VERSION &&
+    prior.intakeId === INTAKE_ID &&
+    prior.experimentId === expected.experimentId &&
+    prior.mode === "live" &&
+    prior.executionPhase === "isolated_executor" &&
+    prior.pattern === expected.pattern &&
+    prior.repetition === expected.repetition &&
+    prior.fixture === (expected.recoveryProbe ? "interruption" : undefined) &&
+    prior.caseId === SHADOW_CASE.id &&
+    prior.runId ===
+      `${expected.experimentId}:${expected.pattern}:${expected.recoveryProbe ? "recovery" : expected.repetition}` &&
+    prior.idempotencyKey === idempotencyKey(expected) &&
+    prior.deliveryKey === deliveryKey(expected) &&
+    JSON.stringify(prior.topology) === JSON.stringify(topology) &&
+    validateShadowProofCoverage(prior.proofCoverage, topology).length === 0 &&
+    prior.boundary === "local_multi_agent_pattern_shadow_only" &&
+    Object.is(prior.liveTouched, false) &&
+    Object.is(prior.providerConfigTouched, false) &&
+    Object.is(prior.protectedMemoryTouched, false)
+  );
+}
+
+/** Carry the actual matching recovery result into normal-run proof, without rewriting history. */
+export function linkShadowRecoveryReplayProof(
+  run: ShadowRunReceipt,
+  recoveries: readonly ShadowRunReceipt[],
+): ShadowRunReceipt {
+  if (!run.proofCoverage || run.mode !== "live" || run.executionPhase !== "isolated_executor") {
+    return run;
+  }
+  const recovery = recoveries.find(
+    (candidate) =>
+      canReuseCompletedIsolatedShadowReceipt(candidate, {
+        experimentId: run.experimentId,
+        pattern: run.pattern,
+        repetition: candidate.repetition,
+        executorFingerprint: run.idempotencyKey.split("|").at(-1) ?? "",
+        recoveryProbe: true,
+      }) &&
+      candidate.caseId === run.caseId &&
+      candidate.recovery.state === "resumed" &&
+      candidate.recovery.passed === true &&
+      candidate.recovery.lostWork === 0 &&
+      candidate.recovery.duplicateFinalOutputs === 0 &&
+      candidate.proofCoverage?.complete === true &&
+      validateShadowProofCoverage(candidate.proofCoverage, run.topology).length === 0,
+  );
+  if (!recovery) {
+    return run;
+  }
+  const entries = run.proofCoverage.entries.map(
+    (entry): ShadowProofCoverageEntry =>
+      entry.kind === "replay"
+        ? {
+            kind: "replay",
+            status: "present",
+            evidence: [`recoveryRun=${recovery.runId}`, `recoveryDelivery=${recovery.deliveryKey}`],
+          }
+        : entry,
+  );
+  const missing = entries.filter((entry) => entry.status === "missing").map((entry) => entry.kind);
+  const unknown = entries.filter((entry) => entry.status === "unknown").map((entry) => entry.kind);
+  return {
+    ...run,
+    recoveryReplaySource: {
+      runId: recovery.runId,
+      idempotencyKey: recovery.idempotencyKey,
+      deliveryKey: recovery.deliveryKey,
+    },
+    proofCoverage: {
+      ...run.proofCoverage,
+      entries,
+      present: entries.filter((entry) => entry.status === "present").map((entry) => entry.kind),
+      missing,
+      unknown,
+      complete: missing.length === 0 && unknown.length === 0,
+    },
+  };
+}
+
 async function atomicWrite(filePath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
@@ -3355,6 +3616,7 @@ export async function buildIsolatedExecutorExperiment(
     rootTimeoutMs?: number;
     retry?: boolean;
     retryReason?: string;
+    observer?: ShadowObserver;
   } = {},
 ): Promise<ShadowExperimentReceipt> {
   const experimentId = params.experimentId ?? DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID;
@@ -3374,29 +3636,67 @@ export async function buildIsolatedExecutorExperiment(
     throw new Error("rootTimeoutMs must be a positive integer");
   }
   const fingerprint = executorFingerprint(params.executorCommand, "live");
+  observeShadow(params.observer, {
+    stage: "intake",
+    experimentId,
+    input: params.patterns ?? SHADOW_PATTERNS,
+    output: patterns,
+  });
+  const replay = buildReplayExperiment({ experimentId, patterns, observer: params.observer });
+  const replayPreflight = {
+    caseId: replay.case.id,
+    receiptSha256: hashText(
+      JSON.stringify({ case: replay.case, runs: replay.runs, summary: replay.summary }),
+    ),
+    passed:
+      replay.summary.normalPasses === patterns.length &&
+      patterns.every((pattern) => replay.summary.recoveryPassByPattern[pattern] === true),
+    normalPasses: replay.summary.normalPasses,
+    patternCount: replay.summary.patternCount,
+  };
+  if (!replayPreflight.passed) {
+    return {
+      ...blockedExperiment({
+        mode: "live",
+        experimentId,
+        patterns,
+        repetitions,
+        fingerprint,
+        code: "replay_preflight_failed",
+        message: "original builtin replay did not pass the requested case/topology mechanics",
+      }),
+      replayPreflight,
+    };
+  }
   if (!params.executorCommand) {
-    return blockedExperiment({
-      mode: "live",
-      experimentId,
-      patterns,
-      repetitions,
-      fingerprint,
-      code: "executor_command_required",
-      message:
-        "isolated-executor phase is blocked until an isolated JSON --executor-command is supplied",
-    });
+    return {
+      ...blockedExperiment({
+        mode: "live",
+        experimentId,
+        patterns,
+        repetitions,
+        fingerprint,
+        code: "executor_command_required",
+        message:
+          "isolated-executor phase is blocked until an isolated JSON --executor-command is supplied",
+      }),
+      replayPreflight,
+    };
   }
   const guard = await checkTrainingGuard();
   if (!guard.ok) {
-    return blockedExperiment({
-      mode: "live",
-      experimentId,
-      patterns,
-      repetitions,
-      fingerprint,
-      code: guard.active ? "active_training_or_eval" : "training_guard_unverified",
-      message: guard.reason,
-    });
+    return {
+      ...blockedExperiment({
+        mode: "live",
+        experimentId,
+        patterns,
+        repetitions,
+        fingerprint,
+        code: guard.active ? "active_training_or_eval" : "training_guard_unverified",
+        message: guard.reason,
+      }),
+      replayPreflight,
+    };
   }
   const existing = await readExistingReceipts();
   const appendRuns: ShadowRunReceipt[] = [];
@@ -3410,7 +3710,15 @@ export async function buildIsolatedExecutorExperiment(
         executorFingerprint: fingerprint,
       });
       const prior = existing.get(key);
-      if (prior?.status === "completed" || prior?.status === "resumed") {
+      if (
+        prior &&
+        canReuseCompletedIsolatedShadowReceipt(prior, {
+          experimentId,
+          pattern,
+          repetition,
+          executorFingerprint: fingerprint,
+        })
+      ) {
         runs.push({ ...prior, reused: true });
         continue;
       }
@@ -3459,7 +3767,8 @@ export async function buildIsolatedExecutorExperiment(
             capabilities: unknownCapabilities(),
             error: {
               code: "retry_required",
-              message: "prior run is not complete; retry requires an explicit reason",
+              message:
+                "prior receipt is incomplete or incompatible with this case, phase, topology or executor identity; review its source before an explicit retry",
             },
           },
           executorFingerprint: fingerprint,
@@ -3484,6 +3793,7 @@ export async function buildIsolatedExecutorExperiment(
       appendRuns.push(withRetry);
     }
   }
+  observeShadow(params.observer, { stage: "isolated", experimentId, input: replay, output: runs });
   const recoveryRuns: ShadowRunReceipt[] = [];
   for (const pattern of patterns) {
     const faultInjectionSupported = runs.some(
@@ -3500,7 +3810,16 @@ export async function buildIsolatedExecutorExperiment(
       executorFingerprint: fingerprint,
     });
     const priorRecovery = existing.get(recoveryKey);
-    if (priorRecovery?.status === "completed" || priorRecovery?.status === "resumed") {
+    if (
+      priorRecovery &&
+      canReuseCompletedIsolatedShadowReceipt(priorRecovery, {
+        experimentId,
+        pattern,
+        repetition: recoveryRepetition,
+        executorFingerprint: fingerprint,
+        recoveryProbe: true,
+      })
+    ) {
       recoveryRuns.push({ ...priorRecovery, reused: true });
       continue;
     }
@@ -3530,7 +3849,8 @@ export async function buildIsolatedExecutorExperiment(
           capabilities: unknownCapabilities(),
           error: {
             code: "retry_required",
-            message: "prior recovery probe is incomplete; retry requires an explicit reason",
+            message:
+              "prior recovery receipt is incomplete or incompatible with this case, phase, topology or executor identity; review its source before an explicit retry",
           },
         },
         executorFingerprint: fingerprint,
@@ -3577,7 +3897,19 @@ export async function buildIsolatedExecutorExperiment(
     recoveryRuns.push(recoveryReceipt);
     appendRuns.push(recoveryReceipt);
   }
-  const allRuns = [...runs, ...recoveryRuns];
+  observeShadow(params.observer, {
+    stage: "recovery",
+    experimentId,
+    input: runs,
+    output: recoveryRuns,
+  });
+  const { allRuns, summary } = summarizeIsolatedExperiment(
+    runs,
+    recoveryRuns,
+    patterns,
+    repetitions,
+    params.observer,
+  );
   const now = new Date().toISOString();
   return {
     receiptSchemaVersion: RECEIPT_SCHEMA_VERSION,
@@ -3589,9 +3921,10 @@ export async function buildIsolatedExecutorExperiment(
     executionPhase: "isolated_executor",
     case: SHADOW_CASE,
     executorFingerprint: fingerprint,
+    replayPreflight,
     createdAt: now,
     completedAt: now,
-    summary: summarizeExperiment("live", allRuns, patterns.length * repetitions, patterns),
+    summary,
     runs: allRuns,
     replayFixtures: REPLAY_FIXTURES,
     protocol: {
@@ -3605,6 +3938,37 @@ export async function buildIsolatedExecutorExperiment(
     providerConfigTouched: false,
     protectedMemoryTouched: false,
   };
+}
+
+function summarizeIsolatedExperiment(
+  runs: readonly ShadowRunReceipt[],
+  recoveryRuns: readonly ShadowRunReceipt[],
+  patterns: readonly ShadowPattern[],
+  repetitions: number,
+  observer?: ShadowObserver,
+) {
+  observeShadow(observer, {
+    stage: "comparison",
+    experimentId: runs[0]?.experimentId ?? "missing",
+    input: { normal: runs, recovery: recoveryRuns },
+  });
+  const allRuns = [
+    ...runs.map((run) => linkShadowRecoveryReplayProof(run, recoveryRuns)),
+    ...recoveryRuns,
+  ];
+  const summary = summarizeExperiment(
+    "live",
+    allRuns,
+    patterns.length * repetitions,
+    patterns,
+    observer,
+  );
+  observeShadow(observer, {
+    stage: "comparison",
+    experimentId: runs[0]?.experimentId ?? "missing",
+    output: summary.patternComparisons,
+  });
+  return { allRuns, summary };
 }
 
 /**

@@ -471,10 +471,14 @@ pnpm test:docker:qr
 
 ### LAN vs loopback (Docker Compose)
 
-`docker-setup.sh` defaults `OPENCLAW_GATEWAY_BIND=lan` so host access to
-`http://127.0.0.1:18789` works with Docker port publishing.
+`docker-setup.sh` defaults `OPENCLAW_GATEWAY_BIND=lan` so host access works with
+Docker port publishing. Because this is a non-loopback listener, configure
+`gateway.tls.enabled: true` before startup; use HTTPS/WSS and trust the Gateway
+certificate in browsers (CLI clients can pin it). The
+setup script enables TLS automatically for `lan`/`custom` binds. A plain
+HTTP/WS host-published connection is not accepted.
 
-- `lan` (default): host browser + host CLI can reach the published gateway port.
+- `lan` (default): host browser + host CLI can reach the published gateway port over TLS.
 - `loopback`: only processes inside the container network namespace can reach
   the gateway directly; host-published port access may fail.
 
@@ -491,7 +495,9 @@ errors from Docker CLI commands, run:
 ```bash
 docker compose run --rm lcx-cli config set gateway.mode local
 docker compose run --rm lcx-cli config set gateway.bind lan
-docker compose run --rm lcx-cli devices list --url ws://127.0.0.1:18789
+docker compose run --rm lcx-cli config set gateway.tls.enabled true
+docker compose run --rm lcx-cli config set gateway.controlUi.allowedOrigins '["https://127.0.0.1:18789"]' --strict-json
+docker compose run --rm lcx-cli devices list
 ```
 
 ### Notes

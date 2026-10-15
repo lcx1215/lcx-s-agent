@@ -622,72 +622,169 @@ async function currentTrainingPlanSnapshot(): Promise<{
   }
 }
 
-async function currentChangeImpactSnapshot(): Promise<{
+type RecoveryOwnerSnapshot = {
   ok: boolean;
   payload?: Record<string, unknown>;
   error?: string;
-}> {
+};
+
+// A blocked owner may exit nonzero with a useful JSON receipt. Preserve it so
+// recovery reports its actual gaps rather than inventing an empty/clean state.
+async function currentHandoffOwnerSnapshot(script: string): Promise<RecoveryOwnerSnapshot> {
   try {
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/operator/lcx-change-impact-plan.ts", "--json"],
+      ["--import", "tsx", `scripts/operator/${script}`, "--json"],
       { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
-    );
-    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+    ).catch((error: unknown) => {
+      if (
+        error &&
+        typeof error === "object" &&
+        "stdout" in error &&
+        typeof error.stdout === "string" &&
+        error.stdout.trim()
+      ) {
+        return { stdout: error.stdout };
+      }
+      throw error;
+    });
+    const payload: unknown = JSON.parse(stdout);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return { ok: false, error: `owner_receipt_not_object:${script}` };
+    }
+    return { ok: true, payload: payload as Record<string, unknown> };
   } catch (error) {
     return { ok: false, error: String(error) };
   }
 }
 
-async function currentModuleAbsorptionGateSnapshot(): Promise<{
-  ok: boolean;
-  payload?: Record<string, unknown>;
-  error?: string;
-}> {
-  try {
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      ["--import", "tsx", "scripts/operator/lcx-module-learning-absorption-gate.ts", "--json"],
-      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
-    );
-    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
-  } catch (error) {
-    return { ok: false, error: String(error) };
+const HANDOFF_SOURCE_CONTRACTS = [
+  {
+    id: "changeImpact",
+    script: "lcx-change-impact-plan.ts",
+    boundary: "local_change_impact_plan_only",
+    arrays: [
+      "changedFiles",
+      "affectedLanes",
+      "unmatchedFiles",
+      "recommendedFastCommands",
+      "deferredCommands",
+      "safetyNotes",
+    ],
+    records: [],
+    strings: [],
+    booleans: [],
+  },
+  {
+    id: "moduleAbsorption",
+    script: "lcx-module-learning-absorption-gate.ts",
+    boundary: "local_module_learning_absorption_gate_only",
+    arrays: ["blockers", "nextActions", "nextProofQueue"],
+    records: ["counts"],
+    strings: ["gateDecision"],
+    booleans: ["absorptionReady"],
+  },
+  {
+    id: "learningSedimentation",
+    script: "lcx-learning-sedimentation-audit.ts",
+    boundary: "local_learning_sedimentation_audit_only",
+    arrays: ["gaps"],
+    records: ["chains.moduleLearningPipeline"],
+    strings: ["assessment"],
+    booleans: ["sufficientForCurrentUse"],
+  },
+  {
+    id: "externalChannelStatus",
+    script: "lcx-external-channel-status.ts",
+    boundary: "local_external_channel_status_only",
+    arrays: [],
+    records: ["externalChannelStatus"],
+    strings: [],
+    booleans: [
+      "externalChannelStatus.externalChannelBound",
+      "externalChannelStatus.userVisibleObserved",
+    ],
+  },
+] as const;
+
+type RecoveryHandoffSources = Record<
+  (typeof HANDOFF_SOURCE_CONTRACTS)[number]["id"],
+  RecoveryOwnerSnapshot
+>;
+
+function handoffField(payload: unknown, field: string): unknown {
+  let value = payload;
+  for (const key of field.split(".")) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    value = (value as Record<string, unknown>)[key];
   }
+  return value;
 }
 
-async function currentLearningSedimentationAuditSnapshot(): Promise<{
-  ok: boolean;
-  payload?: Record<string, unknown>;
-  error?: string;
-}> {
-  try {
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      ["--import", "tsx", "scripts/operator/lcx-learning-sedimentation-audit.ts", "--json"],
-      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
-    );
-    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
-  } catch (error) {
-    return { ok: false, error: String(error) };
-  }
+export function recoveryHandoffSourceChecks(sources: RecoveryHandoffSources) {
+  return HANDOFF_SOURCE_CONTRACTS.map((contract) => {
+    const source = sources[contract.id];
+    const payload = source.payload;
+    const missingFields = [
+      ...contract.arrays.filter((field) => !Array.isArray(handoffField(payload, field))),
+      ...contract.records.filter((field) => {
+        const value = handoffField(payload, field);
+        return !value || typeof value !== "object" || Array.isArray(value);
+      }),
+      ...contract.strings.filter((field) => typeof handoffField(payload, field) !== "string"),
+      ...contract.booleans.filter((field) => typeof handoffField(payload, field) !== "boolean"),
+    ];
+    const available = source.ok && payload !== undefined;
+    const boundaryClean =
+      payload?.liveTouched === false &&
+      payload.providerConfigTouched === false &&
+      payload.protectedMemoryTouched === false;
+    return {
+      id: `handoff_${contract.id}_source_recovered`,
+      ok:
+        available &&
+        payload?.ok === true &&
+        payload.boundary === contract.boundary &&
+        boundaryClean &&
+        missingFields.length === 0,
+      summary: `${contract.script} must deliver its original complete boundary-clean handoff receipt; ${
+        !available
+          ? `source unavailable: ${source.error ?? "no receipt"}`
+          : payload?.ok !== true
+            ? "owner reported a blocked or unsuccessful result"
+            : missingFields.length > 0
+              ? `missing fields: ${missingFields.join(",")}`
+              : payload?.boundary !== contract.boundary || !boundaryClean
+                ? "owner boundary unconfirmed"
+                : "source recovered"
+      }`,
+      evidence: {
+        owner: `scripts/operator/${contract.script}`,
+        sourceAvailable: available,
+        sourceOk: payload?.ok,
+        boundary: payload?.boundary,
+        expectedBoundary: contract.boundary,
+        boundaryClean,
+        missingFields,
+        error: source.error,
+      },
+    };
+  });
 }
 
-async function currentExternalChannelStatusSnapshot(): Promise<{
-  ok: boolean;
-  payload?: Record<string, unknown>;
-  error?: string;
-}> {
-  try {
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      ["--import", "tsx", "scripts/operator/lcx-external-channel-status.ts", "--json"],
-      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
-    );
-    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
-  } catch (error) {
-    return { ok: false, error: String(error) };
-  }
+async function currentChangeImpactSnapshot() {
+  return currentHandoffOwnerSnapshot("lcx-change-impact-plan.ts");
+}
+async function currentModuleAbsorptionGateSnapshot() {
+  return currentHandoffOwnerSnapshot("lcx-module-learning-absorption-gate.ts");
+}
+async function currentLearningSedimentationAuditSnapshot() {
+  return currentHandoffOwnerSnapshot("lcx-learning-sedimentation-audit.ts");
+}
+async function currentExternalChannelStatusSnapshot() {
+  return currentHandoffOwnerSnapshot("lcx-external-channel-status.ts");
 }
 
 async function currentExternalAgentUpgradeRadarSnapshot(): Promise<{
@@ -1091,12 +1188,12 @@ function buildNewWindowHandoffText(params: {
     "- do not touch memory/current-research-line.md or memory/unified-risk-view.md",
     "",
     "## Dirty Worktree",
-    `changedFiles=${changedFiles.length}`,
+    `changedFiles=${params.changeImpact ? changedFiles.length : "unknown"}`,
     ...changedFiles.map((file) => `- ${file}`),
-    `affectedLanes=${affectedLanes.join(",") || "none"}`,
-    `unmatchedFiles=${unmatchedFiles.join(",") || "none"}`,
-    `deferredCommands=${deferredCommands.join(" | ") || "none"}`,
-    `safetyNotes=${safetyNotes.join(" | ") || "none"}`,
+    `affectedLanes=${params.changeImpact ? affectedLanes.join(",") || "none" : "unknown"}`,
+    `unmatchedFiles=${params.changeImpact ? unmatchedFiles.join(",") || "none" : "unknown"}`,
+    `deferredCommands=${params.changeImpact ? deferredCommands.join(" | ") || "none" : "unknown"}`,
+    `safetyNotes=${params.changeImpact ? safetyNotes.join(" | ") || "none" : "unknown"}`,
     "",
     "## External Channel Boundary Truth",
     "volatileOwner=lcx-external-channel-status",
@@ -1159,9 +1256,9 @@ function buildNewWindowHandoffText(params: {
     `sedimentationAssessment=${scalarText(params.learningSedimentation?.assessment)}`,
     `sedimentationModulePipeline=${scalarText(modulePipeline?.planReceipts)}/${scalarText(modulePipeline?.reviewFiles)} planReview historicalEvalAbsorbed=${scalarText(modulePipeline?.evalAbsorbed)} weak=${scalarText(modulePipeline?.weakModuleLearning)} boundaryViolations=${scalarText(modulePipeline?.boundaryViolations)}`,
     `sedimentationLatestReview=${scalarText(sedimentationLatestReview.path)} evalAbsorbed=${scalarText(sedimentationLatestReview.evalAbsorbed)} weak=${scalarText(sedimentationLatestReview.weakModuleLearning)} applicationReady=${scalarText(sedimentationLatestReview.applicationReady)} exactMissingProof=${scalarText(sedimentationLatestReview.exactMissingProofReceipts)}`,
-    `sedimentationGaps=${sedimentationGaps.join(",") || "none"}`,
-    `blockers=${blockers.join(",") || "none"}`,
-    `nextActions=${nextActions.join(" | ") || "none"}`,
+    `sedimentationGaps=${params.learningSedimentation ? sedimentationGaps.join(",") || "none" : "unknown"}`,
+    `blockers=${params.moduleAbsorption ? blockers.join(",") || "none" : "unknown"}`,
+    `nextActions=${params.moduleAbsorption ? nextActions.join(" | ") || "none" : "unknown"}`,
     "",
     "## Self-Repair Hands",
     "owner=lcx-self-repair-hands",
@@ -1584,6 +1681,24 @@ async function main() {
     });
   }
 
+  const handoffSources = options.handoff
+    ? await Promise.all([
+        currentChangeImpactSnapshot(),
+        currentModuleAbsorptionGateSnapshot(),
+        currentLearningSedimentationAuditSnapshot(),
+        currentExternalChannelStatusSnapshot(),
+      ])
+    : undefined;
+  const handoffSourceChecks = handoffSources
+    ? recoveryHandoffSourceChecks({
+        changeImpact: handoffSources[0],
+        moduleAbsorption: handoffSources[1],
+        learningSedimentation: handoffSources[2],
+        externalChannelStatus: handoffSources[3],
+      })
+    : [];
+  checks.push(...handoffSourceChecks);
+
   const failed = checks.filter((check) => !check.ok);
   const informationalWarnings = warnings.filter((warning) =>
     warning.id.startsWith("operator_training_"),
@@ -1632,32 +1747,26 @@ async function main() {
     providerConfigTouched: false,
     protectedMemoryTouched: false,
   };
-  const handoffSources = options.handoff
-    ? await Promise.all([
-        currentChangeImpactSnapshot(),
-        currentModuleAbsorptionGateSnapshot(),
-        currentLearningSedimentationAuditSnapshot(),
-        currentExternalChannelStatusSnapshot(),
-      ])
-    : undefined;
-  const handoffChangeImpact = handoffSources
-    ? compactChangeImpact(handoffSources[0].payload)
-    : undefined;
-  const moduleAbsorption = handoffSources
-    ? compactModuleAbsorptionGate(handoffSources[1].payload)
-    : undefined;
-  const learningSedimentation = handoffSources
-    ? compactLearningSedimentationAudit(handoffSources[2].payload)
-    : undefined;
-  const externalChannelStatus = handoffSources
-    ? compactExternalChannelStatus(handoffSources[3].payload)
-    : undefined;
+  const handoffPayload = (index: number) => {
+    const evidence = handoffSourceChecks[index]?.evidence;
+    return evidence?.sourceAvailable &&
+      evidence.boundaryClean &&
+      evidence.boundary === evidence.expectedBoundary &&
+      evidence.missingFields.length === 0
+      ? handoffSources?.[index]?.payload
+      : undefined;
+  };
+  const handoffChangeImpact = compactChangeImpact(handoffPayload(0));
+  const moduleAbsorption = compactModuleAbsorptionGate(handoffPayload(1));
+  const learningSedimentation = compactLearningSedimentationAudit(handoffPayload(2));
+  const externalChannelStatus = compactExternalChannelStatus(handoffPayload(3));
   const handoffForNewWindow = options.handoff
     ? {
         boundary: "local_context_recovery_handoff_only",
         owner: "lcx-context-recovery-exam",
         purpose:
           "compact current-state snapshot for future Codex windows; reuses context recovery instead of creating a parallel memory lane",
+        sourceChecks: handoffSourceChecks,
         changeImpact: handoffChangeImpact,
         trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
         externalChannelStatus,

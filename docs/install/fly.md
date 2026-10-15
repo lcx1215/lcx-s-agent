@@ -1,7 +1,7 @@
 ---
 title: Fly.io
 description: Deploy LCX Agent on Fly.io
-summary: "Step-by-step Fly.io deployment for LCX Agent with persistent storage and HTTPS"
+summary: "Step-by-step Fly.io deployment for LCX Agent with persistent storage and Gateway TLS"
 read_when:
   - Deploying LCX Agent on Fly.io
   - Setting up Fly volumes, secrets, and first-run config
@@ -9,7 +9,7 @@ read_when:
 
 # Fly.io Deployment
 
-**Goal:** LCX Agent Gateway running on a [Fly.io](https://fly.io) machine with persistent storage, automatic HTTPS, and Discord/channel access.
+**Goal:** LCX Agent Gateway running on a [Fly.io](https://fly.io) machine with persistent storage, Gateway-terminated HTTPS, and Discord/channel access.
 
 ## What you need
 
@@ -47,6 +47,14 @@ Edit `fly.toml` to match your app name and requirements.
 
 **Security note:** The default config exposes a public URL. For a hardened deployment with no public IP, see [Private Deployment](#private-deployment-hardened) or use `fly.private.toml`.
 
+Fly's default HTTP service terminates TLS at the edge and forwards an
+application-level plaintext stream over Fly's encrypted WireGuard mesh. This
+example instead passes TCP through on port 443 so Gateway terminates TLS itself.
+Configure `gateway.tls.enabled: true` and auth in the persisted Gateway config
+before exposing the service. Fly-managed edge certificates do not secure this
+passthrough; provide a certificate trusted by clients. See [Fly TLS termination](https://fly.io/docs/security/tls-termination/)
+and [Fly connection handlers](https://fly.io/docs/networking/services/#tcp-pass-through).
+
 ```toml
 app = "my-openclaw"  # Your app name
 primary_region = "iad"
@@ -61,15 +69,19 @@ primary_region = "iad"
   NODE_OPTIONS = "--max-old-space-size=1536"
 
 [processes]
-  app = "node dist/index.js gateway --allow-unconfigured --port 3000 --bind lan"
+  app = "node dist/index.js gateway --allow-unconfigured --port 3000"
 
-[http_service]
+[[services]]
+  protocol = "tcp"
   internal_port = 3000
-  force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
+
+  [[services.ports]]
+    port = 443
+    # No handlers: forward the TLS stream to Gateway unchanged.
 
 [[vm]]
   size = "shared-cpu-2x"
@@ -82,13 +94,13 @@ primary_region = "iad"
 
 **Key settings:**
 
-| Setting                        | Why                                                                         |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| `--bind lan`                   | Binds to `0.0.0.0` so Fly's proxy can reach the gateway                     |
-| `--allow-unconfigured`         | Starts without a config file (you'll create one after)                      |
-| `internal_port = 3000`         | Must match `--port 3000` (or `OPENCLAW_GATEWAY_PORT`) for Fly health checks |
-| `memory = "2048mb"`            | 512MB is too small; 2GB recommended                                         |
-| `OPENCLAW_STATE_DIR = "/data"` | Persists state on the volume                                                |
+| Setting                        | Why                                                                  |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `--allow-unconfigured`         | Lets the machine boot before you create the config over SSH          |
+| `internal_port = 3000`         | Must match `--port 3000` (or `OPENCLAW_GATEWAY_PORT`)                |
+| TCP port 443 with no handlers  | Passes HTTPS/WSS through so Gateway TLS protects the full connection |
+| `memory = "2048mb"`            | 512MB is too small; 2GB recommended                                  |
+| `OPENCLAW_STATE_DIR = "/data"` | Persists state on the volume                                         |
 
 ## 3) Set secrets
 
@@ -109,7 +121,10 @@ fly secrets set DISCORD_BOT_TOKEN=MTQ...
 
 **Notes:**
 
-- Non-loopback binds (`--bind lan`) require `OPENCLAW_GATEWAY_TOKEN` for security.
+- Before exposing the service, set `gateway.bind: "lan"`, `gateway.tls.enabled: true`, and `gateway.auth.mode: "token"` in `/data/openclaw.json`; `OPENCLAW_GATEWAY_TOKEN` supplies the token.
+- Put a CA-issued certificate and key for the Fly hostname on the mounted volume and set their paths in `gateway.tls.certPath` / `gateway.tls.keyPath`. The generated self-signed certificate is suitable only when the client explicitly trusts it.
+- Set `gateway.controlUi.allowedOrigins` to the public HTTPS origin if you use the Control UI.
+- Raw TCP/TLS passthrough may require a dedicated Fly IPv4 address; check Fly's current address requirements before deployment. `force_https` requires an HTTP handler and cannot be combined with this passthrough configuration.
 - Treat these tokens like passwords.
 - **Prefer env vars over config file** for all API keys and tokens. This keeps secrets out of `openclaw.json` where they could be accidentally exposed or logged.
 
@@ -120,6 +135,9 @@ fly deploy
 ```
 
 First deploy builds the Docker image (~2-3 minutes). Subsequent deploys are faster.
+The bootstrap Gateway binds to loopback until you create the config in step 5;
+the public endpoint will not serve traffic until that config enables LAN bind
+and Gateway TLS and the machine restarts.
 
 After deployment, verify:
 
@@ -131,7 +149,7 @@ fly logs
 You should see:
 
 ```
-[gateway] listening on ws://0.0.0.0:3000 (PID xxx)
+[gateway] listening on wss://0.0.0.0:3000 (PID xxx)
 [discord] logged in to discord as xxx
 ```
 
@@ -190,7 +208,14 @@ cat > /data/openclaw.json << 'EOF'
   },
   "gateway": {
     "mode": "local",
-    "bind": "auto"
+    "bind": "lan",
+    "tls": {
+      "enabled": true,
+      "certPath": "/data/gateway-cert.pem",
+      "keyPath": "/data/gateway-key.pem"
+    },
+    "auth": { "mode": "token" },
+    "controlUi": { "allowedOrigins": ["https://my-openclaw.fly.dev"] }
   },
   "meta": {
     "lastTouchedVersion": "2026.1.29"

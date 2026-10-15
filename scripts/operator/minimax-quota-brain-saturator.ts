@@ -1,9 +1,17 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildFailureCurriculumPrompts } from "./minimax-brain-failure-curriculum.js";
+import {
+  recordTrainingCaller,
+  readTrainingCaller,
+  reviewFailureCurriculum,
+  verifyTrainingFailureSource,
+  type TrainingCallerRef,
+  type TrainingPromptHandoff,
+} from "./minimax-brain-failure-curriculum.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -38,6 +46,8 @@ type CliOptions = {
   failureFocus: boolean;
   guardLogPath: string;
   previewPrompts: number;
+  trainingCaller?: TrainingCallerRef;
+  promptHandoff?: { path: string; sha256: string };
 };
 
 type TeacherPrompt = {
@@ -517,6 +527,9 @@ function parseArgs(args: string[]): CliOptions {
       options.failureFocus = true;
     } else if (arg === "--no-failure-focus") {
       options.failureFocus = false;
+    } else if (arg === "--caller-receipt") {
+      options.trainingCaller = JSON.parse(readValue(args, index)) as TrainingCallerRef;
+      index += 1;
     } else if (arg === "--guard-log") {
       options.guardLogPath = path.resolve(readValue(args, index));
       index += 1;
@@ -662,16 +675,16 @@ function promptFamilyCounts(prompts: TeacherPrompt[]): Record<string, number> {
   }, {});
 }
 
-async function buildBatchPrompts(
-  options: CliOptions,
-  start: number,
-  count: number,
-): Promise<{ prompts: TeacherPrompt[]; failureFocusPrompts: number }> {
+async function buildBatchPrompts(options: CliOptions, start: number, count: number) {
   if (!options.failureFocus) {
-    return { prompts: buildPrompts(start, count), failureFocusPrompts: 0 };
+    return {
+      prompts: buildPrompts(start, count),
+      failureFocusPrompts: 0,
+      curriculumReview: undefined,
+    };
   }
   const maxFailurePrompts = Math.min(Math.ceil(count / 2), 12);
-  const failurePrompts = await buildFailureCurriculumPrompts({
+  const review = await reviewFailureCurriculum({
     guardLogPath: options.guardLogPath,
     evalReceiptPath: path.join(
       options.workspaceDir,
@@ -680,11 +693,34 @@ async function buildBatchPrompts(
     ),
     maxPrompts: maxFailurePrompts,
     startIndex: start,
+    caller: options.trainingCaller,
+    workspaceDir: options.workspaceDir,
   });
+  const failurePrompts = review.prompts;
   const genericPrompts = buildPrompts(start + failurePrompts.length, count - failurePrompts.length);
   return {
     prompts: [...failurePrompts, ...genericPrompts],
     failureFocusPrompts: failurePrompts.length,
+    curriculumReview: {
+      status: review.status,
+      reason: review.reason,
+      checkedAt: review.checkedAt,
+      semanticAdoption: review.semanticAdoption,
+      scopeVerification: review.scopeVerification,
+      freshness: review.freshness,
+      requestedSources: review.requestedSources,
+      selection: review.selection,
+      sources: review.sourceReads.map((read) => ({ ...read.source, at: read.at })),
+      source: review.selectedEvaluation
+        ? {
+            ...review.selectedEvaluation.source,
+            at: review.selectedEvaluation.at,
+            adapterPath: review.selectedEvaluation.snapshot?.adapterPath,
+            fields: ["failedCaseIds", "parseRecoveredCaseIds", "modelContractFailureCaseIds"],
+          }
+        : undefined,
+      promptIds: failurePrompts.map((prompt) => prompt.id),
+    },
   };
 }
 
@@ -761,17 +797,55 @@ async function writePromptFile(
   options: CliOptions,
   round: number,
   prompts: TeacherPrompt[],
+  review?: {
+    status: string;
+    reason: string;
+    source?: TrainingPromptHandoff["source"];
+    selection?: TrainingPromptHandoff["selection"];
+  },
 ): Promise<string> {
+  if (options.trainingCaller) {
+    await readTrainingCaller(options.trainingCaller, options.workspaceDir);
+    if (review?.reason.includes("training_caller_")) {
+      throw new Error(review.reason);
+    }
+    if (review?.source) {
+      await verifyTrainingFailureSource(review.source, review.selection);
+    }
+  }
   await fs.mkdir(options.promptDir, { recursive: true });
   const promptPath = path.join(
     options.promptDir,
     `quota-prompts-${new Date().toISOString().replace(/[:.]/gu, "-")}-r${round}.json`,
   );
-  await fs.writeFile(promptPath, `${JSON.stringify(prompts, null, 2)}\n`, "utf8");
+  const promptText = `${JSON.stringify(prompts, null, 2)}\n`;
+  await fs.writeFile(promptPath, promptText, "utf8");
+  if (options.trainingCaller) {
+    const handoff: TrainingPromptHandoff = {
+      caller: options.trainingCaller,
+      prompt: { path: promptPath, sha256: createHash("sha256").update(promptText).digest("hex") },
+      ...(review?.status === "ready" && review.source
+        ? { source: review.source, selection: review.selection }
+        : {}),
+    };
+    const handoffText = `${JSON.stringify(handoff, null, 2)}\n`;
+    options.promptHandoff = {
+      path: `${promptPath}.handoff.json`,
+      sha256: createHash("sha256").update(handoffText).digest("hex"),
+    };
+    await fs.writeFile(options.promptHandoff.path, handoffText, "utf8");
+  }
   return promptPath;
 }
 
 const options = parseArgs(process.argv.slice(2));
+if (options.write && !options.trainingCaller) {
+  options.trainingCaller = await recordTrainingCaller({
+    logPath: options.logPath,
+    workspaceDir: options.workspaceDir,
+    owner: "minimax-quota-brain-saturator",
+  });
+}
 const calls = targetCalls(options);
 const rounds = Math.ceil(calls / options.batchLimit);
 const deadline = Date.now() + options.durationMinutes * 60_000;
@@ -874,6 +948,21 @@ function isProviderLimitSignal(result: StepResult): boolean {
     "resource_exhausted",
     "billing",
   ].some((needle) => haystack.includes(needle));
+}
+
+function isProviderPaymentRequired(result: StepResult): boolean {
+  const failures = failureErrorsFromResult(result);
+  const payload = result.parsed as { ok?: unknown; error?: unknown; reason?: unknown } | undefined;
+  if (result.exitCode === 0 && failures.length === 0 && payload?.ok !== false) {
+    return false;
+  }
+  const diagnostics = [payload?.error, payload?.reason].filter(
+    (value): value is string => typeof value === "string",
+  );
+  const errors = [result.stderr, ...failures, ...diagnostics].join("\n");
+  return /\b(?:provider_payment_required|payment[ _]required|insufficient[ _](?:balance|credits)|http(?:\/[\d.]+)?(?:\s+status)?\s*[:=]?\s*402|(?:teacher|provider)\s+call\s+failed\s+402)\b/iu.test(
+    errors,
+  );
 }
 
 function isProviderTransportSignal(result: StepResult): boolean {
@@ -1016,7 +1105,20 @@ try {
   for (let round = 1; attempted < calls && Date.now() < deadline; round += 1) {
     const remaining = calls - attempted;
     const batchSize = Math.min(currentBatchLimit, remaining);
-    const { prompts, failureFocusPrompts } = await buildBatchPrompts(options, attempted, batchSize);
+    const { prompts, failureFocusPrompts, curriculumReview } = await buildBatchPrompts(
+      options,
+      attempted,
+      batchSize,
+    );
+    if (curriculumReview) {
+      await appendLog(options.logPath, {
+        event: "failure_curriculum_review",
+        round,
+        ...curriculumReview,
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+    }
     await appendLog(options.logPath, {
       event: "curriculum_family_mix",
       round,
@@ -1038,7 +1140,7 @@ try {
         providerConfigTouched: false,
       });
     }
-    const promptPath = await writePromptFile(options, round, prompts);
+    const promptPath = await writePromptFile(options, round, prompts, curriculumReview);
     const teacherResult = await runJsonStep(
       options,
       round,
@@ -1050,6 +1152,14 @@ try {
         "scripts/operator/minimax-brain-teacher-batch.ts",
         "--prompt-file",
         promptPath,
+        ...(options.promptHandoff && options.trainingCaller
+          ? [
+              "--prompt-handoff",
+              JSON.stringify(options.promptHandoff),
+              "--caller-receipt",
+              JSON.stringify(options.trainingCaller),
+            ]
+          : []),
         "--workspace",
         options.workspaceDir,
         "--limit",
@@ -1067,6 +1177,21 @@ try {
       { allowFailure: true },
     );
     const providerLimited = isProviderLimitSignal(teacherResult);
+    if (isProviderPaymentRequired(teacherResult)) {
+      attempted += batchSize;
+      completedRounds = round;
+      stopReason = "provider_payment_required";
+      await appendLog(options.logPath, {
+        event: "teacher_provider_payment_blocked",
+        status: "blocked_provider_payment_required",
+        reason: stopReason,
+        round,
+        acceptedCandidates: acceptedCandidatesFromResult(teacherResult),
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+      break;
+    }
     const providerTransportUnstable = isProviderTransportSignal(teacherResult);
     const transportFailureCount = providerTransportFailureCount(teacherResult);
     if (teacherResult.exitCode !== 0) {
@@ -1148,11 +1273,22 @@ try {
 
     await runIntegrityChecks(round, false);
   }
+  const finalStopReason =
+    stopReason === "provider_payment_required"
+      ? stopReason
+      : Date.now() >= deadline
+        ? "duration_deadline"
+        : stopReason;
+  const terminalStatus =
+    finalStopReason === "provider_payment_required"
+      ? "blocked_provider_payment_required"
+      : "complete";
   await appendLog(options.logPath, {
     event: "quota_saturator_complete",
     attempted,
     completedRounds,
-    stopReason: Date.now() >= deadline ? "duration_deadline" : stopReason,
+    stopReason: finalStopReason,
+    status: terminalStatus,
     finalBatchLimit: currentBatchLimit,
     finalConcurrency: currentConcurrency,
     consecutiveRateLimitRounds,
@@ -1163,10 +1299,12 @@ try {
   process.stdout.write(
     `${JSON.stringify(
       {
-        ok: true,
+        ok: terminalStatus === "complete",
+        owner: "minimax-quota-brain-saturator",
+        status: terminalStatus,
         attempted,
         completedRounds,
-        stopReason: Date.now() >= deadline ? "duration_deadline" : stopReason,
+        stopReason: finalStopReason,
         finalBatchLimit: currentBatchLimit,
         finalConcurrency: currentConcurrency,
         consecutiveRateLimitRounds,
@@ -1177,6 +1315,12 @@ try {
       2,
     )}\n`,
   );
+  if (terminalStatus === "blocked_provider_payment_required") {
+    process.stderr.write(
+      "provider_payment_required: teacher work stopped; no automatic paid fallback\n",
+    );
+    process.exitCode = 1;
+  }
 } catch (error) {
   await appendLog(options.logPath, {
     event: "quota_saturator_failed",

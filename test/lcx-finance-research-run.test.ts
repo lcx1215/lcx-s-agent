@@ -11,6 +11,7 @@ import {
   buildFinanceResearchRegistryOptions,
   preflightFinanceResearchReceiptDestination,
   preflightLocalModelPythonRuntime,
+  prioritizeFinanceResearchAdaptersByHeartbeat,
 } from "../scripts/operator/lcx-finance-research-run.ts";
 
 const execFileAsync = promisify(execFile);
@@ -30,7 +31,7 @@ async function runResearch(args: string[], env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("lcx-finance-research-run", () => {
-  it("executes a dry plan for the natural finance ask without network or model resolution", async () => {
+  it("does not invent instruments for a broad dry plan without a validated universe", async () => {
     const payload = await runResearch([
       "--ask",
       "分析过去六个月加密货币和美股的市场情绪，并考虑美国中期选举。",
@@ -54,24 +55,41 @@ describe("lcx-finance-research-run", () => {
     );
     expect(payload.batch).toBeUndefined();
     const plan = payload.plan as Record<string, unknown>;
-    expect(plan.expectedJobCount).toBe(13);
-    expect(plan.targetIds).toEqual(
-      expect.arrayContaining([
-        "crypto-btc",
-        "us-equity-spy",
-        "us-equity-qqq",
-        // The directed daily brief's index-options task requires implied
-        // volatility, term structure, and skew, so the prioritized default set
-        // must collect an options chain instead of leaving it to all_registered.
-        "us-index-options-chain",
-      ]),
-    );
+    expect(plan.expectedJobCount).toBe(3);
+    expect(plan.targetIds).toEqual([
+      "macro-debt-to-penny",
+      "macro-average-interest-rates",
+      "macro-cpi",
+    ]);
     expect((plan.orchestration as Record<string, unknown>).primaryModules).toEqual(
       expect.arrayContaining(["event_driven", "cross_asset_liquidity"]),
     );
     expect(
       (payload.gates as readonly Record<string, unknown>[]).every((gate) => gate.passed === false),
     ).toBe(true);
+  });
+
+  it("keeps workflow selection alone offline and rejects retired local live routing before writes", async () => {
+    const planned = await runResearch(["--workflow-models"]);
+    expect(planned.status).toBe("planned");
+    expect(planned.batch).toBeUndefined();
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-handoff-"));
+    try {
+      await expect(
+        runResearch(["--live", "--write", "--adapter", "/missing"], {
+          OPENCLAW_WORKSPACE_DIR: workspaceDir,
+        }),
+      ).rejects.toThrow("local research/review roles retired");
+      expect(await fs.readdir(workspaceDir)).toEqual([]);
+      await expect(
+        runResearch(["--live", "--write", "--workflow-models", "--adapter", "/missing"], {
+          OPENCLAW_WORKSPACE_DIR: workspaceDir,
+        }),
+      ).rejects.toThrow("cannot combine local model overrides");
+      expect(await fs.readdir(workspaceDir)).toEqual([]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 
   it("writes an explicit dry receipt only when requested", async () => {
@@ -116,6 +134,43 @@ describe("lcx-finance-research-run", () => {
     }
   });
 
+  it("prioritizes recently healthy source adapters and preserves stale health as unknown", () => {
+    const adapters = [
+      { id: "massive", priority: 0, providerRole: "primary_market_data" },
+      { id: "yahoo", priority: 1, providerRole: "primary_market_data" },
+      { id: "unverified", priority: 2, providerRole: "primary_market_data" },
+      { id: "alpaca", priority: 3, providerRole: "cross_check_market_data" },
+      { id: "eastmoney", priority: 4, providerRole: "primary_market_data" },
+    ];
+    const observedAt = "2026-10-02T09:00:00.000Z";
+    const endpointRecords = {
+      massive: { checkedAt: "2026-10-02T08:50:00.000Z", status: "degraded" as const },
+      yahoo: { checkedAt: "2026-10-02T08:50:00.000Z", status: "unhealthy" as const },
+      alpaca: { checkedAt: "2026-10-02T08:50:00.000Z", status: "healthy" as const },
+      eastmoney: { checkedAt: "2026-10-02T08:50:00.000Z", status: "healthy" as const },
+    };
+    const prioritized = prioritizeFinanceResearchAdaptersByHeartbeat(
+      adapters,
+      endpointRecords,
+      observedAt,
+    );
+    expect(
+      prioritized.toSorted((left, right) => left.priority - right.priority).map((item) => item.id),
+    ).toEqual(["eastmoney", "unverified", "massive", "yahoo", "alpaca"]);
+
+    const stale = prioritizeFinanceResearchAdaptersByHeartbeat(
+      adapters,
+      {
+        massive: { checkedAt: "2026-09-01T08:50:00.000Z", status: "degraded" },
+        alpaca: { checkedAt: "2026-09-01T08:50:00.000Z", status: "healthy" },
+      },
+      observedAt,
+    );
+    expect(
+      stale.toSorted((left, right) => left.priority - right.priority).map((item) => item.id),
+    ).toEqual(["massive", "yahoo", "unverified", "eastmoney", "alpaca"]);
+  });
+
   it("rejects oversized plan and live model bounds before execution", async () => {
     expect(() => assertResearchAsk("x".repeat(32_769))).toThrow(
       "--ask must be <= 32768 UTF-8 bytes",
@@ -123,8 +178,8 @@ describe("lcx-finance-research-run", () => {
     await expect(runResearch(["--horizon-months", "121"])).rejects.toThrow(
       "--horizon-months must be a positive integer <= 120",
     );
-    await expect(runResearch(["--max-tokens", "16385"])).rejects.toThrow(
-      "--max-tokens must be a positive integer <= 16384",
+    await expect(runResearch(["--max-tokens", "9007199254740992"])).rejects.toThrow(
+      "--max-tokens must be a positive integer <= 9007199254740991",
     );
     await expect(runResearch(["--live", "--timeout-ms", "2147483648"])).rejects.toThrow(
       "--timeout-ms must be a positive integer <= 2147483647",

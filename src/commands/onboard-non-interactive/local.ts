@@ -2,6 +2,7 @@ import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveGatewayPort, writeConfigFile } from "../../config/config.js";
 import { logConfigUpdated } from "../../config/logging.js";
+import { maybeAddTailnetOriginToControlUiAllowedOrigins } from "../../gateway/gateway-config-prompts.shared.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { DEFAULT_GATEWAY_DAEMON_RUNTIME } from "../daemon-runtime.js";
 import { applyOnboardingLocalWorkspaceConfig } from "../onboard-config.js";
@@ -73,7 +74,10 @@ export async function runNonInteractiveOnboardingLocal(params: {
   if (!gatewayResult) {
     return;
   }
-  nextConfig = gatewayResult.nextConfig;
+  nextConfig = await maybeAddTailnetOriginToControlUiAllowedOrigins({
+    config: gatewayResult.nextConfig,
+    tailscaleMode: gatewayResult.tailscaleMode,
+  });
 
   nextConfig = applyNonInteractiveSkillsConfig({ nextConfig, opts, runtime });
 
@@ -104,6 +108,7 @@ export async function runNonInteractiveOnboardingLocal(params: {
       port: gatewayResult.port,
       customBindHost: nextConfig.gateway?.customBindHost,
       basePath: undefined,
+      tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
     });
     await waitForGatewayReachable({
       url: links.wsUrl,

@@ -27,6 +27,7 @@ const FinanceMarketCollectionRefreshSchema = Type.Object({
   fromDate: Type.Optional(Type.String()),
   toDate: Type.Optional(Type.String()),
   asOf: Type.Optional(Type.String()),
+  asOfMode: Type.Optional(Type.Union([Type.Literal("historical"), Type.Literal("live_now")])),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 250 })),
   sourceIds: Type.Optional(Type.Array(Type.String())),
   liveFetch: Type.Optional(Type.Boolean()),
@@ -61,7 +62,11 @@ async function writeReceipt(
   );
   const absolutePath = path.join(workspaceDir, relPath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await fs.writeFile(
+    absolutePath,
+    typeof payload === "string" ? payload : `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
   return relPath;
 }
 
@@ -78,7 +83,7 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
     label: "Finance Market Collection Refresh",
     name: "finance_market_collection_refresh",
     description:
-      "Inspect or explicitly fetch structured US-market collections such as public news, options chains, dividends, splits, official macro series, SEC filings, company profiles, and free-tier EOD history. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
+      "Inspect or explicitly fetch structured finance collections such as public news, options chains, dividends, splits, official macro series, SEC filings, company profiles, and free-tier EOD history. For BTC/ETH live options_chain or market_reference summaries use asOfMode=live_now and deribit_public_option_summary or deribit_public_future_summary. For merger or symbol-change questions, use event_calendar with sourceIds=[alpaca_corporate_actions]; action data does not prove account payment or an order cancellation cause. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
     parameters: FinanceMarketCollectionRefreshSchema,
     execute: async (_toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -90,6 +95,7 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
         fromDate?: string;
         toDate?: string;
         asOf?: string;
+        asOfMode?: FinanceMarketCollectionRequest["asOfMode"];
         limit?: number;
         sourceIds?: string[];
         liveFetch?: boolean;
@@ -106,12 +112,24 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
           fromDate: params.fromDate,
           toDate: params.toDate,
           asOf: params.asOf ?? new Date().toISOString(),
+          asOfMode: params.asOfMode,
           limit: params.limit,
         };
         const envRegistryOptions = resolveFinanceMarketCollectionRegistryOptionsFromEnv();
         const registryOptions = {
           ...envRegistryOptions,
           fetchImpl: options?.fetchImpl,
+          ...(params.writeReceipt
+            ? {
+                captureRawResponse: async (response: { adapterId: string; body: string }) =>
+                  writeReceipt(
+                    workspaceDir,
+                    request.instrument,
+                    `raw-${response.adapterId}`,
+                    response.body,
+                  ),
+              }
+            : {}),
           massiveApiKey: options?.massiveApiKey ?? envRegistryOptions.massiveApiKey,
           finnhubApiKey: options?.finnhubApiKey ?? envRegistryOptions.finnhubApiKey,
           fredApiKey: options?.fredApiKey ?? envRegistryOptions.fredApiKey,
@@ -152,6 +170,8 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
           : undefined;
         return jsonResult({ ...receipt, receiptPath });
       } catch (error) {
+        // Preserve host cancellation as cancellation, rather than a bad model argument.
+        callerSignal?.throwIfAborted();
         if (error instanceof ToolInputError) {
           throw error;
         }

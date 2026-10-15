@@ -158,6 +158,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "artifact_memory_recall",
+    label: "artifact_memory_recall",
+    description:
+      "Find retained tool results and conclusions; verify original content, source time and SHA",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "session_history",
     label: "session_history",
     description: "Read-only recall over archived session transcripts",
@@ -204,7 +213,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "quant_lab",
     label: "quant_lab",
     description:
-      "Deterministic quant toolkit: portfolio construction, risk decomposition, attribution, and association testing with significance",
+      "Deterministic quant toolkit: portfolio construction, risk decomposition, attribution, association testing with significance, caller-supplied pair-spread diagnostics, and bounded fixed-spread reversion replay with explicit futures contract/cost assumptions and next-observation close proxies",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -219,6 +228,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "decision_model_evaluate",
+    label: "decision_model_evaluate",
+    description:
+      "Optional host-configured Clef classification and ambiguous routing among declared choices; advisory only, primary agent and existing execution gates remain authoritative",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     // The registered tool is `finance_data_gateway_snapshot`; `finance_data_gateway` is the
     // ontology concept it maps to (`lcx-ontology.ts`). The catalog must carry the tool id — an
     // entry under the concept name never matches, so the tool was absent from every profile
@@ -228,6 +246,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     description:
       "Collect and normalise finance market data into a gateway snapshot carrying source, timestamp and quality status",
     sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "native_coding_harness",
+    label: "native_coding_harness",
+    description:
+      "LCX native Docker coding with durable patch/artifact delivery; source remains unchanged. Acceptance policy is controller-owned.",
+    sectionId: "agents",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
@@ -352,7 +379,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_calibration_read",
     label: "finance_calibration_read",
     description:
-      "Read-only summary of how accurate this system's own finance calls were: hit rate, Brier score, overconfidence gap, pending sample count, and the conviction floor derived from those outcomes if one can be justified",
+      "Read-only summary of forecast directional accuracy: hit rate, Brier score, overconfidence gap, pending sample count, and a directional calibration floor when supported. These measures do not establish trade profitability or execution eligibility",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -388,7 +415,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_tuning_proposal",
     label: "finance_tuning_proposal",
     description:
-      "Derive tuning proposals from the settled track record, each carrying re-checkable evidence, and record them. Proposes only - applying is a human step. Says plainly when there is too little data to propose anything",
+      "Derive and record forecast-calibration proposals from directional outcomes. They cannot change paper selection or execution gates; reconciled net-trade economics are required separately",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -433,7 +460,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_position_ledger_read",
     label: "finance_position_ledger_read",
     description:
-      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, the equity curve derived from the same stream, and — on request — a behaviour profile of the recorded fills (disposition effect, turnover, momentum chasing, anchoring)",
+      "Read the durable position book and gross marked-value/drawdown diagnostics. With an explicit broker account id, also read stored Alpaca paper history and show fee-adjusted realized trade P&L only when the fill and fee history reconciles. Strategy profitability and execution-threshold promotion remain unproven",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -484,10 +511,28 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "api_capability_health_read",
+    label: "api_capability_health_read",
+    description:
+      "Read a no-network snapshot of local EchoAPI CLI and CoinGecko finance route health, including stored call evidence and provider heartbeat",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "echoapi_cli_health",
+    label: "echoapi_cli_health",
+    description:
+      "Read the pinned EchoAPI CLI installation and latest receipt, or run one bounded public read-only smoke when installed",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "local_specialist",
     label: "local_specialist",
     description:
-      "Run bounded offline classification, fact extraction, or summarization on supplied text",
+      "Agent-supervised batches: deterministic cleaning and duplicate marking, preliminary labels and complete quotations; source retained",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

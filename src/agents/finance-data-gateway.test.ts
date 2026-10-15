@@ -192,3 +192,80 @@ describe("the freshness window is validated like its sibling", () => {
     }
   });
 });
+
+describe("declared cross-check identity", () => {
+  it.each(["same_provider", "same_source", "same_url_fragment", "unrelated_field", "distinct"])(
+    "does not certify copied evidence as independent (%s)",
+    (mode) => {
+      const at = "2026-09-07T10:15:00.000Z";
+      const primary = observation("primary", "primary_market_data", at);
+      const cross = observation(
+        mode === "same_provider" ? "PRIMARY" : "cross",
+        "cross_check_market_data",
+        at,
+      );
+      if (mode === "same_source" || mode === "same_url_fragment") {
+        cross.fields[0].sourceUrlOrArtifact =
+          primary.fields[0].sourceUrlOrArtifact + (mode === "same_url_fragment" ? "#copy" : "");
+      }
+      if (mode === "unrelated_field") {
+        cross.fields[0].name = "unrelated_volume";
+      }
+      const result = buildFinanceDataGatewaySnapshot({
+        instrument: "QQQ",
+        assetClass: "etf",
+        useCase: "copied_source_audit",
+        asOf: at,
+        requireOfficialReference: false,
+        observations: [primary, cross],
+      });
+      expect(result.qualityStatus).toBe(mode === "distinct" ? "ready" : "blocked");
+      expect(result.sourceIndependence?.upstreamLineage).toBe("not_assessed");
+      if (mode !== "distinct") {
+        expect(result.missingEvidence).toContain("distinct_cross_check_source:last_price");
+      }
+    },
+  );
+});
+
+describe("declared upstream cross-check identity", () => {
+  it.each(["shared upstream", "primary is upstream", "tracking address"])(
+    "rejects %s as corroboration",
+    (mode) => {
+      const primary = observation("first", "primary_market_data", "2026-09-07T10:00:00.000Z");
+      const cross = observation("second", "cross_check_market_data", "2026-09-07T10:00:00.000Z");
+      const original = "https://original.test/report?id=1";
+      primary.fields[0].sourceUrlOrArtifact =
+        mode === "shared upstream" ? "https://copy-one.test/report" : original;
+      cross.fields[0].sourceUrlOrArtifact =
+        mode === "tracking address"
+          ? original + "&utm_source=copy"
+          : "https://copy-two.test/report";
+      const snapshot = buildFinanceDataGatewaySnapshot({
+        instrument: "QQQ",
+        assetClass: "etf",
+        useCase: "research",
+        asOf: "2026-09-07T10:15:00.000Z",
+        requireOfficialReference: false,
+        observations: [
+          {
+            ...primary,
+            fields: primary.fields.map((field) => ({
+              ...field,
+              ...(mode === "shared upstream" ? { upstreamSourceUrlOrArtifact: original } : {}),
+            })),
+          },
+          {
+            ...cross,
+            fields: cross.fields.map((field) => ({
+              ...field,
+              ...(mode !== "tracking address" ? { upstreamSourceUrlOrArtifact: original } : {}),
+            })),
+          },
+        ],
+      });
+      expect(snapshot.qualityStatus).toBe("blocked");
+      expect(snapshot.missingEvidence).toContain("distinct_cross_check_source:last_price");
+    },
+  );
+});
