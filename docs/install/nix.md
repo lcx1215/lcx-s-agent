@@ -7,9 +7,14 @@ read_when:
 title: "Nix"
 ---
 
+> **Upstream reference only:** this integration has not been qualified to install
+> the current LCX Agent artifact. Do not run the upstream installer as an LCX
+> deployment. Use the LCX [source installation](./index) until package selection,
+> build identity and service loading have been verified for this integration.
+
 # Nix Installation
 
-The recommended way to run LCX Agent with Nix is via **[nix-openclaw](https://github.com/openclaw/nix-openclaw)** — a batteries-included Home Manager module.
+The inherited upstream Nix reference is **[nix-openclaw](https://github.com/openclaw/nix-openclaw)** — a batteries-included Home Manager module.
 
 ## Quick Start
 

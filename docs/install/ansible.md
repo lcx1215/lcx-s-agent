@@ -7,9 +7,14 @@ read_when:
 title: "Ansible"
 ---
 
+> **Upstream reference only:** this integration has not been qualified to install
+> the current LCX Agent artifact. Do not run the upstream installer as an LCX
+> deployment. Use the LCX [source installation](./index) until package selection,
+> build identity and service loading have been verified for this integration.
+
 # Ansible Installation
 
-The recommended way to deploy LCX Agent to production servers is via **[openclaw-ansible](https://github.com/lcx1215/lcx-s-agent-ansible)** — an automated installer with security-first architecture.
+The inherited upstream Ansible deployment reference is **[openclaw-ansible](https://github.com/openclaw/openclaw-ansible)** — an automated installer with security-first architecture.
 
 ## Quick Start
 
@@ -19,7 +24,7 @@ One-command install:
 curl -fsSL https://raw.githubusercontent.com/openclaw/openclaw-ansible/main/install.sh | bash
 ```
 
-> **📦 Full guide: [github.com/openclaw/openclaw-ansible](https://github.com/lcx1215/lcx-s-agent-ansible)**
+> **📦 Full guide: [github.com/openclaw/openclaw-ansible](https://github.com/openclaw/openclaw-ansible)**
 >
 > The openclaw-ansible repo is the source of truth for Ansible deployment. This page is a quick overview.
 
@@ -118,7 +123,7 @@ If you prefer manual control over the automation:
 sudo apt update && sudo apt install -y ansible git
 
 # 2. Clone repository
-git clone https://github.com/lcx1215/lcx-s-agent-ansible.git
+git clone https://github.com/openclaw/openclaw-ansible.git
 cd openclaw-ansible
 
 # 3. Install Ansible collections
@@ -196,13 +201,13 @@ lcx channels login
 
 For detailed security architecture and troubleshooting:
 
-- [Security Architecture](https://github.com/lcx1215/lcx-s-agent-ansible/blob/main/docs/security.md)
-- [Technical Details](https://github.com/lcx1215/lcx-s-agent-ansible/blob/main/docs/architecture.md)
-- [Troubleshooting Guide](https://github.com/lcx1215/lcx-s-agent-ansible/blob/main/docs/troubleshooting.md)
+- [Security Architecture](https://github.com/openclaw/openclaw-ansible/blob/main/docs/security.md)
+- [Technical Details](https://github.com/openclaw/openclaw-ansible/blob/main/docs/architecture.md)
+- [Troubleshooting Guide](https://github.com/openclaw/openclaw-ansible/blob/main/docs/troubleshooting.md)
 
 ## Related
 
-- [openclaw-ansible](https://github.com/lcx1215/lcx-s-agent-ansible) — full deployment guide
+- [openclaw-ansible](https://github.com/openclaw/openclaw-ansible) — full deployment guide
 - [Docker](/install/docker) — containerized gateway setup
 - [Sandboxing](/gateway/sandboxing) — agent sandbox configuration
 - [Multi-Agent Sandbox & Tools](/tools/multi-agent-sandbox-tools) — per-agent isolation
