@@ -938,3 +938,41 @@ it("keeps the allocation contract intact after a large general context", () => {
   );
   expect(prompt).not.toContain("Fractions must be nonnegative");
 });
+
+it("keeps the ninth ordinary stage with six evidence batches instead of dropping formatting", () => {
+  const names = [
+    "data_cleaning",
+    "financial_extraction",
+    "news_classification",
+    "evidence_integrity",
+    "risk_check",
+    "portfolio_exposure",
+    "research_draft",
+    "adversarial_challenge",
+    "formatting",
+  ];
+  const dependencyOutputs = Object.fromEntries(
+    [
+      ...names,
+      ...Array.from({ length: 5 }, (_, i) => `evidence_batch_extract_${i + 2}`),
+      ...Array.from({ length: 6 }, (_, i) => `evidence_batch_review_${i + 1}`),
+    ].map((name) => [name, { status: "completed", output: { marker: `must-retain-${name}` } }]),
+  );
+  const prompt = buildQualityHarnessModelPrompt({
+    schemaVersion: 1,
+    runId: "native-six-batch-boundary",
+    attempt: 1,
+    stage: "precheck",
+    agentId: "final_precheck",
+    task: "review the final artifact and all findings",
+    evidence: [{ id: "e1", text: "fact" }],
+    sharedContext: {},
+    repairFeedback: [],
+    instructions: "preserve every dependency",
+    dependencyOutputs,
+  });
+  expect(Object.keys(dependencyOutputs)).toHaveLength(20);
+  for (const name of Object.keys(dependencyOutputs)) {
+    expect(prompt).toContain(`must-retain-${name}`);
+  }
+});

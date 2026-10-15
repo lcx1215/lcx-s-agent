@@ -366,12 +366,12 @@ function compactQualityDependencies(
   const entries = Object.entries(request.dependencyOutputs);
   const batchEntries = entries.filter(([taskId]) => taskId.startsWith("evidence_batch_"));
   const otherEntries = entries.filter(([taskId]) => !taskId.startsWith("evidence_batch_"));
-  // Final review depends on eight ordinary stages plus extraction/audit for every batch.
+  // Final review depends on nine ordinary stages plus extraction/audit for every batch.
   const maxEntries =
     request.stage === "precheck"
       ? Math.max(
           16,
-          Math.min(8 + 2 * QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT - 1, 8 + batchEntries.length),
+          Math.min(9 + 2 * QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT - 1, 9 + batchEntries.length),
         )
       : 12;
   return Object.fromEntries(
