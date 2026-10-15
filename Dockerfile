@@ -1,5 +1,5 @@
 # Builds the primary LCX Agent gateway and CLI container image.
-FROM node:22-bookworm@sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935
+FROM node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
 
 # OCI base-image metadata for downstream image consumers.
 # If you change these annotations, also update:
