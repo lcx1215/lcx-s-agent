@@ -2908,6 +2908,7 @@ export async function* financeIntradayMonitorOrder(options: {
   instruments: readonly string[];
   intervalSeconds: number;
   readOwnedInstruments: () => Promise<readonly string[]>;
+  onBarChange?: () => Promise<void>;
   signal: AbortSignal;
   now?: () => number;
 }): AsyncGenerator<string> {
@@ -2918,6 +2919,13 @@ export async function* financeIntradayMonitorOrder(options: {
   while (pending.length && !options.signal.aborted) {
     const bar = Math.floor(now() / (options.intervalSeconds * 1_000));
     if (bar !== observedBar) {
+      if (observedBar !== undefined) {
+        // Out-of-universe and retired holdings retain their original exit owner.
+        await options.onBarChange?.();
+      }
+      if (options.signal.aborted) {
+        return;
+      }
       const owned = await options.readOwnedInstruments();
       if (options.signal.aborted) {
         return;
@@ -2949,6 +2957,7 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
       instruments,
       intervalSeconds: context.options.intraday.intervalSeconds,
       signal: context.signal,
+      onBarChange: () => runFinanceRetiredIntradayExitTick(context),
       readOwnedInstruments: async () => {
         if (!context.intradayController) {
           return [];

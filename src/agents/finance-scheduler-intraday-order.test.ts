@@ -4,10 +4,14 @@ import { financeIntradayMonitorOrder } from "../../scripts/operator/lcx-finance-
 it("revisits owned exits before discovery when a slow review crosses the closing bar", async () => {
   let now = Date.parse("2026-10-14T19:54:00Z");
   const readOwnedInstruments = vi.fn(async () => ["O", "VCLT"]);
+  const onBarChange = vi.fn(async () => {
+    dispatched.push("MANAGED_EXIT");
+  });
   const order = financeIntradayMonitorOrder({
     instruments: ["DISCOVERY1", "DISCOVERY2", "O", "VCLT"],
     intervalSeconds: 300,
     readOwnedInstruments,
+    onBarChange,
     signal: new AbortController().signal,
     now: () => now,
   });
@@ -19,8 +23,17 @@ it("revisits owned exits before discovery when a slow review crosses the closing
       now = Date.parse("2026-10-14T19:55:30Z");
     }
   }
-  expect(dispatched).toEqual(["O", "VCLT", "DISCOVERY1", "O", "VCLT", "DISCOVERY2"]);
+  expect(dispatched).toEqual([
+    "O",
+    "VCLT",
+    "DISCOVERY1",
+    "MANAGED_EXIT",
+    "O",
+    "VCLT",
+    "DISCOVERY2",
+  ]);
   expect(readOwnedInstruments).toHaveBeenCalledTimes(2);
+  expect(onBarChange).toHaveBeenCalledTimes(1);
 });
 
 it("keeps foreign/core or out-of-scope symbols outside the original monitor universe", async () => {
