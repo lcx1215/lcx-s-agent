@@ -32,7 +32,7 @@ jobs:
   # Push to main keeps broad coverage.
   changed-scope:
     needs: [docs-scope]
-    if: github.event_name == 'pull_request' && needs.docs-scope.outputs.docs_only != 'true'
+    if: needs.docs-scope.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     outputs:
       run_node: ${{ steps.scope.outputs.run_node }}
