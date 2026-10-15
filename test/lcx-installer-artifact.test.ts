@@ -7,6 +7,36 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "..");
 
 describe("LCX installer build artifact", () => {
+  it("mounts this checkout installer and supplied archive read-only into Docker", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-smoke-routing-"));
+    try {
+      const archive = path.join(dir, "candidate.tgz");
+      fs.writeFileSync(archive, "test archive");
+      const log = path.join(dir, "docker-calls");
+      fs.writeFileSync(
+        path.join(dir, "docker"),
+        '#!/bin/bash\nprintf "%s\\n" "$@" >> "$DOCKER_CALLS"\n',
+        { mode: 0o755 },
+      );
+      execFileSync("bash", [path.join(root, "scripts/tests/test-install-sh-docker.sh")], {
+        env: {
+          ...process.env,
+          PATH: dir + path.delimiter + process.env.PATH,
+          LCX_INSTALL_TARBALL: archive,
+          DOCKER_CALLS: log,
+          OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT: "1",
+        },
+      });
+      const calls = fs.readFileSync(log, "utf8");
+      expect(calls).toContain(archive + ":/lcx-agent.tgz:ro");
+      expect(calls).toContain(path.join(root, "scripts/install.sh") + ":/lcx-install.sh:ro");
+      expect(calls).toContain("LCX_INSTALL_TARBALL=/lcx-agent.tgz");
+      expect(calls).not.toContain("raw.githubusercontent.com");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each(["lcx-agent", "openclaw"])(
     "validates %s before any registry or install operation",
     (name) => {
