@@ -30,6 +30,12 @@ elif [[ "$MODELS_MODE" == "anthropic" && -z "$ANTHROPIC_API_TOKEN" && -z "$ANTHR
   exit 2
 fi
 
+# This image runs as appuser; both predecessor and current install share a
+# writable prefix. Do not depend on root-owned /usr/local or host npm settings.
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
+mkdir -p "$NPM_CONFIG_PREFIX"
+
 echo "==> Install this checkout's LCX build"
 [[ -f "${LCX_INSTALL_TARBALL:-}" ]] || { echo "ERROR: missing LCX build archive" >&2; exit 2; }
 EXPECTED_VERSION="$(tar -xOf "$LCX_INSTALL_TARBALL" package/package.json | node -pe 'const p=JSON.parse(require("fs").readFileSync(0,"utf8")); if(p.name!=="lcx-agent" || !p.bin?.lcx)process.exit(1); p.version')"
