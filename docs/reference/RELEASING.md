@@ -24,8 +24,8 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - [ ] Bump `package.json` version (e.g., `2026.1.29`).
 - [ ] Run `pnpm plugins:sync` to align extension package versions + changelogs.
 - [ ] Update CLI/version strings in [`src/version.ts`](https://github.com/lcx1215/lcx-s-agent/blob/main/src/version.ts) and the Baileys user agent in [`src/web/session.ts`](https://github.com/lcx1215/lcx-s-agent/blob/main/src/web/session.ts).
-- [ ] Confirm package metadata (name, description, repository, keywords, license) and `bin` map points to [`openclaw.mjs`](https://github.com/lcx1215/lcx-s-agent/blob/main/openclaw.mjs) for `openclaw`.
-- [ ] Publish the workspace compatibility package `packages/openclaw` alongside the canonical `lcx-agent` package so existing `openclaw` plugin peers and `openclaw/plugin-sdk/*` imports remain installable.
+- [ ] Confirm canonical package name `lcx-agent`, this repository’s release identity, and the `lcx` bin pointing to [`lcx.mjs`](https://github.com/lcx1215/lcx-s-agent/blob/main/lcx.mjs). Legacy CLI names are compatibility aliases.
+- [ ] Verify workspace compatibility imports against this build; compatibility names do not grant ownership of upstream registry packages.
 - [ ] If dependencies changed, run `pnpm install` so `pnpm-lock.yaml` is current.
 
 2. **Build & artifacts**
@@ -85,30 +85,14 @@ When the operator says “release”, immediately do this preflight (no extra qu
 
 ## Plugin publish scope (npm)
 
-We only publish **existing npm plugins** under the `@openclaw/*` scope. Bundled
-plugins that are not on npm stay **disk-tree only** (still shipped in
-`extensions/**`).
+Bundled extension names such as `@openclaw/*` are retained for compatibility.
+Their presence in this repository or in the public registry does **not** authorize
+LCX to publish into the upstream namespace. Bundled extensions ship with the
+qualified LCX artifact; preserve each manifest’s `private` setting.
 
-Process to derive the list:
+Any independent plugin publication requires a separately authorized LCX-owned
+package name, verified registry ownership and an explicit compatibility migration.
+Do not derive publication authority from `npm search` results.
 
-1. `npm search @openclaw --json` and capture the package names.
-2. Compare with `extensions/*/package.json` names.
-3. Publish only the **intersection** (already on npm).
-
-Current npm plugin list (update as needed):
-
-- @openclaw/bluebubbles
-- @openclaw/diagnostics-otel
-- @openclaw/discord
-- @openclaw/external
-- @openclaw/lobster
-- @openclaw/matrix
-- @openclaw/msteams
-- @openclaw/nextcloud-talk
-- @openclaw/nostr
-- @openclaw/voice-call
-- @openclaw/zalo
-- @openclaw/zalouser
-
-Release notes must also call out **new optional bundled plugins** that are **not
-on by default** (example: `tlon`).
+Release notes must call out new optional bundled plugins that are not enabled
+by default.
