@@ -39,6 +39,21 @@ export const FinanceBrokerExitFeedbackSchema = z
     activationRef: z.string().regex(/^[a-f0-9]{64}$/u),
     asOf: z.string().datetime(),
     historyRef: z.string().regex(/^[a-f0-9]{64}$/u),
+    methodSummary: z
+      .object({
+        sourceRef: z.string().regex(/^[a-f0-9]{64}$/u),
+        observedExitCount: z.number().int().positive(),
+        instrumentCount: z.number().int().positive(),
+        partialExitCount: z.number().int().nonnegative(),
+        grossPnl: z.number().finite(),
+        netPnl: z.null(),
+        fees: z.literal("not_attributed"),
+        boundary: z.literal(
+          "owned_protective_exits_only_not_all_method_trades_or_independent_trials",
+        ),
+      })
+      .strict()
+      .optional(),
     entries: z
       .array(
         z

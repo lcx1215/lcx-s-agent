@@ -998,6 +998,21 @@ export async function readFinanceBrokerExitFeedback(
   return FinanceBrokerExitFeedbackSchema.parse({
     ...params,
     historyRef: selected[0].historyRef,
+    methodSummary: {
+      sourceRef: caseflowFingerprint({
+        accountId: params.accountId,
+        ruleId: params.ruleId,
+        activationRef: params.activationRef,
+        feedbackIds: entries.map((entry) => entry.feedbackId).toSorted(),
+      }),
+      observedExitCount: entries.length,
+      instrumentCount: new Set(entries.map((entry) => entry.instrument)).size,
+      partialExitCount: entries.filter((entry) => entry.exitQuantity < entry.entryQuantity).length,
+      grossPnl: entries.reduce((sum, entry) => sum + entry.grossPnl, 0),
+      netPnl: null,
+      fees: "not_attributed",
+      boundary: "owned_protective_exits_only_not_all_method_trades_or_independent_trials",
+    },
     entries: selected.map(({ historyRef: _historyRef, ...entry }) => entry),
     boundary: "broker_parent_leg_entry_binding_not_new_execution_receipt_or_strategy_alpha",
   });

@@ -2117,6 +2117,17 @@ it.each(["retain", "change", "ignore", "wrong_value", "wrong_account"] as const)
       asOf: intradayRequest.asOf,
       historyRef: "d".repeat(64),
       entries: [entry],
+      methodSummary: {
+        sourceRef: "f".repeat(64),
+        observedExitCount: 4,
+        instrumentCount: 3,
+        partialExitCount: 1,
+        grossPnl: -150,
+        netPnl: null,
+        fees: "not_attributed" as const,
+        boundary:
+          "owned_protective_exits_only_not_all_method_trades_or_independent_trials" as const,
+      },
       boundary:
         "broker_parent_leg_entry_binding_not_new_execution_receipt_or_strategy_alpha" as const,
     };

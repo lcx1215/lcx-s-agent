@@ -922,6 +922,15 @@ it.each([
       if (fault !== "linked" && fault !== "other_candidate") {
         expect(feedback).toBeUndefined();
       } else {
+        expect(feedback?.methodSummary).toMatchObject({
+          observedExitCount: 1,
+          instrumentCount: 1,
+          partialExitCount: 0,
+          grossPnl: -57,
+          netPnl: null,
+          fees: "not_attributed",
+          sourceRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        });
         expect(feedback?.entries[0]).toMatchObject({
           signalId: "entry-signal",
           instrument: "SPY",
