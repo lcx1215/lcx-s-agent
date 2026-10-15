@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout CLI
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -51,6 +53,20 @@ jobs:
 
       - name: Set up Docker Builder
         uses: docker/setup-buildx-action@v3
+
+      - name: Build changed sandbox images
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" ]]; then
+            git diff --name-only "$BASE_SHA" HEAD -- Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+          else
+            printf '%s\n' Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+          fi
+          while IFS= read -r dockerfile; do
+            [[ -n "$dockerfile" ]] || continue
+            docker build -t "lcx-sandbox-validation:${dockerfile#Dockerfile.}" -f "$dockerfile" .
+          done < "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
 
       - name: Run root Dockerfile CLI smoke
         run: |

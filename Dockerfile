@@ -1,15 +1,15 @@
 # Builds the primary LCX Agent gateway and CLI container image.
-FROM node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
+FROM node:22-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8
 
 # OCI base-image metadata for downstream image consumers.
 # If you change these annotations, also update:
 # - docs/install/docker.md ("Base image metadata" section)
-# - https://docs.openclaw.ai/install/docker
+# - https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md
 LABEL org.opencontainers.image.base.name="docker.io/library/node:22-bookworm" \
-  org.opencontainers.image.base.digest="sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935" \
+  org.opencontainers.image.base.digest="sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8" \
   org.opencontainers.image.source="https://github.com/lcx1215/lcx-s-agent" \
   org.opencontainers.image.url="https://github.com/lcx1215/lcx-s-agent" \
-  org.opencontainers.image.documentation="https://docs.openclaw.ai/install/docker" \
+  org.opencontainers.image.documentation="https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md" \
   org.opencontainers.image.licenses="MIT" \
   org.opencontainers.image.title="LCX Agent" \
   org.opencontainers.image.description="LCX Agent gateway and CLI runtime container image"
