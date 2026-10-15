@@ -10,13 +10,340 @@ import {
   compactFinanceResearchSummary,
   buildControllerNightResearchTargets,
   run,
+  readControllerResearchInput,
 } from "../../scripts/operator/lcx-finance-research-run.ts";
 import {
   FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
   FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
   FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+  readFinanceActiveStrategyResearchScope,
 } from "../../src/agents/finance-night-review-context.ts";
-import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.js";
+import { assertFinanceResearchRuleUse } from "../../src/agents/finance-research-portfolio-plan.js";
+import {
+  runFinanceResearchRun,
+  type FinanceResearchRunReceipt,
+} from "../../src/agents/finance-research-runner.js";
+import {
+  declareFinanceStrategyRule,
+  activateFinanceStrategyRule,
+} from "../../src/agents/finance-strategy-rule-ledger.js";
+
+describe("controller rule-use validation", () => {
+  async function prepare() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-rule-use-"));
+    const asOf = "2026-10-05T19:30:00.000Z";
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "original-rule",
+      form: "trend",
+      instruments: ["SPY"],
+      emits: "weights",
+      schedule: { kind: "daily" },
+      body: { frozenRule: { lookbackMonths: 6, budgetFraction: 0.4 } },
+      observedAt: "2026-10-01T00:00:00Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "original-rule",
+      observedAt: "2026-10-02T00:00:00Z",
+    });
+    const scope = await readFinanceActiveStrategyResearchScope({
+      directory,
+      asOf,
+      strategyIds: ["original-rule"],
+    });
+    const evidence = structuredClone([...scope.evidence]);
+    const active = evidence.find((item) => item.id === "finance-controller:active-strategies")!;
+    const portfolioContext = {
+      accountId: "private-rule-observer",
+      venue: "paper" as const,
+      validityMinutes: 60,
+      conflictPolicy: "block" as const,
+      activeStrategyIds: ["original-rule"],
+      requiredInstruments: ["SPY"],
+    };
+    const use = {
+      source: { ...scope.source, selectedRuleIds: [...scope.source.selectedRuleIds] },
+      accountScope: { accountId: portfolioContext.accountId, venue: portfolioContext.venue, asOf },
+      evidence: { id: active.id, sha256: createHash("sha256").update(active.text).digest("hex") },
+    };
+    return { directory, asOf, scope, evidence, active, portfolioContext, use };
+  }
+  it("validates an original ledger read without claiming the account owns the rule ledger", async () => {
+    const fixture = await prepare();
+    try {
+      expect(() =>
+        assertFinanceResearchRuleUse(
+          fixture.use,
+          fixture.evidence,
+          fixture.portfolioContext,
+          fixture.asOf,
+        ),
+      ).not.toThrow();
+      expect(assertFinanceResearchRuleUse(undefined, [], undefined, fixture.asOf)).toBeUndefined();
+    } finally {
+      await fs.rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+  it.each(["parent_run", "finance_state_dir"] as const)(
+    "rejects %s in the original runner before a valid rule packet can return a dry plan",
+    async (fault) => {
+      const fixture = await prepare();
+      try {
+        const use = assertFinanceResearchRuleUse(
+          fixture.use,
+          fixture.evidence,
+          fixture.portfolioContext,
+          fixture.asOf,
+        );
+        if (!use) {
+          throw new Error("original valid rule-use packet missing");
+        }
+        const model = vi.fn().mockRejectedValue(new Error("model forbidden"));
+        await expect(
+          runFinanceResearchRun({
+            input: {
+              ask: "Review the original active rule without executing trades.",
+              asOf: fixture.asOf,
+              decisionMode: "strategy_candidate",
+              portfolioContext: fixture.portfolioContext,
+              controllerEvidence: fixture.evidence,
+              controllerRuleUse:
+                fault === "parent_run" ? { ...use, parentRunId: "foreign-unbound-parent" } : use,
+            },
+            financeStateDir:
+              fault === "finance_state_dir"
+                ? path.join(fixture.directory, "foreign-rule-owner")
+                : fixture.directory,
+            workspaceDir: fixture.directory,
+            liveFetch: false,
+            allowProviderCalls: false,
+            modelInvoker: model,
+            batchOptions: { realtimeAdapters: [], collectionAdapters: [] },
+          }),
+        ).rejects.toThrow(
+          fault === "parent_run"
+            ? "controller rule use parent run mismatch"
+            : "controller rule use finance state directory mismatch",
+        );
+        expect(model).not.toHaveBeenCalled();
+      } finally {
+        await fs.rm(fixture.directory, { recursive: true, force: true });
+      }
+    },
+  );
+  it.each(["missing", "hash", "body", "selected_ids", "account", "venue", "asof"] as const)(
+    "rejects %s controller rule-use provenance before research",
+    async (fault) => {
+      const fixture = await prepare();
+      try {
+        if (fault === "missing") {
+          fixture.evidence.splice(fixture.evidence.indexOf(fixture.active), 1);
+        }
+        if (fault === "hash") {
+          fixture.use.evidence.sha256 = "0".repeat(64);
+        }
+        if (fault === "body") {
+          const body = JSON.parse(fixture.active.text) as {
+            activeRules: Array<{ body: { frozenRule: { budgetFraction: number } } }>;
+          };
+          body.activeRules[0].body.frozenRule.budgetFraction = 0.9;
+          const activeIndex = fixture.evidence.indexOf(fixture.active);
+          fixture.active = { ...fixture.active, text: JSON.stringify(body) };
+          fixture.evidence[activeIndex] = fixture.active;
+          // Rehash the envelope: the distinct selected-rule fingerprint must still reject replacement.
+          fixture.use.evidence.sha256 = createHash("sha256")
+            .update(fixture.active.text)
+            .digest("hex");
+        }
+        if (fault === "selected_ids") {
+          fixture.use.source.selectedRuleIds = ["foreign-rule"];
+        }
+        if (fault === "account") {
+          fixture.use.accountScope.accountId = "foreign-account";
+        }
+        if (fault === "venue") {
+          Object.assign(fixture.use.accountScope, { venue: "alpaca" });
+        }
+        if (fault === "asof") {
+          fixture.use.accountScope.asOf = "2026-10-06T19:30:00.000Z";
+        }
+        expect(() =>
+          assertFinanceResearchRuleUse(
+            fixture.use,
+            fixture.evidence,
+            fixture.portfolioContext,
+            fixture.asOf,
+          ),
+        ).toThrow();
+      } finally {
+        await fs.rm(fixture.directory, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("scheduled controller handoff input", () => {
+  async function prepare() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-controller-handoff-"));
+    const asOf = "2026-10-05T19:30:00.000Z";
+    const portfolioContext = {
+      accountId: "private-test-account",
+      venue: "paper" as const,
+      validityMinutes: 60,
+      conflictPolicy: "block" as const,
+      activeStrategyIds: ["private-rule"],
+      requiredInstruments: ["SPY"],
+    };
+    const controllerEvidence = [
+      {
+        id: "private-controller",
+        source: "private-source",
+        timestamp: asOf,
+        text: "Explicit local observation only; no execution authority.",
+      },
+    ];
+    const evidencePath = path.join(directory, "controller-evidence.json");
+    const contextPath = path.join(directory, "portfolio-context.json");
+    const handoffPath = path.join(directory, "controller-handoff.json");
+    const evidenceBytes = Buffer.from(JSON.stringify(controllerEvidence) + "\n");
+    const contextBytes = Buffer.from(JSON.stringify(portfolioContext) + "\n");
+    await fs.writeFile(evidencePath, evidenceBytes);
+    await fs.writeFile(contextPath, contextBytes);
+    const pin = (file: string, bytes: Buffer) => ({
+      path: file,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+    const manifest = {
+      schemaVersion: "finance_scheduled_research_handoff_v1",
+      sourceScope: {
+        runId: "e47e3bd0-c7ef-44f0-a4c8-f6bc5df2f2ad",
+        accountId: portfolioContext.accountId,
+        venue: portfolioContext.venue,
+        asOf,
+      },
+      inputs: {
+        controllerEvidence: pin(evidencePath, evidenceBytes),
+        portfolioContext: pin(contextPath, contextBytes),
+      },
+    };
+    return {
+      directory,
+      asOf,
+      portfolioContext,
+      controllerEvidence,
+      evidencePath,
+      contextPath,
+      handoffPath,
+      manifest,
+    };
+  }
+  async function options(fixture: Awaited<ReturnType<typeof prepare>>, includeManifest = true) {
+    const bytes = Buffer.from(JSON.stringify(fixture.manifest) + "\n");
+    await fs.writeFile(fixture.handoffPath, bytes);
+    return {
+      bytes,
+      parsed: parseArgs([
+        "--live",
+        "--workflow-models",
+        "--write",
+        "--decision-mode",
+        "strategy_candidate",
+        "--controller-evidence",
+        fixture.evidencePath,
+        "--portfolio-context",
+        fixture.contextPath,
+        ...(includeManifest
+          ? [
+              "--controller-handoff",
+              fixture.handoffPath,
+              "--controller-handoff-sha256",
+              createHash("sha256").update(bytes).digest("hex"),
+            ]
+          : []),
+      ]),
+    };
+  }
+  it("reads the original pinned inputs and retains the independent scheduler source scope", async () => {
+    const fixture = await prepare();
+    try {
+      const input = await options(fixture);
+      const read = await readControllerResearchInput(input.parsed, fixture.asOf);
+      expect(read.controllerEvidence).toEqual(fixture.controllerEvidence);
+      expect(read.portfolioContext).toEqual(fixture.portfolioContext);
+      expect(read.controllerHandoff).toMatchObject({
+        ...fixture.manifest,
+        producer: {
+          sha256: createHash("sha256").update(input.bytes).digest("hex"),
+          bytes: input.bytes.length,
+        },
+      });
+      expect(read.controllerHandoff?.producer.path).toBe(input.parsed.controllerHandoffPath);
+    } finally {
+      await fs.rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+  it.each([
+    "manifest_hash",
+    "evidence_hash",
+    "context_bytes",
+    "input_path",
+    "account",
+    "venue",
+    "asof",
+  ] as const)("rejects %s before returning controller inputs", async (fault) => {
+    const fixture = await prepare();
+    try {
+      if (fault === "input_path") {
+        fixture.manifest.inputs.controllerEvidence.path = path.join(
+          fixture.directory,
+          "other-evidence.json",
+        );
+      }
+      if (fault === "account") {
+        fixture.manifest.sourceScope.accountId = "other-private-account";
+      }
+      if (fault === "venue") {
+        Object.assign(fixture.manifest.sourceScope, { venue: "alpaca" });
+      }
+      if (fault === "asof") {
+        fixture.manifest.sourceScope.asOf = "2026-10-06T19:30:00.000Z";
+      }
+      const input = await options(fixture);
+      if (fault === "manifest_hash") {
+        await fs.appendFile(fixture.handoffPath, " ");
+      }
+      if (fault === "evidence_hash") {
+        await fs.writeFile(
+          fixture.evidencePath,
+          JSON.stringify([{ ...fixture.controllerEvidence[0], text: "Replaced source bytes." }]) +
+            "\n",
+        );
+      }
+      if (fault === "context_bytes") {
+        await fs.appendFile(fixture.contextPath, " ");
+      }
+      await expect(readControllerResearchInput(input.parsed, fixture.asOf)).rejects.toThrow(
+        /handoff|controller|portfolio|hash|scope/iu,
+      );
+    } finally {
+      await fs.rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+  it("preserves legacy unbound input reads without fabricating a source scope", async () => {
+    const fixture = await prepare();
+    try {
+      const input = await options(fixture, false);
+      const read = await readControllerResearchInput(input.parsed, fixture.asOf);
+      expect(read.controllerEvidence).toEqual(fixture.controllerEvidence);
+      expect(read.portfolioContext).toEqual(fixture.portfolioContext);
+      expect(read.controllerHandoff).toBeUndefined();
+    } finally {
+      await fs.rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("finance research thesis persistence option", () => {
   it("defaults to declared model capacity and accepts positive safe-integer token overrides", () => {
@@ -74,6 +401,27 @@ describe("finance research thesis persistence option", () => {
 });
 
 describe("controller-owned night research scope", () => {
+  it("uses equity close evidence for night review without requesting execution quotes", () => {
+    const targets = buildControllerNightResearchTargets({
+      ask: "Night review current portfolio risk, fresh news and latest evidence.",
+      asOf: "2026-10-09T21:43:57.204Z",
+      horizonMonths: 6,
+      instruments: [
+        { instrument: "SPY", assetClass: "us_equity", reasons: ["held_position"] },
+        { instrument: "BTC/USD", assetClass: "crypto", reasons: ["held_position"] },
+      ],
+    });
+    const equity = targets.find((target) => target.instrument === "SPY");
+    expect(equity?.realtime).toBe(false);
+    expect(equity?.collections?.map((collection) => collection.collection)).toEqual([
+      "eod_history",
+      "news",
+    ]);
+    expect(targets.find((target) => target.instrument === "BTC/USD")?.realtime).toMatchObject({
+      freshnessMaxMinutes: 30,
+    });
+  });
+
   it("requires explicit evidence, exact finance root, and research-only mode", () => {
     expect(() => parseArgs(["--controller-research-scope"])).toThrow(
       /requires --controller-evidence/,
@@ -336,6 +684,13 @@ it("keeps the scheduler protocol parseable while full evidence stays in the rece
     plan: { asOf: "2026-09-29T00:00:00Z" },
     written: { datedPath: "/synthetic/research.json", latestPath: "/synthetic/latest.json" },
     portfolioPlanWritten: "/synthetic/plan.json",
+    portfolioPlanWrite: {
+      path: "/synthetic/plan.json",
+      sha256: "a".repeat(64),
+      asOf: "2026-09-29T00:00:00Z",
+      accountId: "paper-account",
+      venue: "paper" as const,
+    },
     unusedEvidence: "x".repeat(100000),
   };
   const compact = compactFinanceResearchSummary(summary);
@@ -345,6 +700,7 @@ it("keeps the scheduler protocol parseable while full evidence stays in the rece
     plan: summary.plan,
     written: summary.written,
     portfolioPlanWritten: summary.portfolioPlanWritten,
+    portfolioPlanWrite: summary.portfolioPlanWrite,
   });
   expect(compact).not.toHaveProperty("unusedEvidence");
   expect(parseArgs(["--scheduler-summary"]).json).toBe(true);

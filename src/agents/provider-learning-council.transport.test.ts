@@ -417,3 +417,54 @@ describe("council optional role retirement", () => {
     }
   });
 });
+
+describe("original council caller cancellation", () => {
+  it("passes the caller signal to the original agent command and refuses late success before artifact persistence", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-cancel-"));
+    const controller = new AbortController();
+    let release!: (value: unknown) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    hoisted.agentCommandMock.mockReset();
+    hoisted.agentCommandMock.mockImplementation((opts: { abortSignal?: AbortSignal }) => {
+      expect(opts.abortSignal).toBe(controller.signal);
+      entered();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    vi.stubEnv("LCX_LEARNING_COUNCIL_TRANSPORT", "in-process");
+    try {
+      const operation = runExternalLearningCouncil({
+        cfg: {
+          agents: { defaults: { models: { "custom-api-deepseek-com/deepseek-v4-flash": {} } } },
+        },
+        userMessage: "offline cancellation evidence",
+        routeAgentId: "main",
+        sessionKey: "offline-cancel",
+        messageId: "cancelled",
+        workspaceDir,
+        abortSignal: controller.signal,
+      });
+      const failed = expect(operation).rejects.toThrow("learning_council_cancelled");
+      await started;
+      controller.abort();
+      release({
+        payloads: [{ text: "late result must not become completion" }],
+        meta: { agentMeta: { provider: "custom-api-deepseek-com", model: "deepseek-v4-flash" } },
+      });
+      await failed;
+      expect(hoisted.agentCommandMock).toHaveBeenCalledTimes(1);
+      await expect(
+        fs.access(
+          path.join(workspaceDir, buildLearningCouncilArtifactJsonRelativePath("cancelled")),
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -6,6 +6,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recordAgentArtifact } from "../src/agents/artifact-result-recording.js";
+import { buildCentralGovernanceInput } from "../src/agents/central-harness/governance-input.js";
 import type { OpenClawConfig } from "../src/config/config.js";
 import { ArtifactStore } from "../src/memory/artifact-store.js";
 import {
@@ -19,7 +20,7 @@ import {
 type Run = {
   id: string;
   parsed: boolean;
-  ok?: boolean;
+  ok: boolean | undefined;
   exitCode: number;
   payload?: Record<string, unknown>;
   compact: {
@@ -31,6 +32,8 @@ type Run = {
       sourceTimeBasis: string;
     };
     sourceObservedAt?: string;
+    changedFilesReadback?: unknown;
+    strayGate?: unknown;
   };
   runReceipt: LcxRunReceipt;
 };
@@ -311,3 +314,93 @@ it("malformed stdout creates no fabricated payload, while central keeps its orig
   expect(await instance.captureOwnerRun(central, { ok: true })).toBe(central);
   expect(recorder).not.toHaveBeenCalled();
 });
+
+it.each(["git_status_failed", "git_status_timed_out"])(
+  "keeps %s visible through the original collector and central input",
+  async (reason) => {
+    const payload = {
+      ok: false,
+      checkedAt: snapshot.observedAt,
+      boundary: "local_change_impact_plan_only",
+      changedFiles: [],
+      changedFilesReadback: { source: "git", status: "unavailable", reason },
+      strayGate: { ok: false, unmatchedChangedFiles: [], nextAction: "restore Git evidence" },
+      affectedLanes: [],
+      unmatchedFiles: [],
+    };
+    const instance = harness({ exec: async () => ({ stdout: JSON.stringify(payload) }) });
+    const run = await instance.runOwner(
+      { id: "changeImpact", script: "scripts/operator/lcx-change-impact-plan.ts", required: true },
+      { snapshot },
+    );
+    expect(run.runReceipt.status).toBe("blocked");
+    expect(run.compact.changedFilesReadback).toEqual(payload.changedFilesReadback);
+    expect(run.compact.strayGate).toEqual(payload.strayGate);
+    const centralInput = buildCentralGovernanceInput([run], {
+      parentRunId: "private-governance-parent",
+      snapshot,
+    });
+    expect(centralInput.byOwner.changeImpact).toMatchObject({
+      ok: false,
+      compact: {
+        changedFilesReadback: payload.changedFilesReadback,
+        strayGate: payload.strayGate,
+      },
+    });
+    await assertOriginal(run, payload, snapshot.observedAt);
+    if (process.env.LCX_CHANGE_IMPACT_GOVERNANCE_PROOF_DIR) {
+      await fs.mkdir(process.env.LCX_CHANGE_IMPACT_GOVERNANCE_PROOF_DIR, { recursive: true });
+      await fs.writeFile(
+        path.join(process.env.LCX_CHANGE_IMPACT_GOVERNANCE_PROOF_DIR, `${reason}.json`),
+        JSON.stringify({ payload, run, centralInput, modelCalled: false }, null, 2) + "\n",
+      );
+    }
+  },
+);
+
+it.skipIf(!process.env.LCX_CHANGE_IMPACT_NATIVE_PROOF_PATH)(
+  "consumes the retained original change-impact failure body into central input",
+  async () => {
+    const inputPath = process.env.LCX_CHANGE_IMPACT_NATIVE_PROOF_PATH!;
+    const bytes = await fs.readFile(inputPath);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(sha256).toBe(process.env.LCX_CHANGE_IMPACT_NATIVE_PROOF_SHA256);
+    const payload = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+    expect(payload.ok).toBe(false);
+    expect(payload.changedFilesReadback).toMatchObject({ source: "git", status: "unavailable" });
+    const instance = harness({ exec: async () => ({ stdout: bytes.toString("utf8") }) });
+    const run = await instance.runOwner(
+      { id: "changeImpact", script: "scripts/operator/lcx-change-impact-plan.ts", required: true },
+      { snapshot },
+    );
+    const centralInput = buildCentralGovernanceInput([run], {
+      parentRunId: "private-governance-parent",
+      snapshot,
+    });
+    expect(run.runReceipt.status).toBe("blocked");
+    expect(centralInput.byOwner.changeImpact.compact.changedFilesReadback).toEqual(
+      payload.changedFilesReadback,
+    );
+    expect(centralInput.byOwner.changeImpact.compact.strayGate).toEqual(payload.strayGate);
+    if (process.env.LCX_CHANGE_IMPACT_GOVERNANCE_PROOF_DIR) {
+      await fs.writeFile(
+        path.join(
+          process.env.LCX_CHANGE_IMPACT_GOVERNANCE_PROOF_DIR,
+          "native-source-to-central.json",
+        ),
+        JSON.stringify(
+          {
+            producer: { path: inputPath, sha256 },
+            actualProducerPayload: payload,
+            run,
+            centralInput,
+            boundary:
+              "retained_original_CLI_output_at_lowest_exec_IO_original_collector_and_Central_input_no_model_cycle",
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    }
+  },
+);

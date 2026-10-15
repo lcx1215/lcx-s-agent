@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -36,7 +37,11 @@ async function fixture() {
 describe("database artifact feedback through existing production entries (offline scripted)", () => {
   it("records a normal agent tool once, finds its result, and reads a selected mathematical fact", async () => {
     const host = await fixture();
-    const tools = createOpenClawCodingTools({ ...host, agentId: "main" });
+    const tools = createOpenClawCodingTools({
+      ...host,
+      agentId: "main",
+      runId: "ordinary-artifact-invocation",
+    });
     const quant = tools.find((tool) => tool.name === "quant_math")!;
     const recall = tools.find((tool) => tool.name === "artifact_memory_recall")!;
     const result = await quant.execute("quant-result", {
@@ -55,6 +60,18 @@ describe("database artifact feedback through existing production entries (offlin
       field: "/value/details/beta",
     });
     expect(read.details).toMatchObject({ available: true, selectedValue: 7 });
+    const lineage = await recall.execute("read-lineage", {
+      action: "read",
+      id: found.latestArtifactId,
+      field: "/invocation",
+    });
+    expect(lineage.details).toMatchObject({
+      available: true,
+      selectedValue: {
+        runId: "ordinary-artifact-invocation",
+        workspaceId: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+    });
     const { DatabaseSync } = requireNodeSqlite();
     const db = new DatabaseSync(host.dbPath, { readOnly: true });
     try {
@@ -72,8 +89,10 @@ describe("database artifact feedback through existing production entries (offlin
       const capabilities = new Set(["quant_math", "artifact_memory_recall"]);
       const registry = new Map([...fullRegistry].filter(([id]) => capabilities.has(id)));
       const receipts: CentralRunReceipt[] = [];
+      let cycleIndex = 0;
       const cycle = async (ownerId: string, args: Record<string, unknown>) => {
         const receipt = await runCentralHarnessCycle({
+          runId: `artifact-invocation-${beta}-${cycleIndex++}`,
           perception: {
             observedAt: new Date().toISOString(),
             ownerTotals: {},
@@ -97,10 +116,11 @@ describe("database artifact feedback through existing production entries (offlin
         expect(receipt.brainCall.modelCall).toBeUndefined();
         return receipt;
       };
-      await cycle("quant_math", {
+      const produced = await cycle("quant_math", {
         action: "linear_regression",
         series: [beta, beta * 2, beta * 3],
         benchmark: [1, 2, 3],
+        invocationRunId: "model-selected-run",
       });
       // Exercise result recovery independent of the original in-context mathematical digest.
       receipts.splice(0);
@@ -110,6 +130,19 @@ describe("database artifact feedback through existing production entries (offlin
       });
       const id = searched.steps[0].outcome?.latestArtifactId;
       expect(id).toEqual(expect.any(String));
+      const lineage = await cycle("artifact_memory_recall", {
+        action: "read",
+        id,
+        field: "/invocation",
+      });
+      expect(lineage.steps[0].outcome).toMatchObject({
+        available: true,
+        selectedValue: {
+          runId: produced.runId,
+          workspaceId: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      });
+      expect(lineage.runId).not.toBe(produced.runId);
       const read = await cycle("artifact_memory_recall", {
         action: "read",
         id,
@@ -135,6 +168,46 @@ describe("database artifact feedback through existing production entries (offlin
           ? "measure scaling bottleneck"
           : "retain baseline";
       expect(decision).toBe(beta === 7 ? "measure scaling bottleneck" : "retain baseline");
+      const proofDirectory = process.env.LCX_INVOCATION_LINEAGE_PROOF_DIR;
+      if (proofDirectory) {
+        await fs.mkdir(proofDirectory, { recursive: true });
+        const producerBytes = await fs.readFile(
+          path.join(
+            host.workspaceDir,
+            "state/artifacts",
+            `${String(read.steps[0].outcome?.sourceSha256)}.json`,
+          ),
+        );
+        const producerPath = path.join(proofDirectory, `beta-${beta}-original-artifact.json`);
+        const consumerPath = path.join(proofDirectory, `beta-${beta}-native-cycles.json`);
+        await fs.writeFile(producerPath, producerBytes);
+        await fs.writeFile(
+          consumerPath,
+          JSON.stringify({ produced, searched, lineage, read, decision }, null, 2) + "\n",
+        );
+        await fs.writeFile(
+          path.join(proofDirectory, `beta-${beta}-manifest.json`),
+          JSON.stringify(
+            {
+              producer: {
+                path: producerPath,
+                sha256: createHash("sha256").update(producerBytes).digest("hex"),
+              },
+              consumer: {
+                path: consumerPath,
+                sha256: createHash("sha256")
+                  .update(await fs.readFile(consumerPath))
+                  .digest("hex"),
+              },
+              environment: "offline_scripted_original_entries",
+              naturalAdoption: "not_proven",
+              providerCalled: false,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
     },
   );
 });
@@ -381,6 +454,97 @@ describe("bounded artifact evidence and unavailable-result feedback", () => {
     expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(
       CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES,
     );
+  });
+
+  it("recovers an omitted rule body by its exact child pointer and binds the following judgment", async () => {
+    const body = {
+      frozenRule: { exit: "Exit at session close", stopLoss: "ATR based stop" },
+      explanation: "rule context ".repeat(150),
+    };
+    const { receipt, options, artifact, capabilities } = await readCycle(
+      {
+        accountId: "paper-A",
+        venue: "paper",
+        rules: Array.from({ length: 4 }, (_, index) => ({
+          ruleId: `rule-${index}`,
+          instrument: "SPY",
+          body,
+        })),
+      },
+      "/value/rules",
+    );
+    expect(receipt.steps[0].outcomeDroppedKeys).toContain("selectedValue");
+    const hints = receipt.steps[0].outcome?.selectionHints as Array<{ field: string }>;
+    const pointer = hints.find((hint) => hint.field.endsWith("/body"))!.field;
+    const narrow = await runCentralHarnessCycle({
+      ...options,
+      perception: { ...options.perception, backlog: compactReceipts([receipt], 10, capabilities) },
+      brain: {
+        propose: async (perception) => {
+          expect(
+            (perception.backlog[0].outcomes as CompactBacklogEntry["outcomes"])[0].outcome
+              ?.selectionGap,
+          ).toBe("selected_field_exceeds_step_budget");
+          return {
+            kind: "proposed",
+            provider: "fixture",
+            modelId: "scripted",
+            plan: {
+              actions: [
+                {
+                  ownerId: "artifact_memory_recall",
+                  args: { action: "read", id: artifact.id, field: pointer },
+                },
+              ],
+              note: "Read the omitted rule body",
+            },
+          };
+        },
+      },
+    });
+    expect(narrow.steps[0].outcome?.selectedValue).toEqual(body);
+    expect(narrow.steps[0].outcome?.sourceSha256).toBe(artifact.sha256);
+    const next = await runCentralHarnessCycle({
+      ...options,
+      perception: {
+        ...options.perception,
+        backlog: compactReceipts([receipt, narrow], 10, capabilities),
+      },
+      brain: {
+        propose: async (perception) => {
+          const read = perception.backlog
+            .flatMap((item) => item.outcomes as CompactBacklogEntry["outcomes"])
+            .find((step) => step.outcome?.field === pointer)!;
+          expect(read.outcome?.selectedValue).toEqual(body);
+          return {
+            kind: "proposed",
+            provider: "fixture",
+            modelId: "scripted",
+            plan: {
+              actions: [],
+              note: "Retain the session-close exit",
+              evidenceUse: [
+                {
+                  artifactId: artifact.id!,
+                  sourceSha256: artifact.sha256!,
+                  field: pointer,
+                  effect: "retain",
+                  reason: "The frozen exit requires session close; do not infer an always-on exit.",
+                },
+              ],
+            },
+          };
+        },
+      },
+    });
+    expect(next.evidenceUse?.[0]).toMatchObject({
+      verification: "reference_verified",
+      scope: { accountId: "paper-A", venue: "paper", instrument: "SPY" },
+      reason: expect.stringContaining("session close"),
+    });
+    expect(next.ontologyEdges?.some((edge) => edge.object.id === "accountId:paper-A")).toBe(true);
+    expect(next.liveTouched).toBe(false);
+    expect(next.contextBudget?.overBudget).toBe(false);
   });
 
   it("does not expand an unselected full-document read", async () => {

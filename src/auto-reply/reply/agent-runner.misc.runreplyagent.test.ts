@@ -8,6 +8,7 @@ import { loadSessionStore, saveSessionStore } from "../../config/sessions.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../../infra/system-events.js";
 import type { TemplateContext } from "../templating.js";
+import type { GetReplyOptions } from "../types.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
 import { createMockTypingController } from "./test-helpers.js";
 
@@ -115,25 +116,27 @@ describe("runReplyAgent onAgentRunStart", () => {
   function createRun(params?: {
     provider?: string;
     model?: string;
-    opts?: {
-      runId?: string;
-      onAgentRunStart?: (runId: string) => void;
-    };
+    ask?: string;
+    extraSystemPrompt?: string;
+    opts?: GetReplyOptions;
   }) {
     const provider = params?.provider ?? "anthropic";
     const model = params?.model ?? "claude";
+    const ask = params?.ask ?? "hello";
     const typing = createMockTypingController();
     const sessionCtx = {
       Provider: "webchat",
       OriginatingTo: "session:1",
       AccountId: "primary",
       MessageSid: "msg",
+      ...(params?.ask !== undefined ? { CommandBody: ask } : {}),
     } as unknown as TemplateContext;
     const resolvedQueue = { mode: "interrupt" } as unknown as QueueSettings;
     const followupRun = {
-      prompt: "hello",
+      prompt: ask,
       summaryLine: "hello",
       enqueuedAt: Date.now(),
+      ...(params?.ask !== undefined ? { commercialAuditAsk: ask, messageId: "msg" } : {}),
       run: {
         sessionId: "session",
         sessionKey: "main",
@@ -154,11 +157,14 @@ describe("runReplyAgent onAgentRunStart", () => {
         },
         timeoutMs: 1_000,
         blockReplyBreak: "message_end",
+        ...(params?.extraSystemPrompt !== undefined
+          ? { extraSystemPrompt: params.extraSystemPrompt }
+          : {}),
       },
     } as unknown as FollowupRun;
 
     return runReplyAgent({
-      commandBody: "hello",
+      commandBody: ask,
       followupRun,
       queueKey: "main",
       resolvedQueue,
@@ -179,6 +185,62 @@ describe("runReplyAgent onAgentRunStart", () => {
     });
   }
 
+  it.each(["anthropic", "claude-cli"] as const)(
+    "commercial planning advisory reaches the actual %s model callback before generation",
+    async (provider) => {
+      const ask = "当前 QQQ 的价格和数据来源有哪些缺口？";
+      const model = provider === "claude-cli" ? "opus-4.5" : "claude";
+      const target = provider === "claude-cli" ? runCliAgentMock : runEmbeddedPiAgentMock;
+      target.mockResolvedValueOnce({ payloads: [], meta: {} });
+      await createRun({
+        provider,
+        model,
+        ask,
+        extraSystemPrompt: "existing host instruction",
+        opts: {
+          runId: "planning-main-run",
+          commercialAnswerAudit: {
+            messageId: "msg",
+            askSha256: crypto.createHash("sha256").update(ask).digest("hex"),
+            input: { calculations: [] },
+          },
+        },
+      });
+      expect(target).toHaveBeenCalledTimes(1);
+      const input = target.mock.calls[0][0] as {
+        prompt: string;
+        extraSystemPrompt: string;
+        runId: string;
+      };
+      expect(input.prompt).toBe(ask);
+      expect(input.runId).toBe("planning-main-run");
+      expect(input.extraSystemPrompt).toContain(
+        "existing host instruction\n\nLCX predecision advisory",
+      );
+      expect(input.extraSystemPrompt).toContain("finance_data_gateway");
+      if (process.env.LCX_COMMERCIAL_PLANNING_PROOF_DIR) {
+        await fs.mkdir(process.env.LCX_COMMERCIAL_PLANNING_PROOF_DIR, { recursive: true });
+        await fs.writeFile(
+          path.join(process.env.LCX_COMMERCIAL_PLANNING_PROOF_DIR, `main-${provider}.json`),
+          JSON.stringify(
+            {
+              boundary:
+                "actual_original_main_model_callback_with_model_transport_mock_no_semantic_adoption",
+              input,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
+    },
+  );
+  it("commercial planning advisory leaves the actual legacy callback prompt unchanged", async () => {
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [], meta: {} });
+    await createRun({ extraSystemPrompt: "unchanged host prompt" });
+    expect(runEmbeddedPiAgentMock.mock.calls[0][0].extraSystemPrompt).toBe("unchanged host prompt");
+  });
+
   it("does not emit start callback when fallback fails before run start", async () => {
     runWithModelFallbackMock.mockRejectedValueOnce(
       new Error('No API key found for provider "anthropic".'),
@@ -191,7 +253,9 @@ describe("runReplyAgent onAgentRunStart", () => {
 
     expect(onAgentRunStart).not.toHaveBeenCalled();
     expect(result).toMatchObject({
-      text: expect.stringContaining('No API key found for provider "anthropic".'),
+      text: expect.stringContaining("Agent failed before reply"),
+      isError: true,
+      replyToId: "msg",
     });
   });
 
@@ -1729,5 +1793,223 @@ describe("runReplyAgent transient HTTP retry", () => {
 
     const payload = Array.isArray(result) ? result[0] : result;
     expect(payload?.text).toContain("Recovered response");
+  });
+});
+
+describe("original reply outlet council completion handoff", () => {
+  const ask = "Kimi、MiniMax、DeepSeek 三个模型意见不一致时，谁来裁决？";
+  const candidate =
+    "Kimi、MiniMax、DeepSeek 已完成独立审阅，各自角色产出已经分别记录。裁决原则：证据排序优先，先查原始来源、时间戳和可复现的事实，再比较反例和证据缺口。LCX 本地 gate 和审阅流程是最终裁判，不按模型多数票、模型名气或本地记忆直接选结论。当前没有原始来源，分歧维持未解决；下一步补原文与数据口径。";
+  const messageId = "offline-council-handoff";
+  const proofs: Record<string, unknown> = {};
+  async function evidence() {
+    const sourcePath = process.env.LCX_WATERFLOW_REPLY_COUNCIL_ARTIFACT;
+    const content = sourcePath
+      ? await fs.readFile(sourcePath, "utf8")
+      : JSON.stringify({
+          version: 2,
+          generatedAt: "2026-10-11T00:00:00Z",
+          messageId,
+          userMessage: ask,
+          status: "full",
+          roles: [
+            ["kimi", "moonshot", "kimi-k2.6"],
+            ["minimax", "minimax-portal", "MiniMax-M2.7"],
+            ["deepseek", "custom-api-deepseek-com", "deepseek-v4-flash"],
+          ].map(([role, provider, model]) => ({
+            role,
+            model: `${provider}/${model}`,
+            actualProvider: provider,
+            actualModel: model,
+            requestedModelHealth: "healthy",
+            success: true,
+            text: "来源缺失，分歧仍未解决。",
+          })),
+        });
+    return {
+      messageId,
+      content,
+      sha256: crypto.createHash("sha256").update(content).digest("hex"),
+    };
+  }
+  async function run(
+    params: {
+      text?: string;
+      userMessage?: string;
+      currentMessageId?: string;
+      providerEvidence?: Awaited<ReturnType<typeof evidence>>;
+      partials?: string[];
+      blocks?: string[];
+      aborted?: boolean;
+      modelTimedOut?: boolean;
+    } = {},
+  ) {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "reply-council-handoff-"));
+    const emitted: string[] = [];
+    const events: unknown[] = [];
+    const unsubscribe = onAgentEvent((event) => {
+      if (event.data.phase === "provider_council_completion_gate") {
+        events.push(event);
+      }
+    });
+    try {
+      const controller = new AbortController();
+      if (params.aborted) {
+        controller.abort();
+      }
+      runEmbeddedPiAgentMock.mockImplementation(
+        async (options: {
+          onPartialReply?: (payload: { text: string }) => Promise<void>;
+          onBlockReply?: (payload: { text: string }) => Promise<void>;
+        }) => {
+          for (const text of params.partials ?? []) {
+            await options.onPartialReply?.({ text });
+          }
+          for (const text of params.blocks ?? []) {
+            await options.onBlockReply?.({ text });
+          }
+          return {
+            payloads: [{ text: params.text ?? candidate }],
+            meta: {
+              agentMeta: { provider: "anthropic", model: "claude" },
+              timedOut: params.modelTimedOut,
+            },
+          };
+        },
+      );
+      const userMessage = params.userMessage ?? ask;
+      const followupRun = {
+        prompt: userMessage,
+        summaryLine: userMessage,
+        enqueuedAt: Date.now(),
+        run: {
+          sessionId: "offline-council",
+          sessionKey: "offline-council",
+          messageProvider: "webchat",
+          sessionFile: path.join(workspaceDir, "session.jsonl"),
+          workspaceDir,
+          config: {},
+          skillsSnapshot: {},
+          provider: "anthropic",
+          model: "claude",
+          thinkLevel: "low",
+          verboseLevel: "off",
+          elevatedLevel: "off",
+          bashElevated: { enabled: false, allowed: false, defaultLevel: "off" },
+          timeoutMs: 1000,
+          blockReplyBreak: "message_end",
+        },
+      } as unknown as FollowupRun;
+      const result = await runReplyAgent({
+        commandBody: userMessage,
+        followupRun,
+        queueKey: "offline-council",
+        resolvedQueue: { mode: "interrupt" },
+        shouldSteer: false,
+        shouldFollowup: false,
+        isActive: false,
+        isStreaming: false,
+        opts: {
+          abortSignal: controller.signal,
+          providerCouncilEvidence: params.providerEvidence,
+          onPartialReply: (payload) => {
+            if (payload.text) {
+              emitted.push(payload.text);
+            }
+          },
+          onBlockReply: (payload) => {
+            if (payload.text) {
+              emitted.push(payload.text);
+            }
+          },
+        },
+        typing: createMockTypingController(),
+        sessionCtx: {
+          Provider: "webchat",
+          OriginatingTo: "offline-council",
+          AccountId: "offline",
+          MessageSid: params.currentMessageId ?? messageId,
+        } as unknown as TemplateContext,
+        defaultModel: "anthropic/claude",
+        resolvedVerboseLevel: "off",
+        isNewSession: false,
+        blockStreamingEnabled: false,
+        resolvedBlockStreamingBreak: "message_end",
+        shouldInjectGroupIntro: false,
+        typingMode: "instant",
+      });
+      return { result, emitted, events };
+    } finally {
+      unsubscribe();
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  }
+  afterEach(async () => {
+    const dir = process.env.LCX_WATERFLOW_PROOF_DIR;
+    if (dir) {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        path.join(dir, "commercial-reply-outlet-proof.json"),
+        JSON.stringify(
+          {
+            boundary: "original_runReplyAgent_with_local_model_and_delivery_substitutes",
+            naturalExternalDelivery: "not_proven",
+            proofs,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  });
+  it("rejects the same unsupported completion in the actual final reply owner", async () => {
+    const value = await run();
+    expect(JSON.stringify(value.result)).toContain("无法核实");
+    expect(JSON.stringify(value.result)).not.toContain("已完成独立审阅");
+    expect(value.events.length).toBeGreaterThan(0);
+    proofs.missing = value;
+  });
+  it("keeps original writer evidence effective through the final reply owner", async () => {
+    const input = await evidence();
+    const value = await run({ providerEvidence: input });
+    expect(JSON.stringify(value.result)).toContain("已完成独立审阅");
+    expect(JSON.stringify(value.events)).toContain(input.sha256);
+    proofs.valid = { sourceSha256: input.sha256, ...value };
+  });
+  it("uses current inbound identity rather than trusting an old caller identity", async () => {
+    const value = await run({
+      providerEvidence: await evidence(),
+      currentMessageId: "another-message",
+    });
+    expect(JSON.stringify(value.result)).toContain("无法核实");
+    expect(JSON.stringify(value.events)).toContain("provider_council_message_scope_conflict");
+    proofs.wrongMessage = value;
+  });
+  it("guards partial and directly flushed block replies before delivery callbacks", async () => {
+    const value = await run({ partials: [candidate], blocks: [candidate] });
+    expect(value.emitted.length).toBeGreaterThan(0);
+    expect(value.emitted.every((text) => !text.includes("已完成独立审阅"))).toBe(true);
+    proofs.streaming = value;
+  });
+  it("keeps split completion claims inside the same stream scope", async () => {
+    const value = await run({ partials: ["Kimi、MiniMax、DeepSeek ", "已完成独立审阅。"] });
+    expect(value.emitted.every((text) => !text.includes("已完成独立审阅"))).toBe(true);
+    proofs.split = value;
+  });
+  it("does not let a valid receipt restore completion after cancellation", async () => {
+    const value = await run({ providerEvidence: await evidence(), aborted: true });
+    expect(JSON.stringify(value.result)).not.toContain("已完成独立审阅");
+    proofs.cancelled = value;
+  });
+  it("keeps an internally timed-out model result from restoring completion", async () => {
+    const value = await run({ providerEvidence: await evidence(), modelTimedOut: true });
+    expect(JSON.stringify(value.result)).not.toContain("已完成独立审阅");
+    proofs.modelTimedOut = value;
+  });
+  it("keeps sufficient arithmetic on the existing simple path", async () => {
+    const value = await run({ userMessage: "100 的 10% 是多少？", text: "100 的 10% 是 10。" });
+    expect(JSON.stringify(value.result)).toContain("100 的 10% 是 10");
+    expect(value.events).toEqual([]);
+    proofs.arithmetic = value;
   });
 });

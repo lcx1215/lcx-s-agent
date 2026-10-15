@@ -6,6 +6,7 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import { runFinanceDailyCycleOperator } from "../../scripts/operator/lcx-finance-daily-cycle.js";
+import { readControllerResearchInput } from "../../scripts/operator/lcx-finance-research-run.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import {
   financeEtClock,
@@ -17,7 +18,10 @@ import {
 } from "../../src/agents/finance-night-review-context.js";
 import { latestFinanceDirectionalCalibrationPromotion } from "../../src/agents/finance-paper-promotion.js";
 import { FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON } from "../../src/agents/finance-paper-promotion.js";
-import { financePortfolioPlanSchema } from "../../src/agents/finance-portfolio-composition.js";
+import {
+  financePortfolioPlanSchema,
+  FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME,
+} from "../../src/agents/finance-portfolio-composition.js";
 import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance-research-evidence.js";
 import {
   financeResearchPortfolioAbstentionSchema,
@@ -290,6 +294,7 @@ export async function probeOriginalFinanceNightScheduler(params: {
     FINANCE_RESEARCH_SAMPLES_FILENAME,
     FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME,
     FINANCE_SCHEDULER_LOCK,
+    FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME,
     OUTPUT_LIMIT: 1024 * 1024,
     FINANCE_SCHEDULER_TICK_MS,
     financeEtClock,
@@ -536,6 +541,15 @@ export async function probeOriginalFinanceSchedulerPlan(params: {
             );
             originalSummary = owners.compactFinanceResearchSummary({
               ...nativeProducer!.receipt,
+              ...(await readControllerResearchInput(
+                {
+                  controllerEvidencePath: argvValue(argv, "--controller-evidence"),
+                  portfolioContextPath: argvValue(argv, "--portfolio-context"),
+                  controllerHandoffPath: argvValue(argv, "--controller-handoff"),
+                  controllerHandoffSha256: argvValue(argv, "--controller-handoff-sha256"),
+                },
+                asOf,
+              )),
               portfolioPlanWritten: written.path,
               portfolioPlanWrite: written,
             });
@@ -683,6 +697,7 @@ export async function probeOriginalFinanceSchedulerPlan(params: {
     CYCLE_SCRIPT: path.join(repo, "scripts/operator/lcx-finance-daily-cycle.ts"),
     RUNS_LOG: FINANCE_DAILY_CYCLE_RUNS_FILENAME,
     FINANCE_SCHEDULER_LOCK,
+    FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME,
     FINANCE_SCHEDULER_TICK_MS,
     FINANCE_TRADING_WEEKDAYS,
     financeEtClock,

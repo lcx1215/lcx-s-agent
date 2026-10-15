@@ -661,3 +661,54 @@ it("keeps source-timed recovery failure in the minimal finance projection", () =
   expect(boundPerception(bounded.perception, budget).perception).toEqual(bounded.perception);
   expect(bounded.report.injectedBytes).toBeLessThanOrEqual(budget);
 });
+
+it("keeps calibration source custody in the existing crowded finance prompt without granting promotion", () => {
+  const sourceRead = {
+    status: "read",
+    path: "/private/finance-book/research-scored.jsonl",
+    sha256: "a".repeat(64),
+    bytes: 113,
+    includedSampleCount: 1,
+    ignoredRowCount: 2,
+    usedFields: ["conviction", "outcome"],
+    boundary: "raw_ledger_bytes_and_parsed_fields_not_source_truth",
+  };
+  const finance = {
+    status: "present",
+    nextTask: "inspect_directional_calibration_gaps",
+    scoredOutcomeCount: 1,
+    tuning: { proposalCount: 0, promotionCount: 0, sourceRead },
+    scheduler: {
+      runtime: {
+        reconciliation: {
+          status: "unavailable",
+          needsInspection: true,
+          lastErrorCode: "execution_recovery_incomplete",
+        },
+      },
+    },
+    history: "x".repeat(13000),
+  };
+  const input = {
+    observedAt: "2026-10-13T00:00:00Z",
+    ownerTotals: {},
+    backlog: [],
+    boundaries: [],
+    controlRoom: { financeAutomaticLifecycle: finance },
+  };
+  const bounded = boundPerception(input);
+  const projected = bounded.perception.controlRoom.financeAutomaticLifecycle as {
+    scoredOutcomeCount: number;
+    tuning: { sourceRead: typeof sourceRead };
+  };
+  expect(projected.scoredOutcomeCount).toBe(1);
+  expect(projected.tuning.sourceRead).toEqual(sourceRead);
+  const prompt = buildCentralBrainPrompt(bounded.perception);
+  expect(prompt).toContain(sourceRead.sha256);
+  expect(prompt).toContain("raw_ledger_bytes_and_parsed_fields_not_source_truth");
+  expect(prompt).toContain("execution_recovery_incomplete");
+  expect(bounded.report.overBudget).toBe(false);
+  expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
+  expect(boundPerception(bounded.perception).perception).toEqual(bounded.perception);
+  expect(input.controlRoom.financeAutomaticLifecycle).toBe(finance);
+});

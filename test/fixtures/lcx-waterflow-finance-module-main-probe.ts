@@ -316,7 +316,9 @@ export async function prepareOriginalFinanceModuleMain(params: {
       )?.[0];
       const observedCount =
         market?.text.match(/observed=\d+/u)?.[0] ?? market?.text.match(/\d+ closes/u)?.[0];
-      const quoteTimestamp = market?.text.match(/"sourceTimestamp":"([^"]+)"/u)?.[1];
+      const quoteTimestamp =
+        market?.text.match(/"sourceTimestamp":"([^"]+)"/u)?.[1] ??
+        (params.dailyExecutableRule ? "not_requested_research_close_only" : undefined);
       if (!market || !historyWindow || !observedCount || !quoteTimestamp) {
         throw new Error("original model input lacks dated SPY source observations");
       }
