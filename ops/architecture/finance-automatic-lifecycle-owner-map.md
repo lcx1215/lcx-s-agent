@@ -186,6 +186,24 @@ gaps rather than assigning all subsequent account performance to new decisions. 
 adjustment factors are a total-return proxy, not exact dividend reinvestment executions.
 The twenty-session comparison window never blocks immediate evidence-led adaptation.
 
+`finance-paper-economic-attribution.ts` projects the repair interval from the exact
+anchor reconciliation and a cutoff-bound later reconciliation. It reuses the broker
+FIFO matcher, execution receipts and intraday decisions. Inherited lots use the
+anchor's broker mark, not their historical purchase price; post-anchor entries need
+an exact account/order/receipt/decision join to count as new decisions. New decisions
+disposing of inherited lots are a non-additive subset, not counterfactual alpha.
+Unlinked entries, missing valuations and quantity differences remain explicit.
+Historical FIFO residuals in instruments reconciled flat at both endpoints with no
+window fills are disclosed separately, without rewriting historical accounting.
+
+The interval is marked account equity, not an additional close-return series.
+Its residual is equity change minus known gross price contributions and may include
+cashflows, income, fees, corporate actions or observation skew. Recorded USD cash
+fees and source-valued asset fees remain separate; date-only fees on an interval
+boundary have unknown timing. Vendor pending-fee balances do not prove a final bill.
+Aggregates cover every eligible lot before evidence examples are bounded for the
+original research consumer. This projection introduces no new execution authority.
+
 ## Soft and hard responsibilities
 
 Models may select analytical lenses, interpret sourced evidence, build causal

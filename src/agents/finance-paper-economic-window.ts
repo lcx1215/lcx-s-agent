@@ -3,6 +3,7 @@ import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transpo
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { financeEtClock, financeUsEquityLocalTimeInstant } from "./finance-cycle-schedule.js";
+import { readFinancePaperEconomicAttribution } from "./finance-paper-economic-attribution.js";
 import {
   appendFinanceBrokerHistory,
   reduceFinanceBrokerHistoryRecords,
@@ -282,12 +283,21 @@ export async function readFinancePaperEconomicWindow(
       },
       { streams: [prefix.slice(0, -1)] },
     );
-    return result.value
-      ? {
-          sourceRef: result.value.ref,
-          ...evaluateFinancePaperEconomicWindow(result.value.observation),
-        }
-      : { status: "unavailable", reason: "no_account_economic_observation" };
+    if (!result.value) {
+      return { status: "unavailable", reason: "no_account_economic_observation" };
+    }
+    const summary = evaluateFinancePaperEconomicWindow(result.value.observation);
+    const attribution = await readFinancePaperEconomicAttribution(
+      directory,
+      accountId,
+      summary.postRepair.anchor,
+      asOf,
+    );
+    return {
+      sourceRef: result.value.ref,
+      ...summary,
+      postRepair: { ...summary.postRepair, attribution },
+    };
   } catch {
     return { status: "unavailable", reason: "account_economic_observation_unverified" };
   }

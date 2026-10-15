@@ -136,6 +136,8 @@ export type FinanceBrokerMatchedLot = {
   entryAt: string;
   exitAt: string;
   quantity: number;
+  entryPrice: number;
+  exitPrice: number;
   grossPnl: number;
   allocatedCashFees: number;
 };
@@ -144,7 +146,7 @@ export type FinanceBrokerMatchedLot = {
 export function summarizeFinanceBrokerFills(
   activities: readonly Record<string, unknown>[],
   costsVerified: boolean,
-  options: { includeMatchedLots?: boolean } = {},
+  options: { includeMatchedLots?: boolean; includeOpenLots?: boolean } = {},
 ) {
   const matchedLots: FinanceBrokerMatchedLot[] = [];
   const unique = uniqueBrokerActivities(activities);
@@ -295,6 +297,8 @@ export function summarizeFinanceBrokerFills(
           entryAt: lot.at,
           exitAt: String(row.transaction_time),
           quantity: matched,
+          entryPrice: lot.price,
+          exitPrice: price,
           grossPnl: matched * (price - lot.price),
           allocatedCashFees: matched * (lot.feePerUnit + feePerUnit),
         });
@@ -333,6 +337,13 @@ export function summarizeFinanceBrokerFills(
   return {
     basis: "broker_fill_fifo_usd_not_strategy_attribution",
     ...(options.includeMatchedLots ? { matchedLots } : {}),
+    ...(options.includeOpenLots
+      ? {
+          openLots: [...lots].flatMap(([instrument, book]) =>
+            book.map((lot) => ({ instrument, ...lot })),
+          ),
+        }
+      : {}),
     buyFills: buys,
     sellFills: sells,
     matchedLotCount: matches,
@@ -340,6 +351,10 @@ export function summarizeFinanceBrokerFills(
     grossMatchedPnl: gross,
     netMatchedPnl: matches > 0 && issues.size === 0 ? gross - allocatedFees : null,
     allocatedClosedCashFees: allocatedFees,
+    reportedCashFeeAmount: [...orderFees.values()].reduce(
+      (sum, fee) => sum + fee,
+      unallocatedCashFeeAmount,
+    ),
     unallocatedFeeActivityCount: unallocatedFees,
     unallocatedCashFeeAmount,
     unpricedFeeActivityCount,
