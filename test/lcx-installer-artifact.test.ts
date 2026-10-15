@@ -11,7 +11,7 @@ const bashPath = (file: string) =>
     : file;
 
 describe("LCX installer build artifact", () => {
-  it("mounts this checkout installer and supplied archive read-only into Docker", () => {
+  it.each([true, false])("routes the current checkout with a supplied archive: %s", (supplied) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-smoke-routing-"));
     try {
       const archive = path.join(dir, "candidate.tgz");
@@ -19,20 +19,26 @@ describe("LCX installer build artifact", () => {
       const log = path.join(dir, "docker-calls");
       fs.writeFileSync(
         path.join(dir, "docker"),
-        '#!/bin/bash\nprintf "%s\\n" "$@" >> "$DOCKER_CALLS"\n',
+        '#!/bin/bash\nprintf "%s\\n" "$@" >> "$DOCKER_CALLS"\nfor arg in "$@"; do case "$arg" in *:/out) touch "${arg%:/out}/lcx-agent-test.tgz";; esac; done\n',
         { mode: 0o755 },
       );
       execFileSync("bash", [bashPath(path.join(root, "scripts/tests/test-install-sh-docker.sh"))], {
         env: {
           ...process.env,
           PATH: dir + path.delimiter + process.env.PATH,
-          LCX_INSTALL_TARBALL: bashPath(archive),
+          LCX_INSTALL_TARBALL: supplied ? bashPath(archive) : "",
           DOCKER_CALLS: bashPath(log),
           OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT: "1",
         },
       });
       const calls = fs.readFileSync(log, "utf8");
-      expect(calls).toContain(bashPath(archive) + ":/lcx-agent.tgz:ro");
+      if (supplied) {
+        expect(calls).toContain(bashPath(archive) + ":/lcx-agent.tgz:ro");
+      } else {
+        expect(calls).toContain(bashPath(path.join(root, "Dockerfile")));
+        expect(calls).toContain("npm pack --ignore-scripts --pack-destination /out");
+        expect(calls).toContain("lcx-agent-test.tgz:/lcx-agent.tgz:ro");
+      }
       expect(calls).toContain(
         bashPath(path.join(root, "scripts/install.sh")) + ":/lcx-install.sh:ro",
       );
@@ -76,6 +82,29 @@ install_openclaw`;
             env: { ...process.env, LCX_INSTALL_TARBALL: bashPath(archive), CALLS: bashPath(calls) },
           });
           expect(fs.readFileSync(calls, "utf8")).toBe(bashPath(archive));
+          const smoke = fs
+            .readFileSync(path.join(root, "scripts/docker/install-sh-smoke/run.sh"), "utf8")
+            .replace('source "$SCRIPT_DIR/../install-sh-common/cli-verify.sh"', "")
+            .replace("bash /lcx-install.sh", ":");
+          execFileSync(
+            "bash",
+            [
+              "-c",
+              `npm() { printf '%s' "$*" > "$CALLS"; }
+verify_installed_cli() { :; }
+${smoke}`,
+            ],
+            {
+              env: {
+                ...process.env,
+                LCX_INSTALL_TARBALL: bashPath(archive),
+                CALLS: bashPath(calls),
+                OPENCLAW_INSTALL_SMOKE_PREVIOUS: "2026.2.1",
+                OPENCLAW_INSTALL_SMOKE_SKIP_PREVIOUS: "0",
+              },
+            },
+          );
+          expect(fs.readFileSync(calls, "utf8")).toBe("install -g lcx-agent@2026.2.1");
         } else {
           expect(() =>
             execFileSync("bash", ["-c", script], {

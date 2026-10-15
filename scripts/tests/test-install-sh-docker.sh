@@ -5,13 +5,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_IMAGE="${OPENCLAW_INSTALL_SMOKE_IMAGE:-${CLAWDBOT_INSTALL_SMOKE_IMAGE:-openclaw-install-smoke:local}}"
 NONROOT_IMAGE="${OPENCLAW_INSTALL_NONROOT_IMAGE:-${CLAWDBOT_INSTALL_NONROOT_IMAGE:-openclaw-install-nonroot:local}}"
 SKIP_NONROOT="${OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT:-${CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT:-0}}"
-if [[ ! -f "${LCX_INSTALL_TARBALL:-}" ]]; then
-  echo "ERROR: set LCX_INSTALL_TARBALL to the package built from this checkout" >&2
+LATEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$LATEST_DIR"' EXIT
+if [[ -z "${LCX_INSTALL_TARBALL:-}" ]]; then
+  BUILD_IMAGE="${LCX_INSTALL_BUILD_IMAGE:-lcx-install-build:local}"
+  docker build -t "$BUILD_IMAGE" -f "$ROOT_DIR/Dockerfile" "$ROOT_DIR"
+  docker run --rm --user root --entrypoint sh -v "$LATEST_DIR:/out" "$BUILD_IMAGE" -lc 'cd /app && npm pack --ignore-scripts --pack-destination /out'
+  LCX_INSTALL_TARBALL="$(find "$LATEST_DIR" -name 'lcx-agent-*.tgz' -print -quit)"
+fi
+if [[ ! -f "$LCX_INSTALL_TARBALL" ]]; then
+  echo "ERROR: LCX_INSTALL_TARBALL must identify a built LCX package" >&2
   exit 1
 fi
 LCX_INSTALL_TARBALL="$(cd "$(dirname "$LCX_INSTALL_TARBALL")" && pwd)/$(basename "$LCX_INSTALL_TARBALL")"
-LATEST_DIR="$(mktemp -d)"
-trap 'rm -rf "$LATEST_DIR"' EXIT
 LATEST_FILE="${LATEST_DIR}/latest"
 
 echo "==> Build smoke image (upgrade, root): $SMOKE_IMAGE"
