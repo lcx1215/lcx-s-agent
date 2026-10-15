@@ -65,6 +65,7 @@ import {
 } from "../../src/agents/finance-intraday-paper.js";
 import {
   readFinanceDynamicIntradayExitTargets,
+  readFinanceIntradayOwnedPositions,
   readFinanceRetiredIntradayExitTargets,
 } from "../../src/agents/finance-intraday-position.js";
 import {
@@ -73,6 +74,7 @@ import {
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
+import { readFinancePositionRecords } from "../../src/agents/finance-position-ledger.js";
 import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance-research-evidence.js";
 import {
   financeResearchPortfolioAbstentionSchema,
@@ -2901,6 +2903,37 @@ async function reconcileIdleAccountIfDue(context: CycleContext): Promise<void> {
   }
 }
 
+/** Keep owned-position monitoring ahead of discovery, including when a slow scan crosses a bar. */
+export async function* financeIntradayMonitorOrder(options: {
+  instruments: readonly string[];
+  intervalSeconds: number;
+  readOwnedInstruments: () => Promise<readonly string[]>;
+  signal: AbortSignal;
+  now?: () => number;
+}): AsyncGenerator<string> {
+  const allowed = new Set(options.instruments);
+  let pending = [...allowed];
+  let observedBar: number | undefined;
+  const now = options.now ?? Date.now;
+  while (pending.length && !options.signal.aborted) {
+    const bar = Math.floor(now() / (options.intervalSeconds * 1_000));
+    if (bar !== observedBar) {
+      const owned = await options.readOwnedInstruments();
+      if (options.signal.aborted) {
+        return;
+      }
+      // Revisit owned positions once per bar: a prior hold/refusal must not make
+      // them wait for an entire universe scan after pre-close becomes actionable.
+      pending = [...new Set([...owned.filter((symbol) => allowed.has(symbol)), ...pending])];
+      observedBar = bar;
+    }
+    const instrument = pending.shift();
+    if (instrument !== undefined) {
+      yield instrument;
+    }
+  }
+}
+
 async function runTradingTickOnAccountLane(context: CycleContext): Promise<void> {
   await refreshActiveIntradayBinding(context);
   await reconcileIdleAccountIfDue(context);
@@ -2912,7 +2945,24 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
       (left, right) =>
         Number(executionInstruments.has(right)) - Number(executionInstruments.has(left)),
     );
-    for (const instrument of instruments) {
+    const monitorOrder = financeIntradayMonitorOrder({
+      instruments,
+      intervalSeconds: context.options.intraday.intervalSeconds,
+      signal: context.signal,
+      readOwnedInstruments: async () => {
+        if (!context.intradayController) {
+          return [];
+        }
+        const records = await readFinancePositionRecords(context.root.directory);
+        const book = await readFinanceIntradayOwnedPositions({
+          directory: context.root.directory,
+          accountId: context.intradayController.accountId,
+          receipts: records.receipts,
+        });
+        return book.positions.filter((position) => position.quantity > 0).map((p) => p.instrument);
+      },
+    });
+    for await (const instrument of monitorOrder) {
       if (context.signal.aborted) {
         break;
       }
