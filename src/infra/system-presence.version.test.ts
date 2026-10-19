@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { withEnvAsync } from "../test-utils/env.js";
 
+// Exercise fallback semantics without depending on whether this checkout resolves package.json.
+vi.mock("../version.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../version.js")>();
+  return {
+    ...actual,
+    resolveRuntimeServiceVersion: () =>
+      actual.resolveRuntimeServiceVersion(process.env, undefined, "0.0.0"),
+  };
+});
+
 async function withPresenceModule<T>(
   env: Record<string, string | undefined>,
   run: (module: typeof import("./system-presence.js")) => Promise<T> | T,

@@ -22,6 +22,11 @@ vi.mock("../infra/tailscale.js", () => ({
   getTailnetHostname: mocks.getTailnetHostname,
 }));
 
+vi.mock("../gateway/net.js", async (importActual) => ({
+  ...(await importActual<typeof import("../gateway/net.js")>()),
+  pickPrimaryLanIPv4: () => "192.168.2.8",
+}));
+
 import { configureGatewayForOnboarding } from "./onboarding.gateway-config.js";
 
 describe("configureGatewayForOnboarding", () => {
