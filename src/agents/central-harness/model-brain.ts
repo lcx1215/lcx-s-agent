@@ -32,7 +32,12 @@ export type CentralBrainOutcome =
 
 export type CentralBrain = Readonly<{
   inspectCall?: () => { provider: string; modelId: string; modelCall?: CentralBrainCallEvidence };
-  propose: (perception: CentralPerception, signal: AbortSignal) => Promise<CentralBrainOutcome>;
+  propose: (
+    perception: CentralPerception,
+    signal: AbortSignal,
+    /** Host-owned cycle deadline; configured adapters preserve the earlier bound. */
+    deadlineAtMs?: number,
+  ) => Promise<CentralBrainOutcome>;
 }>;
 
 const CENTRAL_GENERAL_PROMPT_PREFIX = [
@@ -334,7 +339,7 @@ export function createCentralBrain(
           }
         : {}),
     }),
-    propose: async (perception, signal) => {
+    propose: async (perception, signal, deadlineAtMs) => {
       if (!callable) {
         return {
           kind: "blocked_no_provider",
@@ -354,7 +359,11 @@ export function createCentralBrain(
         provider: activeAdapter.provider,
         modelId: activeAdapter.modelId,
       };
-      const request = { ...requestIdentity, payload: perception };
+      const request = {
+        ...requestIdentity,
+        payload: perception,
+        ...(deadlineAtMs !== undefined ? { deadlineAtMs } : {}),
+      };
       let raw: unknown;
       let failure: ModelAdapterError["code"] | undefined;
       try {

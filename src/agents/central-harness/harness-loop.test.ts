@@ -513,6 +513,88 @@ describe("executed governance result feedback", () => {
 });
 
 describe("central cycle cancellation and failure closure", () => {
+  it("does not dispatch the brain after wall-clock expiry before timers run", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const propose = vi.fn(brain.propose);
+    const pending = runCentralHarnessCycle({
+      perception,
+      registry: registry(async () => ({})),
+      brain: { propose },
+      deadlineMs,
+    });
+    vi.setSystemTime(deadlineMs + 1);
+    const receipt = await pending;
+    expect(propose).not.toHaveBeenCalled();
+    expect(receipt.brainCall.outcome).toBe("failed");
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("rejects a brain proposal returned after wall-clock expiry without dispatching owners", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const execute = vi.fn(async () => ({ observedOk: true }));
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      registry: registry(execute),
+      brain: {
+        propose: async () => {
+          vi.setSystemTime(deadlineMs + 1);
+          return brain.propose();
+        },
+      },
+      deadlineMs,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(receipt.brainCall.outcome).toBe("failed");
+    expect(receipt.brainCall.reason).toContain("central cycle deadline exceeded");
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("rechecks wall-clock expiry after the gate before dispatching an owner", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const execute = vi.fn(async () => ({ observedOk: true }));
+    const tools = registry(execute);
+    const fixture = tools.get("fixture")!;
+    tools.set("fixture", {
+      ...fixture,
+      approve: () => {
+        vi.setSystemTime(deadlineMs + 1);
+        return { ok: true };
+      },
+    });
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: tools,
+      deadlineMs,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(receipt.steps.every((step) => step.status === "ran_failed")).toBe(true);
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("rejects late owner success and stops subsequent dispatch before timers run", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const execute = vi.fn(async () => {
+      vi.setSystemTime(deadlineMs + 1);
+      return { observedOk: true, receipt: { value: "late" } };
+    });
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: registry(execute),
+      deadlineMs,
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(receipt.steps.map((step) => step.status)).toEqual(["ran_failed", "ran_failed"]);
+    expect(receipt.steps[0].failureReason).toContain("central cycle deadline exceeded");
+    expect(receipt.steps[0].outcome).toBeUndefined();
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
   it("settles a terminal receipt when a brain ignores the deadline signal", async () => {
     vi.useFakeTimers();
     const settle = vi.fn(async () => ({
