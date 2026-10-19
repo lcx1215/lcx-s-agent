@@ -523,13 +523,23 @@ async function boundedCall<T>(
     ]);
     assertApiCallActive(controller.signal);
     finish(undefined, false);
+    // Notification is synchronous bookkeeping; it must not permit a stale return.
+    assertApiCallActive(controller.signal);
     return result;
   } catch (error) {
-    if (error instanceof ApiCallError && error.kind === "timeout") {
-      controller.abort(error);
+    let failure = error;
+    try {
+      assertApiCallActive(controller.signal);
+    } catch (inactive) {
+      failure = inactive;
     }
-    finish(error);
-    throw error;
+    if (failure instanceof ApiCallError && failure.kind === "timeout") {
+      controller.abort(failure);
+    }
+    finish(failure);
+    // Failed notifications consume the same deadline as successful ones.
+    assertApiCallActive(controller.signal);
+    throw failure;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", parentAbort);
@@ -583,8 +593,17 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
       }
     }
     let lastAttemptStatus: ApiCallReceipt["status"] | undefined;
+    let failedProbeAttempt = false;
     const emitAttempt = (receipt: ApiCallReceipt) => {
       lastAttemptStatus = receipt.status;
+      if (
+        receipt.status === "failed" &&
+        (receipt.transportError === "network_error" ||
+          (receipt.transportError === "http_error" &&
+            [408, 429, 500, 502, 503, 504].includes(receipt.httpStatus ?? 0)))
+      ) {
+        failedProbeAttempt = true;
+      }
       scope.onReceipt?.(receipt);
     };
     // One total budget covers attempts and backoff, not a fresh budget for each retry.
@@ -693,6 +712,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                     }
 
                     body = await response.text();
+                    assertApiCallActive(attemptSignal);
                   } catch (error) {
                     assertApiCallActive(attemptSignal);
                     if (error instanceof ApiCallError) {
@@ -747,6 +767,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                 error instanceof ApiCallError ? error.retryAfterMs : undefined,
             },
           );
+          assertApiCallActive(signal);
           if (response.dataAccess?.kind !== "cache") {
             scope.circuitBreaker?.recordSuccess();
             circuitSettled = true;
@@ -769,7 +790,11 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
     );
     return result.finally(() => {
       if (circuitState === "half_open" && !circuitSettled) {
-        scope.circuitBreaker?.releaseProbe?.();
+        if (failedProbeAttempt) {
+          scope.circuitBreaker?.recordFailure();
+        } else {
+          scope.circuitBreaker?.releaseProbe?.();
+        }
       }
     });
   };

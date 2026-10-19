@@ -137,10 +137,19 @@ export async function resolveConfiguredFinanceAuth(
   if (env) {
     return { apiKey: env, source: "environment" };
   }
-  const store = suppliedStore
-    ? structuredClone(suppliedStore)
-    : loadAuthProfileStoreForSecretsRuntime(agentDir);
-  for (const profileId of resolveAuthProfileOrder({ cfg, store, provider })) {
+  let store: AuthProfileStore;
+  let profileIds: string[];
+  try {
+    store = suppliedStore
+      ? structuredClone(suppliedStore)
+      : loadAuthProfileStoreForSecretsRuntime(agentDir);
+    profileIds = resolveAuthProfileOrder({ cfg, store, provider });
+  } catch (error) {
+    assertActive();
+    throw error;
+  }
+  assertActive();
+  for (const profileId of profileIds) {
     assertActive();
     const credential = store.profiles[profileId];
     if (credential?.type !== "api_key" && credential?.type !== "token") {
@@ -164,6 +173,7 @@ export async function resolveConfiguredFinanceAuth(
       /* Try another existing static profile, without exposing secret-resolution errors. */
     }
   }
+  assertActive();
   throw new ModelAdapterError("provider_auth");
 }
 
@@ -406,6 +416,7 @@ export function createConfiguredFinanceModelAdapter(
           throw new Error("rendered finance input exceeds prompt budget");
         }
       } catch (error) {
+        assertActive();
         // Request assembly is local: preserve a safe category without charging a
         // provider call or replaying the unchanged invalid packet on another model.
         throw new ModelAdapterError(
@@ -423,7 +434,14 @@ export function createConfiguredFinanceModelAdapter(
       );
       assertActive();
       accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
-      const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      let cooldownUntil: number;
+      try {
+        cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      } catch (error) {
+        assertActive();
+        throw error;
+      }
+      assertActive();
       if (cooldownUntil > Date.now()) {
         callState = {
           requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
@@ -522,6 +540,18 @@ export function createConfiguredFinanceModelAdapter(
           stage: "response_received",
           httpStatus: http.status,
         });
+        try {
+          assertActive();
+        } catch (error) {
+          // Retain the response fact, but never apply a late status or leave its
+          // body running. The shared bounded reader records cleanup certainty.
+          requestController.abort(error);
+          await readBoundedFinanceResponseText(http, {
+            signal: requestController.signal,
+            discardBody: true,
+          });
+          throw error;
+        }
         if (!http.ok) {
           if (http.status === 402) {
             markPaymentCooldown(accountKey, availabilityDirectory);
@@ -631,6 +661,7 @@ export function createConfiguredFinanceModelAdapter(
         if (deadlineExpired) {
           throw new ModelAdapterError("runtime_timeout");
         }
+        assertActive();
         throw error instanceof ModelAdapterError ? error : new ModelAdapterError("process_error");
       } finally {
         clearTimeout(timer);
