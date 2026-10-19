@@ -1539,7 +1539,8 @@ function projectFinanceBudgetFacts(
               "needsInspection",
             ]
           : ["accountId", "venue", "snapshotRef", "status", "netMatchedPnl", "costScope", "basis"];
-      projected.accounts = original.accounts.slice(0, 1).map((account) => {
+      const maximumAccounts = section === "economicFeedback" ? 2 : 1;
+      projected.accounts = original.accounts.slice(0, maximumAccounts).map((account) => {
         const selected = pick(account, accountKeys, `${section}.accounts.`);
         if (isPlainRecord(account) && Array.isArray(account.issues)) {
           selected.issues = account.issues
@@ -1605,6 +1606,15 @@ function projectFinanceBudgetFacts(
         }
         return selected;
       });
+      const additionalOmitted = Math.max(0, original.accounts.length - maximumAccounts);
+      if (additionalOmitted > 0) {
+        projected.omittedAccounts =
+          (typeof original.omittedAccounts === "number" &&
+          Number.isSafeInteger(original.omittedAccounts) &&
+          original.omittedAccounts >= 0
+            ? original.omittedAccounts
+            : 0) + additionalOmitted;
+      }
       omitted.add(`${section}.accounts.details_or_additional_accounts`);
     }
     result[section] = projected;
@@ -1666,9 +1676,16 @@ function projectFinanceBudgetFacts(
     ) {
       result[section] = {
         status: details.status,
-        accounts: details.accounts
-          .slice(0, 1)
-          .map((a) => (isPlainRecord(a) ? { accountEconomics: a.accountEconomics } : a)),
+        omittedAccounts: details.omittedAccounts,
+        accounts: details.accounts.map((a) =>
+          isPlainRecord(a)
+            ? {
+                accountId: a.accountId,
+                venue: a.venue,
+                accountEconomics: a.accountEconomics,
+              }
+            : a,
+        ),
       };
       omitted.add("economicFeedback.accounts.other_details");
     } else if (isPlainRecord(details) && Object.hasOwn(details, "accounts")) {
@@ -1769,11 +1786,18 @@ function projectFinanceBudgetFacts(
     };
   }
   if (isPlainRecord(result.economicFeedback) && Array.isArray(result.economicFeedback.accounts)) {
-    const account = result.economicFeedback.accounts.find(
+    const accounts = result.economicFeedback.accounts.filter(
       (a) => isPlainRecord(a) && isPlainRecord(a.accountEconomics),
     );
-    if (isPlainRecord(account)) {
-      minimal.economicFeedback = { accounts: [{ accountEconomics: account.accountEconomics }] };
+    if (accounts.length > 0) {
+      minimal.economicFeedback = {
+        omittedAccounts: result.economicFeedback.omittedAccounts,
+        accounts: accounts.map((account) => ({
+          accountId: account.accountId,
+          venue: account.venue,
+          accountEconomics: account.accountEconomics,
+        })),
+      };
     }
   }
   for (const key of Object.keys(source)) {
@@ -1791,6 +1815,23 @@ function projectFinanceBudgetFacts(
   };
   annotateMinimal();
   for (const section of ["economicFeedback", "positionManagement", "intradayExecution"]) {
+    if (
+      section === "economicFeedback" &&
+      isPlainRecord(minimal.economicFeedback) &&
+      Array.isArray(minimal.economicFeedback.accounts)
+    ) {
+      const economic = minimal.economicFeedback;
+      const accounts = minimal.economicFeedback.accounts;
+      let omittedAccounts =
+        typeof economic.omittedAccounts === "number" ? economic.omittedAccounts : 0;
+      while (accounts.length > 1 && jsonBytes(minimal) > maxBytes) {
+        accounts.pop();
+        omittedAccounts += 1;
+        minimal.economicFeedback = { ...economic, accounts, omittedAccounts };
+        omitted.add("economicFeedback.accounts.additional_accounts");
+        annotateMinimal();
+      }
+    }
     if (jsonBytes(minimal) <= maxBytes) {
       break;
     }
