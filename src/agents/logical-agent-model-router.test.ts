@@ -866,6 +866,59 @@ it("includes exactly one opted-in structural repair in the outer task deadline",
   ).toBe(361_000);
 });
 
+it.each(["unavailable", "capability", "input", "late_unavailable"] as const)(
+  "classifies expired %s preflight as a deadline without adapter work or fallback",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const invoke = vi.fn(async () => ({}));
+      const fallback = vi.fn(async () => ({}));
+      const unavailable = vi.fn(() => {
+        if (stage === "late_unavailable") {
+          vi.setSystemTime(started + 2000);
+        }
+        return "provider_auth" as const;
+      });
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [
+            adapter("small", {
+              invoke,
+              ...(stage === "capability" ? { capabilities: [] } : {}),
+              ...(stage.endsWith("unavailable") ? { unavailableReason: unavailable } : {}),
+            }),
+            adapter("reviewer", { invoke: fallback }),
+          ],
+          defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        }),
+      );
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      await expect(
+        router.invoke({
+          role: "data_cleaning",
+          taskId: "expired-preflight",
+          correlationId: "expired-preflight-run",
+          payload: stage === "input" ? { padding: "x".repeat(2000) } : {},
+          deadlineAtMs: started + (stage === "late_unavailable" ? 1000 : -1),
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => work(),
+          record: (call) => calls.push(call),
+        }),
+      ).rejects.toThrow();
+      expect(calls).toMatchObject([
+        { outcome: "timed_out", reason: "deadline", adapterInvoked: false },
+      ]);
+      expect(invoke).not.toHaveBeenCalled();
+      expect(fallback).not.toHaveBeenCalled();
+      expect(unavailable).toHaveBeenCalledTimes(stage === "late_unavailable" ? 1 : 0);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
 it.each(["queue", "result", "validation_pass", "validation_fail"] as const)(
   "rejects model work that expires at %s while deadline timers are suspended",
   async (stage) => {

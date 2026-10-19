@@ -693,6 +693,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                     }
 
                     body = await response.text();
+                    assertApiCallActive(attemptSignal);
                   } catch (error) {
                     assertApiCallActive(attemptSignal);
                     if (error instanceof ApiCallError) {

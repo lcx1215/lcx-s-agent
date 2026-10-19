@@ -556,7 +556,7 @@ it("preserves the caller's one-attempt limit when a source sets its own retry de
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-it.each(["rate_queue", "preparation", "body"] as const)(
+it.each(["rate_queue", "preparation", "body", "body_http_503", "body_http_403"] as const)(
   "rejects expired %s work after wall-clock suspension before timer callbacks resume",
   async (stage) => {
     vi.useFakeTimers();
@@ -564,9 +564,9 @@ it.each(["rate_queue", "preparation", "body"] as const)(
     const start = Date.now();
     const jump = () => vi.setSystemTime(start + 60_000);
     const dispatch = vi.fn<ApiFetch>(async () => ({
-      ...response(),
+      ...response(stage === "body_http_503" ? 503 : stage === "body_http_403" ? 403 : 200),
       text: async () => {
-        if (stage === "body") {
+        if (stage.startsWith("body")) {
           jump();
         }
         return "late evidence";
@@ -593,10 +593,11 @@ it.each(["rate_queue", "preparation", "body"] as const)(
       governApiFetch(fetch, {
         timeoutMs: 1000,
         rateLimiter,
+        retry: { attempts: 1 },
         onReceipt: (receipt) => receipts.push(receipt),
       })("https://fixture.test/source"),
     ).rejects.toMatchObject({ kind: "timeout" });
-    expect(dispatch).toHaveBeenCalledTimes(stage === "body" ? 1 : 0);
+    expect(dispatch).toHaveBeenCalledTimes(stage.startsWith("body") ? 1 : 0);
     expect(receipts.some((receipt) => receipt.status === "timed_out")).toBe(true);
   },
 );

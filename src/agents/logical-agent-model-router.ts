@@ -394,6 +394,20 @@ export class LogicalAgentModelRouter {
       };
       params.signal.addEventListener("abort", abort, { once: true });
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlineAtMs = Math.min(
+        startedAtMs + policy.timeoutMs,
+        params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
+      );
+      const assertActive = () => {
+        if (!controller.signal.aborted && Date.now() >= deadlineAtMs) {
+          outcome = "timed_out";
+          reason = "deadline";
+          controller.abort();
+        }
+        if (controller.signal.aborted) {
+          throw new Error("model call cancelled or timed out");
+        }
+      };
       try {
         if (params.signal.aborted) {
           const expired = params.isDeadlineAbort?.(params.signal.reason) === true;
@@ -401,6 +415,7 @@ export class LogicalAgentModelRouter {
           reason = expired ? "deadline" : "cancelled";
           throw new Error("model call cancelled or timed out");
         }
+        assertActive();
         const anyTool = params.capabilities.allowedTools.includes(LOGICAL_AGENT_ANY_TOOL);
         const allowed =
           policy.requiredCapabilities.every((cap) => adapter.capabilities.includes(cap)) &&
@@ -487,19 +502,6 @@ export class LogicalAgentModelRouter {
             { once: true },
           );
         });
-        const deadlineAtMs = Math.min(
-          Date.now() + policy.timeoutMs,
-          params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
-        );
-        const assertActive = () => {
-          if (!controller.signal.aborted && Date.now() >= deadlineAtMs) {
-            reason = "deadline";
-            controller.abort();
-          }
-          if (controller.signal.aborted) {
-            throw new Error("model call cancelled or timed out");
-          }
-        };
         timer = setTimeout(
           () => {
             reason = "deadline";
@@ -541,6 +543,11 @@ export class LogicalAgentModelRouter {
         this.#completedModels.set(params.correlationId, completed);
         return result;
       } catch (error) {
+        if (!params.signal.aborted && Date.now() >= deadlineAtMs) {
+          outcome = "timed_out";
+          reason = "deadline";
+          controller.abort();
+        }
         if (error instanceof ModelAdapterError && error.code === "runtime_timeout") {
           outcome = "timed_out";
         }
