@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore, type ArtifactRegistration } from "./artifact-store.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
 import { requireNodeSqlite } from "./sqlite.js";
@@ -236,6 +237,83 @@ describe("owner artifacts in the existing memory database", () => {
       });
     } finally {
       writer.close();
+    }
+  });
+
+  function openWithLegacySpelling(readOnly: boolean) {
+    // Model Windows JS realpath retaining a short spelling while native IO
+    // returns the canonical long name. Both spellings still name this directory.
+    const nativeRealpath = fsSync.realpathSync.native;
+    const canonical = nativeRealpath(root);
+    const legacy = `${canonical}${path.sep}.`;
+    const resolve = vi.spyOn(fsSync, "realpathSync").mockReturnValue(legacy);
+    Object.assign(resolve, { native: nativeRealpath });
+    try {
+      return ArtifactStore.open({ dbPath, workspaceDir: root, readOnly });
+    } finally {
+      resolve.mockRestore();
+    }
+  }
+
+  it("reads native-backfilled artifacts through a legacy workspace spelling", async () => {
+    await write(base.relativePath, "native workspace evidence");
+    await store.register(base);
+    const reader = openWithLegacySpelling(true);
+    try {
+      expect(reader.search({ query: "native workspace evidence" }).artifacts).toHaveLength(1);
+      expect((await reader.read(base.id)).text).toBe("native workspace evidence");
+    } finally {
+      reader.close();
+    }
+  });
+
+  it("preserves legacy namespace readback and migrates it only on verified registration", async () => {
+    await write(base.relativePath, "legacy namespace evidence");
+    await store.register(base);
+    const canonical = fsSync.realpathSync.native(root);
+    const legacy = `${canonical}${path.sep}.`;
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(dbPath);
+    db.prepare("UPDATE owner_artifacts SET workspace_root=? WHERE id=?").run(legacy, base.id);
+    const reader = openWithLegacySpelling(true);
+    try {
+      expect((await reader.read(base.id)).text).toBe("legacy namespace evidence");
+      expect(reader.search({ query: "legacy namespace evidence" }).artifacts).toHaveLength(1);
+      expect(
+        db.prepare("SELECT workspace_root FROM owner_artifacts WHERE id=?").get(base.id),
+      ).toMatchObject({ workspace_root: legacy });
+    } finally {
+      reader.close();
+    }
+    const writer = openWithLegacySpelling(false);
+    try {
+      expect(await writer.register(base)).toMatchObject({ status: "unchanged" });
+      expect(
+        db.prepare("SELECT workspace_root FROM owner_artifacts WHERE id=?").get(base.id),
+      ).toMatchObject({ workspace_root: canonical });
+      expect(await fs.readFile(path.join(root, base.relativePath), "utf8")).toBe(
+        "legacy namespace evidence",
+      );
+    } finally {
+      writer.close();
+      db.close();
+    }
+  });
+
+  it("rejects an open when native and legacy resolution reach different workspaces", async () => {
+    const other = path.join(root, "other-namespace");
+    await fs.mkdir(other);
+    const nativeRealpath = fsSync.realpathSync.native;
+    const resolve = vi.spyOn(fsSync, "realpathSync").mockReturnValue(nativeRealpath(other));
+    Object.assign(resolve, { native: nativeRealpath });
+    let opened: ArtifactStore | undefined;
+    try {
+      expect(() => {
+        opened = ArtifactStore.open({ dbPath, workspaceDir: root, readOnly: true });
+      }).toThrow("artifact_workspace_changed_during_open");
+    } finally {
+      resolve.mockRestore();
+      opened?.close();
     }
   });
 
