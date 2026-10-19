@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
 import { createFinanceRealtimeRefreshTool } from "./finance-realtime-refresh-tool.js";
 
@@ -99,6 +99,119 @@ describe("finance_realtime_source_refresh tool", () => {
       expect(fetchCalls).toBe(0);
       await expect(fs.stat(path.join(workspaceDir, "memory"))).rejects.toThrow();
     } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { instrument: "QQQ", callId: "refresh-".repeat(50) },
+    { instrument: "A".repeat(300), callId: "long-instrument" },
+  ])("retains a receipt for long identifiers ($callId)", async ({ instrument, callId }) => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-realtime-long-"));
+    try {
+      const tool = createFinanceRealtimeRefreshTool({ workspaceDir, fetchImpl: fakeFetch });
+      const result = await tool.execute(callId, {
+        instrument,
+        assetClass: "etf",
+        useCase: "tool_receipt_length",
+        asOf: "2026-07-01T20:05:00.000Z",
+        requireOfficialReference: false,
+        liveFetch: true,
+        writeReceipt: true,
+      });
+      const details = result.details as { receiptPath: string };
+      expect(Buffer.byteLength(path.basename(details.receiptPath))).toBeLessThanOrEqual(255);
+      const saved = JSON.parse(
+        await fs.readFile(path.join(workspaceDir, details.receiptPath), "utf8"),
+      );
+      expect(saved.request.instrument).toBe(instrument);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["mkdir", "write", "rename"])("honors cancellation during receipt %s", async (stage) => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-realtime-cancel-"));
+    const controller = new AbortController();
+    const reason = new Error(`cancel during ${stage}`);
+    try {
+      if (stage === "mkdir") {
+        const mkdir = fs.mkdir.bind(fs);
+        vi.spyOn(fs, "mkdir").mockImplementationOnce(async (target, options) => {
+          const result = await mkdir(target, options);
+          controller.abort(reason);
+          return result;
+        });
+      } else if (stage === "write") {
+        const write = fs.writeFile.bind(fs);
+        vi.spyOn(fs, "writeFile").mockImplementationOnce(async (...args) => {
+          await write(...args);
+          controller.abort(reason);
+        });
+      } else {
+        const rename = fs.rename.bind(fs);
+        vi.spyOn(fs, "rename").mockImplementationOnce(async (...args) => {
+          await rename(...args);
+          controller.abort(reason);
+        });
+      }
+      const tool = createFinanceRealtimeRefreshTool({ workspaceDir, fetchImpl: fakeFetch });
+      await expect(
+        tool.execute(
+          "cancel-receipt",
+          {
+            instrument: "QQQ",
+            assetClass: "etf",
+            useCase: "tool_receipt_cancel",
+            asOf: "2026-07-01T20:05:00.000Z",
+            requireOfficialReference: false,
+            liveFetch: true,
+            writeReceipt: true,
+          },
+          controller.signal,
+        ),
+      ).rejects.toBe(reason);
+      const directory = path.join(workspaceDir, "memory", "finance-data-gateway", "realtime");
+      const files = await fs.readdir(directory);
+      if (stage === "rename") {
+        expect(files).toHaveLength(1);
+        expect(
+          JSON.parse(await fs.readFile(path.join(directory, files[0]), "utf8")).request.instrument,
+        ).toBe("QQQ");
+      } else {
+        expect(files).toEqual([]);
+      }
+    } finally {
+      vi.restoreAllMocks();
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans incomplete receipt writes without publishing partial JSON", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-realtime-partial-"));
+    const write = fs.writeFile.bind(fs);
+    try {
+      vi.spyOn(fs, "writeFile").mockImplementationOnce(async (file) => {
+        await write(file, '{"partial":');
+        throw new Error("synthetic disk failure");
+      });
+      const tool = createFinanceRealtimeRefreshTool({ workspaceDir, fetchImpl: fakeFetch });
+      await expect(
+        tool.execute("partial-receipt", {
+          instrument: "QQQ",
+          assetClass: "etf",
+          useCase: "tool_receipt_partial",
+          asOf: "2026-07-01T20:05:00.000Z",
+          requireOfficialReference: false,
+          liveFetch: true,
+          writeReceipt: true,
+        }),
+      ).rejects.toThrow("synthetic disk failure");
+      expect(
+        await fs.readdir(path.join(workspaceDir, "memory", "finance-data-gateway", "realtime")),
+      ).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
