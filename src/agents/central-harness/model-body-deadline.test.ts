@@ -37,8 +37,41 @@ function config(baseUrl: string): OpenClawConfig {
   };
 }
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it("does not enter HTTP after request preparation crosses the earlier host cycle deadline", async () => {
+  vi.useFakeTimers();
+  const deadlineMs = Date.now() + 100;
+  const cfg = config("https://cycle-deadline-fixture.invalid/v1");
+  Object.defineProperty(cfg.models!.providers!.local, "headers", {
+    get: () => {
+      vi.setSystemTime(deadlineMs + 1);
+      return {};
+    },
+  });
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          id: "fixture",
+          choices: [{ finish_reason: "stop", message: { content: '{"actions":[]}' } }],
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const receipt = await runCentralHarnessCycle({
+    perception,
+    deadlineMs,
+    registry: new Map(),
+    brain: createCentralBrain(cfg),
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  expect(receipt.brainCall.outcome).toBe("failed");
+  expect(receipt.steps).toEqual([]);
+  expect(receipt.nextAction).toBe("halt_and_report");
 });
 
 it("settles the original harness after localhost HTTP 200 stalls and rejects late actions", async () => {

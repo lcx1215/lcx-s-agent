@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConfiguredFinanceModelAdapter } from "../configured-finance-model-adapter.js";
+import type { LogicalAgentModelAdapter } from "../logical-agent-model-router.js";
+import { runCentralHarnessCycle } from "./harness-loop.js";
 import {
   buildCentralBrainPrompt,
   buildCentralToolCatalog,
@@ -7,7 +9,8 @@ import {
   createCentralBrain,
 } from "./model-brain.js";
 import { createCentralToolRegistry } from "./tool-registry.js";
-vi.mock("../configured-finance-model-adapter.js", () => ({
+vi.mock("../configured-finance-model-adapter.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../configured-finance-model-adapter.js")>()),
   createConfiguredFinanceModelAdapter: vi.fn(),
 }));
 afterEach(() => vi.resetAllMocks());
@@ -76,6 +79,34 @@ describe("central tool discovery context", () => {
   });
 });
 describe("central configured model capacity", () => {
+  it("forwards the host cycle deadline to the existing configured adapter", async () => {
+    const invoke = vi.fn<LogicalAgentModelAdapter["invoke"]>(async () => ({}));
+    vi.mocked(createConfiguredFinanceModelAdapter).mockReturnValue({
+      id: "fixture",
+      provider: "fixture",
+      modelId: "fixture",
+      mode: "adapter",
+      capabilities: [],
+      requiredTools: [],
+      requiredSideEffects: [],
+      invoke,
+    });
+    const deadlineAtMs = Date.now() + 100;
+    await runCentralHarnessCycle({
+      perception: {
+        observedAt: new Date().toISOString(),
+        ownerTotals: {},
+        controlRoom: {},
+        backlog: [],
+        boundaries: [],
+      },
+      registry: new Map(),
+      brain: createCentralBrain({}),
+      deadlineMs: deadlineAtMs,
+    });
+    expect(invoke.mock.calls[0]?.[0]).toMatchObject({ deadlineAtMs });
+  });
+
   it("passes through default capacity and explicit output limits without a hidden 4096 cap", () => {
     vi.mocked(createConfiguredFinanceModelAdapter).mockReturnValue({
       id: "fixture",

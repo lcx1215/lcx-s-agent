@@ -104,8 +104,16 @@ export async function runCentralHarnessCycle(
   options: HarnessLoopOptions,
 ): Promise<CentralRunReceipt> {
   const controller = new AbortController();
-  const remainingMs = (options.deadlineMs ?? Date.now() + 120_000) - Date.now();
+  const deadlineMs = options.deadlineMs ?? Date.now() + 120_000;
+  const remainingMs = deadlineMs - Date.now();
   const expire = () => controller.abort(new Error("central cycle deadline exceeded"));
+  // Timers may be delayed by host sleep or a busy event loop. Reuse the same
+  // cancellation path at dispatch and result boundaries before trusting a result.
+  const checkDeadline = () => {
+    if (Date.now() >= deadlineMs) {
+      expire();
+    }
+  };
   const timer = remainingMs > 0 ? setTimeout(expire, remainingMs) : undefined;
   if (remainingMs <= 0) {
     expire();
@@ -114,7 +122,7 @@ export async function runCentralHarnessCycle(
     ? AbortSignal.any([options.signal, controller.signal])
     : controller.signal;
   try {
-    return await runCycle(options, signal);
+    return await runCycle({ ...options, deadlineMs }, signal, checkDeadline);
   } finally {
     if (timer) {
       clearTimeout(timer);
@@ -123,7 +131,12 @@ export async function runCentralHarnessCycle(
 }
 
 /** Allow bounded cleanup before recording cancellation; unknown adapters must not imply shutdown. */
-async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+async function observeUntilAborted<T>(
+  signal: AbortSignal,
+  checkDeadline: () => void,
+  run: () => Promise<T>,
+): Promise<T> {
+  checkDeadline();
   signal.throwIfAborted();
   return new Promise<T>((resolve, reject) => {
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -139,10 +152,12 @@ async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>
     signal.addEventListener("abort", abort, { once: true });
     Promise.resolve()
       .then(() => {
+        checkDeadline();
         signal.throwIfAborted();
         return run();
       })
       .then((value) => {
+        checkDeadline();
         if (signal.aborted) {
           reject(signal.reason);
         } else {
@@ -161,6 +176,7 @@ async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>
 async function runCycle(
   options: HarnessLoopOptions,
   signal: AbortSignal,
+  checkDeadline: () => void,
 ): Promise<CentralRunReceipt> {
   const observer = options.registry;
   const runId = options.runId ?? randomUUID();
@@ -202,8 +218,8 @@ async function runCycle(
     };
   } else {
     try {
-      proposal = await observeUntilAborted(signal, () =>
-        options.brain.propose(bounded.perception, signal),
+      proposal = await observeUntilAborted(signal, checkDeadline, () =>
+        options.brain.propose(bounded.perception, signal, options.deadlineMs),
       );
     } catch (error) {
       brainCall = {
@@ -312,7 +328,7 @@ async function runCycle(
     }
     const spec = observer.get(step.ownerId)!;
     try {
-      const observation = await observeUntilAborted(signal, () =>
+      const observation = await observeUntilAborted(signal, checkDeadline, () =>
         options.execute !== undefined
           ? // Test/offline override: deterministic execute given the full spec.
             options.execute(step.ownerId, spec, step.args, signal)
@@ -417,6 +433,7 @@ async function runCycle(
 
   // The next action is computed here, by TypeScript, and never by the brain: it
   // is a bounded enum the following cycle can trust, not self-authored guidance.
+  checkDeadline();
   const nextAction =
     signal.aborted || bounded.report.overBudget
       ? "halt_and_report"
