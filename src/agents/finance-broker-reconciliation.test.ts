@@ -272,10 +272,16 @@ describe("canonical account observation", () => {
   async function reconcile(
     extra: Record<string, unknown> = {},
     latency?: { historyMs: number; appendMs: number },
+    historyActivities: Record<string, unknown>[] = [],
   ) {
     syncMocks.append.mockReset();
     syncMocks.history.mockResolvedValue({ status: "raw_history_synced" });
-    syncMocks.readHistory.mockResolvedValue({ records: [], headRef: "history-head" });
+    syncMocks.readHistory.mockResolvedValue({
+      records: historyActivities.length
+        ? [{ body: { query: "activities:window", payload: historyActivities } }]
+        : [],
+      headRef: "history-head",
+    });
     if (latency) {
       syncMocks.readHistory.mockImplementation(async () => {
         vi.setSystemTime(Date.now() + latency.historyMs);
@@ -316,6 +322,50 @@ describe("canonical account observation", () => {
     });
     return { snapshot, read };
   }
+  it("does not reconcile a balanced round-trip that lies beyond the sealed cutoff", async () => {
+    const rows = ["buy", "sell"].map((side) => ({
+      id: `late-${side}`,
+      activity_type: "FILL",
+      type: "fill",
+      side,
+      symbol: "SPY",
+      qty: "1",
+      price: "100",
+      transaction_time: "2020-01-02T00:00:00Z",
+    }));
+    const { snapshot } = await reconcile({}, undefined, rows);
+    expect(snapshot.status).toBe("unresolved");
+    expect(snapshot.issues).toContain("history_not_complete_from_inception");
+  });
+  it("preserves supported created-at-only cash merger pairs within the seal", async () => {
+    const merger = {
+      activity_type: "MA",
+      activity_sub_type: "CMA",
+      group_id: "merger-group",
+      corporate_action_id: "action",
+      symbol: "WBD",
+      currency: "USD",
+      status: "executed",
+      created_at: "2019-01-03T16:00:00Z",
+    };
+    const rows = [
+      {
+        id: "buy",
+        activity_type: "FILL",
+        type: "fill",
+        side: "buy",
+        symbol: "WBD",
+        qty: "10",
+        price: "50",
+        transaction_time: "2019-01-02T16:00:00Z",
+      },
+      { ...merger, id: "cash", net_amount: "500" },
+      { ...merger, id: "shares", qty: "-10", price: "50", net_amount: "0" },
+    ];
+    const { snapshot } = await reconcile({}, undefined, rows);
+    expect(snapshot.status).toBe("reconciled");
+    expect(snapshot.cashDifference).toBe(0);
+  });
   it("projects only activities for reconciliation without changing account reads", async () => {
     syncMocks.projection.mockClear();
     const { snapshot, read } = await reconcile();

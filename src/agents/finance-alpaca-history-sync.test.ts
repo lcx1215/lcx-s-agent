@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { reconcileFinanceBrokerHistory } from "./finance-alpaca-history-reconciliation.js";
 import {
   readFinanceBrokerHistory,
   syncConfiguredAlpacaPaperHistory,
@@ -104,6 +105,49 @@ describe("Alpaca raw history sync", () => {
     ]);
     expect(history.records[1]?.body.query).toMatch(/^orders:/u);
   });
+  it("retains narrow research facts but requires broker-observed inception for the baseline", async () => {
+    const options = await setup(async (raw) => {
+      const pathname = new URL(raw).pathname;
+      return reply(
+        pathname === "/v2/account"
+          ? { id: "synthetic-account", created_at: "2020-01-01T00:00:00Z" }
+          : pathname.endsWith("orders")
+            ? [
+                {
+                  id: "order",
+                  status: "filled",
+                  filled_qty: "1",
+                  submitted_at: "2025-01-02T15:00:00Z",
+                },
+              ]
+            : [
+                {
+                  id: "fill",
+                  activity_type: "FILL",
+                  type: "fill",
+                  order_id: "order",
+                  symbol: "SPY",
+                  side: "buy",
+                  qty: "1",
+                  price: "100",
+                  transaction_time: "2025-01-02T15:00:00Z",
+                },
+              ],
+      );
+    });
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+    const raw = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(raw.latestSyncReceipt?.accountCreatedAt).toBe("2020-01-01T00:00:00.000Z");
+    const narrow = await reconcileFinanceBrokerHistory(options.directory, options.accountId, raw);
+    expect(narrow.positionBaselineUsable).toBe(false);
+    expect(narrow.fills).toHaveLength(1);
+    await syncAlpacaPaperHistory({ ...options, after: "2020-01-01T00:00:00Z" });
+    expect(
+      (await reconcileFinanceBrokerHistory(options.directory, options.accountId))
+        .positionBaselineUsable,
+    ).toBe(true);
+  });
+
   it("rejects overlapping syncs through directory aliases before a second transport runs", async () => {
     let release!: () => void;
     let entered!: () => void;

@@ -6,6 +6,7 @@ import { resolveProcessScopedMap } from "../shared/process-scoped-map.js";
 import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import { financeHistoryInstant } from "./finance-history-sync-coverage.js";
 import {
   appendFinanceBrokerHistory,
   reduceFinanceBrokerHistoryRecords,
@@ -99,6 +100,9 @@ async function syncAlpacaPaperHistoryOnTurn(
   ) {
     throw new Error("history account identity mismatch");
   }
+  const createdAt = "created_at" in account ? account.created_at : undefined;
+  const inception = financeHistoryInstant(createdAt);
+  const accountCreatedAt = Number.isFinite(inception) ? new Date(inception).toISOString() : null;
   // Invalidate the old completion before this attempt can persist any new pages.
   // An opaque attempt identity also prevents append deduplication from hiding retries.
   const syncId = randomUUID();
@@ -111,7 +115,7 @@ async function syncAlpacaPaperHistoryOnTurn(
         venue: "alpaca:paper",
         query: `sync_receipt:${options.after}:${options.until}`,
         cursor: "",
-        payload: [{ ...payload, syncId }],
+        payload: [{ ...payload, syncId, accountCreatedAt }],
       },
       { signal },
     );

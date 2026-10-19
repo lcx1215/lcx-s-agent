@@ -68,7 +68,16 @@ async function fixture() {
     venue: "alpaca:paper",
     query: "sync_receipt:window",
     cursor: "",
-    payload: [{ status: "raw_history_synced" }],
+    payload: [
+      {
+        accountId,
+        venue: "alpaca:paper",
+        status: "raw_history_synced",
+        accountCreatedAt: "2025-01-01T00:00:00Z",
+        after: "2025-01-01T00:00:00Z",
+        until: "2026-09-21T00:00:00Z",
+      },
+    ],
   });
   await appendFinanceExecutionReceipt(directory, {
     schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
@@ -188,4 +197,39 @@ it("stops an account book read cancelled after dispatch and releases its local r
   const recovered = await readFinanceAccountTradingBook({ ...f, venue: "alpaca:paper" });
   expect(recovered.accountId).toBe(f.accountId);
   expect(recovered.brokerBaselineUsable).toBe(true);
+});
+
+it("keeps narrow manual history readable while falling back to execution receipts", async () => {
+  const f = await fixture();
+  await appendFinanceBrokerHistory(f.directory, {
+    kind: "broker_history",
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+    query: "sync_receipt:narrow",
+    cursor: "",
+    payload: [
+      {
+        accountId: f.accountId,
+        venue: "alpaca:paper",
+        status: "raw_history_synced",
+        accountCreatedAt: "2025-01-01T00:00:00Z",
+        after: "2026-09-20T00:00:00Z",
+        until: "2026-09-21T00:00:00Z",
+      },
+    ],
+  });
+  const book = await readFinanceAccountTradingBook({ ...f, venue: "alpaca:paper" });
+  expect(book.brokerBaselineUsable).toBe(false);
+  expect(book.baselineSource).toBe("execution_receipts");
+  expect(book.brokerHistory.fills).toHaveLength(2);
+  expect(book.brokerHistory.positions).toHaveLength(2);
+});
+it("rejects stale coverage for an explicit account-book cutoff", async () => {
+  const f = await fixture();
+  const book = await readFinanceAccountTradingBook({
+    ...f,
+    venue: "alpaca:paper",
+    requiredThrough: "2026-09-22T00:00:00Z",
+  });
+  expect(book.brokerBaselineUsable).toBe(false);
 });

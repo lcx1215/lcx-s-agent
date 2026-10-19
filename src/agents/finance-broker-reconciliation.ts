@@ -9,6 +9,10 @@ import {
 } from "./finance-alpaca-history-sync.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
+  financeBrokerHistoryCoverage,
+  financeHistoryInstant,
+} from "./finance-history-sync-coverage.js";
+import {
   appendFinanceBrokerHistory,
   reduceFinanceBrokerHistoryRecords,
   readFinanceLatestBrokerReconciliations,
@@ -412,6 +416,9 @@ export async function syncFinanceBrokerReconciliation(
   }
   // Validate the durable history before sampling the final account snapshot so
   // local replay work does not consume the short account-fact freshness lease.
+  let earliestHistoryEvent = Infinity;
+  let latestHistoryEvent = -Infinity;
+  let invalidHistoryEventTime = false;
   const history = await reduceFinanceBrokerHistoryRecords(
     options.directory,
     options.accountId,
@@ -420,6 +427,20 @@ export async function syncFinanceBrokerReconciliation(
     (accumulator, record) => {
       if (record.body.query.startsWith("activities:")) {
         for (const activity of record.body.payload) {
+          if (["FILL", "CFEE", "MA"].includes(String(activity.activity_type))) {
+            const value =
+              activity.transaction_time ??
+              (activity.activity_type !== "FILL" ? activity.created_at : undefined) ??
+              activity.date;
+            const encoded =
+              typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+                ? `${value}T23:59:59.999Z`
+                : value;
+            const time = financeHistoryInstant(encoded);
+            invalidHistoryEventTime ||= !Number.isFinite(time);
+            earliestHistoryEvent = Math.min(earliestHistoryEvent, time);
+            latestHistoryEvent = Math.max(latestHistoryEvent, time);
+          }
           accumulator.observe(activity);
         }
       }
@@ -443,10 +464,26 @@ export async function syncFinanceBrokerReconciliation(
     positions,
     cash: number(last.cash),
     completeFromInception:
-      synced.status === "raw_history_synced" &&
       feesComplete &&
-      typeof first.created_at === "string" &&
-      Date.parse(options.after) <= Date.parse(first.created_at) &&
+      !invalidHistoryEventTime &&
+      financeBrokerHistoryCoverage(
+        {
+          ...synced,
+          accountId: options.accountId,
+          venue: "alpaca:paper",
+          after: options.after,
+          until: options.until,
+          accountCreatedAt: first.created_at,
+        },
+        options.accountId,
+        earliestHistoryEvent === Infinity
+          ? []
+          : [
+              new Date(earliestHistoryEvent).toISOString(),
+              new Date(latestHistoryEvent).toISOString(),
+            ],
+        options.until,
+      ) !== undefined &&
       first.cash === last.cash,
   });
   const protection = classifyFinanceProtectionOrders(
