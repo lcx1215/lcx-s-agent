@@ -10,10 +10,19 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
 
 async function runJsonScript(script: string) {
+  const fixtureHome = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-flow-structure-home-"));
   try {
+    const fixtureBin = path.join(fixtureHome, ".openclaw", "bin");
+    await fs.mkdir(fixtureBin, { recursive: true });
+    // This exam checks source presence only; the host owner fixture must never execute.
+    await fs.writeFile(
+      path.join(fixtureBin, "lcx-local-operator-loop.sh"),
+      "#!/usr/bin/env bash\nexit 99 # structural test source only\n",
+      { mode: 0o600 },
+    );
     return await execFileAsync(process.execPath, ["--import", "tsx", script, "--json"], {
       cwd: repoRoot,
-      env: process.env,
+      env: { ...process.env, LCX_USER_HOME: fixtureHome },
       maxBuffer: EXEC_MAX_BUFFER,
     });
   } catch (error) {
@@ -26,6 +35,8 @@ async function runJsonScript(script: string) {
       ].join("\n"),
       { cause: error },
     );
+  } finally {
+    await fs.rm(fixtureHome, { recursive: true, force: true });
   }
 }
 
@@ -205,7 +216,7 @@ describe("LCX flow graph exam", () => {
     });
   });
 
-  it("passes current task waterflow contracts", async () => {
+  it("passes repository waterflow contracts with a source-only host fixture", async () => {
     const { stdout } = await runJsonScript("scripts/operator/lcx-flow-graph.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
@@ -730,6 +741,8 @@ describe("LCX flow graph exam", () => {
             "skillopt-autocue",
           ]),
           allowedPaths: expect.arrayContaining([
+            "src/agents/commercial-answer-pipeline.ts",
+            "scripts/operator/lcx-commercial-answer-pipeline.ts",
             "src/agents/visible-answer-adoption-gate.ts",
             "src/agents/visible-answer-adoption-gate.test.ts",
             "src/auto-reply/reply/skill-autocue.ts",
