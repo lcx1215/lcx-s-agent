@@ -116,6 +116,27 @@ describe("EchoAPI known CI credential value redaction", () => {
     },
   );
 
+  it.each(["auth", "authToken", "auth_token", "auth-token"])(
+    "redacts a separately echoed auth credential from %s",
+    (key) => {
+      expect(
+        redactEchoApiText(
+          "authentication failed for fixture-auth-value; status 401",
+          `https://open.echoapi.com/ci?${key}=fixture-auth-value`,
+        ),
+      ).toBe("authentication failed for [REDACTED]; status 401");
+    },
+  );
+
+  it("redacts a query identifier after a JSON property separator", () => {
+    expect(
+      redactEchoApiText(
+        '{"error":"invalid","ci_id":"private-project"}',
+        "https://open.echoapi.com/ci?ci_id=private-project",
+      ),
+    ).toBe('{"error":"invalid","ci_id":"[REDACTED]"}');
+  });
+
   it("redacts a short credential without changing an unrelated error code", () => {
     expect(
       redactEchoApiText(

@@ -480,7 +480,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
   const isCredentialKey = (key: string) =>
     /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
       key,
-    ) || /^(?:apiKey|accessToken|refreshToken|clientSecret)$/iu.test(key);
+    ) || /^(?:apiKey|accessToken|refreshToken|clientSecret|auth(?:[_-]?token)?)$/iu.test(key);
   const addQueryValue = (key: string, value: string, raw?: string) => {
     // Ordinary identifiers need a field/value context; their presence in a
     // query alone does not make unrelated diagnostic words credentials.
@@ -549,7 +549,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       const keys = pattern(contextualKeys);
       redacted = redacted.replace(
         new RegExp(
-          `((?:^|[\\s?&({])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?=$|[\\s"'&,;)}\\]])`,
+          `((?:^|[\\s?&({,])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?=$|[\\s"'&,;)}\\]])`,
           "gu",
         ),
         "$1[REDACTED]",
