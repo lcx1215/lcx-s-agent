@@ -393,7 +393,48 @@ export class LogicalAgentModelRouter {
         controller.abort(params.signal.reason);
       };
       params.signal.addEventListener("abort", abort, { once: true });
+      let observationAttempted = false;
+      const observe = () => {
+        if (observationAttempted) {
+          return;
+        }
+        observationAttempted = true;
+        if (adapterInvoked && adapter.mode === "adapter") {
+          try {
+            const candidate = adapter.observe?.(identity);
+            if (
+              candidate !== undefined &&
+              candidate.callId === identity.callId &&
+              candidate.provider === adapter.provider &&
+              candidate.modelId === adapter.modelId &&
+              typeof candidate.transportRequestId === "string" &&
+              candidate.transportRequestId.trim() &&
+              (candidate.kind === "model_inference" ||
+                (candidate.kind === "provider_call" &&
+                  adapter.requiredSideEffects.includes("provider_call")))
+            ) {
+              observation = candidate;
+            }
+          } catch {
+            /* Observation failure cannot promote execution evidence. */
+          }
+        }
+      };
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlineAtMs = Math.min(
+        startedAtMs + policy.timeoutMs,
+        params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
+      );
+      const assertActive = () => {
+        if (!controller.signal.aborted && Date.now() >= deadlineAtMs) {
+          outcome = "timed_out";
+          reason = "deadline";
+          controller.abort();
+        }
+        if (controller.signal.aborted) {
+          throw new Error("model call cancelled or timed out");
+        }
+      };
       try {
         if (params.signal.aborted) {
           const expired = params.isDeadlineAbort?.(params.signal.reason) === true;
@@ -401,6 +442,7 @@ export class LogicalAgentModelRouter {
           reason = expired ? "deadline" : "cancelled";
           throw new Error("model call cancelled or timed out");
         }
+        assertActive();
         const anyTool = params.capabilities.allowedTools.includes(LOGICAL_AGENT_ANY_TOOL);
         const allowed =
           policy.requiredCapabilities.every((cap) => adapter.capabilities.includes(cap)) &&
@@ -487,19 +529,6 @@ export class LogicalAgentModelRouter {
             { once: true },
           );
         });
-        const deadlineAtMs = Math.min(
-          Date.now() + policy.timeoutMs,
-          params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
-        );
-        const assertActive = () => {
-          if (!controller.signal.aborted && Date.now() >= deadlineAtMs) {
-            reason = "deadline";
-            controller.abort();
-          }
-          if (controller.signal.aborted) {
-            throw new Error("model call cancelled or timed out");
-          }
-        };
         timer = setTimeout(
           () => {
             reason = "deadline";
@@ -532,15 +561,16 @@ export class LogicalAgentModelRouter {
             throw new Error("model output contract rejected");
           }
         }
+        observe();
+        assertActive();
         outcome = "completed";
-        const completed =
-          this.#completedModels.get(params.correlationId) ?? new Map<LogicalAgentId, Set<string>>();
-        const models = completed.get(params.role) ?? new Set<string>();
-        models.add(`${adapter.provider}/${adapter.modelId}`);
-        completed.set(params.role, models);
-        this.#completedModels.set(params.correlationId, completed);
         return result;
       } catch (error) {
+        if (!params.signal.aborted && Date.now() >= deadlineAtMs) {
+          outcome = "timed_out";
+          reason = "deadline";
+          controller.abort();
+        }
         if (error instanceof ModelAdapterError && error.code === "runtime_timeout") {
           outcome = "timed_out";
         }
@@ -587,71 +617,88 @@ export class LogicalAgentModelRouter {
           throw new Error(`model routing ${outcome}: ${reason}`, { cause: error });
         }
       } finally {
-        if (timer !== undefined) {
-          clearTimeout(timer);
-        }
-        params.signal.removeEventListener("abort", abort);
-        if (adapterInvoked && adapter.mode === "adapter") {
-          try {
-            const candidate = adapter.observe?.(identity);
+        try {
+          // An already timed-out target may use its declared bounded fallback.
+          // Finalization of an otherwise active target cannot create that timeout
+          // and then silently grant a fresh target budget.
+          const alreadyTimedOut = outcome === "timed_out";
+          const assertFinalizationActive = () => {
             if (
-              candidate !== undefined &&
-              candidate.callId === identity.callId &&
-              candidate.provider === adapter.provider &&
-              candidate.modelId === adapter.modelId &&
-              typeof candidate.transportRequestId === "string" &&
-              candidate.transportRequestId.trim() &&
-              (candidate.kind === "model_inference" ||
-                (candidate.kind === "provider_call" &&
-                  adapter.requiredSideEffects.includes("provider_call")))
+              alreadyTimedOut &&
+              !params.signal.aborted &&
+              Date.now() < (params.deadlineAtMs ?? Number.POSITIVE_INFINITY)
             ) {
-              observation = candidate;
+              return;
             }
+            assertActive();
+          };
+          observe();
+          try {
+            assertFinalizationActive();
           } catch {
-            /* Observation failure cannot promote execution evidence. */
+            // Record the final observed classification once before rejecting.
           }
+          // This receipt describes model work and observation. The synchronous
+          // recorder is notified once; it cannot retroactively change that receipt.
+          params.record(
+            Object.freeze({
+              schemaVersion: "lcx_model_call_v1",
+              ...identity,
+              policyRevision: this.routing.revision,
+              adapterId: adapter.id,
+              mode: adapter.mode,
+              ...(policy.workload ? { workload: policy.workload } : {}),
+              ...(policy.outputContract
+                ? { outputContractRevision: policy.outputContract.revision }
+                : {}),
+              ...(adapter.qualificationId ? { qualificationId: adapter.qualificationId } : {}),
+              startedAtMs,
+              latencyMs: Math.max(0, Date.now() - startedAtMs),
+              outcome,
+              adapterInvoked,
+              realModelInferenceObserved: observation !== undefined,
+              providerCallObserved: observation?.kind === "provider_call",
+              evidence: observation ? "adapter-attested" : "not-observed",
+              ...(observation?.reasoningEffort
+                ? { reasoningEffort: observation.reasoningEffort }
+                : {}),
+              ...(observation?.credentialSource
+                ? { credentialSource: observation.credentialSource }
+                : {}),
+              ...(observation?.outputNormalization
+                ? { outputNormalization: observation.outputNormalization }
+                : {}),
+              ...(observation?.evidenceCoverage
+                ? { evidenceCoverage: observation.evidenceCoverage }
+                : {}),
+              ...(observation
+                ? {
+                    observationIdSha256: createHash("sha256")
+                      .update(observation.transportRequestId)
+                      .digest("hex"),
+                  }
+                : {}),
+              ...(reason ? { reason } : {}),
+            }),
+          );
+          // Failed calls must not launch a fresh fallback after bookkeeping
+          // newly expires. Preserve the explicit already-timed-out fallback path.
+          assertFinalizationActive();
+          if (outcome === "completed") {
+            const completed =
+              this.#completedModels.get(params.correlationId) ??
+              new Map<LogicalAgentId, Set<string>>();
+            const models = completed.get(params.role) ?? new Set<string>();
+            models.add(`${adapter.provider}/${adapter.modelId}`);
+            completed.set(params.role, models);
+            this.#completedModels.set(params.correlationId, completed);
+          }
+        } finally {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
+          params.signal.removeEventListener("abort", abort);
         }
-        params.record(
-          Object.freeze({
-            schemaVersion: "lcx_model_call_v1",
-            ...identity,
-            policyRevision: this.routing.revision,
-            adapterId: adapter.id,
-            mode: adapter.mode,
-            ...(policy.workload ? { workload: policy.workload } : {}),
-            ...(policy.outputContract
-              ? { outputContractRevision: policy.outputContract.revision }
-              : {}),
-            ...(adapter.qualificationId ? { qualificationId: adapter.qualificationId } : {}),
-            startedAtMs,
-            latencyMs: Math.max(0, Date.now() - startedAtMs),
-            outcome,
-            adapterInvoked,
-            realModelInferenceObserved: observation !== undefined,
-            providerCallObserved: observation?.kind === "provider_call",
-            evidence: observation ? "adapter-attested" : "not-observed",
-            ...(observation?.reasoningEffort
-              ? { reasoningEffort: observation.reasoningEffort }
-              : {}),
-            ...(observation?.credentialSource
-              ? { credentialSource: observation.credentialSource }
-              : {}),
-            ...(observation?.outputNormalization
-              ? { outputNormalization: observation.outputNormalization }
-              : {}),
-            ...(observation?.evidenceCoverage
-              ? { evidenceCoverage: observation.evidenceCoverage }
-              : {}),
-            ...(observation
-              ? {
-                  observationIdSha256: createHash("sha256")
-                    .update(observation.transportRequestId)
-                    .digest("hex"),
-                }
-              : {}),
-            ...(reason ? { reason } : {}),
-          }),
-        );
       }
     }
     throw new Error("model routing exhausted");
