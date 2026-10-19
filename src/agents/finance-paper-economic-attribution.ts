@@ -14,6 +14,13 @@ const Numeric = z
   .union([z.number(), z.string().min(1)])
   .transform(Number)
   .pipe(z.number().finite());
+const ReconciliationObservation = z.object({
+  status: z.enum(["reconciled", "unresolved"]),
+  observedAt: z.string().datetime(),
+  accountObservation: z.object({ accountId: z.string() }),
+  cashDifference: z.number().finite().optional(),
+  cashComponents: z.object({ feeCash: z.number().finite() }).optional(),
+});
 const Snapshot = z.object({
   status: z.literal("reconciled"),
   observedAt: z.string().datetime(),
@@ -310,13 +317,17 @@ export function attributeFinancePaperEconomics(params: {
     if (row.activity_type !== "FEE" && row.activity_type !== "CFEE") {
       return false;
     }
-    const time =
-      typeof row.transaction_time === "string" &&
-      /T.*(?:Z|[+-]\d\d:\d\d)$/.test(row.transaction_time)
-        ? Date.parse(row.transaction_time)
-        : NaN;
-    if (Number.isFinite(time)) {
-      return time > from && time <= through;
+    // Match the original reconciliation owner: an explicit occurrence/creation
+    // timestamp takes precedence over the settlement date, not balance posting.
+    const occurredAt = row.transaction_time ?? row.created_at;
+    if (occurredAt !== undefined) {
+      const parsedTime = z.string().datetime({ offset: true }).safeParse(occurredAt);
+      const time = parsedTime.success ? Date.parse(parsedTime.data) : NaN;
+      if (Number.isFinite(time)) {
+        return time > from && time <= through;
+      }
+      feeTimesUnknown.push(String(row.id));
+      return false;
     }
     if (typeof row.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
       if (row.date < startDay || row.date > endDay) {
@@ -341,6 +352,7 @@ export function attributeFinancePaperEconomics(params: {
             type: r.activity_type,
             date: r.date ?? null,
             transactionTime: r.transaction_time ?? null,
+            createdAt: r.created_at ?? null,
             orderId: r.order_id ?? null,
             status: r.status ?? null,
             currency: r.currency ?? null,
@@ -403,6 +415,7 @@ export function attributeFinancePaperEconomics(params: {
       "equity_change_minus_known_gross; includes_cashflows_fees_income_corporate_actions_unvalued_lots_and_snapshot_skew; not_profit",
     fees: {
       periodConfirmedReportedCashFees: periodFees.reportedCashFeeAmount,
+      periodTimingBasis: "transaction_time_then_created_at_then_date; not_balance_posting",
       periodAssetFeeValuation: periodFees.reportedAssetFeeValuation,
       periodTimeAmbiguousActivityIds: [...new Set(feeTimesUnknown)],
       historicalFeeActivityCount: fifo.feeActivityCount,
@@ -443,8 +456,23 @@ export async function readFinancePaperEconomicAttribution(
       directory,
       accountId,
       "alpaca:paper",
-      { opening: undefined as Stored | undefined, closing: undefined as Stored | undefined },
+      {
+        opening: undefined as Stored | undefined,
+        closing: undefined as Stored | undefined,
+        latest: undefined as
+          | { snapshot: z.infer<typeof ReconciliationObservation>; ref: string }
+          | undefined,
+      },
       (state, record) => {
+        const observation = ReconciliationObservation.safeParse(record.body.payload[0]);
+        if (
+          observation.success &&
+          observation.data.accountObservation.accountId === accountId &&
+          Date.parse(observation.data.observedAt) <= Date.parse(asOf) &&
+          (!state.latest || observation.data.observedAt >= state.latest.snapshot.observedAt)
+        ) {
+          state.latest = { snapshot: observation.data, ref: record.ref };
+        }
         const parsed = Snapshot.safeParse(record.body.payload[0]);
         if (
           !parsed.success ||
@@ -483,8 +511,26 @@ export async function readFinancePaperEconomicAttribution(
       receipts: positions.receipts,
       decisions,
     });
+    const latest = snapshots.value.latest;
+    const newerUnresolved =
+      latest?.snapshot.status === "unresolved" &&
+      latest.snapshot.observedAt >= closing.snapshot.observedAt;
     return {
       ...result,
+      ...(newerUnresolved
+        ? {
+            status: "partially_attributed" as const,
+            reconciliationRef: latest.ref,
+            reconciliationAt: latest.snapshot.observedAt,
+            reconciliationStatus: "unresolved" as const,
+            latestCashDifference: latest.snapshot.cashDifference ?? null,
+            latestFeeCash: latest.snapshot.cashComponents?.feeCash ?? null,
+            issues: [
+              ...result.issues,
+              "newer_reconciliation_unresolved; historical_attribution_only",
+            ],
+          }
+        : {}),
       evidence: result.evidence.slice(0, 12),
       omittedEvidenceLots: Math.max(0, result.evidence.length - 12),
       fees: {

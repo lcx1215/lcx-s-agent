@@ -2,9 +2,17 @@ import { z } from "zod";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Amount = z.number().finite().nullable();
+const ReconciliationGap = {
+  reconciliationRef: Hash.optional(),
+  reconciliationAt: z.string().datetime().optional(),
+  reconciliationStatus: z.literal("unresolved").optional(),
+  latestCashDifference: Amount.optional(),
+  latestFeeCash: Amount.optional(),
+};
 /** Compact host facts shared by the original daily, intraday and central judgment paths. */
 export const FinanceAccountEconomicFeedbackSchema = z
   .object({
+    ...ReconciliationGap,
     accountId: z.string().min(1).max(240),
     venue: z.literal("alpaca:paper"),
     asOf: z.string().datetime(),
@@ -16,6 +24,7 @@ export const FinanceAccountEconomicFeedbackSchema = z
     through: z.string().datetime().optional(),
     accountEquityChange: Amount.optional(),
     inheritedGrossPnl: Amount.optional(),
+    inheritedExitDecisionGrossPnl: Amount.optional(),
     newDecisionGrossPnl: Amount.optional(),
     unlinkedGrossPnl: Amount.optional(),
     unallocatedPnl: Amount.optional(),
@@ -36,6 +45,7 @@ const Source = z.object({
   observedAt: z.string().datetime(),
   postRepair: z.object({
     attribution: z.object({
+      ...ReconciliationGap,
       status: z.enum(["gross_price_contributions_attributed", "partially_attributed"]),
       openingRef: Hash,
       closingRef: Hash,
@@ -43,6 +53,7 @@ const Source = z.object({
       through: z.string().datetime(),
       accountEquityChange: Amount,
       unallocatedPnl: Amount,
+      inheritedExitsByNewDecision: z.object({ grossPnl: Amount }).optional(),
       cohorts: z.object({
         inheritedPositions: z.object({ grossPnl: Amount }),
         newDecisions: z.object({ grossPnl: Amount }),
@@ -77,6 +88,8 @@ export function projectFinanceAccountEconomicFeedback(
     !Number.isFinite(Date.parse(asOf)) ||
     Date.parse(parsed.data.observedAt) > Date.parse(asOf) ||
     Date.parse(parsed.data.postRepair.attribution.through) > Date.parse(asOf) ||
+    (parsed.data.postRepair.attribution.reconciliationAt !== undefined &&
+      Date.parse(parsed.data.postRepair.attribution.reconciliationAt) > Date.parse(asOf)) ||
     Date.parse(parsed.data.postRepair.attribution.from) >
       Date.parse(parsed.data.postRepair.attribution.through)
   ) {
@@ -89,7 +102,15 @@ export function projectFinanceAccountEconomicFeedback(
   const a = parsed.data.postRepair.attribution;
   return FinanceAccountEconomicFeedbackSchema.parse({
     ...base,
-    status: a.status === "partially_attributed" ? "partial" : "observed",
+    status:
+      a.status === "partially_attributed" || a.reconciliationStatus === "unresolved"
+        ? "partial"
+        : "observed",
+    reconciliationRef: a.reconciliationRef,
+    reconciliationAt: a.reconciliationAt,
+    reconciliationStatus: a.reconciliationStatus,
+    latestCashDifference: a.latestCashDifference,
+    latestFeeCash: a.latestFeeCash,
     sourceRef: parsed.data.sourceRef,
     openingRef: a.openingRef,
     closingRef: a.closingRef,
@@ -97,6 +118,7 @@ export function projectFinanceAccountEconomicFeedback(
     through: a.through,
     accountEquityChange: a.accountEquityChange,
     inheritedGrossPnl: a.cohorts.inheritedPositions.grossPnl,
+    inheritedExitDecisionGrossPnl: a.inheritedExitsByNewDecision?.grossPnl ?? null,
     newDecisionGrossPnl: a.cohorts.newDecisions.grossPnl,
     unlinkedGrossPnl: a.cohorts.unlinkedPostAnchorEntries.grossPnl,
     unallocatedPnl: a.unallocatedPnl,

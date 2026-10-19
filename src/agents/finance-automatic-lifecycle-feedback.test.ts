@@ -554,7 +554,7 @@ it("keeps economic unavailability local and exposes an explicit non-return bound
       status: "absent",
       asOf: "2026-10-03T00:00:00Z",
       executionAuthority: "none",
-      boundary: expect.stringContaining("not account return"),
+      boundary: expect.stringContaining("not alpha; accounts never aggregated"),
     },
   });
 });
@@ -815,67 +815,112 @@ it.each(["failure", "pending", "recovered", "unsafe_failure"])(
   },
 );
 
-it("keeps new account attribution in the original two-kilobyte lifecycle economic packet", async () => {
-  const observedAt = "2026-10-15T07:00:00.000Z";
-  const economics = {
-    accountId: "paper-account",
-    venue: "alpaca:paper" as const,
-    asOf: observedAt,
-    status: "observed" as const,
-    sourceRef: "a".repeat(64),
-    openingRef: "b".repeat(64),
-    closingRef: "c".repeat(64),
-    from: "2026-10-15T05:18:54.810Z",
-    through: observedAt,
-    accountEquityChange: 61.25,
-    inheritedGrossPnl: 61.25,
-    newDecisionGrossPnl: 0,
-    unlinkedGrossPnl: 0,
-    unallocatedPnl: 0,
-    historicalCashFees: 4.05,
-    historicalAssetFeeValue: 0.08052845,
-    periodConfirmedCashFees: 0,
-    pendingFees: "unknown" as const,
-    modelBill: null,
-  };
-  const read = vi
-    .spyOn(accountEconomicsReader, "readFinanceAccountEconomicFeedback")
-    .mockResolvedValue(economics);
-  const originalProfitRead = brokerProfitReader.readFinanceBrokerProfitFeedback;
-  vi.spyOn(brokerProfitReader, "readFinanceBrokerProfitFeedback").mockImplementation(
-    async (...args) => {
-      const result = await originalProfitRead(...args);
-      for (const account of result.accounts ?? []) {
-        if ("basis" in account) {
-          account.strategyAttribution.strategies = Array.from({ length: 3 }, (_, i) => ({
-            strategyRule: `historical-detail-${i}-`.repeat(40),
-            fillCount: 1,
-          }));
+it.each([1, 2])(
+  "keeps %i account attribution windows in the original two-kilobyte lifecycle economic packet",
+  async (accountCount) => {
+    const observedAt = "2026-10-15T07:00:00.000Z";
+    const economics = {
+      reconciliationRef: "d".repeat(64),
+      reconciliationAt: "2026-10-15T07:00:00.000Z",
+      reconciliationStatus: "unresolved" as const,
+      latestCashDifference: 0.2402438201897894,
+      latestFeeCash: -4.29,
+      accountId: "paper-account",
+      venue: "alpaca:paper" as const,
+      asOf: observedAt,
+      status: "observed" as const,
+      sourceRef: "a".repeat(64),
+      openingRef: "b".repeat(64),
+      closingRef: "c".repeat(64),
+      from: "2026-10-15T05:18:54.810Z",
+      through: observedAt,
+      accountEquityChange: 61.25,
+      inheritedGrossPnl: 61.25,
+      inheritedExitDecisionGrossPnl: 40,
+      newDecisionGrossPnl: 0,
+      unlinkedGrossPnl: 0,
+      unallocatedPnl: 0,
+      historicalCashFees: 4.05,
+      historicalAssetFeeValue: 0.08052845,
+      periodConfirmedCashFees: 0,
+      pendingFees: "unknown" as const,
+      modelBill: null,
+    };
+    const read = vi
+      .spyOn(accountEconomicsReader, "readFinanceAccountEconomicFeedback")
+      .mockImplementation(async (_directory, accountId) => ({
+        ...economics,
+        accountId,
+        newDecisionGrossPnl: accountId === "second-account" ? -10 : 0,
+      }));
+    const originalProfitRead = brokerProfitReader.readFinanceBrokerProfitFeedback;
+    vi.spyOn(brokerProfitReader, "readFinanceBrokerProfitFeedback").mockImplementation(
+      async (...args) => {
+        const result = await originalProfitRead(...args);
+        for (const account of result.accounts ?? []) {
+          if ("basis" in account) {
+            account.strategyAttribution.strategies = Array.from({ length: 3 }, (_, i) => ({
+              strategyRule: `historical-detail-${i}-`.repeat(40),
+              fillCount: 1,
+            }));
+          }
         }
-      }
-      return result;
-    },
-  );
-  await appendFinanceBrokerHistory(directory, {
-    kind: "broker_history",
-    accountId: "paper-account",
-    venue: "alpaca:paper",
-    query: `reconciliation:${observedAt}`,
-    cursor: "",
-    payload: [
-      { status: "reconciled", feesInterpreted: true, observedAt, positions: [], openOrders: [] },
-    ],
-  });
-  const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
-  expect(read).toHaveBeenCalledWith(directory, "paper-account", observedAt);
-  expect(feedback).toMatchObject({
-    economicFeedback: {
-      accounts: [{ accountEconomics: economics, methodPerformance: { methods: [] } }],
-      omittedAccounts: 0,
-    },
-  });
-  if (!("economicFeedback" in feedback)) {
-    throw new Error("lifecycle unavailable");
-  }
-  expect(Buffer.byteLength(JSON.stringify(feedback.economicFeedback))).toBeLessThanOrEqual(2000);
-});
+        return result;
+      },
+    );
+    for (let i = 0; i < accountCount; i++) {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: i === 0 ? "paper-account" : "second-account",
+        venue: "alpaca:paper",
+        query: `reconciliation:${observedAt}`,
+        cursor: "",
+        payload: [
+          {
+            status: "reconciled",
+            feesInterpreted: true,
+            observedAt,
+            positions: [],
+            openOrders: [],
+          },
+        ],
+      });
+    }
+    const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+    expect(read).toHaveBeenCalledWith(directory, "paper-account", observedAt);
+    expect(feedback).toMatchObject({
+      economicFeedback: {
+        accounts:
+          accountCount === 1
+            ? [{ accountEconomics: economics, methodPerformance: { methods: [] } }]
+            : expect.arrayContaining([
+                expect.objectContaining({
+                  accountId: "paper-account",
+                  accountEconomics: expect.objectContaining({
+                    sourceRef: economics.sourceRef,
+                    inheritedGrossPnl: 61.25,
+                    newDecisionGrossPnl: 0,
+                    pendingFees: "unknown",
+                    modelBill: null,
+                  }),
+                }),
+                expect.objectContaining({
+                  accountId: "second-account",
+                  accountEconomics: expect.objectContaining({
+                    sourceRef: economics.sourceRef,
+                    inheritedGrossPnl: 61.25,
+                    newDecisionGrossPnl: -10,
+                    pendingFees: "unknown",
+                    modelBill: null,
+                  }),
+                }),
+              ]),
+        omittedAccounts: 0,
+      },
+    });
+    if (!("economicFeedback" in feedback)) {
+      throw new Error("lifecycle unavailable");
+    }
+    expect(Buffer.byteLength(JSON.stringify(feedback.economicFeedback))).toBeLessThanOrEqual(2000);
+  },
+);

@@ -631,7 +631,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
           ),
       ),
     );
-    const economicFeedback =
+    const buildEconomicFeedback = (compact = false) =>
       profitFeedback.accounts !== undefined
         ? {
             status: profitFeedback.status,
@@ -693,6 +693,61 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                   omittedStrategies: Math.max(0, strategyAttribution.strategies.length - 3),
                 },
               };
+              if (compact) {
+                const economic = summary.accountEconomics;
+                // Account coverage precedes optional method/strategy detail. The source
+                // reference retains access to the original, unabridged economic evidence.
+                const compactEconomics =
+                  economic && economic.status !== "unavailable"
+                    ? {
+                        status: economic.status,
+                        sourceRef: economic.sourceRef,
+                        from: economic.from,
+                        through: economic.through,
+                        accountEquityChange: economic.accountEquityChange,
+                        inheritedGrossPnl: economic.inheritedGrossPnl,
+                        inheritedExitDecisionGrossPnl: economic.inheritedExitDecisionGrossPnl,
+                        newDecisionGrossPnl: economic.newDecisionGrossPnl,
+                        unlinkedGrossPnl: economic.unlinkedGrossPnl,
+                        unallocatedPnl: economic.unallocatedPnl,
+                        historicalCashFees: economic.historicalCashFees,
+                        historicalAssetFeeValue: economic.historicalAssetFeeValue,
+                        periodConfirmedCashFees: economic.periodConfirmedCashFees,
+                        pendingFees: economic.pendingFees,
+                        modelBill: economic.modelBill,
+                        reconciliationRef: economic.reconciliationRef,
+                        reconciliationAt: economic.reconciliationAt,
+                        reconciliationStatus: economic.reconciliationStatus,
+                        latestCashDifference: economic.latestCashDifference,
+                        latestFeeCash: economic.latestFeeCash,
+                      }
+                    : economic;
+                return {
+                  accountId: summary.accountId,
+                  venue: summary.venue,
+                  status: summary.status,
+                  ...(economic && economic.status !== "unavailable"
+                    ? {}
+                    : {
+                        snapshotRef: summary.snapshotRef,
+                        observedAt: summary.observedAt,
+                        freshness: summary.freshness,
+                        basis: summary.basis,
+                        positionManagementMatched: summary.positionManagementMatched,
+                        issues: summary.issues,
+                        omittedIssues: summary.omittedIssues,
+                        strategyAttribution: {
+                          attributedFillCount: summary.strategyAttribution.attributedFillCount,
+                          unattributedFillCount: summary.strategyAttribution.unattributedFillCount,
+                          omittedStrategies: strategyAttribution.strategies.length,
+                        },
+                      }),
+                  accountEconomics: compactEconomics,
+                  netMatchedPnl: summary.netMatchedPnl,
+                  omittedMethods: account.methodPerformance.methods.length,
+                  omittedAccountDetails: true,
+                };
+              }
               if (summary.accountEconomics && summary.accountEconomics.status !== "unavailable") {
                 // Keep current account consequences and one exact method cohort in the same 2KB budget.
                 return {
@@ -720,6 +775,10 @@ export async function buildFinanceAutomaticLifecycleFeedback(
             executionAuthority: "none",
             reason: boundedText(profitFeedback.reason, 160),
           };
+    let economicFeedback = buildEconomicFeedback();
+    if (Buffer.byteLength(JSON.stringify(economicFeedback), "utf8") > 2000) {
+      economicFeedback = buildEconomicFeedback(true);
+    }
     if (economicFeedback.accounts !== undefined) {
       while (
         Buffer.byteLength(JSON.stringify(economicFeedback), "utf8") > 2000 &&
