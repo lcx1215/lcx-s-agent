@@ -247,7 +247,11 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       existingAreas.push(file);
     }
   }
-  await execute("git", ["add", "--force", ...existingAreas], { cwd: repo });
+  // Preserve copied fixture bytes independently of the host Git newline policy.
+  // Windows autocrlf warnings can otherwise exhaust execFile's stderr buffer.
+  await execute("git", ["-c", "core.autocrlf=false", "add", "--force", ...existingAreas], {
+    cwd: repo,
+  });
   await execute(
     "git",
     [
