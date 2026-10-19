@@ -537,6 +537,23 @@ describe("configured research model transport", () => {
       }),
     ).resolves.toEqual({ apiKey: "env-fixture-key", source: "auth_profile" });
   });
+  it("uses an explicit host directory in the original static credential owner", async () => {
+    const profileCfg = structuredClone(cfg);
+    delete profileCfg.models!.providers!.fixture.apiKey;
+    const load = vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockReturnValue({
+      version: 1,
+      profiles: { fixture: { type: "api_key", provider: "fixture", key: "fixture-key" } },
+    });
+    const resolveKey = vi
+      .spyOn(authProfiles, "resolveApiKeyForProfile")
+      .mockResolvedValue({ apiKey: "fixture-key", provider: "fixture" });
+    await resolveConfiguredFinanceAuth(profileCfg, "fixture", undefined, "/trusted/fixture-agent");
+    expect(load).toHaveBeenCalledWith("/trusted/fixture-agent");
+    expect(resolveKey).toHaveBeenCalledWith(
+      expect.objectContaining({ agentDir: "/trusted/fixture-agent" }),
+    );
+  });
+
   it("does not borrow another provider key or refresh an OAuth profile", async () => {
     const profileCfg = structuredClone(cfg);
     delete profileCfg.models!.providers!.fixture.apiKey;

@@ -139,7 +139,7 @@ export async function resolveConfiguredFinanceAuth(
   }
   const store = suppliedStore
     ? structuredClone(suppliedStore)
-    : loadAuthProfileStoreForSecretsRuntime();
+    : loadAuthProfileStoreForSecretsRuntime(agentDir);
   for (const profileId of resolveAuthProfileOrder({ cfg, store, provider })) {
     assertActive();
     const credential = store.profiles[profileId];
@@ -147,7 +147,7 @@ export async function resolveConfiguredFinanceAuth(
       continue;
     }
     try {
-      const resolved = await resolveApiKeyForProfile({ cfg, store, profileId });
+      const resolved = await resolveApiKeyForProfile({ cfg, store, profileId, agentDir });
       assertActive();
       if (resolved?.apiKey) {
         return { apiKey: resolved.apiKey, source: "auth_profile" };
