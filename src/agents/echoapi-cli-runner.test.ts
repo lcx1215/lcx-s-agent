@@ -80,6 +80,8 @@ describe("EchoAPI known CI credential value redaction", () => {
       url: "https://open.echoapi.com/ci?signature=fixture%20query%2Fvalue",
       value: "fixture%20query%2Fvalue",
     },
+    { url: "https://open.echoapi.com/ci?signature=fixture%20query", value: "fixture+query" },
+    { url: "https://open.echoapi.com/ci?signature=fixture%2fquery", value: "fixture%2Fquery" },
     { url: "https://fixture-user:fixture-password@open.echoapi.com/ci", value: "fixture-password" },
     { url: "https://fixture-user:fixture-password@open.echoapi.com/ci", value: "fixture-user" },
     {
@@ -95,9 +97,32 @@ describe("EchoAPI known CI credential value redaction", () => {
 
   it("treats query values literally and redacts longer overlapping values first", () => {
     const url =
-      "https://open.echoapi.com/ci?one=fixture&two=fixture-long&signature=literal%2B%5Bvalue%5D.*";
+      "https://open.echoapi.com/ci?secret=fixture&token=fixture-long&signature=literal%2B%5Bvalue%5D.*";
     const output = redactEchoApiText("fixture-long literal+[value].*; unrelated diagnostic", url);
     expect(output).toBe("[REDACTED] [REDACTED]; unrelated diagnostic");
+  });
+
+  it.each(["1", "public", "public-reference"])(
+    "keeps unrelated diagnostics for a common query identifier %s",
+    (value) => {
+      const url = `https://open.echoapi.com/ci?ci_id=${value}&token=fixture-credential`;
+      const output = redactEchoApiText(
+        `HTTP status 401; public endpoint; ${value} diagnostic; ci_id=${value}; supplied value [${value}]; token=fixture-credential`,
+        url,
+      );
+      expect(output).toBe(
+        `HTTP status 401; public endpoint; ${value} diagnostic; ci_id=[REDACTED]; supplied value [[REDACTED]]; token=[REDACTED]`,
+      );
+    },
+  );
+
+  it("redacts a short credential without changing an unrelated error code", () => {
+    expect(
+      redactEchoApiText(
+        "HTTP status 401; token=1; supplied value [1]",
+        "https://open.echoapi.com/ci?token=1",
+      ),
+    ).toBe("HTTP status 401; token=[REDACTED]; supplied value [[REDACTED]]");
   });
 
   it("removes decoded URL credential values", () => {

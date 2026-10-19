@@ -467,30 +467,57 @@ export function verifyEchoApiReport(report: unknown): boolean {
   );
 }
 
+/** Known credentials and query-value contexts; opaque unlabelled text is not a secret detector. */
 export function redactEchoApiText(value: string, sensitiveUrl?: string): string {
   let redacted = value;
-  const sensitiveValues = new Set<string>();
+  const sensitiveValues = new Map<string, boolean>();
+  const contextualKeys = new Set<string>();
+  const addValue = (value: string, bare: boolean) => {
+    if (value) {
+      sensitiveValues.set(value, bare || sensitiveValues.get(value) === true);
+    }
+  };
+  const isCredentialKey = (key: string) =>
+    /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
+      key,
+    ) || /^(?:apiKey|accessToken|refreshToken|clientSecret)$/iu.test(key);
+  const addQueryValue = (key: string, value: string, raw?: string) => {
+    // Ordinary identifiers need a field/value context; their presence in a
+    // query alone does not make unrelated diagnostic words credentials.
+    const bare = isCredentialKey(key);
+    contextualKeys.add(key);
+    for (const form of [
+      value,
+      encodeURIComponent(value),
+      new URLSearchParams({ v: value }).toString().slice(2),
+      raw,
+    ]) {
+      if (form !== undefined) {
+        addValue(form, bare);
+      }
+    }
+  };
   if (sensitiveUrl) {
     try {
       const parsed = new URL(sensitiveUrl);
-      for (const value of parsed.searchParams.values()) {
-        if (value) {
-          sensitiveValues.add(value);
-        }
+      for (const [key, value] of parsed.searchParams) {
+        addQueryValue(key, value);
       }
       for (const part of parsed.search.slice(1).split("&")) {
         const separator = part.indexOf("=");
         if (separator >= 0 && part.slice(separator + 1)) {
-          sensitiveValues.add(part.slice(separator + 1));
+          for (const [key, value] of new URLSearchParams(part)) {
+            addQueryValue(key, value, part.slice(separator + 1));
+          }
         }
       }
       for (const credential of [parsed.username, parsed.password]) {
         if (!credential) {
           continue;
         }
-        sensitiveValues.add(credential);
+        addValue(credential, true);
         try {
-          sensitiveValues.add(decodeURIComponent(credential));
+          addValue(decodeURIComponent(credential), true);
         } catch {
           // Retain the raw credential even when percent decoding is invalid.
         }
@@ -502,12 +529,39 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
     }
   }
   if (sensitiveValues.size > 0) {
-    // One literal replacement pass avoids partial overlap and re-redacting markers.
-    const pattern = [...sensitiveValues]
-      .toSorted((left, right) => right.length - left.length)
-      .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
-      .join("|");
-    redacted = redacted.replace(new RegExp(pattern, "gu"), "[REDACTED]");
+    const escapeLiteral = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const pattern = (values: Iterable<string>) =>
+      [...values]
+        .toSorted((left, right) => right.length - left.length)
+        .map(escapeLiteral)
+        .join("|");
+    const bare = pattern(
+      [...sensitiveValues].filter(([, allowed]) => allowed).map(([value]) => value),
+    );
+    if (bare) {
+      redacted = redacted.replace(
+        new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_])`, "gu"),
+        "[REDACTED]",
+      );
+    }
+    const all = pattern(sensitiveValues.keys());
+    if (contextualKeys.size > 0) {
+      const keys = pattern(contextualKeys);
+      redacted = redacted.replace(
+        new RegExp(
+          `((?:^|[\\s?&({])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?=$|[\\s"'&,;)}\\]])`,
+          "gu",
+        ),
+        "$1[REDACTED]",
+      );
+    }
+    redacted = redacted.replace(
+      new RegExp(
+        `((?:[Ss]upplied(?: value)?|[Pp]rovided(?: value)?|[Vv]alue|[Pp]arameter|[Cc]redential)\\s*(?:[:=]\\s*)?["'\\[]\\s*)(?:${all})(?=\\s*[\\]"'])`,
+        "gu",
+      ),
+      "$1[REDACTED]",
+    );
   }
   redacted = redacted.replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
     try {
@@ -520,7 +574,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
   return redacted
     .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
     .replace(
-      /(["']?(?:token|api[_-]?key|secret|password)["']?\s*[:=]\s*["']?)[^"',\s}]+/giu,
+      /(["']?(?:token|api[_-]?key|secret|password)["']?\s*[:=]\s*["']?)[^"',;\s}]+/giu,
       "$1[REDACTED]",
     );
 }
