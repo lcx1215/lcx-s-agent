@@ -1358,6 +1358,57 @@ export async function retireFinancePaperExecutionClaim(params: {
   }
 }
 
+/** Journal data is untrusted at runtime, even when its static claim type is valid.
+ * Validate before a resolver can mistake malformed protection for free inventory. */
+function validRecoveryProtection(binding: NonNullable<FinanceExecutionSafetyClaim["binding"]>) {
+  const { protectiveOrders, positionQuantity, intent } = binding;
+  if (protectiveOrders === undefined) {
+    // Historical ordinary claims have neither field. Do not reinterpret a detached
+    // position snapshot as a claim without protection metadata.
+    return positionQuantity === undefined;
+  }
+  if (
+    !Array.isArray(protectiveOrders) ||
+    typeof positionQuantity !== "number" ||
+    !Number.isFinite(positionQuantity) ||
+    positionQuantity < 0 ||
+    !positive(intent.quantity) ||
+    (intent.side === "sell" && intent.quantity > positionQuantity)
+  ) {
+    return false;
+  }
+  const ids = new Set<string>();
+  let reserved = 0;
+  for (const order of protectiveOrders) {
+    if (
+      !order ||
+      typeof order !== "object" ||
+      Array.isArray(order) ||
+      !text(order.id) ||
+      ids.has(order.id) ||
+      !positive(order.quantity) ||
+      !positive(order.stopPrice) ||
+      ![undefined, "stop", "stop_limit"].includes(order.orderType) ||
+      ((order.orderType ?? "stop") === "stop" && order.limitPrice !== undefined) ||
+      (order.orderType === "stop_limit" &&
+        (!positive(order.limitPrice) || order.limitPrice > order.stopPrice))
+    ) {
+      return false;
+    }
+    ids.add(order.id);
+    reserved += order.quantity;
+  }
+  if (!Number.isFinite(reserved) || reserved > positionQuantity) {
+    return false;
+  }
+  // The dispatch gate only admits a protected sell against one whole-position stop.
+  return (
+    intent.side !== "sell" ||
+    intent.quantity <= positionQuantity - reserved ||
+    (protectiveOrders.length === 1 && protectiveOrders[0].quantity === positionQuantity)
+  );
+}
+
 /** Controller-only broker reconciliation under the same lock as order dispatch.
  * No callback result means unresolved, never permission to resend the order. */
 export async function reconcileFinanceExecutionClaims(params: {
@@ -1415,6 +1466,7 @@ export async function reconcileFinanceExecutionClaims(params: {
           !binding ||
           binding.accountId !== params.accountId ||
           binding.venue !== params.venue ||
+          !validRecoveryProtection(binding) ||
           claim.id !==
             digest([
               binding.accountId,
