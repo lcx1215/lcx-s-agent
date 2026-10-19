@@ -3444,11 +3444,12 @@ async function verifySelfRepairDiagnosticFeedback(
   ) {
     throw new Error("feedback_future_candidate_boundary_invalid");
   }
-  const workspace = path.resolve(future.workspaceDir);
+  const workspaceAlias = path.resolve(future.workspaceDir);
+  const workspace = await fs.realpath(workspaceAlias);
   const safeRead = async (filePath: string) =>
     readFileWithinRoot({
       rootDir: workspace,
-      relativePath: path.relative(workspace, path.resolve(workspace, filePath)),
+      relativePath: path.relative(workspaceAlias, path.resolve(workspaceAlias, filePath)),
       maxBytes: 512 * 1024,
     });
   const root = await safeRead(ref.path);
@@ -3471,7 +3472,7 @@ async function verifySelfRepairDiagnosticFeedback(
   if (
     !map ||
     typeof map.path !== "string" ||
-    path.resolve(workspace, map.path) !== path.resolve(producer.receipt.path) ||
+    path.resolve(workspaceAlias, map.path) !== path.resolve(producer.receipt.path) ||
     map.sha256 !== producer.receipt.sha256
   ) {
     throw new Error("feedback_current_map_pin_mismatch");
