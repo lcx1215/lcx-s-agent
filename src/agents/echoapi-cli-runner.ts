@@ -474,7 +474,9 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
   const contextualKeys = new Set<string>();
   const addValue = (value: string, bare: boolean) => {
     if (value) {
-      sensitiveValues.set(value, bare || sensitiveValues.get(value) === true);
+      for (const form of [value, JSON.stringify(value).slice(1, -1)]) {
+        sensitiveValues.set(form, bare || sensitiveValues.get(form) === true);
+      }
     }
   };
   const isCredentialKey = (key: string) =>
@@ -517,7 +519,14 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
         }
         addValue(credential, true);
         try {
-          addValue(decodeURIComponent(credential), true);
+          const decoded = decodeURIComponent(credential);
+          addValue(decoded, true);
+          addValue(encodeURIComponent(decoded), true);
+          const serialized = new URL("https://redacted.invalid");
+          serialized.username = decoded;
+          serialized.password = decoded;
+          addValue(serialized.username, true);
+          addValue(serialized.password, true);
         } catch {
           // Retain the raw credential even when percent decoding is invalid.
         }
@@ -540,7 +549,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
     );
     if (bare) {
       redacted = redacted.replace(
-        new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_])`, "gu"),
+        new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_]|["']?\\s*[:=])`, "gu"),
         "[REDACTED]",
       );
     }
@@ -549,7 +558,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       const keys = pattern(contextualKeys);
       redacted = redacted.replace(
         new RegExp(
-          `((?:^|[\\s?&({,])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?=$|[\\s"'&,;)}\\]])`,
+          `((?:^|[\\s?&({,])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?=$|[\\s"'&,;.)}!?\\]])`,
           "gu",
         ),
         "$1[REDACTED]",

@@ -146,6 +146,41 @@ describe("EchoAPI known CI credential value redaction", () => {
     ).toBe("HTTP status 401; token=[REDACTED]; supplied value [[REDACTED]]");
   });
 
+  it.each(["username", "password"] as const)(
+    "redacts canonical percent encodings of a URL %s",
+    (field) => {
+      const url = new URL("https://open.echoapi.com/ci");
+      url[field] = "fixture%2fuser";
+      expect(redactEchoApiText('credential "fixture%2Fuser"', url.href)).toBe(
+        'credential "[REDACTED]"',
+      );
+    },
+  );
+
+  it.each(["token", "ci_id"])("redacts JSON-escaped query values in %s", (key) => {
+    const value = 'fixture"secret';
+    const url = new URL("https://open.echoapi.com/ci");
+    url.searchParams.set(key, value);
+    expect(redactEchoApiText(JSON.stringify({ error: "invalid", [key]: value }), url.href)).toBe(
+      JSON.stringify({ error: "invalid", [key]: "[REDACTED]" }),
+    );
+  });
+
+  it.each([".", "!", "?"])("redacts contextual values before sentence terminator %s", (suffix) => {
+    expect(
+      redactEchoApiText(
+        `failed for ci_id=private-project${suffix}`,
+        "https://open.echoapi.com/ci?ci_id=private-project",
+      ),
+    ).toBe(`failed for ci_id=[REDACTED]${suffix}`);
+  });
+
+  it.each(["token", "secret", "password"])("preserves the structured secret key %s", (key) => {
+    expect(
+      redactEchoApiText(`${key}=second-secret`, `https://open.echoapi.com/ci?signature=${key}`),
+    ).toBe(`${key}=[REDACTED]`);
+  });
+
   it("removes decoded URL credential values", () => {
     const output = redactEchoApiText(
       "credentials were fixture@user and fixture/password",
