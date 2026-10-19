@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import * as secretResolver from "../secrets/resolve.js";
 import * as authProfiles from "./auth-profiles.js";
 import {
   createConfiguredFinanceModelAdapter,
@@ -537,6 +538,37 @@ describe("configured research model transport", () => {
       }),
     ).resolves.toEqual({ apiKey: "env-fixture-key", source: "auth_profile" });
   });
+  it.each(["api_key", "token"] as const)(
+    "retains configured exec SecretRefs for static %s profiles",
+    async (type) => {
+      const profileCfg = structuredClone(cfg);
+      delete profileCfg.models!.providers!.fixture.apiKey;
+      const secret = { source: "exec" as const, provider: "fixture", id: "key" };
+      const store = {
+        version: 1,
+        profiles: {
+          fixture:
+            type === "api_key"
+              ? { type, provider: "fixture", keyRef: secret }
+              : { type, provider: "fixture", tokenRef: secret },
+        },
+      };
+      const before = structuredClone(store);
+      const resolveSecret = vi
+        .spyOn(secretResolver, "resolveSecretRefString")
+        .mockResolvedValue("exec-fixture-key");
+      await expect(resolveConfiguredFinanceAuth(profileCfg, "fixture", store)).resolves.toEqual({
+        apiKey: "exec-fixture-key",
+        source: "auth_profile",
+      });
+      expect(resolveSecret).toHaveBeenCalledWith(
+        secret,
+        expect.objectContaining({ config: profileCfg }),
+      );
+      expect(store).toEqual(before);
+    },
+  );
+
   it.each(
     (["transport", "error_body"] as const).flatMap((stage) =>
       [false, true].map((cancel) => ({ stage, cancel })),

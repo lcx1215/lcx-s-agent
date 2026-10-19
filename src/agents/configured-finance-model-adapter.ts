@@ -156,7 +156,14 @@ export async function resolveConfiguredFinanceAuth(
       continue;
     }
     try {
-      const resolved = await resolveApiKeyForProfile({ cfg, store, profileId, agentDir });
+      const resolved = await resolveApiKeyForProfile({
+        cfg,
+        store,
+        profileId,
+        agentDir,
+        // Only static api_key/token profiles reach this branch. Their original
+        // resolver supports configured exec SecretRefs without OAuth refresh or writes.
+      });
       assertActive();
       if (resolved?.apiKey) {
         return { apiKey: resolved.apiKey, source: "auth_profile" };
@@ -276,6 +283,8 @@ export type ConfiguredFinanceCallState = Readonly<z.infer<typeof ConfiguredFinan
 export function createConfiguredFinanceModelAdapter(
   cfg: OpenClawConfig,
   options: {
+    /** Trusted host identity; never supplied by model-authored tool parameters. */
+    agentDir?: string;
     maxTokens?: number;
     maxTokensByRole?: Partial<Record<LogicalAgentId, number>>;
     buildPrompt?: (payload: unknown) => string;
@@ -419,7 +428,7 @@ export function createConfiguredFinanceModelAdapter(
       const auth = await resolveFinanceAuthBeforeDeadline(
         cfg,
         provider,
-        undefined,
+        options.agentDir,
         signal,
         deadlineAtMs,
       );
