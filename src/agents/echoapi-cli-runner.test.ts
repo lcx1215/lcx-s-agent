@@ -203,6 +203,73 @@ describe("EchoAPI known CI credential value redaction", () => {
     },
   );
 
+  it("redacts a field in a JSON-serialized diagnostic string", () => {
+    expect(
+      redactEchoApiText(
+        JSON.stringify({ detail: JSON.stringify({ ci_id: "private-project" }) }),
+        "https://open.echoapi.com/ci?ci_id=private-project",
+      ),
+    ).toBe(JSON.stringify({ detail: JSON.stringify({ ci_id: "[REDACTED]" }) }));
+  });
+
+  it("redacts username and password separated by a colon", () => {
+    expect(
+      redactEchoApiText(
+        "credentials were fixture-user:fixture-password",
+        "https://fixture-user:fixture-password@open.echoapi.com/ci",
+      ),
+    ).toBe("credentials were [REDACTED]:[REDACTED]");
+  });
+
+  it("redacts a known credential before narrative punctuation", () => {
+    const output = redactEchoApiText(
+      "authentication failed for secret: status 401",
+      "https://open.echoapi.com/ci?token=secret",
+    );
+    expect(output).not.toContain("secret");
+    expect(output).toContain("401");
+  });
+
+  it("removes unrelated URL query values before a known credential changes the hostname", () => {
+    const output = redactEchoApiText(
+      "https://api.example/private?signature=second-secret",
+      "https://open.echoapi.com/ci?token=api",
+    );
+    expect(output).not.toContain("second-secret");
+    expect(output).toContain("[REDACTED_QUERY]");
+  });
+
+  it("removes complete known field values before generic delimiter handling", () => {
+    expect(
+      redactEchoApiText("token=before;after", "https://open.echoapi.com/ci?token=before%3Bafter"),
+    ).toBe("token=[REDACTED]");
+  });
+
+  it.each([
+    ["https://secret.example/private", "?"],
+    ["https://secret.example/private?sig=fixture", "&"],
+  ])("redacts URL credential continuations after %s", (secret, separator) => {
+    expect(
+      redactEchoApiText(
+        `${secret}${separator}other=second-secret status 401`,
+        `https://open.echoapi.com/ci?signature=${encodeURIComponent(secret)}`,
+      ),
+    ).toBe("[REDACTED] status 401");
+  });
+
+  it.each([
+    ["signature", "https://secret.example/private", "?"],
+    ["signature", "https://secret.example/private?sig=fixture", "&"],
+    ["ci_id", "https://secret.example/private", "?"],
+  ])("redacts contextual URL continuations for %s=%s", (key, secret, separator) => {
+    expect(
+      redactEchoApiText(
+        `${key}=${secret}${separator}other=second-secret status 401`,
+        `https://open.echoapi.com/ci?${key}=${encodeURIComponent(secret)}`,
+      ),
+    ).toBe(`${key}=[REDACTED] status 401`);
+  });
+
   it("removes decoded URL credential values", () => {
     const output = redactEchoApiText(
       "credentials were fixture@user and fixture/password",

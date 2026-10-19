@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, constants, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -537,6 +537,14 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       // Generic URL redaction below still protects malformed input.
     }
   }
+  const quote = String.raw`(?:\\*["'])?`;
+  let bare = "";
+  let urlValues = "";
+  let urlPlaceholder: string | undefined;
+  const protectUrl = () => {
+    urlPlaceholder ??= `https://redacted.invalid/${randomUUID()}/`;
+    return `${urlPlaceholder}?redacted=1`;
+  };
   if (sensitiveValues.size > 0) {
     const escapeLiteral = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     const pattern = (values: Iterable<string>) =>
@@ -544,24 +552,29 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
         .toSorted((left, right) => right.length - left.length)
         .map(escapeLiteral)
         .join("|");
-    const bare = pattern(
-      [...sensitiveValues].filter(([, allowed]) => allowed).map(([value]) => value),
-    );
-    if (bare) {
-      redacted = redacted.replace(
-        new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_]|["']?\\s*[:=])`, "gu"),
-        "[REDACTED]",
-      );
-    }
+    const bareValues = [...sensitiveValues]
+      .filter(([, allowed]) => allowed)
+      .map(([value]) => value);
+    bare = pattern(bareValues);
+    urlValues = pattern(bareValues.filter((value) => /^https?:\/\//iu.test(value)));
     const all = pattern(sensitiveValues.keys());
     if (contextualKeys.size > 0) {
       const keys = pattern(contextualKeys);
       redacted = redacted.replace(
         new RegExp(
-          `((?:^|[^\\p{L}\\p{N}_-])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?![\\p{L}\\p{N}_-])`,
+          `((?:^|[^\\p{L}\\p{N}_-])${quote}(?:${keys})${quote}\\s*[:=]\\s*${quote})(?:${all})(?![\\p{L}\\p{N}_-])`,
           "gu",
         ),
-        "$1[REDACTED]",
+        (match: string, prefix: string, offset: number, text: string) => {
+          const knownValue = match.slice(prefix.length);
+          // Leave URL continuations parseable until generic query removal,
+          // including contextual-only identifiers that must not be masked bare.
+          const hidden =
+            /^https?:\/\//iu.test(knownValue) && /^[?&#/]/u.test(text.slice(offset + match.length))
+              ? protectUrl()
+              : "[REDACTED]";
+          return `${prefix}${hidden}`;
+        },
       );
     }
     redacted = redacted.replace(
@@ -572,6 +585,10 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       "$1[REDACTED]",
     );
   }
+  // Keep unlabelled URL credentials parseable through query removal too.
+  if (urlValues) {
+    redacted = redacted.replace(new RegExp(urlValues, "gu"), protectUrl);
+  }
   redacted = redacted.replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
     try {
       const parsed = new URL(url);
@@ -580,12 +597,42 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       return url;
     }
   });
-  return redacted
+  if (urlPlaceholder) {
+    redacted = redacted.split(`${urlPlaceholder}?[REDACTED_QUERY]`).join("[REDACTED]");
+  }
+  const barePattern = () => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_])`, "gu");
+  if (bare) {
+    // Preserve field names only until their values have been sanitized. A value
+    // followed by punctuation is not necessarily a field name (userinfo, prose).
+    const fieldSeparator = new RegExp(`^${quote}\\s*[:=]`, "u");
+    redacted = redacted.replace(barePattern(), (match: string, offset: number, text: string) =>
+      /^(?:authorization|bearer|token|api[_-]?key|secret|password)$/iu.test(match) &&
+      fieldSeparator.test(text.slice(offset + match.length))
+        ? match
+        : "[REDACTED]",
+    );
+  }
+  redacted = redacted
     .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
     .replace(
-      /(["']?(?:token|api[_-]?key|secret|password)["']?\s*[:=]\s*["']?)[^"',;\s}]+/giu,
+      new RegExp(
+        `(${quote}(?:token|api[_-]?key|secret|password)${quote}\\s*[:=]\\s*${quote})[^"',;\\s}]+`,
+        "giu",
+      ),
       "$1[REDACTED]",
     );
+  if (bare) {
+    const recordPrefix = new RegExp(`(?:^|[{\\[,;\\n])\\s*${quote}$`, "u");
+    const hiddenFieldValue = new RegExp(`^${quote}\\s*[:=]\\s*${quote}\\[REDACTED\\]`, "u");
+    redacted = redacted.replace(barePattern(), (match: string, offset: number, text: string) =>
+      /^(?:authorization|bearer|token|api[_-]?key|secret|password)$/iu.test(match) &&
+      recordPrefix.test(text.slice(0, offset)) &&
+      hiddenFieldValue.test(text.slice(offset + match.length))
+        ? match
+        : "[REDACTED]",
+    );
+  }
+  return redacted;
 }
 
 async function executeEchoApiCase(
