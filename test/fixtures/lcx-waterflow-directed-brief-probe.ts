@@ -114,7 +114,11 @@ export async function prepareNativeDirectedTask(
   historyLevels?: readonly [number, number, number],
   maxApiCalls = 64,
 ) {
-  const prepared = await prepareOriginalFinanceModuleMain({ directory: workspace, fault });
+  const prepared = await prepareOriginalFinanceModuleMain({
+    directory: workspace,
+    fault,
+    historyLevels,
+  });
   const host = {
     accountId: "private-directed-account",
     runId: "private-directed-attempt",

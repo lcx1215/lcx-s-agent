@@ -2,6 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return {
+    ...actual,
+    fetch: vi.fn(async () => {
+      throw new Error("external HTTP forbidden in synthetic handoff fixture");
+    }),
+  };
+});
 import {
   executeDirectedDailyResearchTask,
   readDirectedDailyCases,

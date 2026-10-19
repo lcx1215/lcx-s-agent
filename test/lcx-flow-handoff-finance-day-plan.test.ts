@@ -2,6 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return {
+    ...actual,
+    fetch: vi.fn(async () => {
+      throw new Error("external HTTP forbidden in synthetic handoff fixture");
+    }),
+  };
+});
 import { readFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
 import { runFinanceDailyCycle } from "../src/agents/finance-daily-cycle.js";
 import { bindFinanceDailyStrategy } from "../src/agents/finance-daily-strategy.js";

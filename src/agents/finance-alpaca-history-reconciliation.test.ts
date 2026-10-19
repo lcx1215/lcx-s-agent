@@ -40,6 +40,59 @@ describe("Alpaca broker history reconciliation", () => {
       reconcileFinanceBrokerHistory(directory, accountId, { ...raw, streamScope: ["orders"] }),
     ).rejects.toThrow("requires orders, activities and sync receipts");
   });
+  it("never lets an older complete receipt rescue the latest incomplete or malformed attempt", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "broker-latest-sync-"));
+    directories.push(directory);
+    const accountId = "selected";
+    const append = (query: string, payload: Record<string, unknown>[]) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload,
+      });
+    await append("activities:window", [
+      {
+        id: "fill",
+        activity_type: "FILL",
+        type: "fill",
+        order_id: "order",
+        symbol: "SPY",
+        side: "buy",
+        qty: "1",
+        price: "100",
+        transaction_time: "2025-01-02T15:00:00Z",
+      },
+    ]);
+    await append("sync_receipt:old-window", [{ status: "raw_history_synced" }]);
+    expect((await reconcileFinanceBrokerHistory(directory, accountId)).historyStatus).toBe(
+      "reconciled",
+    );
+    for (const [query, payload] of [
+      ["sync_receipt:new-window", [{ status: "incomplete" }]],
+      ["sync_receipt:malformed", [{}]],
+      ["sync_receipt:empty", []],
+      ["sync_receipt:ambiguous", [{ status: "raw_history_synced" }, { status: "incomplete" }]],
+    ] as const) {
+      await append(query, [...payload]);
+      const read = await readFinanceBrokerHistory(directory, accountId);
+      expect((await reconcileFinanceBrokerHistory(directory, accountId, read)).historyStatus).toBe(
+        "incomplete",
+      );
+    }
+    const read = await readFinanceBrokerHistory(directory, accountId);
+    expect(
+      (
+        await reconcileFinanceBrokerHistory(directory, accountId, {
+          ...read,
+          latestSyncReceipt: null,
+        })
+      ).historyStatus,
+    ).toBe("incomplete");
+  });
+
   it("projects old fills and fees without manufacturing execution receipts", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-history-reconcile-"));
     directories.push(directory);

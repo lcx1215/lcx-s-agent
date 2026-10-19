@@ -5,6 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// These controller fixtures must never create a real broker transport.
+vi.mock("undici", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("undici")>()),
+  fetch: vi.fn(async () => {
+    throw new Error("synthetic fixture network forbidden");
+  }),
+}));
 import {
   executeDirectedDailyResearchBatch,
   executeDirectedDailyResearchTask,

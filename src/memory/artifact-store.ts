@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { hasErrnoCode } from "../infra/errors.js";
 import { openFileWithinRoot, SafeOpenError } from "../infra/fs-safe.js";
 import { assertNoPathAliasEscape } from "../infra/path-alias-guards.js";
 import { ensureMemoryIndexCoreSchema } from "./memory-schema.js";
@@ -396,7 +397,7 @@ export class ArtifactStore {
       }
       const missing =
         (error instanceof SafeOpenError && error.code === "not-found") ||
-        (error instanceof Error && "code" in error && error.code === "ENOENT");
+        hasErrnoCode(error, "ENOENT");
       throw new ArtifactStoreError(
         missing ? "artifact_original_missing" : "artifact_original_blocked",
         { cause: error },

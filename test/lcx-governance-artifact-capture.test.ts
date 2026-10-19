@@ -123,9 +123,11 @@ function harness(
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   const factory = vm.runInThisContext(
-    `(function(dependencies) { const { recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, compactCommercialAcceptanceFailures, readCommercialAcceptanceFeedback, GOVERNANCE_AUTOPILOT_LATEST_PATH, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
+    `(function(dependencies) { const { JSON, recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, compactCommercialAcceptanceFailures, readCommercialAcceptanceFeedback, GOVERNANCE_AUTOPILOT_LATEST_PATH, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
   ) as (dependencies: Record<string, unknown>) => Harness;
   return factory({
+    // Keep parsed owner values in the same realm as the production recorder.
+    JSON,
     recordAgentArtifact: options.recorder ?? recordAgentArtifact,
     loadConfig: options.load ?? (() => config),
     DEFAULT_WORKSPACE_DIR: workspace,

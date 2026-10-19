@@ -9,8 +9,6 @@ import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { readFinancePositionRecords } from "./finance-position-ledger.js";
 
-type Fact = Readonly<{ stream: string; fact: Record<string, unknown> }>;
-
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -273,14 +271,6 @@ function receiptOrderIds(receipts: readonly FinanceExecutionReceipt[]): Set<stri
       return receipt.adapterKind === "venue" && orderId ? [orderId] : [];
     }),
   );
-}
-
-function syncWasComplete(facts: readonly Fact[]): boolean {
-  const receipts = facts
-    .filter(({ stream }) => stream === "sync_receipt")
-    .map(({ fact }) => fact)
-    .filter((fact) => fact.status === "raw_history_synced");
-  return receipts.length > 0;
 }
 
 /**
@@ -570,7 +560,7 @@ export async function reconcileFinanceBrokerHistory(
   const orderAllocatedFeeCount = fees.filter(
     (fee) => fee.orderId !== undefined && appliedFeeIds.has(fee.activityId),
   ).length;
-  const complete = syncWasComplete(raw.facts);
+  const complete = raw.latestSyncReceipt?.status === "raw_history_synced";
   const historyStatus =
     raw.observationCount === 0
       ? "missing"

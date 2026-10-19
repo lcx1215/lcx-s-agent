@@ -69,6 +69,30 @@ export function isFinanceUsEquitySessionDate(date: string): boolean | undefined 
   return weekday !== 0 && weekday !== 6 && !closures.includes(date.slice(5));
 }
 
+// Published 13:00 ET cash-equity closes from the same NYSE calendars above.
+const earlyCloses: Record<string, readonly string[]> = {
+  "2025": ["07-03", "11-28", "12-24"],
+  "2026": ["11-27", "12-24"],
+  "2027": ["11-26"],
+  "2028": ["07-03", "11-24"],
+};
+
+/** Offline verified cash-equity bounds; closures and unknown years are not sessions. */
+export function financeUsEquitySessionBounds(date: string):
+  | {
+      openMinute: number;
+      closeMinute: number;
+    }
+  | undefined {
+  if (isFinanceUsEquitySessionDate(date) !== true) {
+    return undefined;
+  }
+  return {
+    openMinute: 570,
+    closeMinute: earlyCloses[date.slice(0, 4)]?.includes(date.slice(5)) ? 780 : 960,
+  };
+}
+
 /** Calendar completeness is separate from freshness and cross-source price agreement. */
 export function assessFinanceHistoryCoverage(
   request: FinanceMarketCollectionRequest,

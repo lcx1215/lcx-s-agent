@@ -561,6 +561,11 @@ async function appendJournal(file: string, claim: FinanceExecutionSafetyClaim): 
   } finally {
     await handle.close();
   }
+  // Windows file fsync flushes the file through FlushFileBuffers. Node cannot open
+  // and fsync the parent directory there; retain the additional POSIX directory barrier.
+  if (process.platform === "win32") {
+    return;
+  }
   const directory = await fs.open(path.dirname(file), "r");
   try {
     await directory.sync();

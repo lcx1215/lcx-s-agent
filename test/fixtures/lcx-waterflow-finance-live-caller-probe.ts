@@ -53,6 +53,7 @@ export async function probeOriginalFinanceLiveCaller(params: {
   includeNight?: boolean;
 }) {
   let preparation = await prepareOriginalFinanceModuleMain({
+    seedControllerHistory: false,
     directory: path.join(params.directory, "current-research"),
     allocation: params.allocation,
     dailyExecutableRule: true,

@@ -1,3 +1,8 @@
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { withFileLock } from "../infra/file-lock.js";
+import { resolveProcessScopedMap } from "../shared/process-scoped-map.js";
 import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
@@ -18,6 +23,7 @@ export type AlpacaHistoryOptions = {
   maxPages?: number;
 };
 
+const activeSyncs = resolveProcessScopedMap<true>(Symbol.for("lcx.alpacaHistoryActiveSyncs"));
 const host = "https://paper-api.alpaca.markets";
 function instant(value: string) {
   if (!/(Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) {
@@ -37,6 +43,34 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 1000) {
     throw new Error("invalid history page budget");
   }
+  options.signal?.throwIfAborted();
+  await fs.mkdir(options.directory, { recursive: true, mode: 0o700 });
+  const lockKey = path.join(await fs.realpath(options.directory), "alpaca-history-sync");
+  // The shared lock is reentrant within one process, so reject local overlap first.
+  if (activeSyncs.has(lockKey)) {
+    throw new Error("history sync already in progress");
+  }
+  activeSyncs.set(lockKey, true);
+  try {
+    return await withFileLock(
+      lockKey,
+      {
+        retries: { retries: 0, factor: 1, minTimeout: 1, maxTimeout: 1 },
+        // A live owner must never be displaced while it can still persist pages.
+        stale: Number.MAX_SAFE_INTEGER,
+      },
+      () => syncAlpacaPaperHistoryOnTurn(options, after, maxPages),
+    );
+  } finally {
+    activeSyncs.delete(lockKey);
+  }
+}
+
+async function syncAlpacaPaperHistoryOnTurn(
+  options: AlpacaHistoryOptions,
+  after: number,
+  maxPages: number,
+) {
   const signal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(120_000)])
     : AbortSignal.timeout(120_000);
@@ -65,6 +99,32 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
   ) {
     throw new Error("history account identity mismatch");
   }
+  // Invalidate the old completion before this attempt can persist any new pages.
+  // An opaque attempt identity also prevents append deduplication from hiding retries.
+  const syncId = randomUUID();
+  const appendSyncReceipt = (payload: Record<string, unknown>) =>
+    appendFinanceBrokerHistory(
+      options.directory,
+      {
+        kind: "broker_history",
+        accountId: options.accountId,
+        venue: "alpaca:paper",
+        query: `sync_receipt:${options.after}:${options.until}`,
+        cursor: "",
+        payload: [{ ...payload, syncId }],
+      },
+      { signal },
+    );
+  await appendSyncReceipt({
+    accountId: options.accountId,
+    venue: "alpaca:paper",
+    after: options.after,
+    until: options.until,
+    status: "incomplete",
+    streams: [],
+    positionsReconciled: false,
+    executionReceiptsCreated: 0,
+  });
   const streams: Array<{
     stream: string;
     complete: boolean;
@@ -213,6 +273,7 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
     streams.push({ stream, complete, pages, appended, ...(reason ? { reason } : {}) });
   }
   const receipt = {
+    syncId,
     accountId: options.accountId,
     venue: "alpaca:paper",
     after: options.after,
@@ -223,23 +284,10 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
     executionReceiptsCreated: 0,
   } as const;
   signal.throwIfAborted();
-  await appendFinanceBrokerHistory(
-    options.directory,
-    {
-      kind: "broker_history",
-      accountId: options.accountId,
-      venue: "alpaca:paper",
-      query: `sync_receipt:${options.after}:${options.until}`,
-      cursor: "",
-      payload: [
-        {
-          ...receipt,
-          streams: receipt.streams.map(({ appended: _appended, ...stream }) => stream),
-        },
-      ],
-    },
-    { signal },
-  );
+  await appendSyncReceipt({
+    ...receipt,
+    streams: receipt.streams.map(({ appended: _appended, ...stream }) => stream),
+  });
   return receipt;
 }
 
@@ -253,6 +301,7 @@ export async function readFinanceBrokerHistory(
     throw new Error("history account required");
   }
   const selectedStreams = options.streams ? new Set(options.streams) : undefined;
+  const syncState: { latestReceipt: Record<string, unknown> | null } = { latestReceipt: null };
   const latestTimes = new Map<string, number>();
   const factCounts = new Map<string, number>();
   const read = await reduceFinanceBrokerHistoryRecords(
@@ -265,6 +314,10 @@ export async function readFinanceBrokerHistory(
         return facts;
       }
       const stream = record.body.query.split(":", 1)[0];
+      if (stream === "sync_receipt") {
+        // Verified record order, independent of stream filters and fact deduplication.
+        syncState.latestReceipt = record.body.payload.length === 1 ? record.body.payload[0] : null;
+      }
       for (const fact of record.body.payload) {
         // Preserve raw revisions in the ledger, but expose one observation per
         // broker identity to research. Orders and activities have separate IDs.
@@ -304,6 +357,7 @@ export async function readFinanceBrokerHistory(
     venue: "alpaca:paper",
     pageCount: read.recordCount,
     facts: [...read.value.values()],
+    latestSyncReceipt: syncState.latestReceipt,
     totalFactCount: latestTimes.size,
     observationCount: latestTimes.size - (factCounts.get("sync_receipt") ?? 0),
     omittedFactCount: latestTimes.size - read.value.size,

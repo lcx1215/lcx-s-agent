@@ -4,6 +4,7 @@ import {
   type FinanceAlpacaMarketSession,
 } from "./finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import { financeUsEquitySessionBounds } from "./finance-history-coverage.js";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
 import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
 import { turnoverAndCost } from "./quant-math-advanced.js";
@@ -507,8 +508,7 @@ export function runFinanceIntradayPaperReplay(params: {
   const sessionsByDate = new Map(marketSessions.map((session) => [session.date, session]));
   if (
     sessionsByDate.size !== marketSessions.length ||
-    (preCloseExitEnabled &&
-      marketSessions.some((session) => financeAlpacaMarketSessionIssue(session) !== null))
+    marketSessions.some((session) => financeAlpacaMarketSessionIssue(session) !== null)
   ) {
     throw new Error("intraday replay received an invalid or duplicate market-calendar session");
   }
@@ -518,7 +518,7 @@ export function runFinanceIntradayPaperReplay(params: {
     left.startAt.localeCompare(right.startAt),
   )) {
     const session = sessionParts(bar.startAt);
-    if (preCloseExitEnabled) {
+    if (params.marketSessions) {
       const marketSession = sessionsByDate.get(session.date);
       if (!marketSession) {
         if (session.minute >= 570 && session.minute < 960) {
@@ -613,6 +613,22 @@ export function runFinanceIntradayPaperReplay(params: {
           undefined,
           source(),
         );
+      }
+    }
+    if (!preCloseExitEnabled) {
+      const bounds = params.marketSessions
+        ? marketSession
+        : financeUsEquitySessionBounds(sessionDate);
+      if (
+        !bounds ||
+        !isCompleteSession(bars, intervalSeconds, bounds.openMinute, bounds.closeMinute)
+      ) {
+        excludedSessions.push({
+          sessionDate,
+          reason: "incomplete_calendar_session",
+          selectedBars: bars.length,
+        });
+        continue;
       }
     }
     if (bars.length <= config.openingRangeBars + 1) {
@@ -730,14 +746,15 @@ export function runFinanceIntradayPaperReplay(params: {
       source(),
     );
   }
-  const marketCalendarRef = preCloseExitEnabled
-    ? caseflowFingerprint(
-        marketSessions
-          .filter((session) => replayCalendarDates.has(session.date))
-          .map(({ date, calendarRef }) => ({ date, calendarRef }))
-          .toSorted((left, right) => left.date.localeCompare(right.date)),
-      )
-    : undefined;
+  const marketCalendarRef =
+    params.marketSessions !== undefined
+      ? caseflowFingerprint(
+          marketSessions
+            .filter((session) => replayCalendarDates.has(session.date))
+            .map(({ date, calendarRef }) => ({ date, calendarRef }))
+            .toSorted((left, right) => left.date.localeCompare(right.date)),
+        )
+      : undefined;
   const datasetRef = caseflowFingerprint({
     ledgerHeadRef: params.ledgerHeadRef,
     bars: params.bars,

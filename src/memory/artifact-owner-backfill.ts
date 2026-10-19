@@ -7,6 +7,7 @@ import {
 } from "../agents/artifact-result-recording.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { hasErrnoCode } from "../infra/errors.js";
 import { readFileWithinRoot } from "../infra/fs-safe.js";
 import { ArtifactStore, ArtifactStoreError, projectArtifactSourceRefs } from "./artifact-store.js";
 
@@ -160,7 +161,7 @@ export async function backfillOwnerArtifacts(input: {
           }
           entries = await fs.readdir(path.join(workspace, relativeDir), { withFileTypes: true });
         } catch (error) {
-          if (error instanceof Error && "code" in error && error.code === "ENOENT" && depth === 0) {
+          if (hasErrnoCode(error, "ENOENT") && depth === 0) {
             coverage.status = "absent";
             return;
           }

@@ -16,10 +16,17 @@ import {
   runFinanceIntradayPaperReplay,
 } from "./finance-intraday-paper.js";
 
-function session(prices: readonly number[], day = "2026-01-05"): FinanceIntradayBar[] {
+function session(
+  prices: readonly number[],
+  day = "2026-01-05",
+  complete = true,
+): FinanceIntradayBar[] {
   const start = Date.parse(`${day}T14:30:00.000Z`);
-  return prices.map((close, index) => {
-    const open = index === 0 ? close : (prices[index - 1] ?? close);
+  const values = complete
+    ? [...prices, ...Array<number>(Math.max(0, 78 - prices.length)).fill(prices.at(-1)!)]
+    : prices;
+  return values.map((close, index) => {
+    const open = index === 0 ? close : (values[index - 1] ?? close);
     const startAt = new Date(start + index * 300_000).toISOString();
     return {
       instrument: "SPY",
@@ -92,6 +99,59 @@ const config = {
 } as const;
 
 describe("finance intraday paper replay", () => {
+  it.each(["middle", "missing_open", "missing_close"])(
+    "rejects a contiguous partial v1 session: %s",
+    (kind) => {
+      const full = session([100, 100, 100, 101, 102, 103]);
+      const bars =
+        kind === "middle"
+          ? full.slice(6, 30)
+          : kind === "missing_open"
+            ? full.slice(1)
+            : full.slice(0, -1);
+      expect(() =>
+        runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: "partial", config }),
+      ).toThrow(/complete sessions/);
+    },
+  );
+
+  it("admits a complete published early close and rejects holiday or unknown calendar dates", () => {
+    const early = session([100, 100, 100, 101, 102, 103], "2026-11-27").slice(0, 42);
+    expect(
+      runFinanceIntradayPaperReplay({ bars: early, ledgerHeadRef: "early", config }).strategy
+        .sessions,
+    ).toBe(1);
+    for (const day of ["2026-12-25", "2030-01-07"]) {
+      expect(() =>
+        runFinanceIntradayPaperReplay({
+          bars: session([100, 100, 100, 101, 102, 103], day),
+          ledgerHeadRef: "unverified",
+          config,
+        }),
+      ).toThrow(/complete sessions/);
+    }
+  });
+
+  it("uses and binds an explicit official calendar in v1", () => {
+    const bars = session([100, 100, 100, 101, 102, 103]);
+    const calendar = marketCalendarSession("2026-01-05");
+    const result = runFinanceIntradayPaperReplay({
+      bars,
+      ledgerHeadRef: "calendar",
+      config,
+      marketSessions: [calendar],
+    });
+    expect(result.marketCalendarRef).toBeTruthy();
+    expect(() =>
+      runFinanceIntradayPaperReplay({
+        bars,
+        ledgerHeadRef: "calendar",
+        config,
+        marketSessions: [{ ...calendar, closeMinute: 780 }],
+      }),
+    ).toThrow(/invalid/);
+  });
+
   it.each([0.1, 0.5, 1])(
     "scales strategy and benchmark returns by deployed capital (%s)",
     (allocation) => {
@@ -143,7 +203,7 @@ describe("finance intraday paper replay", () => {
 
   it("retains calendar-rejected days alongside usable days instead of concealing source gaps", () => {
     const bars = completeRegularSession();
-    const incomplete = session([100, 101, 100, 102, 103, 104]);
+    const incomplete = session([100, 101, 100, 102, 103, 104], "2026-01-05", false);
     const result = runFinanceIntradayPaperReplay({
       bars: [...bars, ...incomplete],
       ledgerHeadRef: "head",
@@ -292,7 +352,7 @@ describe("finance intraday paper replay", () => {
     });
     expect(() =>
       runFinanceIntradayPaperReplay({
-        bars: session([100, 101, 100, 102, 103, 104]),
+        bars: session([100, 101, 100, 102, 103, 104], "2026-01-05", false),
         ledgerHeadRef: "partial",
         config,
         strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,

@@ -7,8 +7,10 @@ import {
   FinanceResearchRunFailure,
   runCheckpointedFinanceResearch,
 } from "../../scripts/operator/lcx-finance-research-checkpoint-run.js";
+import { appendFinanceBars } from "../../src/agents/finance-bar-ledger.js";
 import { latestCompletedWeekdaySessionDate } from "../../src/agents/finance-cycle-schedule.js";
 import type { FinanceDataGatewayObservationInput } from "../../src/agents/finance-data-gateway.js";
+import { isFinanceUsEquitySessionDate } from "../../src/agents/finance-history-coverage.js";
 import type { FinanceMarketCollectionAdapter } from "../../src/agents/finance-market-collection-registry.js";
 import { readFinanceActiveStrategyResearchScope } from "../../src/agents/finance-night-review-context.js";
 import { financePortfolioPlanSchema } from "../../src/agents/finance-portfolio-composition.js";
@@ -107,6 +109,8 @@ export async function prepareOriginalFinanceModuleMain(params: {
   fault?: FinanceModuleMainFault;
   allocation?: number;
   dailyExecutableRule?: boolean;
+  historyLevels?: readonly [number, number, number];
+  seedControllerHistory?: boolean;
 }) {
   const workspace = path.join(params.directory, "workspace");
   const book = path.join(params.directory, "finance-book");
@@ -135,20 +139,44 @@ export async function prepareOriginalFinanceModuleMain(params: {
     observedAt: "2026-09-01T00:01:00Z",
   });
   const asOf = new Date().toISOString();
+  const historyDates: string[] = [];
+  // The history owner admits prior UTC calendar dates only, including after NY close.
+  let historyDay = Math.min(
+    Date.parse(latestCompletedWeekdaySessionDate(asOf) + "T00:00:00Z"),
+    Date.parse(asOf.slice(0, 10) + "T00:00:00Z") - 86_400_000,
+  );
+  while (historyDates.length < 3) {
+    const day = new Date(historyDay);
+    if (isFinanceUsEquitySessionDate(day.toISOString().slice(0, 10))) {
+      historyDates.unshift(day.toISOString().slice(0, 10));
+    }
+    historyDay -= 86_400_000;
+  }
+  const historyLevels = params.historyLevels ?? [100, 95, 97];
+  if (params.seedControllerHistory !== false) {
+    await appendFinanceBars(book, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      observedAt: asOf,
+      provenance: {
+        origin: "private offline source fixture",
+        sourceUrlOrArtifact: "fixture://private-eod/SPY",
+      },
+      bars: historyLevels.map((close, index) => ({
+        date: historyDates[index],
+        open: close,
+        high: close,
+        low: close,
+        close,
+        volume: 100,
+      })),
+    });
+  }
   const scope = await readFinanceActiveStrategyResearchScope({
     directory: book,
     asOf,
     strategyIds: ["private-trend"],
   });
-  const historyDates: string[] = [];
-  let historyDay = Date.parse(latestCompletedWeekdaySessionDate(asOf) + "T00:00:00Z");
-  while (historyDates.length < 3) {
-    const day = new Date(historyDay);
-    if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) {
-      historyDates.unshift(day.toISOString().slice(0, 10));
-    }
-    historyDay -= 86_400_000;
-  }
   const input: FinanceResearchRunInput = {
     ask: "Review SPY within the active controller rule. Allocate only its bounded budget with explicit invalidation; no execution authority.",
     asOf,
@@ -250,7 +278,7 @@ export async function prepareOriginalFinanceModuleMain(params: {
       sourceCalls.push(call);
       signal.addEventListener("abort", () => (call.aborted = true), { once: true });
       await sourceFault(signal);
-      const response = [100, 95, 97].map((close, index) => {
+      const response = historyLevels.map((close, index) => {
         const date = historyDates[index];
         return {
           itemId: `private-eod-${index}`,

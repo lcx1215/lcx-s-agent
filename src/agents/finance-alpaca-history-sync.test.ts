@@ -40,7 +40,7 @@ function reply(value: unknown) {
 }
 describe("Alpaca raw history sync", () => {
   it.each(["late_response", "read_rejection"] as const)(
-    "stops cancelled history without writing a late page or sync receipt: %s",
+    "stops cancelled history without writing a late page or completed sync receipt: %s",
     async (mode) => {
       const controller = new AbortController();
       const cancelled = new Error("synthetic history cancellation");
@@ -61,15 +61,14 @@ describe("Alpaca raw history sync", () => {
         cancelled,
       );
       expect(requests).toEqual(["/v2/account", "/v2/orders"]);
-      expect(
-        (
-          await readFinanceBrokerHistoryRecords(
-            options.directory,
-            options.accountId,
-            "alpaca:paper",
-          )
-        ).records,
-      ).toEqual([]);
+      const history = await readFinanceBrokerHistoryRecords(
+        options.directory,
+        options.accountId,
+        "alpaca:paper",
+      );
+      expect(history.records).toHaveLength(1);
+      expect(history.records[0]?.body.query).toMatch(/^sync_receipt:/u);
+      expect(history.records[0]?.body.payload[0]?.status).toBe("incomplete");
     },
   );
 
@@ -98,12 +97,100 @@ describe("Alpaca raw history sync", () => {
       options.accountId,
       "alpaca:paper",
     );
-    expect(history.records).toHaveLength(1);
-    expect(history.records[0]?.body.payload).toEqual([
+    expect(history.records).toHaveLength(2);
+    expect(history.records[0]?.body.payload[0]?.status).toBe("incomplete");
+    expect(history.records[1]?.body.payload).toEqual([
       { id: "saved", submitted_at: "2025-01-02T00:00:00Z" },
     ]);
-    expect(history.records[0]?.body.query).toMatch(/^orders:/u);
+    expect(history.records[1]?.body.query).toMatch(/^orders:/u);
   });
+  it("rejects overlapping syncs through directory aliases before a second transport runs", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pause = true;
+    const options = await setup(async (raw) => {
+      if (new URL(raw).pathname === "/v2/account") {
+        return reply({ id: "synthetic-account" });
+      }
+      if (pause) {
+        pause = false;
+        entered();
+        await waiting;
+      }
+      return reply([]);
+    });
+    const first = syncAlpacaPaperHistory(options);
+    await started;
+    let unexpectedReads = 0;
+    try {
+      await expect(
+        syncAlpacaPaperHistory({
+          ...options,
+          directory: path.join(options.directory, "."),
+          read: async () => {
+            unexpectedReads++;
+            return reply([]);
+          },
+        }),
+      ).rejects.toThrow("history sync already in progress");
+      expect(unexpectedReads).toBe(0);
+    } finally {
+      release();
+    }
+    expect((await first).status).toBe("raw_history_synced");
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+  });
+
+  it("tracks same-window attempts and invalidates completion before cancelled pages", async () => {
+    let fail = false;
+    let cancel: AbortController | undefined;
+    const options = await setup(async (raw) => {
+      const pathname = new URL(raw).pathname;
+      if (pathname === "/v2/account") {
+        return reply({ id: "synthetic-account" });
+      }
+      if (fail) {
+        throw new Error("synthetic incomplete page");
+      }
+      if (pathname.endsWith("activities") && cancel) {
+        cancel.abort();
+        cancel.signal.throwIfAborted();
+      }
+      return reply(
+        pathname.endsWith("orders") ? [{ id: "saved", submitted_at: "2025-01-02T00:00:00Z" }] : [],
+      );
+    });
+    const ids = new Set<string>();
+    for (const incomplete of [false, true, false, true]) {
+      fail = incomplete;
+      const result = await syncAlpacaPaperHistory(options);
+      ids.add(result.syncId);
+      const read = await readFinanceBrokerHistory(options.directory, options.accountId, {
+        streams: [],
+      });
+      expect(read.facts).toEqual([]);
+      expect(read.latestSyncReceipt).toMatchObject({
+        syncId: result.syncId,
+        status: incomplete ? "incomplete" : "raw_history_synced",
+      });
+    }
+    expect(ids.size).toBe(4);
+    fail = false;
+    await syncAlpacaPaperHistory(options);
+    cancel = new AbortController();
+    await expect(syncAlpacaPaperHistory({ ...options, signal: cancel.signal })).rejects.toThrow();
+    expect(
+      (await readFinanceBrokerHistory(options.directory, options.accountId)).latestSyncReceipt
+        ?.status,
+    ).toBe("incomplete");
+  });
+
   it("retains only requested streams while reporting all unique observations and stale revisions", async () => {
     const { directory, accountId } = await setup(async () => reply([]));
     const append = (query: string, payload: Record<string, unknown>[]) =>
@@ -178,9 +265,12 @@ describe("Alpaca raw history sync", () => {
     expect(orders.find(({ fact }) => fact.id === "stop-0")?.fact.status).toBe("held");
     expect((await readFinancePositionRecords(options.directory)).receipts).toHaveLength(0);
     await syncAlpacaPaperHistory(options);
-    expect((await readFinanceBrokerHistory(options.directory, options.accountId)).facts).toEqual(
-      history.facts,
+    const retried = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(retried.facts.filter(({ stream }) => stream !== "sync_receipt")).toEqual(
+      history.facts.filter(({ stream }) => stream !== "sync_receipt"),
     );
+    expect(retried.latestSyncReceipt?.status).toBe("raw_history_synced");
+    expect(retried.latestSyncReceipt?.syncId).not.toBe(history.latestSyncReceipt?.syncId);
   });
 
   it.each([{ legs: [null] }, { legs: [{ type: "stop" }] }, { legs: "invalid" }])(
@@ -368,7 +458,7 @@ describe("Alpaca raw history sync", () => {
       const target = path.resolve(sourceDir, relative.replace(/\.js$/, ".ts"));
       return `from "${pathToFileURL(target).href}"`;
     });
-    const legacyPath = path.join(options.directory, "legacy-ledger.ts");
+    const legacyPath = path.join(options.directory, "legacy-ledger.mts");
     await fs.writeFile(legacyPath, relocated);
     // Bare package resolution still comes from the existing installation, no install.
     await fs.symlink(

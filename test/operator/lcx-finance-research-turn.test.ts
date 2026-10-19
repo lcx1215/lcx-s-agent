@@ -6,6 +6,15 @@ import * as credentials from "../../src/agents/finance-credential-env.js";
 import * as collections from "../../src/agents/finance-market-collection-registry.js";
 import * as ledger from "../../src/agents/finance-position-ledger.js";
 import * as transport from "../../src/agents/finance-write-transport.js";
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return {
+    ...actual,
+    fetch: vi.fn(async () => {
+      throw new Error("unexpected HTTP outside synthetic test transports");
+    }),
+  };
+});
 vi.mock("../../src/agents/finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: () => ({
     ALPACA_API_KEY_ID: "PK_SYNTHETIC",
@@ -24,10 +33,17 @@ const runFinanceResearchTurn: typeof runResearchTurn = (args, deps) =>
   runResearchTurn([...args, "--research-basis", "market_structure"], deps);
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("unexpected external fetch in offline fixture");
+    }),
+  );
   vi.spyOn(process.stdout, "write").mockReturnValue(true);
 });
 const directories: string[] = [];
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
