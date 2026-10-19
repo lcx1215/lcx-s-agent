@@ -21,6 +21,7 @@ it("preserves current account attribution and fee gaps through original budget p
     historicalCashFees: 4.05,
     historicalAssetFeeValue: 0.08052845,
     periodConfirmedCashFees: 0,
+    periodFeeTimingUnknownCount: 3,
     pendingFees: "unknown",
     modelBill: null,
   };
@@ -56,6 +57,7 @@ it("preserves current account attribution and fee gaps through original budget p
     expect(prompt).toContain('"newDecisionGrossPnl":0');
     expect(prompt).toContain('"historicalCashFees":4.05');
     expect(prompt).toContain('"historicalAssetFeeValue":0.08052845');
+    expect(prompt).toContain('"periodFeeTimingUnknownCount":3');
     expect(prompt).toContain('"pendingFees":"unknown"');
     expect(prompt).toContain('"modelBill":null');
     expect(prompt).toContain("c".repeat(64));
