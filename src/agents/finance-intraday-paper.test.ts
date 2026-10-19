@@ -92,6 +92,33 @@ const config = {
 } as const;
 
 describe("finance intraday paper replay", () => {
+  it.each([0.1, 0.5, 1])(
+    "scales strategy and benchmark returns by deployed capital (%s)",
+    (allocation) => {
+      const receipt = runFinanceIntradayPaperReplay({
+        bars: session([100, 100, 100, 101, 102, 103]),
+        ledgerHeadRef: null,
+        config: {
+          ...config,
+          maxAllocationFraction: allocation,
+          feeBpsPerSide: 0,
+          spreadBps: 0,
+          slippageBpsPerSide: 0,
+        },
+      });
+      const trade = receipt.trades[0];
+      expect(receipt.strategy.totalReturn).toBeCloseTo(
+        (trade.quantity * (trade.exitReferencePrice - trade.entryReferencePrice)) / config.capital,
+        10,
+      );
+      const baselineQuantity = Math.floor((config.capital * allocation) / 100);
+      expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(
+        (baselineQuantity * 3) / config.capital,
+        10,
+      );
+    },
+  );
+
   it.each([4, 5])("refuses a missing signal-entry/holding interval at index %s", (missingIndex) => {
     const bars = session([100, 101, 100, 102, 103, 104, 105]).filter(
       (_, index) => index !== missingIndex,
@@ -196,7 +223,34 @@ describe("finance intraday paper replay", () => {
     const receipt = runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: null, config });
     // 1 bp fee + 2 bp half-spread + 2 bp slippage on each of two sides.
     expect(receipt.trades[0]?.costFraction).toBe(0.001);
-    expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(0.009, 10);
+    expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(0.0045, 10);
+  });
+
+  it("keeps uninvestable capital in cash for both strategy and benchmark", () => {
+    const receipt = runFinanceIntradayPaperReplay({
+      bars: session([100, 100, 100, 101, 102, 103]),
+      ledgerHeadRef: null,
+      config: { ...config, capital: 1 },
+    });
+    expect(receipt.strategy).toMatchObject({ trades: 0, totalReturn: 0 });
+    expect(receipt.retailOpenToCloseBaseline).toMatchObject({ trades: 0, totalReturn: 0 });
+  });
+
+  it("accumulates fixed-capital P&L without inventing reinvestment across sessions", () => {
+    const prices = [100, 100, 100, 101, 102, 103];
+    const costs = { ...config, feeBpsPerSide: 0, spreadBps: 0, slippageBpsPerSide: 0 };
+    const one = runFinanceIntradayPaperReplay({
+      bars: session(prices),
+      ledgerHeadRef: null,
+      config: costs,
+    });
+    const two = runFinanceIntradayPaperReplay({
+      bars: [...session(prices), ...session(prices, "2026-01-06")],
+      ledgerHeadRef: null,
+      config: costs,
+    });
+    expect(two.strategy.totalReturn).toBeCloseTo(2 * one.strategy.totalReturn, 10);
+    expect(two.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(0.03, 10);
   });
 
   it("records cash when there is no breakout and can show costs erasing a gross edge", () => {
@@ -214,6 +268,11 @@ describe("finance intraday paper replay", () => {
     });
     expect(costly.trades[0]?.grossReturn).toBeGreaterThan(0);
     expect(costly.trades[0]?.netReturn).toBeLessThan(0);
+    const trade = costly.trades[0];
+    const accountReturn =
+      (trade.quantity * trade.entryReferencePrice * trade.netReturn) / config.capital;
+    expect(costly.strategy.totalReturn).toBeCloseTo(accountReturn, 10);
+    expect(costly.strategy.maxDrawdown).toBeCloseTo(-accountReturn, 10);
   });
 
   it("replays v2 exits before the closing bar and rejects incomplete sessions", () => {

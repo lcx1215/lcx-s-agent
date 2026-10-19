@@ -39,7 +39,9 @@ export async function buildFinanceIntradayPaperPayload(args: readonly string[]) 
   const instrument = required(args, "--instrument").toUpperCase();
   const from = required(args, "--from");
   const to = required(args, "--to");
-  if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || from >= to) {
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
     throw new Error("--from and --to must be ordered ISO timestamps");
   }
   const location = resolveFinanceStateDir({ directory: valueAfter(args, "--ledger-dir") });
@@ -73,14 +75,17 @@ export async function buildFinanceIntradayPaperPayload(args: readonly string[]) 
   // later collection timestamp remains in the ledger and must not be rewritten as if known then.
   const ledger = await readFinanceIntradayLedger(location.directory, { instrument, feed });
   const bars = ledger.bars.filter(
-    (bar) => bar.intervalSeconds === intervalSeconds && bar.startAt >= from && bar.endAt <= to,
+    (bar) =>
+      bar.intervalSeconds === intervalSeconds &&
+      Date.parse(bar.startAt) >= fromMs &&
+      Date.parse(bar.endAt) <= toMs,
   );
   const marketCalendarSync =
     strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 ||
     strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
       ? await readFinanceAlpacaMarketCalendar({
-          startDate: financeEtClock(new Date(Date.parse(from))).date,
-          endDate: financeEtClock(new Date(Date.parse(to))).date,
+          startDate: financeEtClock(new Date(fromMs)).date,
+          endDate: financeEtClock(new Date(toMs)).date,
           directory: location.directory,
         })
       : null;

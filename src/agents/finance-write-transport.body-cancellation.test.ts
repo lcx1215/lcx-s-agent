@@ -12,13 +12,99 @@ vi.mock("undici", () => {
   return { fetch: http, Agent, EnvHttpProxyAgent: Agent };
 });
 import { createFinanceAlpacaCycleController } from "./finance-alpaca-cycle-controller.js";
-import { createFinanceUncachedFetch } from "./finance-write-transport.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
+import {
+  createFinanceUncachedFetch,
+  createFinanceWriteTransport,
+} from "./finance-write-transport.js";
 
 afterEach(() => {
   http.mockReset();
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
+
+it.each(["POST", "DELETE"] as const)(
+  "preserves successful %s response handling",
+  async (method) => {
+    http.mockResolvedValue(new Response('{"id":"fixture-order"}', { status: 200 }));
+    await expect(
+      createFinanceWriteTransport()({
+        url: "https://paper-api.alpaca.markets/v2/orders",
+        headers: {},
+        body: "{}",
+        method,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual({ status: 200, body: '{"id":"fixture-order"}' });
+  },
+);
+
+it.each(["POST", "DELETE"] as const)(
+  "releases the %s body after confirmed cancellation",
+  async (method) => {
+    for (const rejectCancel of [false, true]) {
+      const cancel = vi.fn(() =>
+        rejectCancel ? Promise.reject(new Error("stream already errored")) : Promise.resolve(),
+      );
+      const response = new Response(new ReadableStream<Uint8Array>({ cancel }));
+      http.mockResolvedValue(response);
+      const caller = new AbortController();
+      const pending = createFinanceWriteTransport()({
+        url: "https://paper-api.alpaca.markets/v2/orders",
+        headers: {},
+        body: "{}",
+        method,
+        signal: caller.signal,
+      });
+      const check = expect(pending).rejects.toMatchObject({ cleanupStatus: "confirmed" });
+      await Promise.resolve();
+      caller.abort();
+      await check;
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(response.body?.locked).toBe(false);
+    }
+  },
+);
+
+it.each(["POST", "DELETE"] as const)(
+  "bounds %s body cancellation even when the stream never settles",
+  async (method) => {
+    vi.useFakeTimers();
+    for (const oversized of [false, true]) {
+      const cancel = vi.fn(() => new Promise<void>(() => {}));
+      const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+        headers: oversized ? { "content-length": "3145728" } : {},
+      });
+      http.mockResolvedValue(response);
+      const caller = new AbortController();
+      let outcome: unknown;
+      void createFinanceWriteTransport()({
+        url: "https://paper-api.alpaca.markets/v2/orders",
+        headers: {},
+        body: "{}",
+        method,
+        signal: caller.signal,
+      }).then(
+        (value) => {
+          outcome = value;
+        },
+        (error) => {
+          outcome = error;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      caller.abort();
+      await vi.advanceTimersByTimeAsync(1700);
+      expect(outcome).toBeInstanceOf(FinanceHttpBodyAbortError);
+      expect(outcome).toMatchObject({ cleanupStatus: "unconfirmed" });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(response.body?.locked).toBe(false);
+      expect(http.mock.lastCall?.[1]).toMatchObject({ method, signal: caller.signal });
+      expect(http.mock.lastCall?.[1].body).toBe(method === "DELETE" ? undefined : "{}");
+    }
+  },
+);
 
 it.each(["confirmed", "unconfirmed"] as const)(
   "cancels the resident uncached GET body: %s",

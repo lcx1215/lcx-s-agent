@@ -442,7 +442,9 @@ function metric(returns: readonly number[], trades: number): Metric {
   let peak = 1;
   let maxDrawdown = 0;
   for (const value of returns) {
-    equity *= 1 + value;
+    // Every session is sized from config.capital, not the prior session's wealth.
+    // These are fixed-notional P&L fractions; compounding would invent reinvestment.
+    equity += value;
     peak = Math.max(peak, equity);
     maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
   }
@@ -552,6 +554,7 @@ export function runFinanceIntradayPaperReplay(params: {
   const trades: FinanceIntradayPaperTrade[] = [];
   const strategyReturns: number[] = [];
   const baselineReturns: number[] = [];
+  let baselineTrades = 0;
   const excludedSessions: Array<{
     sessionDate: string;
     reason: "incomplete_calendar_session" | "insufficient_opening_history";
@@ -624,7 +627,19 @@ export function runFinanceIntradayPaperReplay(params: {
     const openingHigh = Math.max(...opening.map((bar) => bar.high));
     const baselineEntry = bars[config.openingRangeBars];
     const sessionEnd = bars.at(-1)!;
-    baselineReturns.push(round(sessionEnd.close / baselineEntry.open - 1 - roundTripCost));
+    const baselineQuantity = Math.floor(
+      (config.capital * config.maxAllocationFraction) / baselineEntry.open,
+    );
+    if (baselineQuantity > 0) {
+      baselineTrades += 1;
+    }
+    baselineReturns.push(
+      round(
+        (baselineQuantity *
+          (sessionEnd.close - baselineEntry.open - baselineEntry.open * roundTripCost)) /
+          config.capital,
+      ),
+    );
     const preCloseMinute = marketSession?.closeMinute ?? 960;
     const preCloseIndex = preCloseExitEnabled
       ? bars.findIndex(
@@ -684,7 +699,9 @@ export function runFinanceIntradayPaperReplay(params: {
     }
     const grossReturn = exitPrice / entry.open - 1;
     const netReturn = grossReturn - roundTripCost;
-    strategyReturns.push(round(netReturn));
+    strategyReturns.push(
+      round((quantity * (exitPrice - entry.open - entry.open * roundTripCost)) / config.capital),
+    );
     trades.push(
       Object.freeze({
         sessionDate,
@@ -736,7 +753,7 @@ export function runFinanceIntradayPaperReplay(params: {
     config,
     trades: Object.freeze(trades),
     strategy: metric(strategyReturns, trades.length),
-    retailOpenToCloseBaseline: metric(baselineReturns, baselineReturns.length),
+    retailOpenToCloseBaseline: metric(baselineReturns, baselineTrades),
     cashBaseline: metric(
       strategyReturns.map(() => 0),
       0,
