@@ -1170,3 +1170,49 @@ describe("bounded central coordination", () => {
     expect(receipts.at(-1)?.actionsProposed).toBe(0);
   });
 });
+
+it.each(["metadata_first", "feedback_first"] as const)(
+  "carries research composition through the fixed step budget with %s",
+  async (order) => {
+    const composition = {
+      selectionSource: "caller_proposal",
+      primaryModules: ["macro_rates_inflation"],
+      moduleToolsDispatched: false,
+      replanStatus: "blocked_hard",
+      nextAction: "stop",
+      hardFailureCount: 1,
+      remainingSoftReplans: 0,
+    };
+    const metadata = {
+      receiptPath: "/private/" + "x".repeat(1000),
+      receiptSha256: "a".repeat(64),
+      toolInvocation: { diagnostic: "x".repeat(1000) },
+      reviewFeedback: { diagnostic: "x".repeat(1000) },
+    };
+    const feedback = { status: "needs_review", composition, missingEvidence: ["closure_missing"] };
+    const execute = async () =>
+      order === "metadata_first" ? { ...metadata, ...feedback } : { ...feedback, ...metadata };
+    const spec = { ...registry(execute).get("fixture")!, ownerId: "finance_research_run" };
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      brain: {
+        propose: async () => ({
+          kind: "proposed",
+          provider: "fixture",
+          modelId: "fixture",
+          plan: { actions: [{ ownerId: spec.ownerId, args: {} }], note: "read planning result" },
+        }),
+      },
+      registry: new Map([[spec.ownerId, spec]]),
+    });
+    expect(receipt.steps[0].outcome).toMatchObject(feedback);
+    expect(receipt.steps[0].outcome?.receiptSha256).toBe(metadata.receiptSha256);
+    expect(Buffer.byteLength(JSON.stringify(receipt.steps[0].outcome))).toBeLessThanOrEqual(512);
+    expect(receipt.steps[0].outcomeDroppedKeys).toEqual(
+      expect.arrayContaining(["receiptPath", "toolInvocation", "reviewFeedback"]),
+    );
+    const backlog = compactReceipts([receipt], 5);
+    expect(backlog[0].outcomes[0].outcome?.composition).toEqual(composition);
+    expect(backlog[0].outcomes[0].outcome?.missingEvidence).toEqual(["closure_missing"]);
+  },
+);

@@ -1047,6 +1047,16 @@ function compactCentralStepOutcome(
   ownerId: string,
   source: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
+  if (ownerId === "finance_research_run") {
+    // The producer returns source custody before its planning feedback. Host
+    // paths and invocation metadata must not consume the unchanged step budget
+    // before the composition that the next decision needs to revise or stop.
+    const priorityKeys = ["status", "composition", "receiptSha256", "missingEvidence"];
+    return Object.fromEntries([
+      ...priorityKeys.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]),
+      ...Object.entries(source).filter(([key]) => !priorityKeys.includes(key)),
+    ]);
+  }
   if (
     ownerId === "finance_data_gateway_snapshot" &&
     source.boundary === "finance_data_gateway_research_only"
