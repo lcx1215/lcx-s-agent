@@ -856,3 +856,52 @@ it.each(["prompt", "body"] as const)(
     }
   },
 );
+
+it.each(["json", "terminal"] as const)(
+  "rejects a direct finance result that expires during %s decoding",
+  async (mode) => {
+    vi.useFakeTimers();
+    const startedAtMs = Date.now();
+    const decoded = '{"kind":"review","review":{"notes":["fact"]}}';
+    const content = mode === "json" ? decoded : '{"kind":"review","review":{"notes":["fact"]]}}';
+    const parse = JSON.parse;
+    const activeTimers: number[] = [];
+    const parseSpy = vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      const value: unknown = parse(text, reviver);
+      if (text === decoded) {
+        activeTimers.push(vi.getTimerCount());
+        vi.setSystemTime(startedAtMs + 60_000);
+      }
+      return value;
+    });
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                id: "late-decoding",
+                choices: [{ finish_reason: "stop", message: { content } }],
+              }),
+            ),
+        ),
+      );
+      const isolated = structuredClone(cfg);
+      isolated.models!.providers!.fixture.apiKey = `decode-deadline-${mode}-fixture`;
+      const adapter = createConfiguredFinanceModelAdapter(isolated, { timeoutMs: 1_000 });
+      await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+        code: "runtime_timeout",
+      });
+      expect(activeTimers).toHaveLength(1);
+      expect(activeTimers[0]).toBeGreaterThan(0);
+      expect(adapter.inspectCall?.()?.stage).toBe("failed");
+      const observation = adapter.observe?.(request);
+      expect(observation?.kind).toBe("provider_call");
+      expect(observation?.outputNormalization).toBeUndefined();
+    } finally {
+      parseSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);

@@ -481,6 +481,50 @@ export function createConfiguredFinanceModelAdapter(
         if (usage) {
           recordModelRequestUpdate(trajectoryTicket, { stage: "usage_received", ...usage });
         }
+        assertActive();
+        if (response.id) {
+          observations.set(request.callId, {
+            id: response.id,
+            credentialSource: auth.source,
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(evidenceCoverage ? { evidenceCoverage } : {}),
+          });
+        }
+        const choice = response.choices?.[0];
+        if (choice?.finish_reason === "length") {
+          throw new ModelAdapterError("output_truncated");
+        }
+        if (!choice || !choice.message?.content) {
+          throw new ModelAdapterError("output_invalid");
+        }
+        let value: unknown;
+        let normalized = false;
+        try {
+          value = JSON.parse(choice.message.content) as unknown;
+        } catch {
+          assertActive();
+          if (choice.finish_reason !== "stop") {
+            throw new ModelAdapterError("output_invalid");
+          }
+          try {
+            value = normalizeTerminalDelimiters(choice.message.content);
+            normalized = true;
+          } catch {
+            assertActive();
+            throw new ModelAdapterError("output_invalid");
+          }
+        }
+        assertActive();
+        if (normalized && response.id) {
+          observations.set(request.callId, {
+            id: response.id,
+            normalized: true,
+            credentialSource: auth.source,
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(evidenceCoverage ? { evidenceCoverage } : {}),
+          });
+        }
+        return value;
       } catch (error) {
         if (requestController.signal.aborted) {
           callState = {
@@ -511,44 +555,6 @@ export function createConfiguredFinanceModelAdapter(
         clearTimeout(timer);
         signal.removeEventListener("abort", relayAbort);
         requestController.signal.removeEventListener("abort", observeAbort);
-      }
-      assertActive();
-      if (response.id) {
-        observations.set(request.callId, {
-          id: response.id,
-          credentialSource: auth.source,
-          ...(reasoningEffort ? { reasoningEffort } : {}),
-          ...(evidenceCoverage ? { evidenceCoverage } : {}),
-        });
-      }
-      const choice = response.choices?.[0];
-      if (choice?.finish_reason === "length") {
-        throw new ModelAdapterError("output_truncated");
-      }
-      if (!choice || !choice.message?.content) {
-        throw new ModelAdapterError("output_invalid");
-      }
-      try {
-        return JSON.parse(choice.message.content) as unknown;
-      } catch {
-        if (choice.finish_reason !== "stop") {
-          throw new ModelAdapterError("output_invalid");
-        }
-        try {
-          const value = normalizeTerminalDelimiters(choice.message.content);
-          if (response.id) {
-            observations.set(request.callId, {
-              id: response.id,
-              normalized: true,
-              credentialSource: auth.source,
-              ...(reasoningEffort ? { reasoningEffort } : {}),
-              ...(evidenceCoverage ? { evidenceCoverage } : {}),
-            });
-          }
-          return value;
-        } catch {
-          throw new ModelAdapterError("output_invalid");
-        }
       }
     },
     observe: (request): ModelCallObservation | undefined => {
