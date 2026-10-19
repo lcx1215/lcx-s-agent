@@ -4,6 +4,11 @@ import { buildCentralBrainPrompt } from "./model-brain.js";
 it("preserves current account attribution and fee gaps through original budget projection and brain input", async () => {
   const asOf = "2026-10-15T07:00:00.000Z";
   const economics = {
+    reconciliationRef: "d".repeat(64),
+    reconciliationAt: "2026-10-15T07:00:00.000Z",
+    reconciliationStatus: "unresolved" as const,
+    latestCashDifference: 0.2402438201897894,
+    latestFeeCash: -4.29,
     accountId: "paper",
     venue: "alpaca:paper",
     asOf,
@@ -15,12 +20,14 @@ it("preserves current account attribution and fee gaps through original budget p
     through: asOf,
     accountEquityChange: 61.25,
     inheritedGrossPnl: 61.25,
+    inheritedExitDecisionGrossPnl: 40,
     newDecisionGrossPnl: 0,
     unlinkedGrossPnl: 0,
     unallocatedPnl: 0,
     historicalCashFees: 4.05,
     historicalAssetFeeValue: 0.08052845,
     periodConfirmedCashFees: 0,
+    periodFeeTimingUnknownCount: 3,
     pendingFees: "unknown",
     modelBill: null,
   };
@@ -53,11 +60,18 @@ it("preserves current account attribution and fee gaps through original budget p
   expect(bounded.report.overBudget).toBe(false);
   const check = (prompt: string) => {
     expect(prompt).toContain('"inheritedGrossPnl":61.25');
+    expect(prompt).toContain('"inheritedExitDecisionGrossPnl":40');
+    expect(prompt).toContain("nonadditive subset");
     expect(prompt).toContain('"newDecisionGrossPnl":0');
     expect(prompt).toContain('"historicalCashFees":4.05');
     expect(prompt).toContain('"historicalAssetFeeValue":0.08052845');
+    expect(prompt).toContain('"periodFeeTimingUnknownCount":3');
     expect(prompt).toContain('"pendingFees":"unknown"');
     expect(prompt).toContain('"modelBill":null');
+    expect(prompt).toContain('"latestFeeCash":-4.29');
+    expect(prompt).toContain('"reconciliationStatus":"unresolved"');
+    expect(prompt).toContain('"latestCashDifference":0.2402438201897894');
+    expect(prompt).toContain("d".repeat(64));
     expect(prompt).toContain("c".repeat(64));
     expect(prompt).toContain("inherited gains to new code");
     expect(prompt).not.toContain("omitted historical detail");

@@ -713,6 +713,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                         historicalCashFees: economic.historicalCashFees,
                         historicalAssetFeeValue: economic.historicalAssetFeeValue,
                         periodConfirmedCashFees: economic.periodConfirmedCashFees,
+                        periodFeeTimingUnknownCount: economic.periodFeeTimingUnknownCount,
                         pendingFees: economic.pendingFees,
                         modelBill: economic.modelBill,
                         reconciliationRef: economic.reconciliationRef,
@@ -741,10 +742,10 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                           unattributedFillCount: summary.strategyAttribution.unattributedFillCount,
                           omittedStrategies: strategyAttribution.strategies.length,
                         },
+                        netMatchedPnl: summary.netMatchedPnl,
+                        omittedMethods: account.methodPerformance.methods.length,
                       }),
                   accountEconomics: compactEconomics,
-                  netMatchedPnl: summary.netMatchedPnl,
-                  omittedMethods: account.methodPerformance.methods.length,
                   omittedAccountDetails: true,
                 };
               }

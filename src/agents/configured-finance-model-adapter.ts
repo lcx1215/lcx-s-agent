@@ -418,8 +418,14 @@ export function createConfiguredFinanceModelAdapter(
         }
       };
       requestController.signal.addEventListener("abort", observeAbort, { once: true });
+      let deadlineExpired = false;
       const timer = setTimeout(
-        () => requestController.abort(new Error("model request timeout")),
+        () => {
+          if (!requestController.signal.aborted) {
+            deadlineExpired = true;
+            requestController.abort(new Error("model request timeout"));
+          }
+        },
         Math.max(0, deadlineAtMs - Date.now()),
       );
       if (signal.aborted) {
@@ -558,6 +564,9 @@ export function createConfiguredFinanceModelAdapter(
             stage: "request_error",
             errorKind: "transport",
           });
+        }
+        if (deadlineExpired) {
+          throw new ModelAdapterError("runtime_timeout");
         }
         throw error instanceof ModelAdapterError ? error : new ModelAdapterError("process_error");
       } finally {

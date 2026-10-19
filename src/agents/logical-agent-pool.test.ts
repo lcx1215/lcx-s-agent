@@ -460,6 +460,146 @@ describe("logical agent pool", () => {
     expect(result.finalTaskId).toBe("terminal");
   });
 
+  it.each(["normalize", "clone"] as const)(
+    "rejects output that expires during final %s before checkpoint acceptance",
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000);
+        const checkpointStore = createInMemoryLogicalAgentCheckpointStore<unknown>();
+        const result = await runLogicalAgentPlan({
+          runId: "late-finalization",
+          pool: new LogicalAgentPool({ taskTimeoutMs: 50 }),
+          tasks: [{ id: "late-output", agentId: "data_cleaning", input: {} }],
+          checkpointStore,
+          executor: async () =>
+            stage === "normalize"
+              ? {
+                  get output() {
+                    vi.setSystemTime(1_100);
+                    return "late";
+                  },
+                  sideEffects: [],
+                }
+              : {
+                  output: {
+                    get value() {
+                      vi.setSystemTime(1_100);
+                      return "late";
+                    },
+                  },
+                  sideEffects: [],
+                },
+        });
+        expect(result.tasks[0].status).toBe("failed");
+        expect(result.tasks[0].error).toContain("timed out");
+        expect(checkpointStore.load("late-finalization")?.completedTaskIds ?? []).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["deadline", "caller"] as const)(
+    "distinguishes legacy model %s expiry from caller cancellation",
+    async (mode) => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000);
+        const caller = new AbortController();
+        const pool = new LogicalAgentPool({
+          taskTimeoutMs: 50,
+          modelInvoker: async () => {
+            if (mode === "deadline") {
+              vi.setSystemTime(1_100);
+            } else {
+              caller.abort(new Error("fixture caller cancellation"));
+            }
+            return "late";
+          },
+        });
+        const result = await pool.submit(
+          { id: "legacy-expiry", agentId: "data_cleaning", input: {} },
+          async ({ modelSlot }) => ({
+            output: await modelSlot.invoke({}, caller.signal),
+            sideEffects: [],
+          }),
+        );
+        expect(result.status).toBe("failed");
+        expect(result.modelCalls?.[0]).toMatchObject({
+          outcome: mode === "deadline" ? "timed_out" : "aborted",
+          adapterInvoked: true,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["deadline", "caller"] as const)(
+    "retains routed task %s cause without launching fallback",
+    async (mode) => {
+      vi.useFakeTimers();
+      try {
+        const caller = new AbortController();
+        const fallback = vi.fn(async () => "unexpected fallback");
+        const invoke = vi.fn(
+          async (_request: unknown, signal: AbortSignal) =>
+            new Promise<never>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            }),
+        );
+        const identity = {
+          provider: "fixture",
+          mode: "deterministic" as const,
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: [],
+        };
+        const pool = new LogicalAgentPool({
+          taskTimeoutMs: 50,
+          modelRouting: {
+            revision: "task-cause-fixture",
+            adapters: [
+              { ...identity, id: "primary", modelId: "primary", invoke },
+              { ...identity, id: "fallback", modelId: "fallback", invoke: fallback },
+            ],
+            defaultPolicy: {
+              primary: "primary",
+              fallback: ["fallback"],
+              requiredCapabilities: [],
+              maxInputBytes: 1024,
+              timeoutMs: 500,
+            },
+          },
+        });
+        const pending = pool.submit(
+          { id: "routed-cause", agentId: "data_cleaning", input: {} },
+          async ({ modelSlot }) => ({
+            output: await modelSlot.invoke({}, caller.signal),
+            sideEffects: [],
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(invoke).toHaveBeenCalledOnce();
+        if (mode === "caller") {
+          caller.abort(new Error("fixture cancellation"));
+        } else {
+          await vi.advanceTimersByTimeAsync(51);
+        }
+        const result = await pending;
+        expect(result.status).toBe("failed");
+        expect(result.modelCalls?.[0]).toMatchObject({
+          outcome: mode === "deadline" ? "timed_out" : "aborted",
+          adapterInvoked: true,
+        });
+        expect(fallback).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it.each(["executor", "input_guard", "output_guard"] as const)(
     "rejects a wall-expired task at %s and releases only after termination",
     async (stage) => {
@@ -590,7 +730,10 @@ describe("logical agent pool", () => {
       });
       expect(result.tasks.map((task) => task.status)).toEqual(["failed", "failed"]);
       expect(invoke).toHaveBeenCalledTimes(1);
-      expect(result.tasks[1]?.modelCalls?.[0]?.adapterInvoked).toBe(false);
+      expect(result.tasks[1]?.modelCalls?.[0]).toMatchObject({
+        adapterInvoked: false,
+        outcome: "timed_out",
+      });
       expect(pool.status.activeRuns).toBe(0);
     } finally {
       vi.useRealTimers();

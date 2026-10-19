@@ -729,7 +729,11 @@ export class LogicalAgentPool<TInput, TResult> {
             assertActive();
             modelScope.closed = true;
             await this.#waitForTaskModelInvocations(modelScope);
-            return execution;
+            assertActive();
+            const normalized = normalizeExecutionResult<TResult>(execution, capabilities);
+            const output = cloneAndFreeze(normalized.output);
+            assertActive();
+            return { output, sideEffects: normalized.sideEffects };
           } catch (error: unknown) {
             modelScope.closed = true;
             await this.#waitForTaskModelInvocations(modelScope);
@@ -751,7 +755,6 @@ export class LogicalAgentPool<TInput, TResult> {
         .then(
           (execution): LogicalAgentTaskResult<TResult> => {
             try {
-              const normalized = normalizeExecutionResult<TResult>(execution, capabilities);
               return {
                 taskId: job.task.id,
                 agentId: job.task.agentId,
@@ -759,8 +762,8 @@ export class LogicalAgentPool<TInput, TResult> {
                 modelId: this.#config.modelId,
                 startedAt,
                 completedAt: Date.now(),
-                output: cloneAndFreeze(normalized.output),
-                sideEffects: normalized.sideEffects,
+                output: execution.output,
+                sideEffects: execution.sideEffects,
               };
             } catch (error: unknown) {
               return failedTaskResult<TResult>(job.task, this.#config.modelId, startedAt, error);
@@ -833,11 +836,12 @@ export class LogicalAgentPool<TInput, TResult> {
           );
         }
         const controller = new AbortController();
-        const abort = () => controller.abort();
+        const abort = () =>
+          controller.abort(taskSignal.aborted ? taskSignal.reason : signal.reason);
         for (const source of [signal, taskSignal]) {
           source.addEventListener("abort", abort, { once: true });
           if (source.aborted) {
-            controller.abort();
+            controller.abort(source.reason);
           }
         }
         const invocation = (
@@ -850,6 +854,7 @@ export class LogicalAgentPool<TInput, TResult> {
                 capabilities,
                 signal: controller.signal,
                 deadlineAtMs,
+                isDeadlineAbort: isTaskTimeoutError,
                 dispatch: (invoke, dispatchSignal) => this.#invokeModel(invoke, dispatchSignal),
                 record: (receipt) => receipts.push(receipt),
               })
@@ -889,6 +894,7 @@ export class LogicalAgentPool<TInput, TResult> {
         return this.#modelInvoker(request, signal);
       }, signal);
       assertActive();
+      signal.throwIfAborted();
       outcome = "completed";
       return value;
     } finally {
@@ -907,7 +913,11 @@ export class LogicalAgentPool<TInput, TResult> {
           mode: "injected",
           startedAtMs,
           latencyMs: Math.max(0, Date.now() - startedAtMs),
-          outcome: signal.aborted ? "aborted" : outcome,
+          outcome: signal.aborted
+            ? isTaskTimeoutError(signal.reason)
+              ? "timed_out"
+              : "aborted"
+            : outcome,
           adapterInvoked,
           realModelInferenceObserved: false,
           providerCallObserved: false,
@@ -1212,6 +1222,12 @@ function normalizeExecutionResult<TResult>(
   };
 }
 
+const taskTimeoutErrors = new WeakSet<object>();
+
+function isTaskTimeoutError(reason: unknown): boolean {
+  return typeof reason === "object" && reason !== null && taskTimeoutErrors.has(reason);
+}
+
 function executeWithTimeout<TResult>(
   executor: (
     signal: AbortSignal,
@@ -1268,8 +1284,11 @@ function executeWithTimeout<TResult>(
       return;
     }
     timedOut = true;
+    const failure = new Error(`logical-agent task timed out after ${timeoutMs}ms`);
+    timeoutError = failure;
+    taskTimeoutErrors.add(failure);
     try {
-      controller.abort();
+      controller.abort(failure);
     } catch (error: unknown) {
       cancellationErrors.push(error);
     }
@@ -1277,10 +1296,7 @@ function executeWithTimeout<TResult>(
       cancellationErrors.length === 0
         ? ""
         : `; abort listener failures: ${cancellationErrors.map(formatUnknownError).join("; ")}`;
-    const failure = new Error(
-      `logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`,
-    );
-    timeoutError = failure;
+    failure.message += cancellationDetail;
     cleanupTimer = setTimeout(() => {
       if (!outcomeSettled) {
         onCleanupUnconfirmed?.();

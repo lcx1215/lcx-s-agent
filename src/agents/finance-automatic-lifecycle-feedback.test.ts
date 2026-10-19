@@ -843,6 +843,7 @@ it.each([1, 2])(
       historicalCashFees: 4.05,
       historicalAssetFeeValue: 0.08052845,
       periodConfirmedCashFees: 0,
+      periodFeeTimingUnknownCount: 3,
       pendingFees: "unknown" as const,
       modelBill: null,
     };
@@ -900,6 +901,7 @@ it.each([1, 2])(
                     sourceRef: economics.sourceRef,
                     inheritedGrossPnl: 61.25,
                     newDecisionGrossPnl: 0,
+                    periodFeeTimingUnknownCount: 3,
                     pendingFees: "unknown",
                     modelBill: null,
                   }),
@@ -910,6 +912,7 @@ it.each([1, 2])(
                     sourceRef: economics.sourceRef,
                     inheritedGrossPnl: 61.25,
                     newDecisionGrossPnl: -10,
+                    periodFeeTimingUnknownCount: 3,
                     pendingFees: "unknown",
                     modelBill: null,
                   }),
