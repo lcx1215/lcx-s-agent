@@ -28,10 +28,10 @@ const policy: FinanceQuotaPolicy = {
   basis: "conservative_unknown",
 };
 
-async function setup() {
+async function setup(now: () => number = Date.now) {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-quota-lane-"));
   roots.push(stateDir);
-  const options = { stateDir, policies: [policy], now: () => Date.now() };
+  const options = { stateDir, policies: [policy], now };
   const native = vi.fn<ApiFetch>(async () => ({
     status: 200,
     ok: true,
@@ -68,6 +68,41 @@ describe("finance quota allocation by purpose", () => {
       await expect(fixture.call("production")).resolves.toBeDefined();
     }
     await expect(fixture.call("production")).rejects.toMatchObject({ kind: "budget_exhausted" });
+  });
+
+  it.each(["diagnostics", "calibration"] as const)(
+    "protects production when %s starts before the first production call",
+    async (lane) => {
+      const fixture = await setup();
+      const allowed = lane === "diagnostics" ? 6 : 8;
+      for (let index = 0; index < allowed; index += 1) {
+        await fixture.call(lane);
+      }
+      await expect(fixture.call(lane)).rejects.toMatchObject({ kind: "budget_exhausted" });
+      // Each call opens the original durable guard again: protection survives reopen.
+      for (let index = 0; index < 10; index += 1) {
+        await expect(fixture.call("production")).resolves.toBeDefined();
+      }
+      expect(fixture.native).toHaveBeenCalledTimes(allowed + 10);
+      expect((await fixture.readState()).events.filter((event) => event.fromReserve)).toHaveLength(
+        4,
+      );
+    },
+  );
+
+  it("recovers the full production allowance when the original day window expires", async () => {
+    let time = Date.now();
+    const fixture = await setup(() => time);
+    for (let index = 0; index < 6; index += 1) {
+      await fixture.call("diagnostics");
+    }
+    await expect(fixture.call("diagnostics")).rejects.toMatchObject({ kind: "budget_exhausted" });
+    time += day + 1;
+    for (let index = 0; index < DAY_LIMIT; index += 1) {
+      await fixture.call("production");
+    }
+    await expect(fixture.call("production")).rejects.toMatchObject({ kind: "budget_exhausted" });
+    expect(fixture.native).toHaveBeenCalledTimes(6 + DAY_LIMIT);
   });
 
   it("caps a sweep at its own share plus the shared reserve so it cannot spend production's", async () => {

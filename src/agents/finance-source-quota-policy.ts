@@ -220,7 +220,7 @@ export const FINANCE_SOURCE_QUOTA_POLICIES: readonly FinanceQuotaPolicy[] = [
  * answer "who spent it", and an answer of "nobody knows" is not an allocation.
  *
  * Every call therefore carries the purpose it serves, and the day budget is split by purpose.
- * Protection only binds under real contention -- see `financeLaneAllowance`.
+ * Production may use an idle provider; optional lanes always retain the protected shares.
  */
 export const FINANCE_QUOTA_LANES = ["production", "calibration", "diagnostics"] as const;
 export type FinanceQuotaLane = (typeof FINANCE_QUOTA_LANES)[number];
@@ -261,9 +261,9 @@ export type FinanceLaneAllowance = Readonly<{
   /** Additional calls any lane may draw once its own share is spent. */
   reserve: number;
   /**
-   * True when no other lane has spent anything in the window. Protecting shares against lanes
-   * that are not running would waste the budget, so the lane cap is lifted entirely and only
-   * the provider's own limit binds.
+   * True only for production when no other lane has spent in the window. Diagnostics and
+   * calibration cannot infer that production is inactive from its absence so far: natural
+   * research may start later in the same provider window.
    */
   uncontended: boolean;
 }>;
@@ -272,9 +272,9 @@ export type FinanceLaneAllowance = Readonly<{
  * Split a provider's day budget for one lane.
  *
  * `usedByLane` is the whole window's spend keyed by lane. A lane gets its own share plus the
- * shared reserve, and -- when it is the only lane that has spent anything -- the entire
- * remaining provider budget, because holding 50% idle "just in case" is how a scarce free tier
- * gets wasted.
+ * shared reserve. Only production may use the entire idle provider budget. Letting a diagnostic
+ * heartbeat borrow protected shares before the day's first research call starves the later
+ * natural cycle, even though the lanes never overlap in time.
  */
 export function financeLaneAllowance(params: {
   dayLimit: number;
@@ -284,7 +284,8 @@ export function financeLaneAllowance(params: {
   const own = Math.floor(params.dayLimit * FINANCE_QUOTA_LANE_SHARES[params.lane]);
   const reserve = Math.floor(params.dayLimit * financeQuotaReserveShare());
   const others = FINANCE_QUOTA_LANES.filter((lane) => lane !== params.lane);
-  const uncontended = others.every((lane) => (params.usedByLane[lane] ?? 0) === 0);
+  const uncontended =
+    params.lane === "production" && others.every((lane) => (params.usedByLane[lane] ?? 0) === 0);
   return Object.freeze({ own, reserve, uncontended });
 }
 
