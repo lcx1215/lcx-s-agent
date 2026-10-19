@@ -308,7 +308,7 @@ describe("offline same-cycle central handoff", () => {
       .slice(first, last + 1)
       .map((statement) => statement.getText(ast))
       .join("\n");
-    const body = `const {reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
+    const body = `const {compactCommercialAcceptanceFailures,reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
       ${functions}
       ${commands.getText(ast)}
       const problemRadarCommand=OWNER_COMMANDS.find(command=>command.id==='problemRadar');
@@ -357,6 +357,7 @@ describe("offline same-cycle central handoff", () => {
       handoff: (owners: FixtureRun[]) => Promise<FixtureRun>;
     };
     const harness = evaluate({
+      compactCommercialAcceptanceFailures,
       reviewCleanupBeforeDecision,
       ownerArtifactRecordingConfig: null,
       DEFAULT_WORKSPACE_DIR: os.tmpdir(),
@@ -1023,7 +1024,15 @@ describe("LCX governance autopilot", () => {
     expect(doctor).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
     if (localOperator) {
       expect(localOperator).toContain("governance_file");
-      expect(localOperator).toContain("governanceAutopilot");
+      if (localOperator.includes("lcx-local-operator-receipt-writer.cjs")) {
+        const writer = await fs.readFile(
+          path.join(repoRoot, "scripts/operator/lcx-local-operator-receipt-writer.cjs"),
+          "utf8",
+        );
+        expect(writer).toContain("governanceAutopilot");
+      } else {
+        expect(localOperator).toContain("governanceAutopilot");
+      }
       expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
     }
     expect(runbook).toContain("Governance Autopilot");
