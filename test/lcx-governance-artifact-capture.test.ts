@@ -5,6 +5,10 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  compactCommercialAcceptanceFailures,
+  readCommercialAcceptanceFeedback,
+} from "../scripts/operator/local-brain-training-plan.js";
 import { recordAgentArtifact } from "../src/agents/artifact-result-recording.js";
 import { buildCentralGovernanceInput } from "../src/agents/central-harness/governance-input.js";
 import type { OpenClawConfig } from "../src/config/config.js";
@@ -122,9 +126,12 @@ function harness(
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   const factory = vm.runInThisContext(
-    `(function(dependencies) { const { recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
+    `(function(dependencies) { const { compactCommercialAcceptanceFailures, readCommercialAcceptanceFeedback, GOVERNANCE_AUTOPILOT_LATEST_PATH, recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
   ) as (dependencies: Record<string, unknown>) => Harness;
   return factory({
+    compactCommercialAcceptanceFailures,
+    readCommercialAcceptanceFeedback,
+    GOVERNANCE_AUTOPILOT_LATEST_PATH: path.join(workspace, "prior-governance.json"),
     recordAgentArtifact: options.recorder ?? recordAgentArtifact,
     loadConfig: options.load ?? (() => config),
     DEFAULT_WORKSPACE_DIR: workspace,
@@ -243,7 +250,16 @@ it.each([
     );
     expect(run).toMatchObject({ parsed: true, ok: payload.ok, exitCode });
     expect(run.runReceipt.status).toBe(!ok ? "blocked" : exitCode ? "failed" : "passed");
-    await assertOriginal(run, payload, "2026-01-05T00:00:00.000Z");
+    const enriched = {
+      ...payload,
+      acceptanceFeedback: {
+        status: "held",
+        boundary: "prior_commercial_acceptance_diagnostic_only_no_execution_authority",
+        gaps: ["commercial_acceptance_feedback_current_host_unavailable"],
+      },
+    };
+    expect(run.payload).toEqual(enriched);
+    await assertOriginal(run, enriched, "2026-01-05T00:00:00.000Z");
   },
 );
 
