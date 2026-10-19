@@ -3472,7 +3472,7 @@ async function verifySelfRepairDiagnosticFeedback(
   if (
     !map ||
     typeof map.path !== "string" ||
-    (await fs.realpath(path.resolve(workspaceAlias, map.path))) !==
+    (await fs.realpath(path.resolve(workspace, map.path))) !==
       (await fs.realpath(producer.receipt.path)) ||
     map.sha256 !== producer.receipt.sha256
   ) {
