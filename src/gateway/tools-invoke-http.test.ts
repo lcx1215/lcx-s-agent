@@ -523,6 +523,7 @@ describe("POST /tools/invoke", () => {
           {
             id: "ops",
             default: true,
+            agentDir: "/configured/ops-agent",
             tools: {
               allow: ["agents_list"],
             },
@@ -534,9 +535,38 @@ describe("POST /tools/invoke", () => {
 
     const resDefault = await invokeAgentsListAuthed();
     expect(resDefault.status).toBe(200);
+    expect(lastCreateOpenClawToolsContext?.agentDir).toBe("/configured/ops-agent");
 
     const resMain = await invokeAgentsListAuthed({ sessionKey: "main" });
     expect(resMain.status).toBe(200);
+    expect(lastCreateOpenClawToolsContext?.agentDir).toBe("/configured/ops-agent");
+  });
+
+  it("uses the named session host directory instead of a tool-supplied directory", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [
+          { id: "main", default: true, agentDir: "/configured/main-agent" },
+          {
+            id: "research",
+            agentDir: "/configured/research-agent",
+            tools: { allow: ["agents_list"] },
+          },
+        ],
+      },
+    };
+    const res = await postToolsInvoke({
+      port: sharedPort,
+      headers: { authorization: `Bearer ${TEST_GATEWAY_TOKEN}` },
+      body: {
+        tool: "agents_list",
+        sessionKey: "agent:research:main",
+        args: { agentDir: "/untrusted/agent" },
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(lastCreateOpenClawToolsContext?.agentDir).toBe("/configured/research-agent");
   });
 
   it("maps tool input/auth errors to 400/403 and unexpected execution errors to 500", async () => {
