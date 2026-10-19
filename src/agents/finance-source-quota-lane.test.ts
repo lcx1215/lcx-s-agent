@@ -78,7 +78,7 @@ describe("finance quota allocation by purpose", () => {
       for (let index = 0; index < allowed; index += 1) {
         await fixture.call(lane);
       }
-      await expect(fixture.call(lane)).rejects.toMatchObject({ kind: "budget_exhausted" });
+      await expect(fixture.call(lane)).rejects.toThrow(/protected shares retained/u);
       // Each call opens the original durable guard again: protection survives reopen.
       for (let index = 0; index < 10; index += 1) {
         await expect(fixture.call("production")).resolves.toBeDefined();
