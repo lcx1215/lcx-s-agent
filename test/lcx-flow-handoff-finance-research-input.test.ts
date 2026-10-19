@@ -50,7 +50,23 @@ describe("fresh original preflight files -> original research reader -> native d
   });
   async function probe(fault?: ResearchInputFault) {
     const result = await probeOriginalResearchInput({ directory, fault });
-    const proof = { ...result, actualRunnerInputs: inputs };
+    await persistProof(result, fault, structuredClone(inputs));
+    return result;
+  }
+  async function persistProof(
+    result: Awaited<ReturnType<typeof probeOriginalResearchInput>>,
+    fault: ResearchInputFault | undefined,
+    readerInputs: runner.FinanceResearchRunInput[],
+    programmaticAccountBoundary?: {
+      actualRunnerInputs: runner.FinanceResearchRunInput[];
+      failure: string;
+    },
+  ) {
+    const proof = {
+      ...result,
+      actualRunnerInputs: readerInputs,
+      ...(programmaticAccountBoundary ? { programmaticAccountBoundary } : {}),
+    };
     const proofRoot = process.env.LCX_RESEARCH_INPUT_PROOF_DIR;
     if (proofRoot) {
       const caseDirectory = path.join(proofRoot, fault ?? "normal");
@@ -74,7 +90,6 @@ describe("fresh original preflight files -> original research reader -> native d
         );
       }
     }
-    return result;
   }
   it("actually reads this attempt's fresh broker evidence and rule into the original runner", async () => {
     const result = await probe();
@@ -113,8 +128,8 @@ describe("fresh original preflight files -> original research reader -> native d
       expect(result.failure).toBe("controller handoff controllerEvidence path or bytes mismatch");
       // The scheduled reader rejects changed bytes before normalization. Keep the
       // independent programmatic account guard covered without forging a new pin.
-      await expect(
-        runner.runFinanceResearchRun({
+      const boundaryFailure: unknown = await runner
+        .runFinanceResearchRun({
           input: {
             ask: "Validate supplied private account evidence.",
             asOf: result.asOf,
@@ -123,8 +138,20 @@ describe("fresh original preflight files -> original research reader -> native d
           },
           liveFetch: false,
           workspaceDir: result.workspace,
-        }),
-      ).rejects.toThrow(/broker account scope/);
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(boundaryFailure).toBeInstanceOf(Error);
+      if (!(boundaryFailure instanceof Error)) {
+        throw new Error("missing account boundary failure");
+      }
+      expect(boundaryFailure.message).toMatch(/broker account scope/);
+      await persistProof(result, fault, [], {
+        actualRunnerInputs: structuredClone(inputs),
+        failure: boundaryFailure.message,
+      });
       expect(inputs).toHaveLength(1);
       const broker = inputs[0].controllerEvidence!.find(
         (item) => item.source.trim() === "finance-broker-profit-summary",
