@@ -1,5 +1,6 @@
 export type TuiOptions = {
   url?: string;
+  tlsFingerprint?: string;
   token?: string;
   password?: string;
   session?: string;

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioIds": ["module_learning_internalization_waterflow"],
+  "fromVersion": 2,
+  "toVersion": 3,
+  "reason": "Correct the descriptive graph to actual original owner dependencies; do not invent gate-to-review or retrieval-to-application handoffs.",
+  "changes": {
+    "removedEdges": [
+      ["retrieval_receipt", "apply_validation"],
+      ["local_brain_eval_absorption", "module_learning_absorption_gate"],
+      ["module_learning_absorption_gate", "module_learning_review"]
+    ],
+    "addedEdges": [
+      ["capability_card", "apply_validation"],
+      ["apply_validation", "retrieval_receipt"],
+      ["retrieval_receipt", "local_brain_eval_absorption"],
+      ["local_brain_eval_absorption", "module_learning_review"],
+      ["module_learning_review", "module_learning_absorption_gate"],
+      ["keep_downrank_discard", "module_learning_absorption_gate"]
+    ],
+    "owners": "Original apply writes application receipt; original pipeline writes retrieval receipt afterwards; original plan revalidates them; original review reads evaluation; original gate freshly reads review decisions.",
+    "preserved": "Canonical node vocabulary, relation/state vocabulary, review-to-card feedback, source coverage and global hardened evaluation obligations."
+  },
+  "nonEffects": [
+    "no execution changes",
+    "no provider or trainer calls",
+    "no source or risk gate changes",
+    "no new registry or business state"
+  ],
+  "remainingGap": "Descriptive edges require original consumer readback before whole-scene handoffs can be accepted."
+}

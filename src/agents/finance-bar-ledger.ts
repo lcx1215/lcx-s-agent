@@ -148,6 +148,11 @@ const StoredRecordSchema = z
   .strict();
 export type FinanceBarRecord = z.infer<typeof StoredRecordSchema> & { ref: string };
 
+const SourceFilter = Provenance.pick({ origin: true, sourceUrlOrArtifact: true })
+  .required()
+  .strict();
+export type FinanceBarSourceFilter = z.infer<typeof SourceFilter>;
+
 export type FinanceBarLedger = Readonly<{
   /**
    * Bars in `(instrument, date)` order, one per observed instrument-date *value*.
@@ -168,6 +173,22 @@ export type FinanceBarLedger = Readonly<{
   collapsedRepeats: number;
   recordCount: number;
   headRef: string | null;
+  sourceCatalog?: Readonly<{
+    sources: readonly Readonly<{
+      source: FinanceBarSourceFilter;
+      recordCount: number;
+      latestObservedAt: string;
+    }>[];
+    omittedRecordCount: number;
+    boundary: "retained_provenance_choices_not_source_quality_or_coverage";
+  }>;
+  sourceSelection?: Readonly<{
+    requested: FinanceBarSourceFilter;
+    matchedRecordCount: number;
+    excludedRecordCount: number;
+    allSourcesDivergentDates: readonly string[];
+    boundary: "exact_retained_provenance_not_verified_coverage_or_adjustment";
+  }>;
 }>;
 
 const BAR_LEDGER_MIGRATION_LEDGER = "finance_bar_migrations";
@@ -209,6 +230,21 @@ function openDatabase(directory: string): BarDatabase {
     migrations: BAR_LEDGER_MIGRATIONS,
   });
   return db;
+}
+
+function openReadOnlyDatabase(directory: string): BarDatabase {
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeBarLedgerPath(directory), { readOnly: true });
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA query_only=ON;");
+  return db;
+}
+
+function hasBarRecordsTable(db: BarDatabase): boolean {
+  return (
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+      .get("finance_bar_records") !== undefined
+  );
 }
 
 /**
@@ -348,7 +384,7 @@ export async function appendFinanceBars(
   try {
     db.exec("BEGIN IMMEDIATE");
     try {
-      const records = readStoredRecords(db);
+      const records = Array.from(readStoredRecords(db));
 
       // Content, not batch identity, decides what is new: see `repeatsSkipped`.
       const known = new Set<string>();
@@ -417,7 +453,7 @@ export async function appendFinanceBars(
         "INSERT INTO finance_bar_records (ref, sequence, previous_ref, recorded_at, body) VALUES (?, ?, ?, ?, ?)",
       ).run(ref, record.sequence, record.previousRef, record.recordedAt, JSON.stringify(record));
       db.exec("COMMIT");
-      const after = readStoredRecords(db);
+      const after = Array.from(readStoredRecords(db));
       return Object.freeze({
         record: { ...record, ref },
         appended: true,
@@ -440,12 +476,13 @@ export async function appendFinanceBars(
  * error rather than a silent skip: a book that quietly drops rows would report "no bars were
  * recorded", which reads the same as "nothing happened".
  */
-function readStoredRecords(db: BarDatabase): FinanceBarRecord[] {
+function* readStoredRecords(db: BarDatabase): Generator<FinanceBarRecord> {
   const rows = db
     .prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence")
-    .all() as ReadonlyArray<{ ref?: unknown; body?: unknown }>;
+    .iterate() as Iterable<{ ref?: unknown; body?: unknown }>;
   let previousRef: string | null = null;
-  return rows.map((row, index) => {
+  let sequence = 0;
+  for (const row of rows) {
     if (typeof row.body !== "string" || typeof row.ref !== "string") {
       throw new Error("invalid bar record");
     }
@@ -454,12 +491,12 @@ function readStoredRecords(db: BarDatabase): FinanceBarRecord[] {
       throw new Error("bar record integrity mismatch");
     }
     const record = StoredRecordSchema.parse(raw);
-    if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
+    if (record.sequence !== ++sequence || record.previousRef !== previousRef) {
       throw new Error("bar record chain mismatch");
     }
     previousRef = row.ref;
-    return { ...record, ref: row.ref };
-  });
+    yield { ...record, ref: row.ref };
+  }
 }
 
 /**
@@ -510,8 +547,23 @@ export function collapseRepeatedBars(bars: readonly FinanceBar[]): {
 
 export async function readFinanceBarLedger(
   directory: string,
-  options: { asOf?: string; instrument?: string } = {},
+  options: {
+    asOf?: string;
+    instrument?: string;
+    source?: FinanceBarSourceFilter;
+    includeSources?: boolean;
+  } = {},
 ): Promise<FinanceBarLedger> {
+  const source = options.source === undefined ? undefined : SourceFilter.parse(options.source);
+  const sourceSelection = source
+    ? {
+        requested: Object.freeze(source),
+        matchedRecordCount: 0,
+        excludedRecordCount: 0,
+        allSourcesDivergentDates: Object.freeze([] as string[]),
+        boundary: "exact_retained_provenance_not_verified_coverage_or_adjustment" as const,
+      }
+    : undefined;
   // Opening the database would create it. A read must not have that side effect, and must not
   // destroy the "this book does not exist yet" state just by looking: after one read, an absent
   // book would otherwise report itself as present-but-empty forever.
@@ -522,41 +574,127 @@ export async function readFinanceBarLedger(
       collapsedRepeats: 0,
       recordCount: 0,
       headRef: null,
+      ...(sourceSelection ? { sourceSelection: Object.freeze(sourceSelection) } : {}),
     });
   }
-  const db = openDatabase(directory);
+  const db = openReadOnlyDatabase(directory);
   try {
-    const stored = readStoredRecords(db);
+    if (!hasBarRecordsTable(db)) {
+      return Object.freeze({
+        bars: Object.freeze([]),
+        divergentDates: Object.freeze([]),
+        collapsedRepeats: 0,
+        recordCount: 0,
+        headRef: null,
+        ...(sourceSelection ? { sourceSelection: Object.freeze(sourceSelection) } : {}),
+      });
+    }
     const asOf = options.asOf;
-    const scoped = stored.filter((record) => {
+    let recordCount = 0;
+    let headRef: string | null = null;
+    const firstBarByKey = new Map<string, FinanceBar>();
+    const divergentKeys = new Set<string>();
+    const signaturesByKey = new Map<string, Set<string>>();
+    const bars: FinanceBar[] = [];
+    let collapsedRepeats = 0;
+    const sourceChoices = new Map<
+      string,
+      { source: FinanceBarSourceFilter; recordCount: number; latestObservedAt: string }
+    >();
+    let omittedSourceRecordCount = 0;
+    const allSourceCloses = new Map<string, number>();
+    const allSourceDivergentKeys = new Set<string>();
+    // Consume the entire verified chain even for a narrow read. Only the requested
+    // projection is retained; a filtered-out or trailing corruption still rejects it.
+    for (const record of readStoredRecords(db)) {
+      recordCount += 1;
+      headRef = record.ref;
       if (asOf !== undefined && asOf.length > 0 && record.body.observedAt.localeCompare(asOf) > 0) {
-        return false;
+        continue;
       }
       if (options.instrument !== undefined && record.body.instrument !== options.instrument) {
-        return false;
+        continue;
       }
-      return true;
-    });
-
-    const byKey = new Map<string, Set<number>>();
-    const bars: FinanceBar[] = [];
-    for (const record of scoped) {
+      if (options.includeSources) {
+        const retained = record.body.provenance;
+        const choice = retained.sourceUrlOrArtifact
+          ? { origin: retained.origin, sourceUrlOrArtifact: retained.sourceUrlOrArtifact }
+          : undefined;
+        const key = choice ? JSON.stringify(choice) : undefined;
+        const prior = key ? sourceChoices.get(key) : undefined;
+        if (prior) {
+          prior.recordCount += 1;
+          if (record.body.observedAt > prior.latestObservedAt) {
+            prior.latestObservedAt = record.body.observedAt;
+          }
+        } else if (
+          key &&
+          choice &&
+          sourceChoices.size < 4 &&
+          Buffer.byteLength(key, "utf8") <= 512 &&
+          choice.origin.length <= 120 &&
+          choice.sourceUrlOrArtifact.length <= 512
+        ) {
+          sourceChoices.set(key, {
+            source: choice,
+            recordCount: 1,
+            latestObservedAt: record.body.observedAt,
+          });
+        } else {
+          // Counts omitted records, not unique sources; retain no unbounded label set.
+          omittedSourceRecordCount += 1;
+        }
+      }
+      if (source && sourceSelection) {
+        // Keep the comparison within the same instrument/as-of scope even when a
+        // caller explicitly reads one source. Selection does not resolve disagreement.
+        for (const bar of record.body.bars) {
+          const key = `${bar.instrument}@${bar.date}`;
+          const firstClose = allSourceCloses.get(key);
+          if (firstClose !== undefined && firstClose !== bar.close) {
+            allSourceDivergentKeys.add(key);
+          }
+          allSourceCloses.set(key, firstClose ?? bar.close);
+        }
+        if (
+          record.body.provenance.origin !== source.origin ||
+          record.body.provenance.sourceUrlOrArtifact !== source.sourceUrlOrArtifact
+        ) {
+          sourceSelection.excludedRecordCount += 1;
+          continue;
+        }
+        sourceSelection.matchedRecordCount += 1;
+      }
       for (const bar of record.body.bars) {
         const key = `${bar.instrument}@${bar.date}`;
-        const closes = byKey.get(key) ?? new Set<number>();
-        closes.add(bar.close);
-        byKey.set(key, closes);
+        const first = firstBarByKey.get(key);
+        if (first === undefined) {
+          firstBarByKey.set(key, bar);
+        } else {
+          if (first.close !== bar.close) {
+            divergentKeys.add(key);
+          }
+          // The validated instrument/date fields cannot contain the key separators.
+          // Full content signatures are only needed when that same day is seen again.
+          let signatures = signaturesByKey.get(key);
+          if (signatures === undefined) {
+            signatures = new Set([barSignature(first)]);
+            signaturesByKey.set(key, signatures);
+          }
+          const signature = barSignature(bar);
+          if (signatures.has(signature)) {
+            collapsedRepeats += 1;
+            continue;
+          }
+          signatures.add(signature);
+        }
         bars.push(bar);
       }
     }
     // Divergence is computed before collapsing: which source said what is a fact about the
     // sources, and it must survive the removal of replays.
-    const divergentDates = [...byKey.entries()]
-      .filter(([, closes]) => closes.size > 1)
-      .map(([key]) => key)
-      .toSorted();
-    const collapsed = collapseRepeatedBars(bars);
-    const ordered = collapsed.bars.toSorted(
+    const divergentDates = [...divergentKeys].toSorted();
+    const ordered = bars.toSorted(
       (left, right) =>
         left.instrument.localeCompare(right.instrument) || left.date.localeCompare(right.date),
     );
@@ -564,9 +702,28 @@ export async function readFinanceBarLedger(
     return Object.freeze({
       bars: Object.freeze(ordered),
       divergentDates: Object.freeze(divergentDates),
-      collapsedRepeats: collapsed.collapsedRepeats,
-      recordCount: stored.length,
-      headRef: stored.at(-1)?.ref ?? null,
+      collapsedRepeats,
+      recordCount,
+      headRef,
+      ...(options.includeSources
+        ? {
+            sourceCatalog: Object.freeze({
+              sources: Object.freeze(
+                [...sourceChoices.values()].map((choice) => Object.freeze(choice)),
+              ),
+              omittedRecordCount: omittedSourceRecordCount,
+              boundary: "retained_provenance_choices_not_source_quality_or_coverage" as const,
+            }),
+          }
+        : {}),
+      ...(sourceSelection
+        ? {
+            sourceSelection: Object.freeze({
+              ...sourceSelection,
+              allSourcesDivergentDates: Object.freeze([...allSourceDivergentKeys].toSorted()),
+            }),
+          }
+        : {}),
     });
   } finally {
     db.close();

@@ -133,12 +133,28 @@ code may run on that host, require token/password auth.
 ### Bind to tailnet + token
 
 ```bash
-lcx gateway --bind tailnet --token "$(openssl rand -hex 32)"
+lcx config set gateway.bind tailnet
+lcx config set gateway.tls.enabled true
+lcx config set gateway.auth.mode token
+lcx config set gateway.auth.token "$(openssl rand -hex 32)"
+lcx gateway
 ```
 
 Then open:
 
-- `http://<tailscale-ip>:18789/` (or your configured `gateway.controlUi.basePath`)
+- `https://<tailscale-ip>:18789/` (or your configured `gateway.controlUi.basePath`)
+
+The certificate must be trusted by the client and include the Tailnet IP or
+MagicDNS name in its SAN. When LCX Agent generates a self-signed Gateway
+certificate, it includes `localhost`, the machine hostname, and process-visible local
+interface IPs in the SAN at generation time. The certificate is still
+self-signed and must be trusted by the browser; automatic generation requires
+`openssl` on `PATH`. If an address changes, or you
+connect through a custom DNS name, install a certificate whose SAN covers that
+name. Existing certificates are not silently replaced because clients may pin
+their fingerprint. For container-published host addresses, the container may not
+see the host IP; install a certificate whose SAN matches the URL used in the
+browser.
 
 Paste the token into the UI settings (sent as `connect.params.auth.token`).
 
@@ -148,9 +164,10 @@ If you open the dashboard over plain HTTP (`http://<lan-ip>` or `http://<tailsca
 the browser runs in a **non-secure context** and blocks WebCrypto. By default,
 LCX Agent **blocks** Control UI connections without device identity.
 
-**Recommended fix:** use HTTPS (Tailscale Serve) or open the UI locally:
+**Recommended fix:** use HTTPS (Tailscale Serve or Gateway TLS) or open the UI locally:
 
 - `https://<magicdns>/` (Serve)
+- `https://<tailscale-ip>:18789/` (direct bind with Gateway TLS and a trusted certificate)
 - `http://127.0.0.1:18789/` (on the gateway host)
 
 **Insecure-auth toggle behavior:**
@@ -160,6 +177,7 @@ LCX Agent **blocks** Control UI connections without device identity.
   gateway: {
     controlUi: { allowInsecureAuth: true },
     bind: "tailnet",
+    tls: { enabled: true },
     auth: { mode: "token", token: "replace-me" },
   },
 }
@@ -174,6 +192,7 @@ LCX Agent **blocks** Control UI connections without device identity.
   gateway: {
     controlUi: { dangerouslyDisableDeviceAuth: true },
     bind: "tailnet",
+    tls: { enabled: true },
     auth: { mode: "token", token: "replace-me" },
   },
 }

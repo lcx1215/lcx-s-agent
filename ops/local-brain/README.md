@@ -530,8 +530,12 @@ durable files, the latest local operator state, and the mind model instead of
 needing the old chat transcript. The local operator loop should keep
 `mindModel`, `flowGraph`, and `contextRecovery` fields in
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
-The latest state must also be fresh; a stale but readable JSON file is treated
-as a failed recovery signal.
+The hourly loop also atomically mirrors the same receipt to the inspected
+checkout's `state/lcx-local-operator-latest.json`; context recovery prefers that
+checkout-scoped copy so one worktree cannot overwrite another's workflow proof.
+The receipt records the inspected repository and commit. Never copy it between
+worktrees. The latest state must also be fresh; a stale but readable JSON file
+is treated as a failed recovery signal.
 
 For a new coding window that needs a one-screen current-state handoff, use the
 same recovery owner instead of creating a separate handoff lane:

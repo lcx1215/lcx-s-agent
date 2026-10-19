@@ -85,17 +85,14 @@ lcx models status
 
 ### Control UI 在 HTTP 上失败（"device identity required" / "connect failed"）
 
-如果你通过纯 HTTP 打开仪表板（例如 `http://<lan-ip>:18789/` 或
-`http://<tailscale-ip>:18789/`），浏览器运行在**非安全上下文**中，
-会阻止 WebCrypto，因此无法生成设备身份。
+如果尝试通过纯 HTTP 打开远程仪表板，浏览器运行在**非安全上下文**中，
+会阻止 WebCrypto；Gateway 也会拒绝没有 TLS 的直接非回环监听。
 
 **修复：**
 
-- 优先通过 [Tailscale Serve](/gateway/tailscale) 使用 HTTPS。
-- 或在 Gateway 网关主机上本地打开：`http://127.0.0.1:18789/`。
-- 如果必须使用 HTTP，启用 `gateway.controlUi.allowInsecureAuth: true` 并
-  使用 Gateway 网关令牌（仅令牌；无设备身份/配对）。参见
-  [Control UI](/web/control-ui#insecure-http)。
+- 优先通过 [Tailscale Serve](/gateway/tailscale) 使用 HTTPS，或启用 Gateway TLS 并使用受信任的证书。
+- 也可以在 Gateway 网关主机上本地打开：`http://127.0.0.1:18789/`。
+- `gateway.controlUi.allowInsecureAuth` 不会绕过非回环监听的 TLS 门禁。参见 [Control UI](/web/control-ui)。
 
 ### CI Secrets Scan Failed
 
@@ -214,8 +211,8 @@ Gateway 网关可能拒绝绑定。
 - `gateway.mode` 必须为 `local` 才能运行 `lcx gateway` 和服务。
 - 如果你设置了 `gateway.mode=remote`，**CLI 默认**使用远程 URL。服务可能仍在本地运行，但你的 CLI 可能在探测错误的位置。使用 `lcx gateway status` 查看服务解析的端口 + 探测目标（或传递 `--url`）。
 - `lcx gateway status` 和 `lcx doctor` 在服务看起来正在运行但端口关闭时会显示日志中的**最后 Gateway 网关错误**。
-- 非本地回环绑定（`lan`/`tailnet`/`custom`，或本地回环不可用时的 `auto`）需要认证：
-  `gateway.auth.token`（或 `OPENCLAW_GATEWAY_TOKEN`）。
+- 所有直接非回环绑定（`lan`/`custom`/`tailnet`，以及解析到非回环地址的 `auto`）需要认证和 TLS：
+  配置 `gateway.auth.token`（或 `OPENCLAW_GATEWAY_TOKEN`）并设置 `gateway.tls.enabled: true`。
 - `gateway.remote.token` 仅用于远程 CLI 调用；它**不**启用本地认证。
 - `gateway.token` 被忽略；使用 `gateway.auth.token`。
 
@@ -234,6 +231,11 @@ Gateway 网关可能拒绝绑定。
 
 - 你将 `gateway.bind` 设置为非本地回环模式（`lan`/`tailnet`/`custom`，或本地回环不可用时的 `auto`）但没有配置认证。
 - 修复：设置 `gateway.auth.mode` + `gateway.auth.token`（或导出 `OPENCLAW_GATEWAY_TOKEN`）并重启服务。
+
+**如果 `Last gateway error:` 提到 `non-loopback Gateway binds require gateway.tls.enabled=true`**
+
+- 所有非回环监听（包括 LAN/custom/tailnet）都会拒绝明文传输认证凭据。
+- 修复：启用 `gateway.tls.enabled`，让客户端或代理信任 Gateway 证书；或者把 Gateway 留在 loopback，并通过 SSH/Tailscale Serve 访问。
 
 **如果 `lcx gateway status` 显示 `bind=tailnet` 但未找到 tailnet 接口**
 

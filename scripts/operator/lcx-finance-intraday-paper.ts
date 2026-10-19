@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+
+import { pathToFileURL } from "node:url";
+import { syncAlpacaIntradayBars } from "../../src/agents/finance-alpaca-intraday.js";
+import { readFinanceAlpacaMarketCalendar } from "../../src/agents/finance-alpaca-market-calendar.js";
+import { financeEtClock } from "../../src/agents/finance-cycle-schedule.js";
+import { readFinanceIntradayLedger } from "../../src/agents/finance-intraday-ledger.js";
+import {
+  FINANCE_INTRADAY_OPENING_RANGE_RULE,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+  FinanceIntradayReplayInputError,
+  runFinanceIntradayPaperReplay,
+} from "../../src/agents/finance-intraday-paper.js";
+import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
+
+function valueAfter(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index < 0 ? undefined : args[index + 1];
+}
+
+function required(args: readonly string[], flag: string): string {
+  const value = valueAfter(args, flag)?.trim();
+  if (!value) {
+    throw new Error(`${flag} is required`);
+  }
+  return value;
+}
+
+function numberAfter(args: readonly string[], flag: string): number {
+  const value = Number(required(args, flag));
+  if (!Number.isFinite(value)) {
+    throw new Error(`${flag} must be finite`);
+  }
+  return value;
+}
+
+export async function buildFinanceIntradayPaperPayload(args: readonly string[]) {
+  const instrument = required(args, "--instrument").toUpperCase();
+  const from = required(args, "--from");
+  const to = required(args, "--to");
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
+    throw new Error("--from and --to must be ordered ISO timestamps");
+  }
+  const location = resolveFinanceStateDir({ directory: valueAfter(args, "--ledger-dir") });
+  const intervalSeconds = Number(valueAfter(args, "--interval-seconds") ?? 300);
+  if (![60, 300, 900].includes(intervalSeconds)) {
+    throw new Error("--interval-seconds must be 60, 300, or 900");
+  }
+  const feed = valueAfter(args, "--feed") ?? "iex";
+  if (feed !== "iex" && feed !== "sip") {
+    throw new Error("--feed must be iex or sip");
+  }
+  const strategyRule = valueAfter(args, "--strategy-rule") ?? FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  if (
+    strategyRule !== FINANCE_INTRADAY_OPENING_RANGE_RULE &&
+    strategyRule !== FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 &&
+    strategyRule !== FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
+  ) {
+    throw new Error("--strategy-rule is unsupported");
+  }
+  const sync = args.includes("--sync-alpaca")
+    ? await syncAlpacaIntradayBars({
+        directory: location.directory,
+        instrument,
+        start: from,
+        end: to,
+        intervalSeconds: intervalSeconds as 60 | 300 | 900,
+        feed,
+      })
+    : null;
+  // Historical bars collected after the requested window are still valid replay inputs; their
+  // later collection timestamp remains in the ledger and must not be rewritten as if known then.
+  const ledger = await readFinanceIntradayLedger(location.directory, { instrument, feed });
+  const bars = ledger.bars.filter(
+    (bar) =>
+      bar.intervalSeconds === intervalSeconds &&
+      Date.parse(bar.startAt) >= fromMs &&
+      Date.parse(bar.endAt) <= toMs,
+  );
+  const marketCalendarSync =
+    strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 ||
+    strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
+      ? await readFinanceAlpacaMarketCalendar({
+          startDate: financeEtClock(new Date(fromMs)).date,
+          endDate: financeEtClock(new Date(toMs)).date,
+          directory: location.directory,
+        })
+      : null;
+  const receipt = runFinanceIntradayPaperReplay({
+    bars,
+    ledgerHeadRef: ledger.headRef,
+    strategyRule,
+    ...(marketCalendarSync ? { marketSessions: marketCalendarSync } : {}),
+    config: {
+      openingRangeBars: Number(valueAfter(args, "--opening-range-bars") ?? 6),
+      capital: numberAfter(args, "--capital"),
+      maxAllocationFraction: numberAfter(args, "--max-allocation"),
+      feeBpsPerSide: numberAfter(args, "--fee-bps-per-side"),
+      spreadBps: numberAfter(args, "--spread-bps"),
+      slippageBpsPerSide: numberAfter(args, "--slippage-bps-per-side"),
+      rewardRisk: Number(valueAfter(args, "--reward-risk") ?? 2),
+    },
+  });
+  return Object.freeze({
+    waterflow: "finance_intraday_paper_waterflow",
+    boundary: "local_research_and_paper_replay_only",
+    source: {
+      directory: location.directory,
+      directorySource: location.source,
+      ledgerHeadRef: ledger.headRef,
+      ledgerRecordCount: ledger.recordCount,
+      selectedBars: bars.length,
+      from,
+      to,
+      sync,
+      marketCalendar: marketCalendarSync
+        ? {
+            source: "Alpaca Paper market calendar",
+            sourceUrlOrArtifact: "https://paper-api.alpaca.markets/v2/calendar",
+            sessions: marketCalendarSync.length,
+            calendarRef: receipt.marketCalendarRef,
+            observedAt: marketCalendarSync[0]?.observedAt ?? null,
+          }
+        : null,
+    },
+    receipt,
+    claims: {
+      networkTouched: sync !== null || marketCalendarSync !== null,
+      credentialsRead: sync !== null || marketCalendarSync !== null,
+      orderPlaced: false,
+      alphaProven: false,
+    },
+  });
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args.includes("--help")) {
+    process.stdout.write(
+      "Usage: lcx-finance-intraday-paper --instrument SPY --from ISO --to ISO --capital N " +
+        "--max-allocation FRACTION --fee-bps-per-side N --spread-bps N " +
+        "--slippage-bps-per-side N [--opening-range-bars N] [--ledger-dir DIR] " +
+        "[--reward-risk N] [--strategy-rule opening_range_breakout_long_next_bar_v1|opening_range_breakout_long_pre_close_v2|opening_range_breakout_long_dynamic_universe_v3] " +
+        "[--sync-alpaca] [--interval-seconds 60|300|900] [--feed iex|sip] [--json]\n",
+    );
+    return;
+  }
+  try {
+    const payload = await buildFinanceIntradayPaperPayload(args);
+    process.stdout.write(`${JSON.stringify(payload, null, args.includes("--json") ? 2 : 0)}\n`);
+  } catch (error) {
+    if (!(error instanceof FinanceIntradayReplayInputError)) {
+      throw error;
+    }
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          waterflow: "finance_intraday_paper_waterflow",
+          boundary: "local_research_and_paper_replay_only",
+          status: "blocked",
+          executionAuthority: "none",
+          owner: error.owner,
+          source: error.source,
+          requested: {
+            instrument: valueAfter(args, "--instrument"),
+            from: valueAfter(args, "--from"),
+            to: valueAfter(args, "--to"),
+          },
+          gaps: [error.gap],
+          requiredNextStep:
+            "Recover the missing/conflicting source bars in the original ledger before replaying; do not substitute a later bar.",
+          claims: { orderPlaced: false, alphaProven: false },
+        },
+        null,
+        args.includes("--json") ? 2 : 0,
+      )}\n`,
+    );
+    process.exitCode = 1;
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  await main();
+}

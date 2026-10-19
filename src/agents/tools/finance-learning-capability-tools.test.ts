@@ -1040,4 +1040,84 @@ This note stays research-only, without pretending to be execution approval, and 
       "tactical_timing requires backtest_or_empirical_evidence and whipsaw or drawdown risk",
     );
   });
+  it.each(["missing", "cycle", "fork", "cross_source", "cross_module"] as const)(
+    "blocks an invalid %s review lineage in the actual next apply",
+    async (fault) => {
+      workspaceDir = await makeTempWorkspace("openclaw-learning-lineage-");
+      const args = buildValidArgs();
+      await seedArticle(
+        workspaceDir,
+        args.articlePath,
+        "Concrete liquidity evidence and risk method.",
+      );
+      await createFinanceLearningCapabilityAttachTool({ workspaceDir }).execute("attach", args);
+      const root = "memory/module-learning-pipeline-plan-receipts/2026-10-11/";
+      const predecessor = `${root}old.json`;
+      const current = `${root}new.json`;
+      const base = {
+        boundary: "local_module_learning_pipeline_plan",
+        targetModule: "credit_liquidity",
+        sourceUrlOrPath: args.articlePath,
+        status: "stored_only",
+        keepDownrankDiscardDecision: "keep",
+      };
+      const old = {
+        ...base,
+        ...(fault === "cross_source" ? { sourceUrlOrPath: "memory/another-source.md" } : {}),
+        ...(fault === "cross_module" ? { targetModule: "technical_timing" } : {}),
+        ...(fault === "cycle" ? { supersedesReceiptPath: current } : {}),
+      };
+      const next = {
+        ...base,
+        supersedesReceiptPath: fault === "missing" ? `${root}absent.json` : predecessor,
+      };
+      const rows = [
+        [predecessor, old],
+        [current, next],
+      ] as const;
+      for (const [file, value] of rows) {
+        await seedArticle(workspaceDir, file, JSON.stringify(value));
+      }
+      if (fault === "fork") {
+        await seedArticle(workspaceDir, `${root}fork.json`, JSON.stringify(next));
+      }
+      const inspect = detailsOf(
+        await createFinanceLearningCapabilityInspectTool({ workspaceDir }).execute("inspect", {
+          queryText: "liquidity regime mapper",
+        }),
+      );
+      expect(inspect.candidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            moduleLearningReview: expect.objectContaining({
+              status: "review_evidence_unverified",
+              applicationAllowed: false,
+              receipts: expect.arrayContaining([
+                expect.objectContaining({
+                  supersessionIssues: expect.arrayContaining([
+                    expect.stringContaining("supersession_"),
+                  ]),
+                }),
+              ]),
+            }),
+          }),
+        ]),
+      );
+      const applied = detailsOf(
+        await createFinanceLearningCapabilityApplyTool({ workspaceDir }).execute("next", {
+          queryText: "liquidity regime mapper",
+          maxCandidates: 1,
+        }),
+      );
+      expect(applied).toMatchObject({
+        applicationStatus: "not_application_ready",
+        candidateCount: 0,
+        failedReason: "module_learning_review_blocks_application",
+      });
+      const receipt = JSON.parse(
+        await fs.readFile(path.join(workspaceDir, applied.usageReceiptPath), "utf8"),
+      );
+      expect(receipt).toMatchObject({ candidateCount: 0, ok: false });
+    },
+  );
 });

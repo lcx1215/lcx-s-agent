@@ -21,6 +21,10 @@
  * is well-formed passes every other check in the chain.
  */
 
+import {
+  FinanceExpectationGapSchema,
+  type FinanceExpectationGap,
+} from "./finance-expectation-gap.js";
 import type { FinanceConclusionDirection } from "./finance-intent-compiler.js";
 
 export type FinanceEvidenceRef = Readonly<{
@@ -36,6 +40,7 @@ export type FinanceIntakeConclusion = Readonly<{
   direction: FinanceConclusionDirection;
   conviction: number;
   thesis: string;
+  expectationGap?: FinanceExpectationGap;
   assetClass: string;
   evidence: readonly FinanceEvidenceRef[];
   horizonDays?: number;
@@ -82,6 +87,13 @@ export function parseResearchConclusion(
     return { ok: false, refusals: ["refuse: the conclusion is not an object"] };
   }
 
+  const expectationGap =
+    raw.expectationGap === undefined
+      ? undefined
+      : FinanceExpectationGapSchema.safeParse(raw.expectationGap);
+  if (expectationGap && !expectationGap.success) {
+    refusals.push("refuse: malformed expectation-gap hypothesis");
+  }
   const conclusionId = typeof raw.conclusionId === "string" ? raw.conclusionId.trim() : "";
   if (!conclusionId) {
     refusals.push("refuse: conclusionId is missing");
@@ -184,6 +196,7 @@ export function parseResearchConclusion(
       direction: direction as FinanceConclusionDirection,
       conviction,
       thesis,
+      ...(expectationGap?.success ? { expectationGap: expectationGap.data } : {}),
       assetClass,
       evidence,
       ...(typeof raw.horizonDays === "number" && Number.isFinite(raw.horizonDays)

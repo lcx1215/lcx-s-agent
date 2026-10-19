@@ -2,11 +2,31 @@ import { describe, expect, it, vi } from "vitest";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import {
   createFinanceRealtimeSourceRegistry,
+  createYahooDelayedMarketAdapter,
   inspectFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   runFinanceRealtimeRefresh,
   type FinanceRealtimeSourceAdapter,
 } from "./finance-realtime-source-registry.js";
+
+describe("Yahoo prediction-market source eligibility", () => {
+  it("excludes explicit prediction_market identifiers without narrowing existing other classes", () => {
+    const yahoo = createYahooDelayedMarketAdapter();
+    for (const assetClass of ["prediction_market", " Prediction_Market ", "crypto"]) {
+      expect(yahoo.supports({ ...request, assetClass })).toBe(false);
+    }
+    for (const assetClass of [
+      "equity",
+      "etf",
+      "index",
+      "fx",
+      "commodities",
+      "unknown_legacy_class",
+    ]) {
+      expect(yahoo.supports({ ...request, assetClass })).toBe(true);
+    }
+  });
+});
 
 const request = {
   instrument: "QQQ",

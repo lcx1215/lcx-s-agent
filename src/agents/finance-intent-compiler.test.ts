@@ -3,6 +3,7 @@ import {
   compileExecutionIntent,
   type FinanceResearchConclusion,
 } from "./finance-intent-compiler.js";
+import { normalizeUsEquityProtectionPrices } from "./finance-us-equity-price-normalization.js";
 
 const market = { referencePrice: 100, referencePriceAt: "2026-09-20T00:00:00.000Z" };
 const equity = 100_000;
@@ -96,6 +97,79 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it.each(["entry", "authorization"] as const)(
+    "retains the %s sizing explanation when whole-share quantity rounds to zero",
+    (bound) => {
+      const result = compileExecutionIntent({
+        conclusion: equityConclusion,
+        market,
+        equity,
+        runAuthorizationId: "auth-1",
+        ...(bound === "entry" ? { maxEntryNotional: 99 } : { maxAuthorizedNotional: 99 }),
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        refusals: ["refuse: computed size rounds to zero; refusing rather than trading a token"],
+        notes: [
+          "sized from stop distance 5.0000 at 1.00% planned risk; costs excluded and gap loss is not capped",
+          bound === "entry"
+            ? "entry size reduced from 200 to 0 within supplied notional headroom 99"
+            : "order size reduced from 200 to 0 within controller authorization 99",
+        ],
+      });
+      expect(result).not.toHaveProperty("intent");
+    },
+  );
+
+  it("shrinks a valid entry to supplied headroom instead of discarding it", () => {
+    const base = { conclusion: equityConclusion, market, equity, runAuthorizationId: "auth-1" };
+    const result = compileExecutionIntent({
+      ...base,
+      maxEntryNotional: market.referencePrice * 3.5,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.intent.quantity).toBe(3);
+      expect(result.notes.join()).toContain("entry size reduced");
+    }
+    expect(compileExecutionIntent({ ...base, maxEntryNotional: 0 }).ok).toBe(false);
+    expect(compileExecutionIntent({ ...base, maxEntryNotional: NaN }).ok).toBe(false);
+  });
+
+  it("caps controller-authorized notional for buys and sells", () => {
+    const buy = compileExecutionIntent({
+      conclusion: equityConclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+      maxAuthorizedNotional: 350,
+    });
+    const sell = compileExecutionIntent({
+      conclusion: { ...equityConclusion, direction: "sell", invalidationPrice: 105 },
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+      maxAuthorizedNotional: 350,
+    });
+    expect(buy.ok && buy.intent.quantity).toBe(3);
+    expect(sell.ok && sell.intent.quantity).toBe(3);
+  });
+  it("uses a trusted exact quantity when closing an observed position", () => {
+    const result = compileExecutionIntent({
+      conclusion: { ...equityConclusion, direction: "sell", invalidationPrice: undefined },
+      market,
+      equity,
+      runAuthorizationId: "intraday-paper-session",
+      quantityOverride: 17.5,
+      maxEntryNotional: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.intent).toMatchObject({ side: "sell", quantity: 17.5 });
+      expect(result.notes.join()).toMatch(/exact-quantity override/);
+    }
+  });
+
   it("refuses a stop-driven class that gives no stop", () => {
     const result = compileExecutionIntent({
       conclusion: { ...equityConclusion, invalidationPrice: undefined },
@@ -150,6 +224,21 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it("allows a pre-budgeted scale-in while retaining the normal sizing rules", () => {
+    const result = compileExecutionIntent({
+      conclusion: equityConclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+      existingPosition: { quantity: 100, unrealizedFraction: -0.2 },
+      plannedScaleIn: true,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.notes.join(" ")).toContain("planned scale-in");
+    }
+  });
+
   it("still lets a value strategy build a position when nothing is underwater", () => {
     // The point of testing the boundary from both sides: class C must be able to
     // add over time, or the rule meant to stop averaging down would freeze it.
@@ -201,6 +290,51 @@ describe("compileExecutionIntent", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.intent.stopPrice).toBe(95);
+    }
+  });
+
+  it("keeps generic prices unchanged and binds pre-normalized provenance without creating a target leg", () => {
+    const conclusion = { ...equityConclusion, invalidationPrice: 95.004, targetPrice: 110.006 };
+    const generic = compileExecutionIntent({
+      conclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    expect(generic.ok).toBe(true);
+    if (generic.ok) {
+      expect(generic.intent.stopPrice).toBe(95.004);
+      expect(generic.intent.priceNormalization).toBeUndefined();
+    }
+
+    const normalized = normalizeUsEquityProtectionPrices({
+      instrument: "AAPL",
+      assetClass: "us_equity",
+      side: "buy",
+      entryPrice: 100,
+      stopPrice: 95.004,
+      targetPrice: 110.006,
+    });
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok) {
+      return;
+    }
+    const bound = compileExecutionIntent({
+      conclusion: {
+        ...conclusion,
+        invalidationPrice: normalized.stopPrice,
+        targetPrice: normalized.targetPrice,
+        priceNormalization: normalized.provenance,
+      },
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    expect(bound.ok).toBe(true);
+    if (bound.ok) {
+      expect(bound.intent.stopPrice).toBe(normalized.stopPrice);
+      expect(bound.intent.priceNormalization).toEqual(normalized.provenance);
+      expect(bound.intent).not.toHaveProperty("targetPrice");
     }
   });
 

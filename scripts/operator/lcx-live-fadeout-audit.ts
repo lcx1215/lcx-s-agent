@@ -337,22 +337,31 @@ export async function buildLcxLiveFadeoutAudit() {
         "replace active legacy development status semantics with core-ready, core-verified, or local-only while preserving physical paths and historical receipts",
     },
     checkTerms({
+      // Retain the receipt id while checking the current entry/profile contract.
       id: "runtime_drift_skill_uses_unified_local_model",
       owner: "skills/agent-runtime-drift-auditor/SKILL.md",
       file: "skills/agent-runtime-drift-auditor/SKILL.md",
       requiredTerms: [
         "canonical repository",
         "linked worktree",
+        "actual source commit",
+        "gateway",
+        "serve",
+        "finance scheduler",
+        "current profile",
+        "not a whole-system failure",
         "external-channel-bound",
         "core-ready",
-        "GitHub/GitLab",
-        "not a second repository",
+        "user-visible-observed",
+        "does not apply migration",
+        "change providers",
+        "send messages or place orders",
       ],
       summary:
-        "runtime drift guidance must describe one local system/repository with worktrees and keep remote feature branches at GitHub/GitLab",
+        "runtime drift guidance must bind evidence to the declared entry and profile, keep one canonical repository, separate readiness proofs, and grant no mutation authority",
       text: runtimeDriftSkill,
       nextAction:
-        "rewrite runtime drift guidance around one local system/factory, linked worktrees, and the external-channel boundary",
+        "align runtime drift guidance with the current entry/profile and read-only audit contract; preserve canonical ownership and separate external-channel/user-visible proof",
     }),
     checkTerms({
       id: "doctrine_uses_forward_status_model",

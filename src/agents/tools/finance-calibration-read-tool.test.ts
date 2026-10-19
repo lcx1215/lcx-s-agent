@@ -81,7 +81,8 @@ describe("finance_calibration_read", () => {
     const floor = result.floor as { value: number | null; basis: string; samplesUsed: number };
     expect(floor.value).toBeNull();
     expect(floor.samplesUsed).toBe(0);
-    expect(floor.basis).toMatch(/refusing to invent a floor/);
-    expect(String(result.note)).toMatch(/No scored outcomes yet/);
+    expect(floor.basis).toContain("refusing to invent");
+    expect(floor.basis).toContain("floor");
+    expect(String(result.note)).toMatch(/No scored directional outcomes yet/);
   });
 });

@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { DEFAULT_WORKSPACE_DIR, GOVERNANCE_AUTOPILOT_LATEST_PATH } from "./lcx-local-paths.ts";
 
 type CliOptions = {
@@ -454,15 +457,209 @@ function displayValue(value: unknown): string {
   return "";
 }
 
-async function readJsonIfExists(filePath: string): Promise<Record<string, unknown> | undefined> {
+async function readJsonIfExists(filePath: string) {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+    const bytes = await fs.readFile(filePath, "utf8");
+    return { snapshot: JSON.parse(bytes) as Record<string, unknown>, sha256: sha256(bytes) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
     }
     throw error;
   }
+}
+
+function sha256(bytes: string): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+type CandidateFeedback = {
+  status: "not_candidate_history" | "unverified" | "input_changed" | "paired_eval_required";
+  consumedReceiptPath: string | null;
+  consumedReceiptSha256: string | null;
+  sourceAutopilotSha256: string | null;
+  candidatePath: string | null;
+  candidateSha256: string | null;
+  evaluationStatus: string | null;
+  candidateEditPaused: boolean;
+  deferredTrainCases: string[];
+  gaps: string[];
+};
+
+// This is receipt readback for duplicate work, never an evaluation of candidate behavior.
+async function readCandidateFeedback(params: {
+  workspaceDir: string;
+  spec: SkillSpec;
+  latestReceiptPath: string;
+  bestSkillPath: string;
+  bestSkill: string | undefined;
+  sourcePath: string;
+  sourceSha256: string | undefined;
+  sourceCheckedAt: string | undefined;
+  split: ReturnType<typeof buildCaseSplit>;
+  proposedMarkdown: string;
+}): Promise<CandidateFeedback> {
+  const feedback: CandidateFeedback = {
+    status: "not_candidate_history",
+    consumedReceiptPath: null,
+    consumedReceiptSha256: null,
+    sourceAutopilotSha256: null,
+    candidatePath: null,
+    candidateSha256: null,
+    evaluationStatus: null,
+    candidateEditPaused: false,
+    deferredTrainCases: [],
+    gaps: [],
+  };
+  const fail = (gap: string) => {
+    feedback.status = "unverified";
+    feedback.gaps.push(gap);
+    return feedback;
+  };
+  let bytes: string;
+  let prior: Record<string, unknown>;
+  try {
+    bytes = await fs.readFile(params.latestReceiptPath, "utf8");
+    prior = recordValue(JSON.parse(bytes));
+  } catch (error) {
+    return fail(
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+        ? "previous_receipt_missing"
+        : "previous_receipt_unreadable",
+    );
+  }
+  feedback.consumedReceiptSha256 = sha256(bytes);
+  if (prior.boundary !== "local_skillopt_lite_only" || prior.skillId !== params.spec.id) {
+    return fail("previous_receipt_scope_conflict");
+  }
+  if (prior.phase === "bootstrap") {
+    return feedback;
+  }
+  if (prior.phase !== "candidate-edit") {
+    return fail("previous_receipt_phase_unknown");
+  }
+  const skillRoot = path.dirname(params.bestSkillPath);
+  const receiptPath =
+    typeof prior.receiptPath === "string"
+      ? path.resolve(params.workspaceDir, prior.receiptPath)
+      : null;
+  const candidatePath =
+    typeof prior.candidatePath === "string"
+      ? path.resolve(params.workspaceDir, prior.candidatePath)
+      : null;
+  if (
+    !receiptPath ||
+    path.dirname(receiptPath) !== path.join(skillRoot, "receipts") ||
+    !candidatePath ||
+    path.dirname(candidatePath) !== path.join(skillRoot, "candidates") ||
+    typeof prior.bestSkillPath !== "string" ||
+    path.resolve(params.workspaceDir, prior.bestSkillPath) !== params.bestSkillPath ||
+    typeof prior.latestReceiptPath !== "string" ||
+    path.resolve(params.workspaceDir, prior.latestReceiptPath) !== params.latestReceiptPath
+  ) {
+    return fail("previous_receipt_path_scope_conflict");
+  }
+  feedback.consumedReceiptPath = receiptPath;
+  feedback.candidatePath = candidatePath;
+  try {
+    const rootRealPath = await fs.realpath(skillRoot);
+    if (
+      path.dirname(await fs.realpath(receiptPath)) !== path.join(rootRealPath, "receipts") ||
+      path.dirname(await fs.realpath(candidatePath)) !== path.join(rootRealPath, "candidates")
+    ) {
+      return fail("previous_receipt_or_candidate_realpath_scope_conflict");
+    }
+  } catch {
+    // File-specific missing/reading failures below retain their exact owner gap.
+  }
+  try {
+    if (sha256(await fs.readFile(receiptPath, "utf8")) !== feedback.consumedReceiptSha256) {
+      return fail("previous_receipt_bytes_conflict");
+    }
+  } catch {
+    return fail("previous_immutable_receipt_missing_or_unreadable");
+  }
+  const sourceTime = Date.parse(params.sourceCheckedAt ?? "");
+  const receiptTime = Date.parse(typeof prior.checkedAt === "string" ? prior.checkedAt : "");
+  if (
+    !Number.isFinite(sourceTime) ||
+    !Number.isFinite(receiptTime) ||
+    receiptTime < sourceTime ||
+    receiptTime > Date.now()
+  ) {
+    return fail("previous_receipt_source_time_conflict");
+  }
+  if (
+    typeof prior.sourceAutopilotPath !== "string" ||
+    path.resolve(prior.sourceAutopilotPath) !== params.sourcePath
+  ) {
+    return fail("previous_receipt_source_scope_conflict");
+  }
+  if (typeof prior.sourceAutopilotSha256 !== "string" || !params.sourceSha256) {
+    return fail("previous_source_hash_missing");
+  }
+  feedback.sourceAutopilotSha256 = prior.sourceAutopilotSha256;
+  const targetedEval = recordValue(recordValue(prior.proofChain).targetedEval);
+  feedback.evaluationStatus = typeof targetedEval.status === "string" ? targetedEval.status : null;
+  const identities = Array.isArray(targetedEval.candidateIdentities)
+    ? targetedEval.candidateIdentities
+        .map(recordValue)
+        .filter((row) => row.skillId === params.spec.id)
+    : [];
+  const identity = identities[0];
+  if (
+    identities.length !== 1 ||
+    identity.path !== candidatePath ||
+    typeof identity.sha256 !== "string" ||
+    identity.materialized !== true
+  ) {
+    return fail("previous_candidate_identity_conflict");
+  }
+  feedback.candidateSha256 = identity.sha256;
+  try {
+    if (sha256(await fs.readFile(candidatePath, "utf8")) !== identity.sha256) {
+      return fail("previous_candidate_hash_conflict");
+    }
+  } catch {
+    return fail("previous_candidate_missing_or_unreadable");
+  }
+  if (params.bestSkill === undefined || sha256(params.bestSkill) !== identity.sha256) {
+    return fail("previous_best_skill_hash_conflict");
+  }
+  if (
+    targetedEval.status !== "blocked_candidate_injection_unsupported" ||
+    targetedEval.candidateInjectionSupported !== false ||
+    targetedEval.behaviorAccepted !== false ||
+    !["candidate_edit_static_accepted_pending_eval", "preflight_only_no_candidate_edit"].includes(
+      String(prior.status),
+    )
+  ) {
+    return fail("previous_evaluation_status_unsupported_or_unknown");
+  }
+  const previousFeedback = recordValue(prior.candidateFeedback);
+  const priorTrainCases =
+    previousFeedback.candidateEditPaused === true
+      ? previousFeedback.deferredTrainCases
+      : prior.trainCases;
+  const sameCases = (actual: unknown, expected: string[]) =>
+    Array.isArray(actual) && JSON.stringify(actual) === JSON.stringify(expected);
+  if (
+    prior.sourceAutopilotSha256 !== params.sourceSha256 ||
+    prior.sourceAutopilotCheckedAt !== params.sourceCheckedAt ||
+    !sameCases(priorTrainCases, params.split.trainCases) ||
+    !sameCases(prior.validationCases, params.split.validationCases) ||
+    !sameCases(prior.regressionCases, params.split.regressionCases) ||
+    sha256(params.proposedMarkdown) !== identity.sha256
+  ) {
+    feedback.status = "input_changed";
+    feedback.gaps.push("source_course_or_candidate_changed_requires_new_paired_eval");
+    return feedback;
+  }
+  feedback.status = "paired_eval_required";
+  feedback.candidateEditPaused = true;
+  feedback.deferredTrainCases = [...params.split.trainCases];
+  feedback.gaps.push("unchanged_candidate_requires_valid_paired_behavior_eval_before_another_edit");
+  return feedback;
 }
 
 function extractLatestAutopilotTruth(
@@ -795,18 +992,61 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function targetedEvalCommand(
-  adapterPath: string | undefined,
-  caseIds: string[],
-  regressionCaseIds: string[],
-  receiptPath: string,
-): string {
-  const adapterArg = adapterPath ? `--adapter ${shellQuote(adapterPath)}` : "--contract-only";
-  const receiptArg = `--receipt ${shellQuote(receiptPath)}`;
-  if (caseIds.length > 0) {
-    return `node --import tsx scripts/operator/local-brain-distill-eval.ts ${adapterArg} --hardened --case-id ${caseIds.join(",")} --summary-only --json --timeout-ms 180000 ${receiptArg}`;
+async function validateEvalCases(caseIds: string[]) {
+  const scriptPath = path.join(import.meta.dirname, "local-brain-distill-eval.ts");
+  const source = await fs.readFile(scriptPath);
+  const command = `node --import tsx scripts/operator/local-brain-distill-eval.ts --contract-only --case-id ${shellQuote(caseIds.join(","))} --summary-only --json`;
+  if (caseIds.length === 0) {
+    return {
+      ok: false,
+      caseIds,
+      command: null,
+      reason: "no_eval_cases",
+      registrySha256: createHash("sha256").update(source).digest("hex"),
+    };
   }
-  return `node --import tsx scripts/operator/local-brain-distill-eval.ts ${adapterArg} --contract-only --case-id ${regressionCaseIds.join(",")} --json ${receiptArg}`;
+  // Use the evaluator's own registry expansion, with no model, receipt or workspace writes.
+  try {
+    const result = await promisify(execFile)(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        scriptPath,
+        "--contract-only",
+        "--case-id",
+        caseIds.join(","),
+        "--summary-only",
+        "--json",
+      ],
+      { timeout: 30000, maxBuffer: 2 * 1024 * 1024 },
+    );
+    const parsed = JSON.parse(result.stdout) as {
+      contractOnly?: boolean;
+      summary?: { passed?: number; total?: number };
+    };
+    const ok =
+      parsed.contractOnly === true &&
+      typeof parsed.summary?.total === "number" &&
+      parsed.summary.total > 0 &&
+      parsed.summary.passed === parsed.summary.total;
+    return {
+      ok,
+      caseIds,
+      command,
+      reason: ok ? null : "contract_validation_failed_or_incomplete",
+      registrySha256: createHash("sha256").update(source).digest("hex"),
+    };
+  } catch (error) {
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      caseIds,
+      command: null,
+      reason: diagnostic,
+      registrySha256: createHash("sha256").update(source).digest("hex"),
+    };
+  }
 }
 
 function buildInstantPreflight(params: {
@@ -848,15 +1088,12 @@ function buildProofChain(params: {
   truth: LatestAutopilotTruth;
   adapterPath?: string;
   trainCases: string[];
+  validationCases: string[];
   regressionCases: string[];
+  registryValidation: Awaited<ReturnType<typeof validateEvalCases>>;
+  candidateIdentities: { skillId: string; path: string; sha256: string; materialized: boolean }[];
   receiptPath: string;
 }) {
-  const targetedCommand = targetedEvalCommand(
-    params.adapterPath,
-    params.trainCases,
-    params.regressionCases,
-    params.receiptPath,
-  );
   return {
     boundary: "local_skillopt_proof_chain_only",
     immediateUse: {
@@ -866,14 +1103,28 @@ function buildProofChain(params: {
       externalChannelApplied: false,
     },
     targetedEval: {
-      status:
-        params.truth.activeProcessCount > 0
-          ? "blocked_by_active_training_or_eval"
-          : "ready_when_idle",
-      command: targetedCommand,
+      status: params.registryValidation.ok
+        ? "blocked_candidate_injection_unsupported"
+        : params.registryValidation.reason?.includes("unknown eval case id(s)")
+          ? "blocked_invalid_eval_cases"
+          : "blocked_contract_validation_failed",
+      command: null,
+      contractDiagnosticCommand: params.registryValidation.command,
+      registryValidation: params.registryValidation,
+      caseGroups: {
+        train: params.trainCases,
+        validation: params.validationCases,
+        regression: params.regressionCases,
+      },
+      candidateIdentities: params.candidateIdentities,
+      candidateInjectionSupported: false,
+      behaviorAccepted: false,
+      reason:
+        "The current evaluator does not load candidate Skill text or compare baseline and candidate; contract-only diagnostics cannot establish Skill improvement.",
       adapterPath: params.adapterPath,
       receiptPath: params.receiptPath,
-      acceptanceGate: "targeted cases improve and regression cases stay clean",
+      acceptanceGate:
+        "candidate identity verified, paired baseline/candidate validation improves and all regression cases stay clean",
     },
     modelWeightAbsorption: {
       status: "not_absorbed_until_training_and_promotion_truth",
@@ -924,7 +1175,7 @@ async function main() {
       ? GOVERNANCE_AUTOPILOT_LATEST_PATH
       : path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
   const snapshot = await readJsonIfExists(statePath);
-  const truth = extractLatestAutopilotTruth(snapshot);
+  const truth = extractLatestAutopilotTruth(snapshot?.snapshot);
   const explicitSkill = !["auto", "all"].includes(options.skillId);
   const specs = selectSpecs(options, truth);
   const timestamp = new Date().toISOString().replaceAll(":", "-");
@@ -935,7 +1186,7 @@ async function main() {
       const skillRoot = path.join(workspaceDir, "memory", "skillopt-lite", spec.id);
       const bestSkillPath = path.join(skillRoot, "best_skill.md");
       const latestReceiptPath = path.join(skillRoot, "skillopt-lite-latest.json");
-      const candidatePath = path.join(skillRoot, "candidates", `${timestamp}.md`);
+      let candidatePath = path.join(skillRoot, "candidates", `${timestamp}.md`);
       const receiptPath = path.join(skillRoot, "receipts", `${timestamp}.json`);
       const existingBestSkill = await readTextIfExists(bestSkillPath);
       const outputMarkdown =
@@ -943,6 +1194,30 @@ async function main() {
           ? appendCandidateEdit(existingBestSkill ?? markdown, spec, split.trainCases)
           : markdown;
       const gate = staticGate(spec, outputMarkdown);
+      const candidateFeedback =
+        options.phase === "candidate-edit"
+          ? await readCandidateFeedback({
+              workspaceDir,
+              spec,
+              latestReceiptPath,
+              bestSkillPath,
+              bestSkill: existingBestSkill,
+              sourcePath: statePath,
+              sourceSha256: snapshot?.sha256,
+              sourceCheckedAt: truth.checkedAt,
+              split,
+              proposedMarkdown: outputMarkdown,
+            })
+          : null;
+      if (!gate.ok && candidateFeedback?.candidateEditPaused) {
+        candidateFeedback.candidateEditPaused = false;
+        candidateFeedback.status = "unverified";
+        candidateFeedback.gaps.push("static_gate_failed_before_feedback_pause");
+      }
+      if (gate.ok && candidateFeedback?.candidateEditPaused && candidateFeedback.candidatePath) {
+        candidatePath = candidateFeedback.candidatePath;
+        split.trainCases = [];
+      }
       const accepted =
         options.phase === "bootstrap" ? gate.ok : gate.ok && split.trainCases.length > 0;
       const status = gate.ok
@@ -959,6 +1234,7 @@ async function main() {
         gate,
         accepted,
         status,
+        candidateFeedback,
         bestSkillPath,
         latestReceiptPath,
         candidatePath,
@@ -990,11 +1266,23 @@ async function main() {
   const skillPathMap = Object.fromEntries(
     skillPackets.map((packet) => [packet.spec.id, packet.relativeBestSkillPath]),
   );
+  const registryValidation = await validateEvalCases(
+    unique([...unionTrainCases, ...unionValidationCases, ...unionRegressionCases]),
+  );
+  const candidateIdentities = skillPackets.map((packet) => ({
+    skillId: packet.spec.id,
+    path: packet.candidatePath,
+    sha256: createHash("sha256").update(packet.outputMarkdown).digest("hex"),
+    materialized: packet.candidateFeedback?.candidateEditPaused === true,
+  }));
   const proofChain = buildProofChain({
     truth,
     adapterPath: truth.latestCandidateAdapter ?? truth.selectedCleanAdapter,
     trainCases: unionTrainCases,
+    validationCases: unionValidationCases,
     regressionCases: unionRegressionCases,
+    registryValidation,
+    candidateIdentities,
     receiptPath: path.join(workspaceDir, "state", "lcx-skillopt-targeted-eval-receipt-latest.json"),
   });
   const instantPreflight = buildInstantPreflight({
@@ -1023,6 +1311,8 @@ async function main() {
     checkedAt: new Date().toISOString(),
     sourceAutopilotPath: statePath,
     sourceAutopilotCheckedAt: truth.checkedAt,
+    sourceAutopilotSha256: snapshot?.sha256 ?? null,
+    candidateFeedback: primary.candidateFeedback,
     activeProcessCount: truth.activeProcessCount,
     selectedCleanAdapter: truth.selectedCleanAdapter,
     latestCandidateAdapter: truth.latestCandidateAdapter,
@@ -1053,6 +1343,7 @@ async function main() {
     skillPackets: skillPackets.map((packet) => ({
       skillId: packet.spec.id,
       title: packet.spec.title,
+      candidateFeedback: packet.candidateFeedback,
       status: packet.status,
       accepted: packet.accepted,
       trainCases: packet.split.trainCases,
@@ -1073,7 +1364,11 @@ async function main() {
     proofChain,
     absorptionPlan: proofChain.modelWeightAbsorption,
     externalChannelProofPlan: proofChain.externalChannelBinding,
-    nextIdleAction: "run_targeted_eval_then_accept_or_reject_skill_edit",
+    nextIdleAction: registryValidation.ok
+      ? "add_candidate_injection_and_paired_behavior_eval_before_acceptance"
+      : registryValidation.reason?.includes("unknown eval case id(s)")
+        ? "migrate_or_remove_invalid_eval_cases_with_semantic_review"
+        : "inspect_contract_validation_failure_before_model_eval",
     nextIdleCommand: proofChain.targetedEval.command,
     liveTouched: false,
     providerConfigTouched: false,
@@ -1087,6 +1382,7 @@ async function main() {
         skillId: packet.spec.id,
         status: packet.status,
         accepted: packet.accepted,
+        candidateFeedback: packet.candidateFeedback,
         trainCases: packet.split.trainCases,
         validationCases: packet.split.validationCases,
         regressionCases: packet.split.regressionCases,
@@ -1102,9 +1398,13 @@ async function main() {
         latestReceiptPath: packet.relativeLatestReceiptPath,
       };
       await fs.mkdir(path.dirname(packet.receiptPath), { recursive: true });
-      if (options.phase === "candidate-edit") {
+      if (options.phase === "candidate-edit" && !packet.candidateFeedback?.candidateEditPaused) {
         await fs.mkdir(path.dirname(packet.candidatePath), { recursive: true });
         await fs.writeFile(packet.candidatePath, packet.outputMarkdown, "utf8");
+        const identity = candidateIdentities.find((entry) => entry.skillId === packet.spec.id);
+        if (identity) {
+          identity.materialized = true;
+        }
       }
       if (packet.accepted) {
         await fs.writeFile(packet.bestSkillPath, packet.outputMarkdown, "utf8");

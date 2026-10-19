@@ -738,3 +738,45 @@ Notes:
 
 - `remote.*` takes precedence over `models.providers.openai.*`.
 - `remote.headers` merge with OpenAI headers; remote wins on key conflicts. Omit `remote.headers` to use the OpenAI defaults.
+
+## Database recall of agent results
+
+Ordinary agent tool results and completed assistant outputs are registered in the
+configured agent memory SQLite. The Central Harness registers its own tool results
+and cycle receipts in the same store. Native coding and sandbox runs retain their
+existing isolation, and disabling memory search disables this registration.
+Registration uses local SQLite and FTS without an embedding or model request.
+
+`artifact_memory_recall` provides read-only access:
+
+- `action=search`, optional `query`, `owner`, `asOf`, and `limit` find registered results.
+  An absent or empty query browses the current workspace. Each page defaults to
+  20 results and is capped at 100. When `hasMore=true`, copy `nextCursor` into
+  `cursor` with the same query, owner and asOf to continue, including results
+  sharing one timestamp. Cursors cannot select another database or workspace.
+  Page reads are not an immutable database snapshot; use an explicit `asOf` for
+  historical evidence. CJK queries use escaped substring matching because the
+  default FTS tokenizer does not segment continuous CJK text.
+- `action=read`, `id` verifies the original bytes and source reference. Optional
+  `field` selects a JSON Pointer such as `/value/details/beta`; optional `asOf`
+  rejects a result observed after the requested window.
+
+The tool belongs to the coding profile and `group:memory`; explicit deny policies
+still apply. It searches retained result artifacts, while `memory_search` searches
+Markdown memory. Neither search surface proves complete historical coverage.
+
+The registry preserves owner, run, source time, MIME, byte size, SHA256, and an
+original reference. Text, JSON, tables, and opaque image, audio, PDF, or other
+binary files share this registration contract. Binary references do not imply
+content extraction or understanding. Text extraction is bounded to 64 KiB; tool
+JSON envelopes are limited to 16 MiB, and omitted or truncated data is named.
+Media payloads remain in the original artifact and are omitted from model-facing
+text projections. Source files remain under their original owner's authority.
+
+The resident Central Harness also backfills declared immutable Central, learning,
+module-learning, and captured-result directories. It reports coverage, gaps, and
+limits rather than scanning arbitrary state or protected configuration. Failed
+registration leaves the original result usable and recoverable. Memory reindexing
+publishes its prepared tables in the original database without discarding the
+registered results. Retrieval proves retained evidence, not skill validation,
+model learning, execution authority, or profitability.

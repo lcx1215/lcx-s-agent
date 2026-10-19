@@ -56,6 +56,10 @@ package-lock.json
 .claude/
 .agents/
 .agents
+!.agents/
+.agents/*
+!.agents/skills/
+!.agents/skills/**
 .agent/
 .workbuddy-ai/
 skills-lock.json

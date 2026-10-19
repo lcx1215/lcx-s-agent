@@ -7,6 +7,7 @@ import {
   type FinanceExecutionReceipt,
 } from "../finance-execution-adapter.js";
 import {
+  appendFinanceBrokerHistory,
   appendFinanceExecutionReceipt,
   appendFinancePositionMark,
   readFinancePositionLedger,
@@ -94,6 +95,8 @@ type ReadPayload = {
   unrealizedUnavailableReason?: string | null;
   instrumentsWithoutMark?: readonly string[];
   headRef?: string | null;
+  history?: unknown;
+  brokerSnapshot?: unknown;
   asOfCaveat?: string | null;
   equityCurve?: {
     status: string;
@@ -123,6 +126,95 @@ type ReadPayload = {
     };
   };
 };
+
+it("reads scoped retained native protection separately from the receipt book", async () => {
+  const directory = await storeDirectory();
+  await appendFinanceExecutionReceipt(directory, fill());
+  const observedAt = new Date().toISOString();
+  const append = async (accountId: string) =>
+    appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: `reconciliation:${observedAt}`,
+      cursor: "",
+      payload: [{ observedAt, positions: [{ symbol: "TLT", qty: "130" }], openOrders: [] }],
+    });
+  const record = await append("requested-account");
+  for (const accountId of ["other-1", "other-2", "other-3", "other-4"]) {
+    await append(accountId);
+  }
+  const tool = createFinancePositionLedgerReadTool();
+  const ordinary = await read(tool, { directory });
+  expect(ordinary.brokerSnapshot).toBeUndefined();
+  const scoped = await read(tool, { directory, brokerAccountId: "requested-account" });
+  expect(scoped.positions).toEqual(ordinary.positions);
+  expect(scoped.brokerSnapshot).toMatchObject({
+    status: "present",
+    accounts: [
+      {
+        accountId: "requested-account",
+        venue: "alpaca:paper",
+        snapshotRef: record.record.ref,
+        observedAt,
+        freshness: "fresh",
+        positionCount: 1,
+        uncoveredCount: 1,
+        holdings: [{ instrument: "TLT", positionQuantity: 130, status: "no_recognized_stop" }],
+      },
+    ],
+  });
+  const snapshot = scoped.brokerSnapshot as { accounts: Record<string, unknown>[] };
+  expect(snapshot.accounts).toHaveLength(1);
+  expect(snapshot.accounts[0]).not.toHaveProperty("outsideActiveRuleCount");
+  expect(snapshot.accounts[0]).not.toHaveProperty("needsInspection");
+  expect((snapshot.accounts[0].holdings as Record<string, unknown>[])[0]).not.toHaveProperty(
+    "activeRuleIds",
+  );
+});
+
+it("reports malformed retained native snapshots without claiming a flat account", async () => {
+  const directory = await storeDirectory();
+  const observedAt = new Date().toISOString();
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "requested-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${observedAt}`,
+    cursor: "",
+    payload: [{ observedAt, positions: [{ symbol: "TLT", qty: "unknown" }], openOrders: [] }],
+  });
+  const result = await read(createFinancePositionLedgerReadTool(), {
+    directory,
+    brokerAccountId: "requested-account",
+  });
+  expect(result.brokerSnapshot).toMatchObject({
+    status: "unavailable",
+    reason: expect.any(String),
+  });
+  expect(result.brokerSnapshot).not.toHaveProperty("accounts");
+});
+
+it("preserves stale and absent native snapshot status without inventing current protection", async () => {
+  const directory = await storeDirectory();
+  await appendFinanceExecutionReceipt(directory, fill());
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "requested-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${PAST}`,
+    cursor: "",
+    payload: [{ observedAt: PAST, positions: [{ symbol: "TLT", qty: "130" }], openOrders: [] }],
+  });
+  const tool = createFinancePositionLedgerReadTool();
+  const stale = await read(tool, { directory, brokerAccountId: "requested-account" });
+  expect(stale.brokerSnapshot).toMatchObject({
+    status: "present",
+    accounts: [{ freshness: "stale", observedAt: PAST, uncoveredCount: 1 }],
+  });
+  const missing = await read(tool, { directory, brokerAccountId: "missing-account" });
+  expect(missing.brokerSnapshot).toMatchObject({ status: "absent", accounts: [] });
+});
 
 /**
  * Three paper buys at round prices. Round levels are the cheapest stream that reaches a label:
@@ -207,6 +299,250 @@ describe("finance_position_ledger_read", () => {
     expect(payload.venueFillCount).toBe(1);
   });
 
+  it("pages account-scoped receipts without gaps, rejects stale cursors, and leaves storage unchanged", async () => {
+    const directory = await storeDirectory();
+    for (let index = 0; index < 3; index += 1) {
+      await appendFinanceExecutionReceipt(
+        directory,
+        fill({
+          accountId: "acct-a",
+          venue: "paper",
+          receiptId: `page-${index}`,
+          recordedAt: `2026-09-10T00:0${index}:00.000Z`,
+        }),
+      );
+    }
+    await appendFinanceExecutionReceipt(
+      directory,
+      fill({ accountId: "acct-b", venue: "paper", receiptId: "other-account" }),
+    );
+    const tool = createFinancePositionLedgerReadTool({});
+    const args = {
+      directory,
+      historyKind: "receipt",
+      historyAccountId: "acct-a",
+      historyVenue: "paper",
+      historyLimit: 2,
+    };
+    const first = await read(tool, args);
+    const firstPage = first.history as {
+      items: { receiptId: string }[];
+      nextCursor: string;
+      headRef: string;
+    };
+    expect(firstPage.items.map((row) => row.receiptId)).toEqual(["page-0", "page-1"]);
+    const wrongScope = await read(tool, {
+      ...args,
+      historyInstrument: "MSFT",
+      historyCursor: firstPage.nextCursor,
+    });
+    expect((wrongScope.history as { status: string }).status).toBe("stale_cursor");
+    const beforeRead = await fs.stat(financePositionLedgerPath(directory));
+    const second = await read(tool, { ...args, historyCursor: firstPage.nextCursor });
+    expect(
+      (second.history as { items: { receiptId: string }[] }).items.map((row) => row.receiptId),
+    ).toEqual(["page-2"]);
+    const afterRead = await fs.stat(financePositionLedgerPath(directory));
+    expect(afterRead.size).toBe(beforeRead.size);
+    expect(afterRead.mtimeMs).toBe(beforeRead.mtimeMs);
+    await appendFinanceExecutionReceipt(
+      directory,
+      fill({ accountId: "acct-a", venue: "paper", receiptId: "new-head" }),
+    );
+    const stale = await read(tool, { ...args, historyCursor: firstPage.nextCursor });
+    expect((stale.history as { status: string }).status).toBe("stale_cursor");
+    expect(await fs.readFile(financePositionLedgerPath(directory))).toBeTruthy();
+  });
+
+  it("rejects missing history scope and marks stored order observations unreconciled", async () => {
+    const directory = await storeDirectory();
+    await appendFinanceExecutionReceipt(directory, fill({ accountId: "acct-a" }));
+    const tool = createFinancePositionLedgerReadTool({});
+    expect((await read(tool, { directory, historyKind: "receipt" })).status).toBe("invalid_scope");
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "acct-a",
+      venue: "alpaca:paper",
+      query: "orders:old",
+      cursor: "",
+      payload: [
+        {
+          id: "order-1",
+          client_order_id: "client-1",
+          symbol: "AAPL",
+          side: "buy",
+          status: "new",
+          qty: "2",
+          created_at: "2026-09-10T00:00:00Z",
+          updated_at: "2026-09-10T00:00:00Z",
+          message: "private raw field",
+        },
+      ],
+    });
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "acct-a",
+      venue: "alpaca:paper",
+      query: "orders:new",
+      cursor: "",
+      payload: [
+        {
+          id: "order-1",
+          client_order_id: "client-1",
+          symbol: "AAPL",
+          side: "buy",
+          status: "filled",
+          qty: "2",
+          filled_qty: "2",
+          created_at: "2026-09-10T00:00:00Z",
+          updated_at: "2026-09-10T01:00:00Z",
+          message: "private raw field",
+        },
+      ],
+    });
+    const broker = await read(tool, {
+      directory,
+      historyKind: "order",
+      historyAccountId: "acct-a",
+      historyVenue: "alpaca:paper",
+    });
+    const history = broker.history as {
+      status: string;
+      sourceStatus: string;
+      items: Record<string, unknown>[];
+    };
+    expect(history.status).toBe("raw_observations_only");
+    expect(history.sourceStatus).toBe("raw_observations_only");
+    expect(history.items).toHaveLength(1);
+    expect(history.items[0]).toMatchObject({
+      orderId: "order-1",
+      status: "filled",
+      filledQuantity: 2,
+    });
+    expect(history.items[0]).not.toHaveProperty("message");
+  });
+
+  it("reports an oversized single receipt by reference instead of an empty completed page", async () => {
+    const directory = await storeDirectory();
+    await appendFinanceExecutionReceipt(
+      directory,
+      fill({
+        accountId: "acct-large",
+        venue: "paper",
+        receiptId: "receipt-large",
+        intentId: "x".repeat(4_000),
+      }),
+    );
+    const page = await read(createFinancePositionLedgerReadTool({}), {
+      directory,
+      historyKind: "receipt",
+      historyAccountId: "acct-large",
+      historyVenue: "paper",
+      historyLimit: 1,
+    });
+    expect(page.history).toMatchObject({ status: "item_too_large", items: [], nextCursor: null });
+    expect((page.history as { omittedRef: string }).omittedRef).toBeTruthy();
+  });
+
+  it("pages normalized broker fills and fees with account/head-bound cursors", async () => {
+    const directory = await storeDirectory();
+    const accountId = "acct-history";
+    const appendFacts = (payload: Record<string, unknown>[], query: string) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload,
+      });
+    await appendFacts(
+      [
+        {
+          id: "fill-1",
+          activity_type: "FILL",
+          type: "fill",
+          order_id: "o-1",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          price: "100",
+          transaction_time: "2026-09-10T00:00:00Z",
+        },
+        {
+          id: "fill-2",
+          activity_type: "FILL",
+          type: "fill",
+          order_id: "o-2",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "2",
+          price: "101",
+          transaction_time: "2026-09-10T01:00:00Z",
+        },
+        {
+          id: "fee-1",
+          activity_type: "FEE",
+          order_id: "o-1",
+          symbol: "AAPL",
+          currency: "USD",
+          net_amount: "-1.25",
+          date: "2026-09-10",
+        },
+      ],
+      "activities:fixture",
+    );
+    const tool = createFinancePositionLedgerReadTool({});
+    const scope = {
+      directory,
+      historyAccountId: accountId,
+      historyVenue: "alpaca:paper",
+      historyLimit: 1,
+    };
+    const first = await read(tool, { ...scope, historyKind: "fill" });
+    const firstHistory = first.history as {
+      items: { activityId: string }[];
+      nextCursor: string;
+      headRef: string;
+    };
+    expect(firstHistory.items[0]?.activityId).toBe("fill-1");
+    expect(firstHistory.headRef).toMatch(/^[a-f0-9]{64}$/u);
+    const second = await read(tool, {
+      ...scope,
+      historyKind: "fill",
+      historyCursor: firstHistory.nextCursor,
+    });
+    expect((second.history as { items: { activityId: string }[] }).items[0]?.activityId).toBe(
+      "fill-2",
+    );
+    const fees = await read(tool, { ...scope, historyKind: "fee" });
+    expect(
+      (fees.history as { items: { activityId: string; amount: number }[] }).items[0],
+    ).toMatchObject({ activityId: "fee-1", amount: 1.25 });
+    await appendFacts(
+      [
+        {
+          id: "fill-3",
+          activity_type: "FILL",
+          type: "fill",
+          order_id: "o-3",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          price: "102",
+          transaction_time: "2026-09-10T02:00:00Z",
+        },
+      ],
+      "activities:next",
+    );
+    const stale = await read(tool, {
+      ...scope,
+      historyKind: "fill",
+      historyCursor: firstHistory.nextCursor,
+    });
+    expect((stale.history as { status: string }).status).toBe("stale_cursor");
+  });
+
   it("refuses to total unrealized PnL when an open position has no mark", async () => {
     const directory = await storeDirectory();
     await appendFinanceExecutionReceipt(directory, fill());
@@ -274,7 +610,9 @@ describe("finance_position_ledger_read", () => {
     });
 
     expect(payload.ok).toBe(true);
-    expect(payload.asOfCaveat).toContain("only marks are limited to asOf");
+    expect(payload.asOfCaveat).toContain(
+      "gross curve includes only receipts and marks recorded by asOf",
+    );
   });
 
   it("rejects a malformed as-of instant and a non-positive initial capital by name", async () => {

@@ -140,3 +140,74 @@ describe("LCX owner control map", () => {
     expect(map.markdown).not.toContain("structuralOwnerFailures");
   });
 });
+
+describe("self-repair native block precedence", () => {
+  function control(
+    repair: Record<string, unknown>,
+    ownerCommands: readonly Record<string, unknown>[] = [],
+  ) {
+    return buildOwnerControlMap({
+      checkedAt: "2026-10-11T12:00:00.000Z",
+      governance: { owners: { selfRepairHands: repair }, ownerCommands },
+      localFailureTrace: {},
+      paths: {
+        latestMarkdownPath: "/tmp/map.md",
+        latestJsonPath: "/tmp/map.json",
+        sourcePaths: [],
+      },
+    }).items.find((item) => item.id === "self_repair_memory_and_training_candidate_hands");
+  }
+  it("keeps a current source block above an older completed candidate", () => {
+    const item = control({
+      status: "blocked",
+      sourceReview: {
+        status: "blocked",
+        blockers: ["source_sha256_mismatch"],
+        source: { path: "state/source.json" },
+      },
+      latestWrittenReceipt: { status: "write_completed" },
+    });
+    expect(item).toMatchObject({ status: "blocked_now", ownerCanDirectNow: false });
+    expect(item?.reason).toContain("source_sha256_mismatch");
+    expect(item?.reason).toContain("state/source.json");
+    expect(item?.reason).not.toContain("只做 dry-run");
+  });
+  it("labels the latest write's source failure during a safe read", () => {
+    const item = control({
+      status: "dry_run_ready",
+      latestWrittenReceipt: {
+        status: "blocked",
+        sourceReview: { status: "blocked", blockers: ["source_evidence_unreadable"] },
+      },
+    });
+    expect(item?.status).toBe("blocked_now");
+    expect(item?.reason).toContain("最近一次自修写入");
+    expect(item?.reason).toContain("source_evidence_unreadable");
+  });
+  it("exposes a failed current read even without a parseable compact payload", () => {
+    const item = control({}, [
+      { id: "selfRepairHands", parsed: false, exitCode: 1, runReceipt: { status: "failed" } },
+    ]);
+    expect(item).toMatchObject({ status: "blocked_now", ownerCanDirectNow: false });
+    expect(item?.reason).toContain("本轮自修回执读取失败");
+  });
+  it("does not call a pending source review completed or add a new write gate", () => {
+    const item = control({
+      status: "dry_run_ready",
+      sourceReview: { requested: true, status: "pending" },
+      latestWrittenReceipt: { status: "write_completed" },
+    });
+    expect(item?.status).toBe("codex_can_act_when_safe");
+    expect(item?.reason).toContain("仍待原来源校验");
+  });
+  it("lets a new native completion replace an old blocked write without claiming training", () => {
+    const item = control({
+      status: "write_completed",
+      candidateOnly: true,
+      reuseAllowed: false,
+      latestWrittenReceipt: { status: "blocked" },
+    });
+    expect(item?.status).toBe("codex_can_act_when_safe");
+    expect(item?.reason).toContain("不代表复用或训练验收");
+  });
+});

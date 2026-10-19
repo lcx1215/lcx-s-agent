@@ -762,6 +762,14 @@ export const AgentEntrySchema = z
 
 export const ToolsSchema = z
   .object({
+    financeModelSlots: z
+      .object({
+        fast: z.string().trim().min(1),
+        reasoning: z.string().trim().min(1),
+        review: z.string().trim().min(1),
+      })
+      .strict()
+      .optional(),
     ...CommonToolPolicyFields,
     web: ToolsWebSchema,
     mcp: ToolsMcpSchema,

@@ -2,32 +2,83 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   createApiSourceGovernanceRegistry,
   type ApiCallReceipt,
 } from "../../src/agents/api-call-contract.ts";
 import type { FinanceDecisionMode } from "../../src/agents/finance-decision-policy.ts";
-import { resolveFinanceMarketCollectionRegistryOptionsFromEnv } from "../../src/agents/finance-market-collection-registry.ts";
-import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "../../src/agents/finance-realtime-source-registry.ts";
 import {
+  createFinanceMarketCollectionRegistry,
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv,
+  type FinanceMarketCollectionAdapter,
+} from "../../src/agents/finance-market-collection-registry.ts";
+import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
+import {
+  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
+  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+  FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS,
+  FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+  assertFinanceNightResearchAsOf,
+  financeNightResearchHoldingBasisSchema,
+  readFinanceActiveStrategyResearchScope,
+  readFinanceNightReviewResearchScope,
+  type FinanceNightResearchInstrument,
+  type FinanceNightResearchScope,
+} from "../../src/agents/finance-night-review-context.ts";
+import {
+  createFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
+  type FinanceRealtimeSourceAdapter,
+} from "../../src/agents/finance-realtime-source-registry.ts";
+import {
+  financeScheduledResearchHandoffSchema,
+  type FinanceResearchControllerHandoff,
+  assertFinanceResearchRuleUse,
+  type FinanceResearchControllerRuleUse,
+} from "../../src/agents/finance-research-portfolio-plan.js";
+import {
+  buildDefaultFinanceResearchTargets,
+  financeResearchPortfolioContextSchema,
   runFinanceResearchRun,
+  readFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchRunInput,
   type FinanceResearchRunReceipt,
 } from "../../src/agents/finance-research-runner.ts";
 import {
+  persistFinanceResearchStrategyLearning,
+  type FinanceResearchStrategyLearningResult,
+} from "../../src/agents/finance-research-strategy-learning.js";
+import {
+  persistFinanceResearchThesisLearning,
+  validateFinanceResearchThesisProposals,
+  type FinanceResearchThesisLearningResult,
+} from "../../src/agents/finance-research-thesis-learning.ts";
+import {
+  recordFinanceResearchResult,
+  type FinanceResultRecordingHost,
+} from "../../src/agents/finance-result-recording.ts";
+import {
+  readFinanceSourceHeartbeat,
+  type FinanceSourceHeartbeatRecord,
+} from "../../src/agents/finance-source-heartbeat.ts";
+import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.ts";
+import {
   createLocalQualityHarnessAdapter,
-  resolveLocalTextModelRuntimeConfig,
   type LocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
 import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
+import { createCanonicalStateRootLogicalAgentCheckpointStore } from "../../src/agents/logical-agent-pool-checkpoint-store.ts";
+import { QUALITY_HARNESS_MAX_EVIDENCE_ITEMS } from "../../src/agents/quality-harness-contract.ts";
+import { loadConfig } from "../../src/config/config.ts";
+import {
+  FinanceResearchRunFailure,
+  runCheckpointedFinanceResearch,
+} from "./lcx-finance-research-checkpoint-run.ts";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
-import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const WORKSPACE_DIR = () => process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR;
 
 const DEFAULT_ASK =
@@ -35,11 +86,12 @@ const DEFAULT_ASK =
 const DEFAULT_MODEL_ID = "Qwen/Qwen3-0.6B";
 const MAX_HORIZON_MONTHS = 120;
 const MAX_RESEARCH_ASK_BYTES = 32_768;
-const MAX_MODEL_TOKENS = 16_384;
+const MAX_MODEL_TOKENS = Number.MAX_SAFE_INTEGER;
 const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
 // The local adapter compacts evidence and dependency output before prompting; allow the
-// router to receive the contract's bounded 48-item quality packet before that compaction.
+// router to receive the contract's bounded 64-item quality packet before that compaction.
 export const QUALITY_ROUTER_MAX_INPUT_BYTES = 1_000_000;
+const FINANCE_SOURCE_HEALTH_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 type Options = {
   ask: string;
@@ -47,13 +99,20 @@ type Options = {
   horizonMonths: number;
   decisionMode: FinanceDecisionMode;
   live: boolean;
+  workflowModels: boolean;
+  executeModules: boolean;
   quality: boolean;
   write: boolean;
+  persistTheses: boolean;
+  financeStateDir?: string;
   adapterPath?: string;
   modelId: string;
   pythonPath?: string;
-  maxTokens: number;
+  maxTokens?: number;
   timeoutMs: number;
+  runTimeoutMs: number;
+  maxModelCalls: number;
+  maxModelConcurrency: 1 | 2;
   allowModelNetwork: boolean;
   maxApiCalls: number;
   maxConcurrency: number;
@@ -62,7 +121,14 @@ type Options = {
   totalTimeoutMs: number;
   retryAttempts: number;
   includeYahooPublicSources: boolean;
+  portfolioContextPath?: string;
+  portfolioPlanOut?: string;
+  controllerEvidencePath?: string;
+  controllerHandoffPath?: string;
+  controllerHandoffSha256?: string;
+  controllerResearchScope: boolean;
   json: boolean;
+  schedulerSummary?: boolean;
 };
 
 class HelpRequestedError extends Error {
@@ -85,13 +151,18 @@ function usage(): string {
     `  --horizon-months N                 horizon for the research plan (default: 6, max: ${MAX_HORIZON_MONTHS})`,
     "  --decision-mode MODE               research_only|strategy_candidate|conditional_trade_candidate",
     "  --live                              fetch bounded public/provider sources and run the model DAG",
+    "  --workflow-models                  authorize configured workflow models for research and review",
+    "  --execute-modules                  execute the selected finance-module DAG with producer receipts",
     "  --skip-quality                     do not run the quality harness (live only)",
-    "  --adapter DIR                      explicit local adapter directory",
-    "  --model MODEL                      local model id (default: Qwen/Qwen3-0.6B)",
-    "  --python PATH                      local model Python runtime",
-    `  --max-tokens N                     bounded local model output tokens (max: ${MAX_MODEL_TOKENS})`,
-    `  --timeout-ms N                     bounded local model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
-    "  --allow-model-network              allow the local model runtime to use network",
+    "  --adapter DIR                      retired local override (not valid with workflow models)",
+    "  --model MODEL                      retired local model override",
+    "  --python PATH                      retired local Python override",
+    `  --max-tokens N                     explicit workflow output tokens (default: declared model capacity)`,
+    `  --timeout-ms N                     bounded workflow model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
+    "  --run-timeout-ms N                 source + model cancellation deadline (default: 840000)",
+    "  --max-model-concurrency N          model DAG slots, 1 or 2 (default: 2)",
+    "  --max-model-calls N                whole-run model attempt budget (default: 48)",
+    "  --allow-model-network              retired local network override",
     "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
     "  --max-concurrency N                batch concurrency (default: 3)",
     "  --max-sources-per-job N            source adapters per job (default: 2)",
@@ -99,8 +170,17 @@ function usage(): string {
     `  --total-timeout-ms N               whole batch timeout (default: 180000, max: ${MAX_MODEL_TIMEOUT_MS})`,
     "  --retry-attempts N                 attempts per adapter (default: 1)",
     "  --include-yahoo-public-sources     explicitly opt in to Yahoo public adapters",
+    "  --portfolio-context FILE           controller-owned active-strategy/account envelope",
+    "  --portfolio-plan-out FILE          atomically write a verified portfolio plan",
+    "  --controller-evidence FILE         timestamped controller-owned local evidence packet",
+    "  --controller-handoff FILE          original scheduler input provenance receipt",
+    "  --controller-handoff-sha256 SHA     exact scheduler-written provenance bytes",
+    "  --controller-research-scope        target only the unique typed night scope in controller evidence (research_only)",
+    "  --persist-theses                   store only fully gated, source-linked research thesis candidates",
+    "  --finance-state-dir DIR            exact existing finance state root (required with --persist-theses)",
     "  --write                            write the full receipt to workspace state",
-    "  --json                             emit a bounded JSON summary",
+    "  --json                             emit a JSON summary",
+    "  --scheduler-summary                emit compact status and persisted receipt paths",
   ].join("\n");
 }
 
@@ -133,17 +213,23 @@ function decisionMode(value: string): FinanceDecisionMode {
   );
 }
 
-function parseArgs(args: readonly string[]): Options {
+export function parseArgs(args: readonly string[]): Options {
   const options: Options = {
     ask: DEFAULT_ASK,
     horizonMonths: 6,
     decisionMode: "research_only",
     live: false,
+    workflowModels: false,
+    executeModules: false,
     quality: true,
     write: false,
+    persistTheses: false,
+    controllerResearchScope: false,
     modelId: DEFAULT_MODEL_ID,
-    maxTokens: 384,
     timeoutMs: 120_000,
+    runTimeoutMs: 840_000,
+    maxModelCalls: 48,
+    maxModelConcurrency: 2,
     allowModelNetwork: false,
     maxApiCalls: 48,
     maxConcurrency: 3,
@@ -170,6 +256,10 @@ function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--live") {
       options.live = true;
+    } else if (arg === "--workflow-models") {
+      options.workflowModels = true;
+    } else if (arg === "--execute-modules") {
+      options.executeModules = true;
     } else if (arg === "--skip-quality") {
       options.quality = false;
     } else if (arg === "--adapter") {
@@ -186,6 +276,19 @@ function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--timeout-ms") {
       options.timeoutMs = positiveInteger(readValue(args, index, arg), arg, MAX_MODEL_TIMEOUT_MS);
+      index += 1;
+    } else if (arg === "--run-timeout-ms") {
+      options.runTimeoutMs = positiveInteger(
+        readValue(args, index, arg),
+        arg,
+        MAX_MODEL_TIMEOUT_MS,
+      );
+      index += 1;
+    } else if (arg === "--max-model-concurrency") {
+      options.maxModelConcurrency = positiveInteger(readValue(args, index, arg), arg, 2) as 1 | 2;
+      index += 1;
+    } else if (arg === "--max-model-calls") {
+      options.maxModelCalls = positiveInteger(readValue(args, index, arg), arg, 10_000);
       index += 1;
     } else if (arg === "--allow-model-network") {
       options.allowModelNetwork = true;
@@ -217,8 +320,33 @@ function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--include-yahoo-public-sources") {
       options.includeYahooPublicSources = true;
+    } else if (arg === "--portfolio-context") {
+      options.portfolioContextPath = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--portfolio-plan-out") {
+      options.portfolioPlanOut = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--controller-evidence") {
+      options.controllerEvidencePath = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--controller-research-scope") {
+      options.controllerResearchScope = true;
+    } else if (arg === "--controller-handoff") {
+      options.controllerHandoffPath = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--controller-handoff-sha256") {
+      options.controllerHandoffSha256 = readValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--persist-theses") {
+      options.persistTheses = true;
+    } else if (arg === "--finance-state-dir") {
+      options.financeStateDir = path.resolve(readValue(args, index, arg));
+      index += 1;
     } else if (arg === "--write") {
       options.write = true;
+    } else if (arg === "--scheduler-summary") {
+      options.schedulerSummary = true;
+      options.json = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -226,6 +354,71 @@ function parseArgs(args: readonly string[]): Options {
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
+  }
+  if (
+    options.workflowModels &&
+    args.some((arg) => ["--adapter", "--model", "--python", "--allow-model-network"].includes(arg))
+  ) {
+    throw new Error("--workflow-models cannot combine local model overrides");
+  }
+  if (options.portfolioPlanOut && !options.portfolioContextPath) {
+    throw new Error("--portfolio-plan-out requires --portfolio-context");
+  }
+  if (options.controllerHandoffPath || options.controllerHandoffSha256) {
+    if (
+      !options.controllerHandoffPath ||
+      !options.controllerHandoffSha256 ||
+      !/^[a-f0-9]{64}$/u.test(options.controllerHandoffSha256) ||
+      !options.controllerEvidencePath ||
+      !options.portfolioContextPath
+    ) {
+      throw new Error(
+        "--controller-handoff requires --controller-handoff-sha256, --controller-evidence and --portfolio-context",
+      );
+    }
+  }
+  if (
+    options.portfolioContextPath &&
+    (!options.live || !options.workflowModels || !options.write)
+  ) {
+    throw new Error(
+      "--portfolio-context requires --live --workflow-models --write so an allocation proposal has source, model and quality receipts",
+    );
+  }
+  if (options.portfolioContextPath && options.decisionMode !== "strategy_candidate") {
+    throw new Error("--portfolio-context requires --decision-mode strategy_candidate");
+  }
+  if (options.executeModules && (!options.live || !options.workflowModels || !options.write)) {
+    throw new Error("--execute-modules requires --live --workflow-models --write");
+  }
+  if (
+    options.controllerEvidencePath &&
+    (!options.live || !options.workflowModels || !options.write)
+  ) {
+    throw new Error("--controller-evidence requires --live --workflow-models --write");
+  }
+  if (options.controllerResearchScope && !options.controllerEvidencePath) {
+    throw new Error("--controller-research-scope requires --controller-evidence");
+  }
+  if (options.controllerResearchScope && !options.financeStateDir) {
+    throw new Error("--controller-research-scope requires --finance-state-dir");
+  }
+  if (options.controllerResearchScope && options.decisionMode !== "research_only") {
+    throw new Error("--controller-research-scope requires --decision-mode research_only");
+  }
+  if (options.controllerResearchScope && options.portfolioContextPath) {
+    throw new Error("--controller-research-scope cannot be combined with --portfolio-context");
+  }
+  if (
+    options.persistTheses &&
+    (!options.live || !options.workflowModels || !options.write || !options.quality)
+  ) {
+    throw new Error(
+      "--persist-theses requires --live --workflow-models --write with quality enabled",
+    );
+  }
+  if (options.persistTheses && !options.financeStateDir) {
+    throw new Error("--persist-theses requires an exact --finance-state-dir");
   }
   return options;
 }
@@ -239,6 +432,190 @@ export function assertResearchAsk(value: string): string {
     throw new Error(`--ask must be <= ${MAX_RESEARCH_ASK_BYTES} UTF-8 bytes`);
   }
   return normalized;
+}
+
+export function parseControllerResearchScope(
+  evidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>,
+  asOf: string,
+): FinanceNightResearchScope {
+  assertFinanceNightResearchAsOf(asOf);
+  const matching = evidence.filter(
+    (item) =>
+      item.id === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
+      item.source === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+  );
+  if (
+    matching.length !== 1 ||
+    matching[0]?.id !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
+    matching[0]?.source !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE
+  ) {
+    throw new Error("--controller-research-scope requires exactly one canonical night scope item");
+  }
+  if (matching[0].timestamp !== asOf) {
+    throw new Error("controller night research scope evidence timestamp does not match --as-of");
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(matching[0].text);
+  } catch {
+    throw new Error("controller night research scope is not valid JSON");
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("controller night research scope must be an object");
+  }
+  const scope = raw as Record<string, unknown>;
+  if (
+    scope.schemaVersion !== FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION ||
+    scope.asOf !== asOf ||
+    !Array.isArray(scope.activeStrategyIds) ||
+    scope.activeStrategyIds.some((id) => typeof id !== "string" || !id.trim()) ||
+    new Set(scope.activeStrategyIds).size !== scope.activeStrategyIds.length ||
+    !Array.isArray(scope.instruments) ||
+    scope.instruments.length === 0 ||
+    scope.instruments.length > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS
+  ) {
+    throw new Error("controller night research scope is invalid or does not match --as-of");
+  }
+  const seen = new Set<string>();
+  const isSupportedIdentity = (instrument: string, assetClass: unknown) =>
+    assetClass === "crypto"
+      ? /^[A-Z0-9]{2,12}\/USD$/u.test(instrument)
+      : assetClass === "us_equity"
+        ? /^[A-Z]{1,5}(?:\.[A-Z])?$/u.test(instrument)
+        : false;
+  const instruments = scope.instruments.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`controller night research scope instrument ${index} must be an object`);
+    }
+    const item = value as Record<string, unknown>;
+    if (
+      typeof item.instrument !== "string" ||
+      typeof item.assetClass !== "string" ||
+      (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
+      !Array.isArray(item.reasons) ||
+      item.reasons.length === 0 ||
+      item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy")
+    ) {
+      throw new Error(`controller night research scope instrument ${index} is malformed`);
+    }
+    const instrument = item.instrument.trim().toUpperCase();
+    if (!isSupportedIdentity(instrument, item.assetClass)) {
+      throw new Error(
+        `controller night research scope has unsupported instrument identity: ${instrument}`,
+      );
+    }
+    const key = `${item.assetClass}:${instrument}`;
+    if (!instrument || seen.has(key)) {
+      throw new Error(
+        `controller night research scope has empty or duplicate instrument: ${instrument}`,
+      );
+    }
+    seen.add(key);
+    return Object.freeze({
+      instrument,
+      assetClass: item.assetClass,
+      reasons: Object.freeze(
+        [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+      ) as FinanceNightResearchInstrument["reasons"],
+    }) as FinanceNightResearchInstrument;
+  });
+  let coverage: FinanceNightResearchScope["coverage"];
+  if (scope.coverage !== undefined) {
+    if (
+      typeof scope.coverage !== "object" ||
+      scope.coverage === null ||
+      Array.isArray(scope.coverage)
+    ) {
+      throw new Error("controller night research scope coverage is malformed");
+    }
+    const rawCoverage = scope.coverage as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(rawCoverage.totalInstrumentCount) ||
+      (rawCoverage.totalInstrumentCount as number) <= instruments.length ||
+      rawCoverage.selectionMethod !== "held_priority_et_date_rotation_v1" ||
+      !Array.isArray(rawCoverage.deferredInstruments) ||
+      rawCoverage.deferredInstruments.length === 0 ||
+      (rawCoverage.totalInstrumentCount as number) !==
+        instruments.length + rawCoverage.deferredInstruments.length
+    ) {
+      throw new Error("controller night research scope coverage is invalid");
+    }
+    const deferredInstruments = rawCoverage.deferredInstruments.map((value, index) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(
+          `controller night research scope deferred instrument ${index} is malformed`,
+        );
+      }
+      const item = value as Record<string, unknown>;
+      if (
+        typeof item.instrument !== "string" ||
+        typeof item.assetClass !== "string" ||
+        (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
+        !Array.isArray(item.reasons) ||
+        item.reasons.length === 0 ||
+        item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy") ||
+        new Set(item.reasons).size !== item.reasons.length
+      ) {
+        throw new Error(
+          `controller night research scope deferred instrument ${index} is malformed`,
+        );
+      }
+      const instrument = item.instrument.trim().toUpperCase();
+      if (!isSupportedIdentity(instrument, item.assetClass)) {
+        throw new Error(
+          `controller night research scope has unsupported instrument identity: ${instrument}`,
+        );
+      }
+      const key = `${item.assetClass}:${instrument}`;
+      if (!instrument || seen.has(key)) {
+        throw new Error(
+          `controller night research scope has empty or duplicate instrument: ${instrument}`,
+        );
+      }
+      seen.add(key);
+      return Object.freeze({
+        instrument,
+        assetClass: item.assetClass,
+        reasons: Object.freeze(
+          [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+        ) as FinanceNightResearchInstrument["reasons"],
+      }) as FinanceNightResearchInstrument;
+    });
+    coverage = Object.freeze({
+      totalInstrumentCount: rawCoverage.totalInstrumentCount as number,
+      deferredInstruments: Object.freeze(deferredInstruments),
+      selectionMethod: "held_priority_et_date_rotation_v1",
+    });
+  }
+  return Object.freeze({
+    schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+    asOf,
+    activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
+    instruments: Object.freeze(instruments),
+    ...(scope.holdingBasis === undefined
+      ? {}
+      : { holdingBasis: financeNightResearchHoldingBasisSchema.parse(scope.holdingBasis) }),
+    ...(coverage ? { coverage } : {}),
+  });
+}
+
+export function buildControllerNightResearchTargets(params: {
+  ask: string;
+  asOf: string;
+  horizonMonths: number;
+  instruments: readonly FinanceNightResearchInstrument[];
+}) {
+  return buildDefaultFinanceResearchTargets(
+    params.ask,
+    params.horizonMonths,
+    params.asOf,
+    undefined,
+    undefined,
+    params.instruments,
+    // Equity night review consumes the controller's closed-session evidence;
+    // it does not need live execution quotes. Crypto keeps its 24-hour refresh.
+    [],
+  );
 }
 
 const ISO_TIMESTAMP_PATTERN =
@@ -268,32 +645,6 @@ export function assertIsoTimestamp(value: string): string {
   return new Date(value).toISOString();
 }
 
-async function resolveAdapterPath(options: Options): Promise<string> {
-  if (options.adapterPath?.trim()) {
-    return path.resolve(options.adapterPath);
-  }
-  const result = await execFileAsync(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      path.join(REPO_ROOT, "scripts/operator/minimax-brain-training-guard.ts"),
-      "--resolve-current-adapter",
-      "--no-train",
-      "--model",
-      options.modelId,
-      "--current-adapter",
-      "latest-passing",
-    ],
-    { cwd: REPO_ROOT, maxBuffer: 2 * 1024 * 1024, timeout: 30_000 },
-  );
-  const payload = parseJsonObjectFromOutput(result.stdout);
-  if (typeof payload.selectedAdapter !== "string" || !payload.selectedAdapter.trim()) {
-    throw new Error("training guard did not return a selected adapter");
-  }
-  return path.resolve(payload.selectedAdapter);
-}
-
 function routingRevision(prefix: string, runtime: LocalTextModelRuntimeConfig): string {
   return `${prefix}-${createHash("sha256")
     .update(`${runtime.adapterPath}:${runtime.modelId}`)
@@ -307,20 +658,6 @@ export function buildFinanceResearchCommitteeRouting(
   const adapter = createLocalQualityHarnessAdapter(runtime);
   return {
     revision: routingRevision("finance-local-committee-v1", runtime),
-    adapters: [adapter],
-    defaultPolicy: {
-      primary: adapter.id,
-      requiredCapabilities: ["quality_harness"],
-      maxInputBytes: QUALITY_ROUTER_MAX_INPUT_BYTES,
-      timeoutMs: runtime.timeoutMs,
-    },
-  };
-}
-
-function buildQualityRouting(runtime: LocalTextModelRuntimeConfig): LogicalAgentModelRouting {
-  const adapter = createLocalQualityHarnessAdapter(runtime);
-  return {
-    revision: routingRevision("finance-local-quality-v1", runtime),
     adapters: [adapter],
     defaultPolicy: {
       primary: adapter.id,
@@ -359,10 +696,15 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
       decisionMode: receipt.plan.decisionMode,
       liveFetch: options.live,
       qualityRequested: options.quality,
+      persistTheses: options.persistTheses,
     },
     status: receipt.status,
     answerDecision: receipt.answerDecision,
+    ...(receipt.controllerHandoff ? { controllerHandoff: receipt.controllerHandoff } : {}),
+    ...(receipt.controllerRuleUse ? { controllerRuleUse: receipt.controllerRuleUse } : {}),
+    ...(receipt.portfolioAbstention ? { portfolioAbstention: receipt.portfolioAbstention } : {}),
     plan: {
+      asOf: receipt.plan.asOf,
       expectedJobCount: receipt.plan.expectedJobCount,
       targetIds: receipt.plan.targets.map((target) => target.id),
       orchestration: receipt.plan.orchestration,
@@ -511,7 +853,7 @@ export async function preflightFinanceResearchReceiptDestination(
 export async function preflightLocalModelPythonRuntime(pythonPath: string): Promise<void> {
   const normalized = pythonPath.trim();
   if (!normalized) {
-    throw new Error("local model Python runtime is required");
+    throw new Error("retired local Python override is required");
   }
   try {
     await execFileAsync(normalized, ["-c", "import mlx.core, mlx_lm"], {
@@ -523,8 +865,12 @@ export async function preflightLocalModelPythonRuntime(pythonPath: string): Prom
   }
 }
 
-async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
-  const root = WORKSPACE_DIR();
+export async function writeReceipt(
+  receipt: FinanceResearchRunReceipt,
+  asOf: string,
+  host?: FinanceResultRecordingHost,
+) {
+  const root = host?.workspaceDir ?? WORKSPACE_DIR();
   const stateDir = path.join(root, "state");
   // `state/` is git-ignored and is where the agent-side research tool writes its own runs;
   // `memory/` is tracked, so a run archive dropped there becomes repository content.
@@ -537,7 +883,15 @@ async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   const serialized = `${JSON.stringify(receipt, null, 2)}\n`;
   await writePrivateReceipt(datedPath, serialized);
   await writePrivateReceipt(latestPath, serialized);
-  return { datedPath, latestPath };
+  const sha256 = createHash("sha256").update(serialized, "utf8").digest("hex");
+  const artifactEvidence = await recordFinanceResearchResult({
+    workspaceDir: root,
+    receipt,
+    datedPath,
+    sourceSha256: sha256,
+    host,
+  });
+  return { datedPath, latestPath, sha256, artifactEvidence };
 }
 
 export function buildFinanceResearchRegistryOptions(
@@ -558,27 +912,357 @@ export function buildFinanceResearchRegistryOptions(
   } as const;
 }
 
-async function run(
-  options: Options,
-): Promise<{ receipt: FinanceResearchRunReceipt; written?: unknown }> {
+/** Rank healthy providers first without allowing health to override evidence roles. */
+export function prioritizeFinanceResearchAdaptersByHeartbeat<
+  T extends { id: string; priority: number; providerRole: string },
+>(
+  adapters: readonly T[],
+  endpointRecords: Readonly<
+    Record<string, Pick<FinanceSourceHeartbeatRecord, "checkedAt" | "status">>
+  >,
+  observedAt: string,
+): T[] {
+  const observedAtMs = Date.parse(observedAt);
+  const healthRank = (adapterId: string) => {
+    const record = endpointRecords[adapterId];
+    const checkedAtMs = record ? Date.parse(record.checkedAt) : Number.NaN;
+    const ageMs = observedAtMs - checkedAtMs;
+    if (
+      !record ||
+      !Number.isFinite(ageMs) ||
+      ageMs < 0 ||
+      ageMs > FINANCE_SOURCE_HEALTH_MAX_AGE_MS
+    ) {
+      return 1;
+    }
+    if (record.status === "healthy") {
+      return 0;
+    }
+    return record.status === "unknown" ? 1 : 2;
+  };
+  const roleRank = (role: string) =>
+    role === "primary_market_data" ? 0 : role === "cross_check_market_data" ? 1 : 2;
+  const orderedIds = adapters
+    .toSorted(
+      (left, right) =>
+        roleRank(left.providerRole) - roleRank(right.providerRole) ||
+        healthRank(left.id) - healthRank(right.id) ||
+        left.priority - right.priority ||
+        left.id.localeCompare(right.id),
+    )
+    .map((adapter) => adapter.id);
+  const priorityById = new Map(orderedIds.map((id, index) => [id, index]));
+  return adapters.map((adapter) => ({
+    ...adapter,
+    priority: priorityById.get(adapter.id) ?? adapter.priority,
+  }));
+}
+
+async function financeResearchAdaptersWithFreshHealth(params: {
+  includeYahooPublicSources: boolean;
+  financeStateDir?: string;
+  workspaceDir: string;
+  observedAt: string;
+}): Promise<{
+  realtimeAdapters: FinanceRealtimeSourceAdapter[];
+  collectionAdapters: FinanceMarketCollectionAdapter[];
+}> {
+  const { realtimeRegistryOptions, collectionRegistryOptions } =
+    buildFinanceResearchRegistryOptions(params.includeYahooPublicSources);
+  const stateDirectory = resolveFinanceStateDir({
+    ...(params.financeStateDir ? { directory: params.financeStateDir } : {}),
+    workspaceDir: params.workspaceDir,
+  }).directory;
+  let endpointRecords: Readonly<
+    Record<string, Pick<FinanceSourceHeartbeatRecord, "checkedAt" | "status">>
+  > = {};
+  try {
+    const heartbeat = await readFinanceSourceHeartbeat({ directory: stateDirectory });
+    endpointRecords = heartbeat.endpointRecords ?? {};
+  } catch {
+    // Unavailable health history preserves the configured source priority.
+  }
+  return {
+    realtimeAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
+      createFinanceRealtimeSourceRegistry(realtimeRegistryOptions),
+      endpointRecords,
+      params.observedAt,
+    ),
+    collectionAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
+      createFinanceMarketCollectionRegistry(collectionRegistryOptions),
+      endpointRecords,
+      params.observedAt,
+    ),
+  };
+}
+
+export type FinancePortfolioPlanWrite = Readonly<{
+  path: string;
+  sha256: string;
+  asOf: string;
+  accountId: string;
+  venue: "paper" | "alpaca";
+}>;
+
+async function writeVerifiedPortfolioPlan(
+  filePath: string,
+  plan: unknown,
+): Promise<FinancePortfolioPlanWrite> {
+  const { financePortfolioPlanSchema } =
+    await import("../../src/agents/finance-portfolio-composition.ts");
+  const parsed = financePortfolioPlanSchema.parse(plan);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const serialized = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writePrivateReceipt(temporary, serialized);
+  await fs.rename(temporary, filePath);
+  return {
+    path: filePath,
+    sha256: createHash("sha256").update(serialized).digest("hex"),
+    asOf: parsed.asOf,
+    accountId: parsed.accountId,
+    venue: parsed.venue,
+  };
+}
+
+/** Read once, bind original bytes, then reuse the parsed controller inputs. */
+export async function readControllerResearchInput(
+  options: Pick<
+    Options,
+    | "controllerEvidencePath"
+    | "portfolioContextPath"
+    | "controllerHandoffPath"
+    | "controllerHandoffSha256"
+  >,
+  asOf: string,
+): Promise<{
+  controllerEvidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>;
+  portfolioContext?: FinanceResearchRunInput["portfolioContext"];
+  controllerHandoff?: FinanceResearchControllerHandoff;
+}> {
+  const [evidenceBytes, contextBytes, handoffBytes] = await Promise.all([
+    options.controllerEvidencePath ? fs.readFile(options.controllerEvidencePath) : undefined,
+    options.portfolioContextPath ? fs.readFile(options.portfolioContextPath) : undefined,
+    options.controllerHandoffPath ? fs.readFile(options.controllerHandoffPath) : undefined,
+  ]);
+  const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  let controllerHandoff: FinanceResearchControllerHandoff | undefined;
+  if (options.controllerHandoffPath || options.controllerHandoffSha256) {
+    if (!handoffBytes || sha256(handoffBytes) !== options.controllerHandoffSha256) {
+      throw new Error("controller handoff producer hash mismatch");
+    }
+    const handoff = financeScheduledResearchHandoffSchema.parse(
+      JSON.parse(handoffBytes.toString("utf8")),
+    );
+    for (const [name, filename, bytes] of [
+      ["controllerEvidence", options.controllerEvidencePath, evidenceBytes],
+      ["portfolioContext", options.portfolioContextPath, contextBytes],
+    ] as const) {
+      const pin = handoff.inputs[name];
+      if (
+        !filename ||
+        path.resolve(pin.path) !== path.resolve(filename) ||
+        !bytes ||
+        pin.bytes !== bytes.length ||
+        pin.sha256 !== sha256(bytes)
+      ) {
+        throw new Error(`controller handoff ${name} path or bytes mismatch`);
+      }
+    }
+    if (Date.parse(handoff.sourceScope.asOf) !== Date.parse(asOf)) {
+      throw new Error("controller handoff asOf mismatch");
+    }
+    controllerHandoff = {
+      ...handoff,
+      producer: {
+        path: options.controllerHandoffPath!,
+        sha256: sha256(handoffBytes),
+        bytes: handoffBytes.length,
+      },
+    };
+  }
+  const controllerEvidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]> =
+    evidenceBytes ? JSON.parse(evidenceBytes.toString("utf8")) : [];
+  const portfolioContext = contextBytes
+    ? financeResearchPortfolioContextSchema.parse(JSON.parse(contextBytes.toString("utf8")))
+    : undefined;
+  if (
+    controllerHandoff &&
+    (!portfolioContext ||
+      controllerHandoff.sourceScope.accountId !== portfolioContext.accountId ||
+      controllerHandoff.sourceScope.venue !== portfolioContext.venue)
+  ) {
+    throw new Error("controller handoff account or venue mismatch");
+  }
+  return {
+    controllerEvidence,
+    portfolioContext,
+    ...(controllerHandoff ? { controllerHandoff } : {}),
+  };
+}
+
+export async function run(options: Options): Promise<{
+  receipt: FinanceResearchRunReceipt;
+  written?: unknown;
+  portfolioPlanWritten?: string;
+  portfolioPlanWrite?: FinancePortfolioPlanWrite;
+  thesisLearning?: FinanceResearchThesisLearningResult;
+  strategyLearning?: FinanceResearchStrategyLearningResult;
+}> {
   const ask = assertResearchAsk(options.ask);
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
   const asOfMode = options.live && options.asOf === undefined ? ("live_now" as const) : undefined;
   if (options.live && !options.write) {
     throw new Error("--write is required with --live to persist the full research receipt");
   }
+  if (options.live && !options.workflowModels) {
+    throw new Error(
+      "local research/review roles retired: use --live --workflow-models --write to authorize the configured finance workflow; omit --live for a plan",
+    );
+  }
+  if (
+    options.workflowModels &&
+    (options.adapterPath ||
+      options.pythonPath ||
+      options.modelId !== DEFAULT_MODEL_ID ||
+      options.allowModelNetwork)
+  ) {
+    throw new Error("--workflow-models cannot combine local model overrides");
+  }
   if (options.live) {
     await preflightFinanceResearchReceiptDestination(asOf);
+  }
+  if (options.financeStateDir) {
+    const stateDirectory = await fs.stat(options.financeStateDir).catch(() => undefined);
+    if (!stateDirectory?.isDirectory()) {
+      throw new Error("--finance-state-dir must name an existing finance state directory");
+    }
+  }
+  const {
+    controllerEvidence: suppliedControllerEvidence,
+    portfolioContext,
+    controllerHandoff,
+  } = await readControllerResearchInput(options, asOf);
+  const controllerResearchScope = options.controllerResearchScope
+    ? parseControllerResearchScope(suppliedControllerEvidence, asOf)
+    : undefined;
+  if (controllerResearchScope) {
+    const ledgerScope = await readFinanceNightReviewResearchScope({
+      directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
+      asOf,
+    });
+    if (JSON.stringify(ledgerScope) !== JSON.stringify(controllerResearchScope)) {
+      throw new Error(
+        "controller night research scope does not match the finance ledgers at --as-of",
+      );
+    }
+  }
+
+  const strategyScope =
+    options.portfolioContextPath && portfolioContext
+      ? await readFinanceActiveStrategyResearchScope({
+          directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
+          asOf,
+          strategyIds: portfolioContext.activeStrategyIds,
+        })
+      : undefined;
+  const controllerPortfolioContext =
+    portfolioContext && strategyScope
+      ? financeResearchPortfolioContextSchema.parse({
+          ...portfolioContext,
+          requiredInstruments: strategyScope.instruments,
+        })
+      : portfolioContext;
+  const ruleEvidence = strategyScope?.evidence.find(
+    (item) => item.id === "finance-controller:active-strategies",
+  );
+  const controllerRuleUse =
+    strategyScope && portfolioContext && ruleEvidence
+      ? assertFinanceResearchRuleUse(
+          {
+            source: strategyScope.source,
+            accountScope: {
+              accountId: portfolioContext.accountId,
+              venue: portfolioContext.venue,
+              asOf,
+            },
+            evidence: {
+              id: ruleEvidence.id,
+              sha256: createHash("sha256").update(ruleEvidence.text, "utf8").digest("hex"),
+            },
+            ...(controllerHandoff ? { parentRunId: controllerHandoff.sourceScope.runId } : {}),
+          },
+          strategyScope.evidence,
+          portfolioContext,
+          asOf,
+        )
+      : undefined;
+  let equityUniverseSnapshot: FinanceResearchRunInput["equityUniverseSnapshot"];
+  if (options.financeStateDir) {
+    try {
+      equityUniverseSnapshot = readFinanceResearchEquityUniverseSnapshot(
+        options.financeStateDir,
+        asOf,
+      );
+    } catch {
+      // Preserve the planner's explicit missing-universe limitation; never substitute tickers.
+      process.stderr.write(
+        "controller equity universe unavailable or invalid; broad research remains scope-limited\n",
+      );
+    }
   }
   const input: FinanceResearchRunInput = {
     ask,
     asOf,
     horizonMonths: options.horizonMonths,
     decisionMode: options.decisionMode,
+    ...(options.executeModules ? { executeModules: true } : {}),
+    controllerEvidence: [...(strategyScope?.evidence ?? []), ...suppliedControllerEvidence],
+    ...(controllerHandoff ? { controllerHandoff } : {}),
+    ...(controllerRuleUse ? { controllerRuleUse } : {}),
+    ...(strategyScope
+      ? {
+          targets: buildDefaultFinanceResearchTargets(
+            ask,
+            options.horizonMonths,
+            asOf,
+            equityUniverseSnapshot,
+            strategyScope.instruments,
+            undefined,
+            strategyScope.intradayInstruments,
+            strategyScope.historyMonths,
+          ),
+        }
+      : {}),
+    ...(controllerResearchScope
+      ? {
+          targets: buildControllerNightResearchTargets({
+            ask,
+            horizonMonths: options.horizonMonths,
+            asOf,
+            instruments: controllerResearchScope.instruments,
+          }),
+        }
+      : {}),
+    ...(equityUniverseSnapshot ? { equityUniverseSnapshot } : {}),
     ...(asOfMode === undefined ? {} : { asOfMode }),
+    ...(controllerPortfolioContext
+      ? {
+          portfolioContext: controllerPortfolioContext,
+          strategyStage: "research_candidate" as const,
+        }
+      : {}),
   };
   const { realtimeRegistryOptions, collectionRegistryOptions } =
     buildFinanceResearchRegistryOptions(options.includeYahooPublicSources);
+  const healthPrioritizedAdapters = options.live
+    ? await financeResearchAdaptersWithFreshHealth({
+        includeYahooPublicSources: options.includeYahooPublicSources,
+        ...(options.financeStateDir ? { financeStateDir: options.financeStateDir } : {}),
+        workspaceDir: WORKSPACE_DIR(),
+        observedAt: new Date().toISOString(),
+      })
+    : undefined;
   const batchOptions = {
     maxApiCalls: options.maxApiCalls,
     maxConcurrency: options.maxConcurrency,
@@ -588,30 +1272,36 @@ async function run(
     retry: { attempts: options.retryAttempts },
     realtimeRegistryOptions,
     collectionRegistryOptions,
+    ...healthPrioritizedAdapters,
+    ...(options.live && options.write && options.financeStateDir
+      ? {
+          macroSnapshotDirectory: resolveFinanceStateDir({
+            directory: options.financeStateDir,
+          }).directory,
+        }
+      : {}),
   } as const;
   if (!options.live) {
     const receipt = await runFinanceResearchRun({
       input,
+      workspaceDir: WORKSPACE_DIR(),
+      ...(options.financeStateDir
+        ? {
+            financeStateDir: resolveFinanceStateDir({ directory: options.financeStateDir })
+              .directory,
+          }
+        : {}),
       liveFetch: false,
       batchOptions,
     });
     const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
     return { receipt, ...(written === undefined ? {} : { written }) };
   }
-  const adapterPath = await resolveAdapterPath(options);
-  await Promise.all([
-    fs.access(path.join(adapterPath, "adapter_config.json")),
-    fs.access(path.join(adapterPath, "adapters.safetensors")),
-  ]);
-  const runtime = resolveLocalTextModelRuntimeConfig({
-    adapterPath,
-    modelId: options.modelId,
-    ...(options.pythonPath === undefined ? {} : { pythonPath: options.pythonPath }),
+  const workflow = createFinanceModelWorkflow(loadConfig(), {
+    maxCalls: options.maxModelCalls,
     maxTokens: options.maxTokens,
     timeoutMs: options.timeoutMs,
-    allowNetwork: options.allowModelNetwork,
   });
-  await preflightLocalModelPythonRuntime(runtime.pythonPath);
   const governance = createApiSourceGovernanceRegistry({
     minIntervalMs: 250,
     maxConcurrent: 1,
@@ -619,18 +1309,171 @@ async function run(
     failureThreshold: 3,
     resetAfterMs: 30_000,
   });
-  const receipt = await runFinanceResearchRun({
-    input,
-    liveFetch: true,
-    qualityEnabled: options.quality,
-    modelId: runtime.modelId,
-    modelRouting: buildFinanceResearchCommitteeRouting(runtime),
-    ...(options.quality ? { qualityModelRouting: buildQualityRouting(runtime) } : {}),
-    sourceGovernance: governance,
-    batchOptions,
-  });
+  const receipt = await runCheckpointedFinanceResearch(
+    {
+      input,
+      workspaceDir: WORKSPACE_DIR(),
+      ...(options.financeStateDir
+        ? {
+            financeStateDir: resolveFinanceStateDir({ directory: options.financeStateDir })
+              .directory,
+          }
+        : {}),
+      liveFetch: true,
+      qualityEnabled: options.quality,
+      allowProviderCalls: true,
+      maxModelConcurrency: options.maxModelConcurrency,
+      modelRouting: workflow.routing,
+      ...(options.quality ? { qualityModelRouting: workflow.routing } : {}),
+      ...(options.write && options.quality
+        ? { qualityCheckpointStore: createCanonicalStateRootLogicalAgentCheckpointStore() }
+        : {}),
+      sourceGovernance: governance,
+      batchOptions,
+    },
+    {
+      directory: path.join(WORKSPACE_DIR(), "state", "finance-research-checkpoints"),
+      runTimeoutMs: options.runTimeoutMs,
+      maxModelCalls: options.maxModelCalls,
+    },
+  );
   const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
-  return { receipt, ...(written === undefined ? {} : { written }) };
+  let thesisLearning: FinanceResearchThesisLearningResult | undefined;
+  let strategyLearning: FinanceResearchStrategyLearningResult | undefined;
+  if (options.persistTheses && written && options.financeStateDir) {
+    const state = resolveFinanceStateDir({ directory: options.financeStateDir });
+    const artifact = receipt.quality?.finalArtifact;
+    try {
+      const proposals = validateFinanceResearchThesisProposals({
+        value: artifact?.supportingAnalysis?.financeThesisProposals,
+        claims: artifact?.claims ?? [],
+        evidence: (receipt.batch?.committeeEvidence ?? []).slice(
+          0,
+          QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
+        ),
+        instruments: receipt.plan.targets.map((target) => target.instrument),
+        asOf,
+        receiptReference: written.datedPath,
+        runId: receipt.quality?.runId ?? "",
+      });
+      thesisLearning = await persistFinanceResearchThesisLearning({
+        directory: state.directory,
+        eligible:
+          receipt.status === "candidate" &&
+          receipt.gates.every((gate) => gate.passed) &&
+          receipt.quality?.status === "verified" &&
+          receipt.quality.quality.passed,
+        proposals,
+        observedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      thesisLearning = Object.freeze({
+        status: "refused",
+        reason: error instanceof Error ? error.message : String(error),
+        results: Object.freeze([]),
+      });
+    }
+  }
+  if (options.persistTheses && written && options.financeStateDir) {
+    const artifact = receipt.quality?.finalArtifact;
+    let stage: "proposal_validation" | "draft_persistence" = "proposal_validation";
+    try {
+      strategyLearning = await persistFinanceResearchStrategyLearning({
+        onStage: (next) => {
+          stage = next;
+        },
+        directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
+        eligible:
+          receipt.status === "candidate" &&
+          receipt.gates.every((gate) => gate.passed) &&
+          receipt.quality?.status === "verified" &&
+          receipt.quality.quality.passed,
+        value: artifact?.supportingAnalysis?.financeStrategyRuleProposals,
+        claims: artifact?.claims ?? [],
+        evidence: (receipt.batch?.committeeEvidence ?? []).slice(
+          0,
+          QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
+        ),
+        instruments: receipt.plan.targets.map((target) => target.instrument),
+        asOf,
+        observedAt: new Date().toISOString(),
+        receiptReference: written.datedPath,
+        runId: receipt.quality?.runId ?? "",
+      });
+    } catch {
+      strategyLearning = {
+        status: "refused",
+        stage,
+        reason:
+          stage === "proposal_validation"
+            ? "method_draft_source_or_schema_invalid"
+            : "method_draft_ledger_failed",
+        results: [],
+      };
+    }
+  }
+  const portfolioPlanWrite =
+    options.portfolioPlanOut && receipt.portfolioPlan
+      ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
+      : undefined;
+  return {
+    receipt,
+    ...(written === undefined ? {} : { written }),
+    ...(portfolioPlanWrite === undefined
+      ? {}
+      : { portfolioPlanWritten: portfolioPlanWrite.path, portfolioPlanWrite }),
+    ...(thesisLearning === undefined ? {} : { thesisLearning }),
+    ...(strategyLearning === undefined ? {} : { strategyLearning }),
+  };
+}
+
+/** Machine protocol stays small; full evidence remains in the written receipt. */
+export function compactFinanceResearchSummary(
+  summary: Pick<
+    ReturnType<typeof summarizeReceipt>,
+    "schemaVersion" | "boundary" | "status" | "answerDecision" | "gates"
+  > & {
+    plan: { asOf: string };
+    written?: unknown;
+    portfolioPlanWritten?: string;
+    portfolioPlanWrite?: FinancePortfolioPlanWrite;
+    portfolioAbstention?: FinanceResearchRunReceipt["portfolioAbstention"];
+    controllerHandoff?: FinanceResearchControllerHandoff;
+    controllerRuleUse?: FinanceResearchControllerRuleUse;
+  },
+) {
+  return {
+    schemaVersion: summary.schemaVersion,
+    boundary: summary.boundary,
+    status: summary.status,
+    answerDecision: summary.answerDecision,
+    plan: { asOf: summary.plan.asOf },
+    gates: summary.gates.map((gate) => ({ id: gate.id, passed: gate.passed })),
+    written: summary.written,
+    portfolioPlanWritten: summary.portfolioPlanWritten,
+    portfolioPlanWrite: summary.portfolioPlanWrite,
+    ...(summary.portfolioAbstention ? { portfolioAbstention: summary.portfolioAbstention } : {}),
+    ...(summary.controllerHandoff ? { controllerHandoff: summary.controllerHandoff } : {}),
+    ...(summary.controllerRuleUse ? { controllerRuleUse: summary.controllerRuleUse } : {}),
+  };
+}
+
+export function compactFinanceResearchFailure(error: FinanceResearchRunFailure) {
+  return {
+    schemaVersion: "lcx_finance_research_operator_v1",
+    boundary: "local_finance_research_run_only",
+    status: "failed",
+    answerDecision: "return_failed_reason",
+    failure: {
+      reason: error.reason,
+      failureClass: error.failureClass,
+      ...(error.enteredStage ? { enteredStage: error.enteredStage } : {}),
+      runId: error.runId,
+      checkpointPath: error.checkpointPath,
+      startedAt: error.startedAt,
+    },
+    gates: [],
+  };
 }
 
 async function main(): Promise<number> {
@@ -639,9 +1482,19 @@ async function main(): Promise<number> {
   const summary = {
     ...summarizeReceipt(result.receipt, options),
     ...(result.written === undefined ? {} : { written: result.written }),
+    ...(result.portfolioPlanWritten === undefined
+      ? {}
+      : {
+          portfolioPlanWritten: result.portfolioPlanWritten,
+          portfolioPlanWrite: result.portfolioPlanWrite,
+        }),
+    ...(result.thesisLearning === undefined ? {} : { thesisLearning: result.thesisLearning }),
+    ...(result.strategyLearning === undefined ? {} : { strategyLearning: result.strategyLearning }),
   };
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(options.schedulerSummary ? compactFinanceResearchSummary(summary) : summary, null, 2)}\n`,
+    );
   } else {
     process.stdout.write(
       [
@@ -649,10 +1502,13 @@ async function main(): Promise<number> {
         `answer_decision=${summary.answerDecision}`,
         `expected_jobs=${summary.plan.expectedJobCount}`,
         `gates=${summary.gates.map((gate) => `${gate.id}:${gate.passed ? "pass" : "fail"}`).join(",")}`,
+        ...(result.thesisLearning ? [`thesis_learning=${result.thesisLearning.status}`] : []),
         `not_touched=${summary.notTouched.join(",")}`,
       ].join("\n") + "\n",
     );
   }
+  // A persistence failure stays visible in `thesisLearning`; it does not become a new trading
+  // gate or suppress an otherwise valid research candidate.
   return summary.status === "candidate" || summary.status === "planned" ? 0 : 2;
 }
 
@@ -664,6 +1520,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(`${usage()}\n`);
       process.exitCode = 0;
     } else {
+      if (
+        error instanceof FinanceResearchRunFailure &&
+        (process.argv.includes("--scheduler-summary") || process.argv.includes("--json"))
+      ) {
+        process.stdout.write(`${JSON.stringify(compactFinanceResearchFailure(error))}\n`);
+      }
       process.stderr.write(
         `lcx finance research run failed: ${error instanceof Error ? error.message : String(error)}\n`,
       );

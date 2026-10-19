@@ -44,7 +44,7 @@ By default the container is **not** installed as a systemd service, you start it
 ./scripts/run-openclaw-podman.sh launch setup
 ```
 
-Then open `http://127.0.0.1:18789/` and use the token from `~openclaw/.openclaw/.env` (or the value printed by setup).
+Then open `https://127.0.0.1:18789/` and use the token from `~openclaw/.openclaw/.env` (or the value printed by setup). The generated certificate is self-signed, so trust it in your browser before continuing; an existing certificate is preserved and must already be trusted by your browser.
 
 ## Systemd (Quadlet, optional)
 
@@ -85,7 +85,7 @@ To add quadlet **after** an initial setup that did not use it, re-run: `./setup-
 - **Token:** Stored in `~openclaw/.openclaw/.env` as `OPENCLAW_GATEWAY_TOKEN`. `setup-podman.sh` and `run-openclaw-podman.sh` generate it if missing (uses `openssl`, `python3`, or `od`).
 - **Optional:** In that `.env` you can set provider keys (e.g. `GROQ_API_KEY`, `OLLAMA_API_KEY`) and other LCX Agent env vars.
 - **Host ports:** By default the script maps `18789` (gateway) and `18790` (bridge). Override the **host** port mapping with `OPENCLAW_PODMAN_GATEWAY_HOST_PORT` and `OPENCLAW_PODMAN_BRIDGE_HOST_PORT` when launching.
-- **Gateway bind:** By default, `run-openclaw-podman.sh` starts the gateway with `--bind loopback` for safe local access. To expose on LAN, set `OPENCLAW_GATEWAY_BIND=lan` and configure `gateway.controlUi.allowedOrigins` (or explicitly enable host-header fallback) in `openclaw.json`.
+- **Gateway bind:** `run-openclaw-podman.sh` defaults to `--bind loopback` for safe local access. The Quadlet installed by setup uses LAN access with Gateway TLS and a local Control UI origin. Setup enables Gateway TLS in an existing valid config and appends the local HTTPS origin while preserving other allowed origins. Invalid config stops setup before the Quadlet starts. For another non-loopback bind, enable `gateway.tls.enabled`, configure `gateway.controlUi.allowedOrigins` (or explicitly enable host-header fallback), and use HTTPS/WSS. A generated cert lists addresses visible inside the container; for a published host IP or custom DNS name, install a trusted certificate whose SAN matches the browser URL. CLI clients can pin the generated certificate.
 - **Paths:** Host config and workspace default to `~openclaw/.openclaw` and `~openclaw/.openclaw/workspace`. Override the host paths used by the launch script with `OPENCLAW_CONFIG_DIR` and `OPENCLAW_WORKSPACE_DIR`.
 
 ## Useful commands

@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { enqueueCommand } from "../../../process/command-queue.js";
 import type { InputProvenance } from "../../../sessions/input-provenance.js";
 import type { ExecElevatedDefaults, ExecToolDefaults } from "../../bash-tools.js";
+import type { NativeCodingRunBinding } from "../../coding-harness/native-types.js";
 import type { BlockReplyPayload } from "../../pi-embedded-payloads.js";
 import type { BlockReplyChunking, ToolResultFormat } from "../../pi-embedded-subscribe.js";
 import type { SkillSnapshot } from "../../skills.js";
@@ -20,6 +21,8 @@ export type ClientToolDefinition = {
 };
 
 export type RunEmbeddedPiAgentParams = {
+  /** Process-local capability, never an ingress option. */
+  nativeCodingBinding?: NativeCodingRunBinding;
   sessionId: string;
   sessionKey?: string;
   agentId?: string;

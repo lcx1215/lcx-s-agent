@@ -1,3 +1,5 @@
+import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
 /**
  * Declared execution adapter seam for `finance_live_execution_waterflow`.
  *
@@ -25,19 +27,94 @@
  * deliberately ships only the paper adapter so that "capability exists" is never claimed
  * from "a seam exists".
  */
-
-import { createHash, randomUUID } from "node:crypto";
 import type { LcxOntologyFinanceExecutionAuthority } from "../shared/lcx-ontology.js";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import {
+  withFinanceExecutionSafety,
+  type FinanceExecutionSafetyContext,
+  type FinanceExecutionSafetyFailure,
+  type FinanceExecutionSafetyFacts,
+} from "./finance-execution-safety.js";
+import type { UsEquityPriceNormalizationProvenance } from "./finance-us-equity-price-normalization.js";
 
 export const FINANCE_EXECUTION_RECEIPT_SCHEMA = "lcx_finance_execution_receipt_v1" as const;
 
 export type FinanceOrderSide = "buy" | "sell";
 export type FinanceOrderType = "market" | "limit";
 
+export const FINANCE_DECISION_REFERENCE_SOURCES = [
+  "daily_cycle_candidate",
+  "intraday_signal",
+  "research_receipt",
+  "account_position_maintenance",
+] as const;
+
+/** A durable pointer back to the decision evidence that originated an order. */
+export type FinanceDecisionReference = Readonly<{
+  source: (typeof FINANCE_DECISION_REFERENCE_SOURCES)[number];
+  id: string;
+}>;
+
+/** Audit-only lineage from a research allocation to the target that produced this order. */
+export const financeExecutionResearchLineageSchema = z
+  .object({
+    portfolioPlan: z
+      .object({
+        asOf: z.string().datetime(),
+        validUntil: z.string().datetime(),
+        accountId: z.string().min(1),
+        venue: z.enum(["paper", "alpaca"]),
+        provenance: z
+          .object({
+            kind: z.literal("finance_research_allocation"),
+            receiptId: z.string().min(1),
+            evidenceIds: z.array(z.string().min(1)).min(1),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    targetWeight: z.number().finite().min(0).max(1),
+    contributions: z
+      .array(
+        z
+          .object({
+            strategyId: z.string().min(1),
+            evidenceReceiptId: z.string().min(1),
+            stance: z.enum(["accumulate", "reduce", "neutral"]),
+            sleeveWeight: z.number().finite().min(0).max(1),
+            accountWeight: z.number().finite().min(0).max(1),
+            evidenceIds: z.array(z.string().min(1)).min(1).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+export type FinanceExecutionResearchLineage = z.infer<typeof financeExecutionResearchLineageSchema>;
+
+/** Controller-issued rebalance boundary, rechecked against fresh locked account facts. */
+export const financeExecutionTargetWeightAuthorizationSchema = z
+  .object({
+    targetWeight: z.number().finite().min(0).max(1),
+    driftBandFraction: z.number().finite().min(0).max(1),
+    maxOrderNotional: z.number().finite().nonnegative(),
+  })
+  .strict();
+export type FinanceExecutionTargetWeightAuthorization = z.infer<
+  typeof financeExecutionTargetWeightAuthorizationSchema
+>;
+
 /** The `execution_intent` node. Every field is required: an order path is never inferred. */
 export type FinanceExecutionIntent = Readonly<{
   intentId: string;
+  /** Points to the upstream candidate/signal record; it is not a strategy-performance claim. */
+  decisionRef?: FinanceDecisionReference;
+  /** Non-authorizing provenance only; the controller supplies it, never model JSON. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Controller-only capital boundary; never supplied by model output. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
   instrument: string;
   side: FinanceOrderSide;
   orderType: FinanceOrderType;
@@ -53,6 +130,16 @@ export type FinanceExecutionIntent = Readonly<{
    * with none is worse than not asking for one, because it looks controlled.
    */
   stopPrice?: number;
+  /** Deterministic, non-authorizing source/normalized price provenance. */
+  priceNormalization?: UsEquityPriceNormalizationProvenance;
+  /**
+   * Explicit limit price for a crypto stop-limit protection order.
+   *
+   * Alpaca crypto has no OTO order class. A protected crypto entry therefore submits a
+   * separate sell `stop_limit` after the entry is confirmed filled; this field is required
+   * for that path so the adapter never invents a slippage boundary.
+   */
+  protectionLimitPrice?: number;
   /** Last observed price used for the notional checks. */
   referencePrice: number;
   /** ISO datetime the reference price belongs to. "Now" is never assumed. */
@@ -151,6 +238,23 @@ export type FinanceExecutionFill = Readonly<{
   filledAt: string;
   /** Adapter-declared provenance. A paper fill must never read as a market observation. */
   venueRef: string;
+  /** Explicit stable venue identity, only after terminal status is observed. */
+  terminalOrderIdentity?: Readonly<{ orderId: string; terminal: true }>;
+  /** Venue identity for an independently submitted protective order, when one was requested. */
+  protectionOrder?: FinanceExecutionProtection;
+}>;
+
+export type FinanceExecutionProtection = Readonly<{
+  orderId: string;
+  clientOrderId: string;
+  side: "sell";
+  orderType: "stop_limit";
+  quantity: number;
+  timeInForce: "gtc";
+  stopPrice: number;
+  limitPrice: number;
+  status: string;
+  venueRef: string;
 }>;
 
 export type FinanceExecutionAdapter = Readonly<{
@@ -164,13 +268,26 @@ export type FinanceExecutionAdapter = Readonly<{
   instruments: readonly string[];
   /** Credentials, funding and account binding are a separate authority, never read here. */
   credentialsAuthority: "external";
-  execute: (intent: FinanceExecutionIntent, signal: AbortSignal) => Promise<FinanceExecutionFill>;
+  supportsProtectedReduction?: boolean;
+  execute: (
+    intent: FinanceExecutionIntent,
+    signal: AbortSignal,
+    facts?: FinanceExecutionSafetyFacts,
+  ) => Promise<FinanceExecutionFill>;
 }>;
 
 export type FinanceExecutionReceipt = Readonly<{
   schemaVersion: typeof FINANCE_EXECUTION_RECEIPT_SCHEMA;
   receiptId: string;
+  /** Absent only on legacy receipts; never infer account membership from venue alone. */
+  accountId?: string;
   intentId: string;
+  /** Optional for legacy/manual intents; never infer missing decision lineage from an instrument. */
+  decisionRef?: FinanceDecisionReference;
+  /** Optional for legacy receipts; records research ancestry without granting order authority. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Present on controller target-rebalance orders and persisted for audit. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
   runAuthorizationId: string;
   adapterId: string;
   adapterKind: FinanceExecutionAdapter["kind"];
@@ -191,6 +308,8 @@ export type FinanceExecutionReceipt = Readonly<{
 }>;
 
 export type FinanceOrderPlacementRequest = Readonly<{
+  /** Controller-issued only. Missing context always refuses, including internal paper. */
+  safetyContext?: FinanceExecutionSafetyContext;
   /** Must be `live_execution`; every other mode is refused before any adapter is called. */
   mode: FinanceDecisionMode;
   intent: FinanceExecutionIntent;
@@ -207,6 +326,7 @@ export type FinanceOrderPlacementRequest = Readonly<{
 export type FinanceOrderPlacementResult = Readonly<{
   status: "placed" | "refused";
   refusalReasons: readonly string[];
+  safetyFailure?: FinanceExecutionSafetyFailure;
   receipt?: FinanceExecutionReceipt;
 }>;
 
@@ -216,6 +336,20 @@ function isPositiveFinite(value: unknown): value is number {
 
 function normalizeInstrument(instrument: string): string {
   return instrument.trim().toUpperCase();
+}
+
+function isFinanceDecisionReference(value: unknown): value is FinanceDecisionReference {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const reference = value as Record<string, unknown>;
+  return (
+    Object.keys(reference).toSorted().join(",") === "id,source" &&
+    typeof reference.id === "string" &&
+    reference.id.trim().length > 0 &&
+    typeof reference.source === "string" &&
+    FINANCE_DECISION_REFERENCE_SOURCES.some((source) => source === reference.source)
+  );
 }
 
 /**
@@ -261,6 +395,28 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   if (request.mode !== "live_execution") {
     reasons.push("finance_execution_requires_live_execution_mode");
   }
+  if (intent.side !== "buy" && intent.side !== "sell") {
+    reasons.push("execution_intent_side_invalid");
+  }
+  if (intent.orderType !== "market" && intent.orderType !== "limit") {
+    reasons.push("execution_intent_order_type_invalid");
+  }
+  if (budget.automation !== "attended" && budget.automation !== "unattended") {
+    reasons.push("risk_budget_automation_invalid");
+  }
+  for (const [key, code] of [
+    ["maxOrderNotional", "risk_budget_max_order_notional_invalid"],
+    ["maxInstrumentNotional", "risk_budget_max_instrument_notional_invalid"],
+    ["maxOrdersPerRun", "risk_budget_max_orders_per_run_invalid"],
+  ] as const) {
+    const cap = budget[key];
+    if (
+      cap !== undefined &&
+      (!isPositiveFinite(cap) || (key === "maxOrdersPerRun" && !Number.isSafeInteger(cap)))
+    ) {
+      reasons.push(code);
+    }
+  }
   if (intent.runAuthorizationId.trim().length === 0) {
     reasons.push("explicit_run_authorization_required");
   }
@@ -272,6 +428,30 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
 
   if (intent.intentId.trim().length === 0) {
     reasons.push("execution_intent_id_required");
+  }
+  if (intent.decisionRef !== undefined && !isFinanceDecisionReference(intent.decisionRef)) {
+    reasons.push("execution_intent_decision_reference_invalid");
+  }
+  const researchLineage =
+    intent.researchLineage === undefined
+      ? undefined
+      : financeExecutionResearchLineageSchema.safeParse(intent.researchLineage);
+  if (researchLineage !== undefined && !researchLineage.success) {
+    reasons.push("execution_intent_research_lineage_invalid");
+  }
+  const targetWeightAuthorization =
+    intent.targetWeightAuthorization === undefined
+      ? undefined
+      : financeExecutionTargetWeightAuthorizationSchema.safeParse(intent.targetWeightAuthorization);
+  if (targetWeightAuthorization !== undefined && !targetWeightAuthorization.success) {
+    reasons.push("execution_intent_target_weight_authorization_invalid");
+  }
+  if (
+    researchLineage?.success &&
+    targetWeightAuthorization?.success &&
+    researchLineage.data.targetWeight !== targetWeightAuthorization.data.targetWeight
+  ) {
+    reasons.push("execution_intent_target_weight_lineage_mismatch");
   }
   if (intent.rationale.trim().length === 0) {
     reasons.push("execution_intent_rationale_required");
@@ -311,6 +491,24 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
         : intent.stopPrice <= intent.referencePrice)
     ) {
       reasons.push("execution_intent_stop_price_on_wrong_side");
+    }
+  }
+
+  if (intent.protectionLimitPrice !== undefined) {
+    if (!isPositiveFinite(intent.protectionLimitPrice)) {
+      reasons.push("execution_intent_protection_limit_price_must_be_positive");
+    }
+    if (intent.stopPrice === undefined) {
+      reasons.push("execution_intent_protection_limit_requires_stop_price");
+    } else if (
+      isPositiveFinite(intent.stopPrice) &&
+      isPositiveFinite(intent.protectionLimitPrice) &&
+      intent.protectionLimitPrice > intent.stopPrice
+    ) {
+      reasons.push("execution_intent_protection_limit_price_above_stop");
+    }
+    if (intent.side !== "buy") {
+      reasons.push("execution_intent_protection_limit_forbidden_for_sell");
     }
   }
 
@@ -384,6 +582,109 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   return reasons;
 }
 
+/** One deterministic constructor for normal completion and durable confirmed-claim recovery. */
+export function buildFinanceExecutionReceipt(params: {
+  intent: FinanceExecutionIntent;
+  adapter: Pick<FinanceExecutionAdapter, "id" | "venue" | "kind">;
+  fill: FinanceExecutionFill;
+  recordedAt: string;
+  accountId?: string;
+  /** Recovery of already persisted receipts only; never selected by placement. */
+  identityVersion?: "legacy" | "account-v1";
+}): FinanceExecutionReceipt {
+  const { intent, adapter, fill, recordedAt: recordedAtInput, accountId } = params;
+  const notional = intent.referencePrice * intent.quantity;
+  const recordedAt = recordedAtInput;
+  const legacyIdentity = accountId === undefined || params.identityVersion === "legacy";
+  const receiptId = `exec-${createHash("sha256")
+    .update(
+      !legacyIdentity
+        ? JSON.stringify(
+            adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal
+              ? [accountId, adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId]
+              : [
+                  accountId,
+                  adapter.id,
+                  adapter.venue,
+                  intent.runAuthorizationId,
+                  intent.intentId,
+                  intent.instrument,
+                  intent.side,
+                  intent.quantity,
+                  recordedAt,
+                ],
+          )
+        : adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal === true
+          ? JSON.stringify([adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId])
+          : [
+              intent.intentId,
+              intent.instrument,
+              intent.side,
+              String(intent.quantity),
+              recordedAt,
+            ].join("|"),
+    )
+    .digest("hex")
+    .slice(0, 24)}`;
+
+  return Object.freeze({
+    schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+    receiptId,
+    ...(accountId === undefined ? {} : { accountId }),
+    intentId: intent.intentId,
+    ...(intent.decisionRef === undefined ? {} : { decisionRef: intent.decisionRef }),
+    ...(intent.researchLineage === undefined ? {} : { researchLineage: intent.researchLineage }),
+    ...(intent.targetWeightAuthorization === undefined
+      ? {}
+      : { targetWeightAuthorization: intent.targetWeightAuthorization }),
+    runAuthorizationId: intent.runAuthorizationId,
+    adapterId: adapter.id,
+    adapterKind: adapter.kind,
+    venue: adapter.venue,
+    instrument: normalizeInstrument(intent.instrument),
+    side: intent.side,
+    orderType: intent.orderType,
+    quantity: intent.quantity,
+    ...(intent.limitPrice === undefined ? {} : { limitPrice: intent.limitPrice }),
+    referencePrice: intent.referencePrice,
+    referencePriceAt: intent.referencePriceAt,
+    notional,
+    fill,
+    executionAuthority: "declared_execution_adapter_required",
+    recordedAt,
+  });
+}
+
+/** Detached diagnostic observations of original handoffs; never dispatch or execution authority. */
+export type FinanceExecutionObservation = Readonly<{
+  node:
+    | "execution_intent"
+    | "explicit_run_authorization"
+    | "declared_execution_adapter"
+    | "order_placement"
+    | "execution_receipt"
+    | "position_ledger";
+  input?: unknown;
+  output?: unknown;
+  status?: "refused";
+  reason?: string;
+}>;
+export type FinanceExecutionObserver = (observation: FinanceExecutionObservation) => void;
+
+export function observeFinanceExecution(
+  observer: FinanceExecutionObserver | undefined,
+  observation: FinanceExecutionObservation,
+): void {
+  if (!observer) {
+    return;
+  }
+  try {
+    observer(structuredClone(observation));
+  } catch {
+    // A diagnostic sink cannot change the native gate, settlement, or ledger result.
+  }
+}
+
 /**
  * Place one order through a declared adapter, or refuse with named reasons.
  *
@@ -392,8 +693,33 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
  */
 export async function placeFinanceOrder(
   request: FinanceOrderPlacementRequest,
+  observer?: FinanceExecutionObserver,
 ): Promise<FinanceOrderPlacementResult> {
+  // Keep the capability object identity, but snapshot all model/caller mutable trade data
+  // before any await; checks, execution and receipt must describe one intent.
+  request = {
+    ...request,
+    intent: Object.freeze(structuredClone(request.intent)),
+    budget: Object.freeze(structuredClone(request.budget)),
+    adapters: request.adapters.map((adapter) => {
+      const snapshot = {
+        ...adapter,
+        instruments: Object.freeze([...adapter.instruments]),
+        orderTypes: Object.freeze([...adapter.orderTypes]),
+      };
+      snapshot.execute = adapter.execute.bind(snapshot);
+      return Object.freeze(snapshot);
+    }),
+  };
+  observeFinanceExecution(observer, { node: "execution_intent", output: request.intent });
   const refusalReasons = collectRefusalReasons(request);
+  observeFinanceExecution(observer, {
+    node: "explicit_run_authorization",
+    input: request.intent,
+    ...(refusalReasons.length
+      ? { status: "refused", reason: refusalReasons.join("; ") }
+      : { output: request.intent }),
+  });
   if (refusalReasons.length > 0) {
     return Object.freeze({
       status: "refused" as const,
@@ -411,41 +737,63 @@ export async function placeFinanceOrder(
   }
 
   const { intent } = request;
-  const fill = await adapter.execute(intent, request.signal ?? new AbortController().signal);
-  const notional = intent.referencePrice * intent.quantity;
-  const recordedAt = request.recordedAt ?? new Date().toISOString();
-  const receiptId = `exec-${createHash("sha256")
-    .update(
-      [intent.intentId, intent.instrument, intent.side, String(intent.quantity), recordedAt].join(
-        "|",
-      ),
-    )
-    .digest("hex")
-    .slice(0, 24)}`;
-
+  observeFinanceExecution(observer, {
+    node: "declared_execution_adapter",
+    input: intent,
+    output: intent,
+  });
+  let receiptInput: FinanceExecutionFill | undefined;
+  let settled = false;
+  const safety = await withFinanceExecutionSafety({
+    context: request.safetyContext,
+    intent,
+    budget: request.budget,
+    adapterId: adapter.id,
+    venue: adapter.venue,
+    adapterKind: adapter.kind,
+    supportsProtectedReduction: adapter.supportsProtectedReduction,
+    signal: request.signal,
+    recordedAt: request.recordedAt,
+    buildReceipt: (fill, recordedAt, accountId) => {
+      if (observer) {
+        receiptInput = structuredClone(fill);
+      }
+      return buildFinanceExecutionReceipt({ intent, adapter, fill, recordedAt, accountId });
+    },
+    execute: observer
+      ? async (signal, facts) => {
+          observeFinanceExecution(observer, { node: "order_placement", input: intent });
+          const fill = await adapter.execute(intent, signal, facts);
+          if (!settled && !signal.aborted) {
+            observeFinanceExecution(observer, { node: "order_placement", output: fill });
+          }
+          return fill;
+        }
+      : (signal, facts) => adapter.execute(intent, signal, facts),
+  });
+  settled = true;
+  if (!safety.ok) {
+    observeFinanceExecution(observer, {
+      node: receiptInput === undefined ? "order_placement" : "execution_receipt",
+      input: receiptInput ?? intent,
+      status: "refused",
+      reason: safety.reasons.join("; "),
+    });
+    return Object.freeze({
+      status: "refused" as const,
+      refusalReasons: Object.freeze(safety.reasons),
+      ...(safety.failure ? { safetyFailure: safety.failure } : {}),
+    });
+  }
+  observeFinanceExecution(observer, {
+    node: "execution_receipt",
+    input: receiptInput,
+    output: safety.receipt,
+  });
   return Object.freeze({
     status: "placed" as const,
     refusalReasons: Object.freeze([] as const),
-    receipt: Object.freeze({
-      schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
-      receiptId,
-      intentId: intent.intentId,
-      runAuthorizationId: intent.runAuthorizationId,
-      adapterId: adapter.id,
-      adapterKind: adapter.kind,
-      venue: adapter.venue,
-      instrument: normalizeInstrument(intent.instrument),
-      side: intent.side,
-      orderType: intent.orderType,
-      quantity: intent.quantity,
-      ...(intent.limitPrice === undefined ? {} : { limitPrice: intent.limitPrice }),
-      referencePrice: intent.referencePrice,
-      referencePriceAt: intent.referencePriceAt,
-      notional,
-      fill,
-      executionAuthority: "declared_execution_adapter_required",
-      recordedAt,
-    }),
+    receipt: safety.receipt,
   });
 }
 

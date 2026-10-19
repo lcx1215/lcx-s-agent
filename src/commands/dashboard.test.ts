@@ -35,6 +35,7 @@ function mockSnapshot(params?: {
   token?: string;
   bind?: GatewayBindMode;
   customBindHost?: string;
+  tlsEnabled?: boolean;
 }) {
   const token = params?.token ?? "abc123";
   mocks.readConfigFileSnapshot.mockResolvedValue({
@@ -48,6 +49,7 @@ function mockSnapshot(params?: {
         auth: { token },
         bind: params?.bind,
         customBindHost: params?.customBindHost,
+        tls: { enabled: params?.tlsEnabled === true },
       },
     },
     issues: [],
@@ -55,8 +57,8 @@ function mockSnapshot(params?: {
   });
   mocks.resolveGatewayPort.mockReturnValue(18789);
   mocks.resolveControlUiLinks.mockReturnValue({
-    httpUrl: "http://127.0.0.1:18789/",
-    wsUrl: "ws://127.0.0.1:18789",
+    httpUrl: `${params?.tlsEnabled === true ? "https" : "http"}://127.0.0.1:18789/`,
+    wsUrl: `${params?.tlsEnabled === true ? "wss" : "ws"}://127.0.0.1:18789`,
   });
   mocks.copyToClipboard.mockResolvedValue(true);
 }
@@ -85,6 +87,7 @@ describe("dashboardCommand bind selection", () => {
       bind: "loopback",
       customBindHost: undefined,
       basePath: undefined,
+      tlsEnabled: false,
     });
   });
 
@@ -98,6 +101,7 @@ describe("dashboardCommand bind selection", () => {
       bind: "custom",
       customBindHost: "10.0.0.5",
       basePath: undefined,
+      tlsEnabled: false,
     });
   });
 
@@ -111,6 +115,24 @@ describe("dashboardCommand bind selection", () => {
       bind: "tailnet",
       customBindHost: undefined,
       basePath: undefined,
+      tlsEnabled: false,
     });
+  });
+
+  it("preserves HTTPS for a TLS-enabled Gateway", async () => {
+    mockSnapshot({ bind: "lan", tlsEnabled: true });
+
+    await dashboardCommand(runtime, { noOpen: true });
+
+    expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
+      port: 18789,
+      bind: "loopback",
+      customBindHost: undefined,
+      basePath: undefined,
+      tlsEnabled: true,
+    });
+    expect(runtime.log).toHaveBeenCalledWith(
+      "Dashboard URL: https://127.0.0.1:18789/#token=abc123",
+    );
   });
 });

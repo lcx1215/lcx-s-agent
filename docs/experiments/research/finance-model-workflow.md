@@ -5,6 +5,12 @@ The canonical finance role contracts in `src/shared/lcx-ontology.ts` now drive
 workflow with `--workflow-models`; omit `--live` to inspect its model allocation
 without inference. Add `--live` only for a bounded real source/model run.
 
+This explicit specialist workflow is an available research route, not a
+per-order prerequisite. Keep routine judgments in the existing trade-review
+tool loop; invoke this workflow when the task needs its specialist contracts.
+Its role and review boundaries remain in force once selected. See the
+[lifecycle owner map](https://github.com/lcx1215/lcx-s-agent/blob/main/ops/architecture/finance-automatic-lifecycle-owner-map.md).
+
 | Responsibility                               | Candidate selection                       | Admission boundary                          |
 | -------------------------------------------- | ----------------------------------------- | ------------------------------------------- |
 | Intake                                       | Deterministic supplied-task/evidence plan | No model inference claim                    |
@@ -85,26 +91,46 @@ training plan back to candidate repair before another identical evaluation.
 
 ## Local preprocessing on an 8 GB Mac
 
-The registered `local_specialist` tool runs small, offline base weights before
-the research workflow. `classify`, `extract` and `summarize` currently select
-Qwen3.5-2B-4bit under `~/.openclaw/models/local-specialists`. Inputs are capped at
-4,000 characters and outputs at 512 tokens, with a 90-second deadline. No cloud
-fallback is implicit. The models are loaded on demand and the process exits
-after each invocation; text and vision adapters share an OS inference lock.
-The text runner limits MLX allocation to 3 GiB and cache to 128 MiB; this is not
-a guarantee about total process or system memory. Recurring training remains a
-separate owner and must not be started alongside local inference on this host.
+The registered `local_specialist` tool is optional, agent-supervised offline
+preprocessing. Prefer fixed-label batches or source-complete quotation extraction
+when reviewing those records would otherwise consume meaningful primary-model
+work. Do not add an inference round trip for trivial copying, whitespace cleanup
+or arithmetic. Use deterministic cleaning and numerical tools for those tasks.
+Free-form summaries remain unqualified and return the original source.
 
-Classification is a suggested label, never authority to discard source evidence.
-Extracted quotations must be exact substrings of the input; completeness and
-summary accuracy still require review. Base outputs may unwrap one complete JSON
-code fence, but cannot repair missing fields, incomplete JSON or surrounding
-commentary. Receipts distinguish raw contract compliance from usable content and
-never claim training absorption. Receipts are written under the workspace's
-`state/local-specialist-runs` directory.
+`classify` and `extract` select Qwen3.5-2B-4bit under
+`~/.openclaw/models/local-specialists`. The resident service loads weights on the
+first inference and reuses them. A batch permits at most 32 records, 4,000
+characters per record and 32,000 overall, with a 60-second batch deadline,
+15-second inference deadline per item and 512 output tokens. No cloud fallback
+is implicit; failures preserve the source for the supervising agent. See
+[local data workers](../../tools/local-data-workers.md) for the existing worker,
+process restart and cancellation contracts.
+
+Text and vision share an OS inference lock. The text runner limits MLX allocation
+to 3 GiB and cache to 128 MiB; this does not bound total system memory. Training
+remains a separate owner and must not run alongside inference on this host.
+
+Classification supplies a suggested label, never authority to discard evidence.
+Extraction must preserve all non-whitespace source characters as exact quotes,
+including signs, units and caveats. The primary agent still reviews the source.
+A normalized JSON result is distinct from raw contract compliance; neither proves
+semantic quality across tasks, training absorption or an efficiency gain.
+Receipts retain these distinctions under `state/local-specialist-runs`.
 
 Qwen3.5-0.8B-4bit is a smaller installed candidate, not an enabled fallback: its
 classification quality did not justify automatic use. The existing Qwen3-0.6B
 training/LoRA lane and Qwen3-VL image adapter retain their roles. Model weight
 downloads are separate from the Git checkout and record source revision and
 SHA-256 verification; a cached model alone is not an active route.
+
+## Explicit model roles
+
+Declare `tools.financeModelSlots` with `fast`, `reasoning`, and `review` model
+references in trusted host configuration. These select the existing workflow
+slots for simple extraction, complex reasoning, and independent review. They do
+not replace the primary agent or grant execution authority. Explicit per-run
+slots take precedence; historical fleet slot configuration remains compatible.
+A distinct author and reviewer preserve model diversity, without proving quality.
+Auxiliary local text and structured decision tools remain on-demand tools;
+financial arithmetic and execution gates remain deterministic.

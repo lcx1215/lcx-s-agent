@@ -19,7 +19,7 @@ export function handleAutoCompactionStart(ctx: EmbeddedPiSubscribeContext) {
   });
 
   // Run before_compaction plugin hook (fire-and-forget)
-  const hookRunner = getGlobalHookRunner();
+  const hookRunner = ctx.params.disableHooks ? undefined : getGlobalHookRunner();
   if (hookRunner?.hasHooks("before_compaction")) {
     void hookRunner
       .runBeforeCompaction(
@@ -67,7 +67,7 @@ export function handleAutoCompactionEnd(
 
   // Run after_compaction plugin hook (fire-and-forget)
   if (!willRetry) {
-    const hookRunnerEnd = getGlobalHookRunner();
+    const hookRunnerEnd = ctx.params.disableHooks ? undefined : getGlobalHookRunner();
     if (hookRunnerEnd?.hasHooks("after_compaction")) {
       void hookRunnerEnd
         .runAfterCompaction(

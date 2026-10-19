@@ -72,6 +72,7 @@ lcx gateway
 {
   gateway: {
     bind: "tailnet",
+    tls: { enabled: true },
     controlUi: { enabled: true },
     auth: { mode: "token", token: "your-token" },
   },
@@ -86,7 +87,7 @@ lcx gateway
 
 打开：
 
-- `http://<tailscale-ip>:18789/`（或你配置的 `gateway.controlUi.basePath`）
+- `https://<tailscale-ip>:18789/`（或你配置的 `gateway.controlUi.basePath`）
 
 ### 公共互联网（Funnel）
 

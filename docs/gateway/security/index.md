@@ -622,7 +622,7 @@ If you load canvas content in a normal browser, treat it like any other untruste
 Bind mode controls where the Gateway listens:
 
 - `gateway.bind: "loopback"` (default): only local clients can connect.
-- Non-loopback binds (`"lan"`, `"tailnet"`, `"custom"`) expand the attack surface. Only use them with a shared token/password and a real firewall.
+- Every direct non-loopback bind (`lan`, `custom`, or `tailnet`) expands the attack surface and requires a shared token/password plus `gateway.tls.enabled: true`; `auto` also requires TLS if it resolves beyond loopback. Binding a socket to a Tailnet IP does not prove every inbound packet arrived through WireGuard. Keep SSH/Tailscale Serve on loopback when possible.
 
 Rules of thumb:
 

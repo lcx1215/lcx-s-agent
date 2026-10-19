@@ -14,7 +14,7 @@ vi.mock("./subagent-announce.js", () => ({
 
 vi.mock("./subagent-registry.store.js", () => ({
   loadSubagentRegistryFromDisk: vi.fn(() => new Map()),
-  saveSubagentRegistryToDisk: vi.fn(() => {}),
+  saveSubagentRegistryToDisk: vi.fn(() => true),
 }));
 
 let subagentRegistry: typeof import("./subagent-registry.js");

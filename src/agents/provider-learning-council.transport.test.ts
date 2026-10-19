@@ -1,8 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
   agentCommandMock: vi.fn(),
+  gatewayMock: vi.fn(),
   createDefaultDepsMock: vi.fn(() => ({})),
+}));
+
+vi.mock("../gateway/call.js", () => ({
+  callGateway: (...args: unknown[]) => hoisted.gatewayMock(...args),
+  randomIdempotencyKey: () => "fixture-key",
 }));
 
 vi.mock("../commands/agent.js", () => ({
@@ -17,7 +26,14 @@ vi.mock("../runtime.js", () => ({
   defaultRuntime: { log: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-import { __testing, resolveLearningCouncilTransport } from "./provider-learning-council.js";
+import { buildLearningCouncilArtifactJsonRelativePath } from "../hooks/bundled/lobster-brain-registry.js";
+import { resolveMinimaxDefaultTextModelId } from "./minimax-model-catalog.js";
+import {
+  __testing,
+  resolveLearningCouncilTransport,
+  resolveLearningCouncilDisabledRoles,
+  runExternalLearningCouncil,
+} from "./provider-learning-council.js";
 
 describe("learning council transport", () => {
   beforeEach(() => {
@@ -69,7 +85,10 @@ describe("learning council transport", () => {
     expect(response).toEqual({
       status: "ok",
       summary: "completed",
-      result: { payloads: [{ text: "  kimi says hi  " }] },
+      result: {
+        payloads: [{ text: "  kimi says hi  " }, { text: "   " }, {}],
+        meta: { durationMs: 1 },
+      },
     });
     expect(hoisted.agentCommandMock).toHaveBeenCalledTimes(1);
     const [opts] = hoisted.agentCommandMock.mock.calls[0] as [Record<string, unknown>];
@@ -99,5 +118,353 @@ describe("learning council transport", () => {
     });
 
     expect(response.result?.payloads).toEqual([]);
+  });
+});
+
+const agentMeta = { provider: "moonshot", model: "kimi-k2.6", sessionId: "fixture" };
+const roleParams = {
+  cfg: { agents: { defaults: { models: { "moonshot/kimi-k2.6": {} } } } },
+  role: "kimi" as const,
+  userMessage: "synthetic",
+  routeAgentId: "main",
+  baseSessionKey: "fixture",
+  timeoutSeconds: 1,
+  thinking: "off" as const,
+  extraSystemPrompt: "",
+};
+
+describe.each(["in-process", "gateway"] as const)(
+  "council result evidence over %s",
+  (transport) => {
+    beforeEach(() => {
+      vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "");
+    });
+    async function run(result: unknown, status = "ok", summary = "completed") {
+      hoisted.agentCommandMock.mockResolvedValue(result);
+      hoisted.gatewayMock.mockResolvedValue({ status, summary, result });
+      return __testing.runLearningCouncilRole({ ...roleParams, transport });
+    }
+    it("uses the configured replacement for a legacy role without claiming the old provider", async () => {
+      vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "custom-api-deepseek-com/deepseek-v4-pro");
+      const value = await run({
+        payloads: [{ text: "answer" }],
+        meta: {
+          agentMeta: {
+            provider: "custom-api-deepseek-com",
+            model: "deepseek-v4-pro",
+            sessionId: "fixture",
+          },
+        },
+      });
+      expect(value).toMatchObject({
+        success: true,
+        model: "custom-api-deepseek-com/deepseek-v4-pro",
+        providerFamily: "custom-api-deepseek-com",
+        requestedModelHealth: "healthy",
+      });
+      expect(value.heading).toBe("Synthesis (custom-api-deepseek-com/deepseek-v4-pro)");
+    });
+    it("keeps the same role usable with another configured API", async () => {
+      vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "replacement-provider/reviewer-v1");
+      const value = await run({
+        payloads: [{ text: "answer" }],
+        meta: {
+          agentMeta: {
+            provider: "replacement-provider",
+            model: "reviewer-v1",
+            sessionId: "fixture",
+          },
+        },
+      });
+      expect(value).toMatchObject({
+        success: true,
+        model: "replacement-provider/reviewer-v1",
+        providerFamily: "replacement-provider",
+        requestedModelHealth: "healthy",
+      });
+      expect(value.heading).toBe("Synthesis (replacement-provider/reviewer-v1)");
+    });
+    it("reports actual matching model and valid answer as healthy", async () => {
+      const value = await run({ payloads: [{ text: "answer" }], meta: { agentMeta } });
+      expect(value).toMatchObject({
+        success: true,
+        text: "answer",
+        actualProvider: "moonshot",
+        actualModel: "kimi-k2.6",
+        requestedModelHealth: "healthy",
+      });
+    });
+    it.each([
+      { payloads: [{ text: "provider exploded", isError: true }], meta: { agentMeta } },
+      {
+        payloads: [{ text: "answer" }],
+        meta: { agentMeta, error: { kind: "retry_limit", message: "failed" } },
+      },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, stopReason: "error" } },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, timedOut: true } },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, aborted: true } },
+      {
+        payloads: [{ text: "answer" }],
+        meta: { agentMeta, pendingToolCalls: [{ id: "1", name: "tool", arguments: "{}" }] },
+      },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, stopReason: "tool_calls" } },
+      { payloads: [] },
+    ])("rejects nonfinal/error/empty output %#", async (result) => {
+      expect(await run(result)).toMatchObject({ success: false, text: "" });
+    });
+    it("accepts only the completed-prompt compaction timeout exception", async () => {
+      const meta = {
+        agentMeta,
+        timedOut: true,
+        aborted: true,
+        timedOutDuringCompaction: true,
+        promptCompleted: true,
+      };
+      expect(await run({ payloads: [{ text: "answer" }], meta })).toMatchObject({ success: true });
+      expect(
+        await run({ payloads: [{ text: "answer" }], meta: { ...meta, promptCompleted: false } }),
+      ).toMatchObject({ success: false });
+      expect(await run({ payloads: [{ text: "error", isError: true }], meta })).toMatchObject({
+        success: false,
+      });
+      expect(
+        await run({
+          payloads: [{ text: "answer" }],
+          meta: { ...meta, error: { kind: "retry_limit", message: "failed" } },
+        }),
+      ).toMatchObject({ success: false });
+    });
+    it("records fallback separately from requested model health", async () => {
+      expect(
+        await run({
+          payloads: [{ text: "answer" }],
+          meta: { agentMeta: { ...agentMeta, provider: "different", model: "fallback" } },
+        }),
+      ).toMatchObject({
+        success: true,
+        model: "moonshot/kimi-k2.6",
+        actualProvider: "different",
+        actualModel: "fallback",
+        requestedModelHealth: "mismatched",
+      });
+    });
+    it("does not invent model identity without runtime metadata", async () => {
+      expect(await run({ payloads: [{ text: "answer" }] })).toMatchObject({
+        success: true,
+        requestedModelHealth: "unknown",
+        actualProvider: undefined,
+        actualModel: undefined,
+      });
+    });
+  },
+);
+
+it("requires gateway ok status and never uses its control summary as answer text", async () => {
+  hoisted.gatewayMock.mockResolvedValue({
+    status: "error",
+    result: { payloads: [{ text: "answer" }] },
+  });
+  expect(
+    await __testing.runLearningCouncilRole({ ...roleParams, transport: "gateway" }),
+  ).toMatchObject({ success: false });
+  hoisted.gatewayMock.mockResolvedValue({ status: "ok", summary: "completed" });
+  expect(
+    await __testing.runLearningCouncilRole({ ...roleParams, transport: "gateway" }),
+  ).toMatchObject({ success: false, text: "" });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("council visible evidence labels", () => {
+  const role = (name: "kimi" | "deepseek", health: "healthy" | "mismatched" | "unknown") => ({
+    role: name,
+    capability: "synthesis" as const,
+    model: "requested/model",
+    providerFamily: "requested",
+    heading: name,
+    success: true,
+    text: "usable content",
+    requestedModelHealth: health,
+    ...(health === "unknown"
+      ? {}
+      : {
+          actualProvider: health === "healthy" ? "requested" : "replacement",
+          actualModel: "model",
+        }),
+  });
+  it("describes only attempted role outputs when MiniMax is disabled", () => {
+    const lead = __testing.renderLearningCouncilReadableLead({
+      userMessage: "fixture",
+      status: "full",
+      roles: [role("kimi", "healthy"), role("deepseek", "healthy")],
+      rescues: [],
+      mutableFactWarnings: [],
+      sourceCoverageWarnings: [],
+    });
+    expect(lead).toContain("本轮角色产出：kimi、deepseek");
+    expect(lead).not.toContain("三模型");
+    expect(lead).not.toContain("minimax");
+  });
+  it("keeps fallback content useful while stating unproven requested-model health", () => {
+    const lead = __testing.renderLearningCouncilReadableLead({
+      userMessage: "fixture",
+      status: "full",
+      roles: [role("kimi", "mismatched"), role("deepseek", "unknown")],
+      rescues: [],
+      mutableFactWarnings: [],
+      sourceCoverageWarnings: [],
+    });
+    expect(lead).toContain("本轮角色产出：kimi、deepseek");
+    expect(lead).toContain("替代模型 replacement/model");
+    expect(lead).toContain("deepseek: 请求模型健康未证实 (unknown)");
+  });
+  it("labels review inputs with actual model or unknown rather than requested configuration", () => {
+    const prompt = __testing.buildMiniMaxSystemPrompt({
+      userMessage: "fixture",
+      kimiText: "usable",
+      kimiModel: __testing.actualCouncilModel(role("kimi", "mismatched")),
+      deepseekText: "usable",
+      deepseekModel: __testing.actualCouncilModel(role("deepseek", "unknown")),
+    });
+    expect(prompt).toContain("runtime model: replacement/model");
+    expect(prompt).toContain("runtime model: unknown");
+    expect(prompt).not.toContain("requested/model");
+  });
+});
+
+describe("council optional role retirement", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "");
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL", "");
+    vi.stubEnv("LCX_LEARNING_COUNCIL_TRANSPORT", "in-process");
+    hoisted.agentCommandMock.mockReset();
+    hoisted.gatewayMock.mockReset();
+  });
+  const cfg = {
+    agents: { defaults: { models: { "custom-api-deepseek-com/deepseek-v4-flash": {} } } },
+  };
+  it("retires unselected Kimi and MiniMax roles", () => {
+    expect(resolveLearningCouncilDisabledRoles(cfg)).toEqual(["kimi", "minimax"]);
+  });
+  it.each(["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"])(
+    "keeps explicitly allowed Kimi %s",
+    (model) => {
+      expect(
+        resolveLearningCouncilDisabledRoles({ agents: { defaults: { models: { [model]: {} } } } }),
+      ).toEqual(["minimax"]);
+    },
+  );
+  it.each(["minimax", "minimax-portal"])("keeps explicitly allowed %s", (provider) => {
+    expect(
+      resolveLearningCouncilDisabledRoles({
+        agents: {
+          defaults: { models: { [`${provider}/${resolveMinimaxDefaultTextModelId()}`]: {} } },
+        },
+      }),
+    ).toEqual(["kimi"]);
+  });
+  it("keeps trusted replacement overrides ahead of the allowlist", () => {
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "replacement/synthesis");
+    vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL", "replacement/challenge");
+    expect(resolveLearningCouncilDisabledRoles(cfg)).toEqual([]);
+  });
+  it("never resolves the retired Kimi fallback on a direct role attempt", async () => {
+    await expect(__testing.runLearningCouncilRole({ ...roleParams, cfg })).rejects.toThrow(
+      /retired/u,
+    );
+    expect(hoisted.agentCommandMock).not.toHaveBeenCalled();
+  });
+  it("executes only the selected extraction model and records retired roles as skipped", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-retirement-"));
+    try {
+      hoisted.agentCommandMock.mockResolvedValue({
+        payloads: [{ text: "fixture answer" }],
+        meta: { agentMeta: { provider: "custom-api-deepseek-com", model: "deepseek-v4-flash" } },
+      });
+      const reply = await runExternalLearningCouncil({
+        cfg,
+        userMessage: "fixture",
+        routeAgentId: "main",
+        sessionKey: "fixture",
+        messageId: "retirement",
+        workspaceDir,
+      });
+      expect(hoisted.agentCommandMock).toHaveBeenCalledTimes(1);
+      expect(hoisted.agentCommandMock.mock.calls[0]?.[0]).toMatchObject({
+        model: "custom-api-deepseek-com/deepseek-v4-flash",
+      });
+      expect(hoisted.gatewayMock).not.toHaveBeenCalled();
+      expect(reply).toContain("本轮角色产出：deepseek；失败或未完成：无");
+      const artifact = JSON.parse(
+        await fs.readFile(
+          path.join(workspaceDir, buildLearningCouncilArtifactJsonRelativePath("retirement")),
+          "utf8",
+        ),
+      ) as {
+        status: string;
+        skippedRoles: Array<{ role: string }>;
+        roles: Array<{ role: string }>;
+        rescues: unknown[];
+      };
+      expect(artifact.status).toBe("full");
+      expect(artifact.skippedRoles.map((entry) => entry.role)).toEqual(["kimi", "minimax"]);
+      expect(artifact.roles.map((entry) => entry.role)).toEqual(["deepseek"]);
+      expect(artifact.rescues).toEqual([]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("original council caller cancellation", () => {
+  it("passes the caller signal to the original agent command and refuses late success before artifact persistence", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-cancel-"));
+    const controller = new AbortController();
+    let release!: (value: unknown) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    hoisted.agentCommandMock.mockReset();
+    hoisted.agentCommandMock.mockImplementation((opts: { abortSignal?: AbortSignal }) => {
+      expect(opts.abortSignal).toBe(controller.signal);
+      entered();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    vi.stubEnv("LCX_LEARNING_COUNCIL_TRANSPORT", "in-process");
+    try {
+      const operation = runExternalLearningCouncil({
+        cfg: {
+          agents: { defaults: { models: { "custom-api-deepseek-com/deepseek-v4-flash": {} } } },
+        },
+        userMessage: "offline cancellation evidence",
+        routeAgentId: "main",
+        sessionKey: "offline-cancel",
+        messageId: "cancelled",
+        workspaceDir,
+        abortSignal: controller.signal,
+      });
+      const failed = expect(operation).rejects.toThrow("learning_council_cancelled");
+      await started;
+      controller.abort();
+      release({
+        payloads: [{ text: "late result must not become completion" }],
+        meta: { agentMeta: { provider: "custom-api-deepseek-com", model: "deepseek-v4-flash" } },
+      });
+      await failed;
+      expect(hoisted.agentCommandMock).toHaveBeenCalledTimes(1);
+      await expect(
+        fs.access(
+          path.join(workspaceDir, buildLearningCouncilArtifactJsonRelativePath("cancelled")),
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 });

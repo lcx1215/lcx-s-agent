@@ -6,6 +6,25 @@ import {
 } from "./finance-strategy-method-kit.js";
 
 describe("finance strategy method kit", () => {
+  it.each([
+    "Gamma Scalping",
+    "gamma-scalping",
+    "long straddle",
+    "delta hedging",
+    "波动收割机",
+    "伽马跨式研究",
+  ])("routes %s to the existing M11 method", (ask) => {
+    const kit = buildFinanceStrategyMethodKit(ask);
+    expect(kit.selectedModules).toEqual(["M01", "M11"]);
+    expect(kit.rules.M11?.join(" ")).toContain(
+      "Continuous delta hedging does not eliminate gamma P&L",
+    );
+    expect(kit.rules.M11?.join(" ")).toContain("self-financing ledger");
+    expect(kit.rules.M11?.join(" ")).toContain(
+      "equity Paper authority does not authorize option legs",
+    );
+    expect(kit.prompt).toContain("executionAuthority=none");
+  });
   it("exposes the frozen M01/M02/M12 contract used by model requests", () => {
     const kit = buildFinanceStrategyMethodKit("回测三年美股表现");
     expect(kit.schemaVersion).toBe(FINANCE_STRATEGY_METHOD_KIT_SCHEMA_VERSION);
@@ -14,11 +33,12 @@ describe("finance strategy method kit", () => {
     expect(kit.rules.M01?.join(" ")).toContain("point-in-time");
     expect(kit.rules.M12?.join(" ")).toContain("common factor");
     expect(kit.prompt).toContain("executionAuthority=none");
-    expect(kit.catalog.methods).toHaveLength(12);
-    expect(kit.catalog.directions).toHaveLength(28);
+    expect(kit.catalog.methods).toHaveLength(13);
+    expect(kit.catalog.directions).toHaveLength(29);
     expect(Object.keys(kit.catalog.operationalContracts)).toEqual([...STRATEGY_METHOD_IDS]);
     expect(kit.prompt).toContain("M11 波动率相对价值");
     expect(kit.prompt).toContain("D28 融资拥挤与流动性压力");
+    expect(kit.prompt).toContain("D29 商品期货跨品种价差");
     expect(Object.isFrozen(kit)).toBe(true);
   });
   it("does not turn a factual request into a trend backtest", () => {
@@ -50,5 +70,31 @@ describe("finance strategy method kit", () => {
     expect(kit.rules.M11?.join(" ")).toContain("完整同步曲面");
     expect(kit.prompt).toContain("M10 尾部保护与保险预算");
     expect(kit.prompt).toContain("M11 波动率相对价值");
+  });
+
+  it("routes commodity pair-spread questions to a bounded, discoverable M13 contract", () => {
+    const articleTitle = buildFinanceStrategyMethodKit(
+      "从相关性到价差：怎样建立一个商品套利组合？",
+    );
+    const kit = buildFinanceStrategyMethodKit(
+      "研究豆油和棕榈油的商品期货套利组合，评估价差是否可能回归",
+    );
+    const rules = kit.rules.M13?.join(" ") ?? "";
+
+    expect(articleTitle.selectedModules).toEqual(["M01", "M12", "M13"]);
+    expect(kit.selectedModules).toEqual(["M01", "M12", "M13"]);
+    expect(kit.prompt).toContain("M13 商品期货配对价差");
+    expect(rules).toContain("pair_spread_diagnostics");
+    expect(rules).toContain("pair_spread_reversion_replay");
+    expect(rules).toContain("If quant_lab is available");
+    expect(rules).toContain("frozen");
+    expect(rules).toContain("next-observation close proxies");
+    expect(rules).toContain("no overlapping events");
+    expect(rules).toContain("supplied, synchronized, timestamped observations");
+    expect(rules).toContain("event-based recovery");
+    expect(rules).toContain("integer lots");
+    expect(rules).toContain("commodity-pair-y-maturity-panel/README.md");
+    expect(rules).toContain("clean preregistered out-of-sample claim");
+    expect(rules).toContain("no pair selection, signal, contract-level backtest, or execution");
   });
 });

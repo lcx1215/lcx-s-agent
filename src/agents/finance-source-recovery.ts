@@ -37,6 +37,8 @@ const sourceJob = z.object({
   apiCalls: z.array(
     z.object({
       status: z.string(),
+      operation: z.string().optional(),
+      source: z.string().optional(),
       httpStatus: z.number().optional(),
       transportError: z.string().optional(),
       networkCode: z.string().optional(),
@@ -83,9 +85,9 @@ function classify(job: RecoveryJob, nowMs: number) {
   if (job.missingEvidence.includes("checkpoint_dispatch_outcome_unknown")) {
     return result("reconcile_dispatch", "dispatch_outcome_unknown");
   }
-  const failed = job.apiCalls.filter((call) => call.status !== "succeeded");
+  const failures = job.apiCalls.filter((call) => call.status !== "succeeded");
   if (
-    failed.some(
+    failures.some(
       (call) =>
         call.httpStatus === 401 || call.httpStatus === 403 || call.transportError === "forbidden",
     )
@@ -100,6 +102,21 @@ function classify(job: RecoveryJob, nowMs: number) {
   if (job.apiCalls.some((call) => call.status === "succeeded")) {
     return result("review_evidence", "transport_succeeded_but_evidence_incomplete");
   }
+  // The collector wraps a failed HTTP call as source_error. Classify the
+  // underlying transport, while retaining independent adapter/parse failures.
+  const failed = failures.filter(
+    (call) =>
+      !(
+        call.operation === "collect" &&
+        call.transportError === "source_error" &&
+        call.source &&
+        failures.some(
+          (transport) =>
+            (transport.operation === "http_get" || transport.operation === "http_get_total") &&
+            transport.source === call.source,
+        )
+      ),
+  );
   const delays = failed.filter(
     (call) =>
       (call.retryAfterMs ?? 0) > 0 ||
@@ -160,7 +177,9 @@ export function buildFinanceSourceRecoveryPlan(input: unknown, asOf: string) {
         asOf: state.originalAsOf,
         jobs: state.jobs,
       }
-    : sourceBatch.parse(wrapped.success ? wrapped.data.batch : input);
+    : sourceBatch.parse(
+        wrapped.success && Object.hasOwn(wrapped.data, "batch") ? wrapped.data.batch : input,
+      );
   if (nowMs < Date.parse(batch.asOf)) {
     throw new Error("recovery time cannot precede source batch");
   }

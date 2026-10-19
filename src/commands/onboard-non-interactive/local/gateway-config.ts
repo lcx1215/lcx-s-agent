@@ -97,6 +97,7 @@ export function applyNonInteractiveGatewayConfig(params: {
       ...nextConfig.gateway,
       port,
       bind,
+      ...(bind !== "loopback" ? { tls: { ...nextConfig.gateway?.tls, enabled: true } } : {}),
       tailscale: {
         ...nextConfig.gateway?.tailscale,
         mode: tailscaleMode,

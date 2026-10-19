@@ -88,15 +88,9 @@ services:
         "18789",
       ]
     healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
+      test: ["CMD", "node", "dist/index.js", "health"]
       interval: 30s
-      timeout: 5s
+      timeout: 15s
       retries: 5
       start_period: 20s
 

@@ -1,5 +1,5 @@
 /**
- * Position and PnL ledger derived from execution receipts.
+ * Position and gross price-PnL ledger derived from execution receipts.
  *
  * One domain, two halves:
  *
@@ -19,9 +19,9 @@
  * 2. A mark without a usable timestamp is rejected into `rejectedMarks`. A price with no
  *    "as of" cannot be called current.
  *
- * Average cost is used, and shorts are handled with the same arithmetic as longs: a fill
- * that reduces the open quantity realizes PnL against the average cost, and a fill that
- * flips the sign starts a new average at its own fill price.
+ * Filled quantity and average cost are used, and shorts are handled with the same arithmetic
+ * as longs. This is gross price PnL: receipts currently carry no fee/commission amount, and
+ * the projection does not model cash flows, dividends, borrow, or financing costs.
  *
  * The store adds three properties the pure projection cannot have:
  *
@@ -34,6 +34,7 @@
  *   `ref` is the canonical hash of its content. A read re-verifies both.
  */
 
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
@@ -43,12 +44,15 @@ import { LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES } from "../shared/lcx-ontolo
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
+  FINANCE_DECISION_REFERENCE_SOURCES,
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
+  financeExecutionResearchLineageSchema,
+  financeExecutionTargetWeightAuthorizationSchema,
   fingerprintFinanceExecutionReceipts,
 } from "./finance-execution-adapter.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
 
-export const FINANCE_POSITION_LEDGER_SCHEMA = "lcx_finance_position_ledger_v1" as const;
+export const FINANCE_POSITION_LEDGER_SCHEMA = "lcx_finance_position_ledger_v2" as const;
 
 export type FinancePositionMark = Readonly<{
   instrument: string;
@@ -79,6 +83,11 @@ export type FinancePositionLedger = Readonly<{
   /** Paper and venue fills are counted apart so a simulated ledger is never read as real. */
   paperFillCount: number;
   venueFillCount: number;
+  /** Real account-maintenance fills whose historic entry cost is outside this receipt book. */
+  unattributedMaintenanceReceiptIds?: readonly string[];
+  maintenancePnlStatus?: "unknown_requires_broker_history";
+  /** Gross fill-price PnL only; this ledger does not establish net profitability. */
+  pnlBasis: "gross_fill_price_only";
   positions: readonly FinancePosition[];
   /** Instruments holding an open quantity but no usable mark. */
   instrumentsWithoutMark: readonly string[];
@@ -157,8 +166,24 @@ export function projectFinancePositions(params: {
   const byInstrument = new Map<string, MutablePosition>();
   let paperFillCount = 0;
   let venueFillCount = 0;
+  const unattributedMaintenanceReceiptIds: string[] = [];
 
   for (const receipt of ordered) {
+    if (receipt.decisionRef?.source === "account_position_maintenance") {
+      if (
+        receipt.side !== "sell" ||
+        receipt.adapterKind !== "venue" ||
+        receipt.venue !== "alpaca:paper" ||
+        !receipt.accountId?.trim()
+      ) {
+        throw new Error("invalid account position maintenance receipt");
+      }
+      // This sell consumes a reconciled broker-history baseline, not an LCX entry
+      // lot. Count the actual fill without manufacturing a short or entry cost.
+      venueFillCount += 1;
+      unattributedMaintenanceReceiptIds.push(receipt.receiptId);
+      continue;
+    }
     const instrument = normalizeInstrument(receipt.instrument);
     const position = byInstrument.get(instrument) ?? {
       instrument,
@@ -166,7 +191,10 @@ export function projectFinancePositions(params: {
       averageCost: 0,
       realizedPnl: 0,
     };
-    const signedQuantity = receipt.side === "buy" ? receipt.quantity : -receipt.quantity;
+    // `quantity` is requested size. Position accounting must use what the adapter
+    // actually reported as filled, especially when an order is only partly filled.
+    const signedQuantity =
+      receipt.side === "buy" ? receipt.fill.filledQuantity : -receipt.fill.filledQuantity;
     applyFill(position, signedQuantity, receipt.fill.fillPrice);
     byInstrument.set(instrument, position);
     if (receipt.adapterKind === "paper") {
@@ -245,6 +273,13 @@ export function projectFinancePositions(params: {
     receiptCount: ordered.length,
     paperFillCount,
     venueFillCount,
+    ...(unattributedMaintenanceReceiptIds.length
+      ? {
+          unattributedMaintenanceReceiptIds: Object.freeze(unattributedMaintenanceReceiptIds),
+          maintenancePnlStatus: "unknown_requires_broker_history" as const,
+        }
+      : {}),
+    pnlBasis: "gross_fill_price_only",
     positions: Object.freeze(positions),
     instrumentsWithoutMark: Object.freeze(instrumentsWithoutMark),
     rejectedMarks: Object.freeze(rejectedMarks),
@@ -274,7 +309,17 @@ const FinanceExecutionReceiptRecordSchema = z
   .object({
     schemaVersion: z.literal(FINANCE_EXECUTION_RECEIPT_SCHEMA),
     receiptId: Text,
+    accountId: Text.optional(),
     intentId: Text,
+    decisionRef: z
+      .object({
+        source: z.enum(FINANCE_DECISION_REFERENCE_SOURCES),
+        id: Text,
+      })
+      .strict()
+      .optional(),
+    researchLineage: financeExecutionResearchLineageSchema.optional(),
+    targetWeightAuthorization: financeExecutionTargetWeightAuthorizationSchema.optional(),
     runAuthorizationId: z.string(),
     adapterId: Text,
     adapterKind: z.enum(["paper", "venue"]),
@@ -293,6 +338,25 @@ const FinanceExecutionReceiptRecordSchema = z
         fillPrice: z.number().finite().positive(),
         filledAt: z.string().datetime(),
         venueRef: Text,
+        terminalOrderIdentity: z
+          .object({ orderId: Text, terminal: z.literal(true) })
+          .strict()
+          .optional(),
+        protectionOrder: z
+          .object({
+            orderId: Text,
+            clientOrderId: Text,
+            side: z.literal("sell"),
+            orderType: z.literal("stop_limit"),
+            quantity: z.number().finite().positive(),
+            timeInForce: z.literal("gtc"),
+            stopPrice: z.number().finite().positive(),
+            limitPrice: z.number().finite().positive(),
+            status: Text,
+            venueRef: Text,
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     executionAuthority: z.enum([...LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES]),
@@ -363,6 +427,8 @@ const databasePath = financePositionLedgerPath;
 
 const POSITION_LEDGER_MIGRATION_LEDGER = "finance_position_migrations";
 const POSITION_LEDGER_MIGRATIONS: readonly SqliteMigration[] = [
+  // Raw history has its own chain: old receipt/mark readers remain compatible.
+
   {
     version: 1,
     description: "append-only execution receipt and mark ledger",
@@ -385,6 +451,15 @@ const POSITION_LEDGER_MIGRATIONS: readonly SqliteMigration[] = [
         ref TEXT, updated_at TEXT NOT NULL
       );
     `,
+  },
+  {
+    version: 3,
+    description: "account scoped raw broker history, separate from position projection",
+    sql: `CREATE TABLE IF NOT EXISTS finance_broker_history (
+      sequence INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, body TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS finance_broker_history_no_update BEFORE UPDATE ON finance_broker_history BEGIN SELECT RAISE(ABORT,'broker history is append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS finance_broker_history_no_delete BEFORE DELETE ON finance_broker_history BEGIN SELECT RAISE(ABORT,'broker history is append-only'); END;`,
   },
 ];
 
@@ -451,7 +526,20 @@ async function appendRecord(
         (item) => item.body.kind === body.kind && item.recordKey === recordKey,
       );
       if (existing) {
-        if (caseflowFingerprint(existing.body) !== caseflowFingerprint(body)) {
+        const comparable = (value: typeof body) => {
+          if (
+            value.kind === "receipt" &&
+            value.receipt.adapterKind === "venue" &&
+            value.receipt.fill.terminalOrderIdentity?.terminal
+          ) {
+            const { recordedAt: _observedAt, ...economicReceipt } = value.receipt;
+            return { ...value, receipt: economicReceipt };
+          }
+          return value;
+        };
+        if (
+          caseflowFingerprint(comparable(existing.body)) !== caseflowFingerprint(comparable(body))
+        ) {
           throw new Error(
             `position record ${recordKey} already recorded with different content; ` +
               "the ledger is append-only and has no correction path",
@@ -577,8 +665,8 @@ export async function readFinancePositionRecords(
 }
 
 /**
- * Re-derive positions and PnL from the stored stream, optionally as of an instant. Marks
- * after `asOf` are excluded, so a historical view is reproducible instead of "latest wins".
+ * Re-derive positions and PnL from the stored stream, optionally as of an instant. Fills and
+ * marks after `asOf` are excluded, so a historical view is reproducible instead of "latest wins".
  */
 export async function readFinancePositionLedger(
   directory: string,
@@ -589,17 +677,20 @@ export async function readFinancePositionLedger(
   if (asOf.length > 0 && !Number.isFinite(Date.parse(asOf))) {
     throw new Error("asOf must be an ISO datetime");
   }
-  const considered =
-    asOf.length === 0
-      ? read.marks
-      : read.marks.filter((mark) => Date.parse(mark.at) <= Date.parse(asOf));
+  const cutoff = asOf.length === 0 ? undefined : Date.parse(asOf);
+  const consideredReceipts =
+    cutoff === undefined
+      ? read.receipts
+      : read.receipts.filter((receipt) => Date.parse(receipt.fill.filledAt) <= cutoff);
+  const consideredMarks =
+    cutoff === undefined ? read.marks : read.marks.filter((mark) => Date.parse(mark.at) <= cutoff);
   // The projection lets the last mark per instrument win, so sorting by time makes "last"
   // mean "latest"; a stable sort keeps append order as the tie-break.
-  const ordered = considered.toSorted((left, right) => left.at.localeCompare(right.at));
+  const orderedMarks = consideredMarks.toSorted((left, right) => left.at.localeCompare(right.at));
   return Object.freeze({
-    ledger: projectFinancePositions({ receipts: read.receipts, marks: ordered }),
-    receipts: Object.freeze([...read.receipts]),
-    marks: Object.freeze([...ordered]),
+    ledger: projectFinancePositions({ receipts: consideredReceipts, marks: orderedMarks }),
+    receipts: Object.freeze([...consideredReceipts]),
+    marks: Object.freeze([...orderedMarks]),
     recordCount: read.records.length,
     receiptRecordCount: read.receipts.length,
     markRecordCount: read.marks.length,
@@ -755,6 +846,458 @@ export async function advanceFinancePositionProjection(
       throw error;
     }
     return statusOf(readWatermark(db, projection), head);
+  } finally {
+    db.close();
+  }
+}
+
+/** Account-scoped execution history only, not broker-current account equity or risk facts.
+ * Legacy unassigned receipts are reported, never silently attributed to this account.
+ * Unscoped historical marks are deliberately omitted from this projection. */
+export async function readFinanceAccountPositionLedger(
+  directory: string,
+  scope: { accountId: string; venue: string },
+) {
+  if (!scope.accountId.trim() || !scope.venue.trim()) {
+    throw new Error("explicit account and venue scope required");
+  }
+  const read = await readFinancePositionRecords(directory);
+  const receipts = read.receipts.filter(
+    (receipt) => receipt.accountId === scope.accountId && receipt.venue === scope.venue,
+  );
+  return Object.freeze({
+    ledger: projectFinancePositions({ receipts }),
+    receipts: Object.freeze(receipts),
+    historyStatus:
+      receipts.length === 0 ? ("missing" as const) : ("recorded_history_only" as const),
+    excludedReceiptCount: read.receipts.length - receipts.length,
+    unassignedReceiptCount: read.receipts.filter((receipt) => receipt.accountId === undefined)
+      .length,
+    headRef: read.headRef,
+  });
+}
+
+const BrokerHistoryBodySchema = z
+  .object({
+    kind: z.literal("broker_history"),
+    accountId: Text,
+    venue: Text,
+    query: Text,
+    cursor: z.string(),
+    payload: z.array(z.record(z.string(), z.unknown())),
+  })
+  .strict();
+type BrokerHistoryBody = z.infer<typeof BrokerHistoryBodySchema>;
+const BrokerHistoryRecordSchema = z
+  .object({
+    sequence: z.number().int().positive(),
+    previousRef: Hash.nullable(),
+    body: BrokerHistoryBodySchema,
+  })
+  .strict();
+export type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
+
+// Byte-identical rows may reuse normalized headers and schema proofs. Payloads are
+// never cached: a selected record is decoded afresh, including schema transformations.
+const BrokerHistoryHeaderSchema = BrokerHistoryRecordSchema.extend({
+  body: BrokerHistoryBodySchema.extend({ payload: z.unknown() }),
+});
+const BROKER_HISTORY_HASH_PROOF_LIMIT = 100_000;
+// The resident history exceeded the old 50k proof cap and repeatedly decoded its tail.
+// Keep 100k finite hash proofs and the same 16 MiB header envelope; payloads remain
+// uncached and every current byte and full chain are still checked on every read.
+const BROKER_HISTORY_HEADER_PROOF_BYTES = 16 * 1024 * 1024;
+const BROKER_HISTORY_HEADER_PROOF_MAX_BYTES = 2048;
+type BrokerHistoryProofHeader = Readonly<{
+  sequence: number;
+  previousRef: string | null;
+  accountId: string;
+  venue: string;
+  query: string;
+  cursor: string;
+  payloadCount: number;
+}>;
+type BrokerHistoryHashProof = {
+  ref: string;
+  payloadUnchanged: boolean;
+  header?: BrokerHistoryProofHeader;
+  bodyFingerprint?: string;
+};
+const brokerHistoryHashProofs = new Map<string, BrokerHistoryHashProof>();
+let brokerHistoryHeaderProofBytes = 0;
+
+/** Hash every current row and verify the global chain before lazily decoding selected payloads. */
+function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
+  if (!hasTable(db, "finance_broker_history")) {
+    return;
+  }
+  let previousRef: string | null = null;
+  let sequence = 0;
+  // CAST returns the database encoding. Keep SQLite's own decoding for legacy UTF-16 stores.
+  const utf8 = db.prepare("PRAGMA encoding").get()?.encoding === "UTF-8";
+  for (const row of db
+    .prepare(
+      `SELECT ref,typeof(body) AS body_type,${utf8 ? "CAST(body AS BLOB)" : "body"} AS body FROM finance_broker_history ORDER BY sequence`,
+    )
+    .iterate()) {
+    if (
+      row.body_type !== "text" ||
+      !(row.body instanceof Uint8Array || typeof row.body === "string") ||
+      typeof row.ref !== "string"
+    ) {
+      throw new Error("invalid broker history row");
+    }
+    const storedRef = row.ref;
+    const encodedHash = createHash("sha256").update(row.body).digest("hex");
+    let proof = brokerHistoryHashProofs.get(encodedHash);
+    let raw: unknown;
+    let record: z.infer<typeof BrokerHistoryRecordSchema> | undefined;
+    const encodedBytes = row.body;
+    const readRecord = () => {
+      if (!record) {
+        // Preserve SQLite text decoding semantics, including Unicode and BOM behavior.
+        raw = JSON.parse(
+          typeof encodedBytes === "string"
+            ? encodedBytes
+            : Buffer.from(
+                encodedBytes.buffer,
+                encodedBytes.byteOffset,
+                encodedBytes.byteLength,
+              ).toString("utf8"),
+        );
+        record = (
+          proof?.payloadUnchanged
+            ? BrokerHistoryHeaderSchema.parse(raw)
+            : BrokerHistoryRecordSchema.parse(raw)
+        ) as z.infer<typeof BrokerHistoryRecordSchema>;
+      }
+      return { ...record, ref: storedRef };
+    };
+    const header =
+      proof?.header ??
+      (() => {
+        const parsed = readRecord();
+        return Object.freeze({
+          sequence: parsed.sequence,
+          previousRef: parsed.previousRef,
+          accountId: parsed.body.accountId,
+          venue: parsed.body.venue,
+          query: parsed.body.query,
+          cursor: parsed.body.cursor,
+          payloadCount: parsed.body.payload.length,
+        });
+      })();
+    const canonicalRef = proof?.ref ?? caseflowFingerprint(raw);
+    if (
+      canonicalRef !== row.ref ||
+      header.previousRef !== previousRef ||
+      header.sequence !== ++sequence
+    ) {
+      throw new Error("broker history chain mismatch");
+    }
+    // Retain the verified prefix at capacity: FIFO eviction would churn the whole
+    // cache on every ordered full scan. Uncached tail bytes still receive full checks.
+    if (proof === undefined && brokerHistoryHashProofs.size < BROKER_HISTORY_HASH_PROOF_LIMIT) {
+      proof = {
+        ref: canonicalRef,
+        // A transforming schema must still run on later reads (for example __proto__ keys).
+        payloadUnchanged:
+          JSON.stringify(readRecord().body.payload) ===
+          JSON.stringify((raw as z.infer<typeof BrokerHistoryRecordSchema>).body.payload),
+      };
+      brokerHistoryHashProofs.set(encodedHash, proof);
+    }
+    if (proof && !proof.header) {
+      const bytes = Buffer.byteLength(JSON.stringify(header));
+      if (
+        bytes <= BROKER_HISTORY_HEADER_PROOF_MAX_BYTES &&
+        brokerHistoryHeaderProofBytes + bytes <= BROKER_HISTORY_HEADER_PROOF_BYTES
+      ) {
+        proof.header = header;
+        brokerHistoryHeaderProofBytes += bytes;
+      }
+    }
+    previousRef = row.ref;
+    yield { header, ref: row.ref, proof, readRecord };
+  }
+}
+
+/** Validate every account's chain while retaining only the caller's selected rows. */
+function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
+  for (const row of readVerifiedBrokerHistoryRows(db)) {
+    yield row.readRecord();
+  }
+}
+
+/** Additive table in the existing database; never appends to the position chain. */
+const brokerHistoryAppendTurns = new Map<string, Promise<void>>();
+export async function appendFinanceBrokerHistory(
+  directory: string,
+  body: BrokerHistoryBody,
+  options: { signal?: AbortSignal } = {},
+) {
+  options.signal?.throwIfAborted();
+  const key = databasePath(directory);
+  const previous = brokerHistoryAppendTurns.get(key);
+  let release = () => {};
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  brokerHistoryAppendTurns.set(key, turn);
+  try {
+    await previous;
+    return await appendBrokerHistoryOnTurn(directory, body, options);
+  } finally {
+    release();
+    if (brokerHistoryAppendTurns.get(key) === turn) {
+      brokerHistoryAppendTurns.delete(key);
+    }
+  }
+}
+
+async function appendBrokerHistoryOnTurn(
+  directory: string,
+  body: BrokerHistoryBody,
+  options: { signal?: AbortSignal },
+) {
+  options.signal?.throwIfAborted();
+  const validated = BrokerHistoryBodySchema.parse(body);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(databasePath(directory));
+  try {
+    chmodSync(databasePath(directory), 0o600);
+    db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    applySqliteMigrations({
+      db,
+      ledgerTable: POSITION_LEDGER_MIGRATION_LEDGER,
+      migrations: POSITION_LEDGER_MIGRATIONS,
+    });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const fingerprint = caseflowFingerprint(validated);
+      let last: { sequence: number; ref: string } | undefined;
+      let existing: BrokerHistoryRecord | undefined;
+      // Finding a duplicate never ends validation: corrupt tails and other accounts
+      // must still fail before returning the first matching observation.
+      for (const row of readVerifiedBrokerHistoryRows(db)) {
+        if (row.header.sequence % 64 === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        options.signal?.throwIfAborted();
+        last = { sequence: row.header.sequence, ref: row.ref };
+        if (
+          !existing &&
+          row.header.accountId === validated.accountId &&
+          row.header.venue === validated.venue &&
+          row.header.query === validated.query &&
+          row.header.cursor === validated.cursor &&
+          row.header.payloadCount === validated.payload.length
+        ) {
+          const bodyFingerprint =
+            row.proof?.bodyFingerprint ?? caseflowFingerprint(row.readRecord().body);
+          if (row.proof) {
+            row.proof.bodyFingerprint = bodyFingerprint;
+          }
+          if (bodyFingerprint === fingerprint) {
+            existing = row.readRecord();
+          }
+        }
+      }
+      if (existing) {
+        db.exec("COMMIT");
+        return { record: existing, appended: false };
+      }
+      const record = {
+        sequence: (last?.sequence ?? 0) + 1,
+        previousRef: last?.ref ?? null,
+        body: validated,
+      };
+      const ref = caseflowFingerprint(record);
+      db.prepare("INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)").run(
+        record.sequence,
+        ref,
+        JSON.stringify(record),
+      );
+      db.exec("COMMIT");
+      return { record: { ...record, ref }, appended: true };
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
+}
+/** Pure local projection: verify the global chain, retaining only caller-owned state. */
+export async function reduceFinanceBrokerHistoryRecords<T>(
+  directory: string,
+  accountId: string,
+  venue: string,
+  initial: T,
+  reduce: (value: T, record: BrokerHistoryRecord) => T,
+  options: { streams?: readonly string[]; signal?: AbortSignal } = {},
+) {
+  options.signal?.throwIfAborted();
+  if (!accountId.trim() || !venue.trim()) {
+    throw new Error("broker history requires account and venue");
+  }
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return { value: initial, headRef: null, recordCount: 0 };
+  }
+  try {
+    let value = initial;
+    let headRef: string | null = null;
+    let recordCount = 0;
+    const streams = options.streams ? new Set(options.streams) : undefined;
+    for (const row of readVerifiedBrokerHistoryRows(db)) {
+      // Keep socket acknowledgements, heartbeat pongs and host deadlines runnable.
+      // Every current row still receives the original byte/hash/chain validation.
+      if (row.header.sequence % 64 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      options.signal?.throwIfAborted();
+      if (row.header.accountId === accountId && row.header.venue === venue) {
+        // Validate the entire current chain; avoid decoding previously verified
+        // payloads that this consumer will immediately discard.
+        if (!streams || streams.has(row.header.query.split(":", 1)[0])) {
+          value = reduce(value, row.readRecord());
+        }
+        headRef = row.ref;
+        recordCount += 1;
+      }
+    }
+    return { value, headRef, recordCount };
+  } finally {
+    db.close();
+  }
+}
+
+export async function readFinanceBrokerHistoryRecords(
+  directory: string,
+  accountId: string,
+  venue: string,
+) {
+  const read = await reduceFinanceBrokerHistoryRecords(
+    directory,
+    accountId,
+    venue,
+    [] as BrokerHistoryRecord[],
+    (records, record) => {
+      records.push(record);
+      return records;
+    },
+  );
+  return { records: read.value, headRef: read.headRef };
+}
+
+/** Economics projection: validate the full chain without retaining repeated source pages. */
+export async function readFinanceBrokerHistoryActivities(
+  directory: string,
+  accountId: string,
+  venue: string,
+  throughSequence: number,
+) {
+  if (
+    !accountId.trim() ||
+    !venue.trim() ||
+    !Number.isSafeInteger(throughSequence) ||
+    throughSequence < 1
+  ) {
+    throw new Error("broker activities require account, venue and sealed sequence");
+  }
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return { activities: [], headRef: null };
+  }
+  try {
+    const activities = new Map<string, { fingerprint: string; row: Record<string, unknown> }>();
+    let headRef: string | null = null;
+    for (const record of readBrokerHistoryRows(db)) {
+      if (record.sequence % 64 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      if (record.body.accountId !== accountId || record.body.venue !== venue) {
+        continue;
+      }
+      headRef = record.ref;
+      if (record.sequence > throughSequence || !record.body.query.startsWith("activities:")) {
+        continue;
+      }
+      for (const row of record.body.payload) {
+        if (typeof row.id !== "string" || !row.id) {
+          throw new Error("missing activity identity");
+        }
+        const fingerprint = caseflowFingerprint(row);
+        const previous = activities.get(row.id);
+        if (previous && previous.fingerprint !== fingerprint) {
+          throw new Error("conflicting activity identity");
+        }
+        activities.set(row.id, { fingerprint, row });
+      }
+    }
+    return { activities: [...activities.values()].map(({ row }) => row), headRef };
+  } finally {
+    db.close();
+  }
+}
+
+/** Latest reconciliations per book, with chain validation and no migration or writes. */
+export async function readFinanceLatestBrokerReconciliations(
+  directory: string,
+  options: { asOf?: string; scope?: { accountId: string; venue: string } } = {},
+) {
+  if (options.scope && (!options.scope.accountId.trim() || !options.scope.venue.trim())) {
+    throw new Error("broker reconciliation scope requires account and venue");
+  }
+  const cutoff = options.asOf === undefined ? undefined : Date.parse(options.asOf);
+  if (cutoff !== undefined && !Number.isFinite(cutoff)) {
+    throw new Error("invalid broker reconciliation cutoff");
+  }
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return { records: [], omittedAccounts: 0 };
+  }
+  try {
+    const latest = new Map<string, BrokerHistoryRecord>();
+    const heads = new Map<string, string>();
+    for (const row of readBrokerHistoryRows(db)) {
+      // Scope retention, not validation: the generator still verifies every tail row.
+      if (
+        options.scope &&
+        (row.body.accountId !== options.scope.accountId || row.body.venue !== options.scope.venue)
+      ) {
+        continue;
+      }
+      const key = JSON.stringify([row.body.venue, row.body.accountId]);
+      heads.set(key, row.ref);
+      if (row.body.query.startsWith("reconciliation:")) {
+        const observedAt = row.body.payload[0]?.observedAt;
+        if (
+          cutoff !== undefined &&
+          typeof observedAt === "string" &&
+          Date.parse(observedAt) > cutoff
+        ) {
+          continue;
+        }
+        latest.set(key, row);
+      }
+    }
+    const selected = [...latest.entries()].toSorted((a, b) => b[1].sequence - a[1].sequence);
+    return {
+      records: selected.slice(0, 3).map(([key, row]) => ({
+        ref: row.ref,
+        accountId: row.body.accountId,
+        sequence: row.sequence,
+        venue: row.body.venue,
+        // A research cutoff reads the sealed snapshot at that time. Later raw
+        // pages do not replace it; current execution readers retain head checks.
+        superseded: cutoff === undefined && heads.get(key) !== row.ref,
+        snapshot: row.body.payload[0],
+      })),
+      omittedAccounts: Math.max(0, selected.length - 3),
+    };
   } finally {
     db.close();
   }

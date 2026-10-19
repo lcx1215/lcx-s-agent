@@ -7,6 +7,8 @@
  * crossing a module, workflow, evidence, or delivery boundary.
  */
 
+import { LCX_WORKFLOW_PROCESS_CONTRACTS } from "./lcx-workflow-process-contracts.js";
+
 export const LCX_ONTOLOGY_VERSION = "lcx_ontology_v1" as const;
 export const LCX_ONTOLOGY_EVOLUTION_CONTRACT_VERSION = "lcx_ontology_evolution_v1" as const;
 export const LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION = "lcx_ontology_migration_v1" as const;
@@ -374,7 +376,7 @@ export const LCX_ONTOLOGY_AGENT_ROLES = [
 export type LcxOntologyAgentRole = (typeof LCX_ONTOLOGY_AGENT_ROLES)[number];
 
 /** Consumed by finance model routing. Slots describe responsibility, not parameter count. */
-export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v9" as const;
+export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v17" as const;
 export const LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS = {
   data_cleaning: {
     stage: "intake",
@@ -434,7 +436,8 @@ export const LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS = {
   },
   formatting: {
     stage: "format",
-    slot: "fast",
+    // Formatting must use the model that authored the draft (router affinity).
+    slot: "reasoning",
     ontologyRole: "worker",
     output: "artifact",
     localSpecialistEligible: false,
@@ -1099,6 +1102,7 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "finance_learning_memory",
   "causal_map",
   "review_panel",
+  "model_tool_decision",
   "control_room_summary",
   "visible_reply",
   "source_intake",
@@ -1148,6 +1152,8 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "local_failure_trace",
   "automation_cleanup",
   "system_doctor",
+  "operator_training_supervisor",
+  "operator_agent_exam",
   "operator_latest_receipt",
   "operator_digest",
   "language_router",
@@ -1203,6 +1209,11 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "commercial_acceptance_harness",
   "schedule_gate",
   "repair_lock",
+  "intraday_point_in_time_ledger",
+  "frozen_intraday_signal",
+  "same_cost_retail_baseline",
+  "paper_replay_receipt",
+  "intraday_result_score",
   "execution_intent",
   "explicit_run_authorization",
   "declared_execution_adapter",
@@ -1214,6 +1225,13 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "central_agent_brain_proposal",
   "central_agent_gate",
   "central_agent_latest_receipt",
+  "portfolio_candidate",
+  "portfolio_plan",
+  "strategy_rule_ledger",
+  "finance_scheduler",
+  "night_settlement",
+  "tuning_proposal",
+  "deterministic_promotion_gate",
 ] as const;
 export type LcxOntologyWorkflowNodeId = (typeof LCX_ONTOLOGY_WORKFLOW_NODE_IDS)[number];
 
@@ -1306,6 +1324,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "live_proof_required",
   "tool_permission_audit_required",
   "human_signoff_checkpoint",
+  "research_quality_gate_required",
   "no_wallet_or_order_execution",
   "market_microstructure_warning_required",
   "paper_only_backtest_required",
@@ -1347,10 +1366,22 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "execution_receipt_required",
   "append_only_ledger_required",
   "mark_required_for_unrealized_pnl",
+  "closed_bar_only_required",
+  "next_bar_fill_required",
+  "same_cost_baseline_required",
+  "paper_replay_not_execution_receipt",
+  "multi_regime_validation_required",
   "declared_period_required_for_annualised_metric",
   "llm_proposes_ts_gate_approves",
   "central_agent_plan_only_no_dispatch",
   "central_agent_no_execution_authority",
+  "research_receipt_required",
+  "portfolio_plan_required",
+  "strategy_rule_activation_required",
+  "single_finance_scheduler_owner_required",
+  "paper_venue_only_for_autonomous_cycle",
+  "night_feedback_requires_scored_outcomes",
+  "deterministic_promotion_gate_required",
 ] as const;
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
@@ -1378,9 +1409,11 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
   "multi_agent_pattern_shadow_evaluation_waterflow",
   "logical_agent_pool_waterflow",
   "prediction_market_research_only_waterflow",
+  "finance_intraday_paper_waterflow",
   "finance_live_execution_waterflow",
   "automation_repair_lock_waterflow",
   "central_agent_decision_waterflow",
+  "finance_automatic_paper_trading_waterflow",
 ] as const;
 export type LcxOntologyWorkflowScenarioId = (typeof LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS)[number];
 
@@ -1407,8 +1440,10 @@ export const LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS = [
   "multi_agent_pattern_shadow_evaluation",
   "logical_agent_pool",
   "prediction_market_research_and_strategy_audit",
+  "intraday_point_in_time_paper_validation",
   "authorized_live_execution_and_risk_budget",
   "codex_auto_repair_and_schedule_guard",
+  "automatic_paper_trading_lifecycle",
 ] as const;
 export type LcxOntologyWorkflowFamilyId = (typeof LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS)[number];
 
@@ -1794,6 +1829,62 @@ export const LCX_ONTOLOGY_STATE_CHAINS = {
   capabilityEvidence: ["missing", "present"],
 } as const;
 
+/** Descriptive handoff contract over existing nodes; it grants no execution authority. */
+export const LCX_FINANCE_RULE_HANDOFF_CONTRACT = {
+  scenario: "central_agent_decision_waterflow",
+  proof: "src/agents/central-harness/rule-handoff.test.ts",
+  receipt: "lcx-central-agent-log-latest.jsonl",
+  stages: [
+    {
+      node: "strategy_rule_ledger",
+      owner: "src/agents/tools/finance-strategy-rule-ledger-read-tool.ts",
+      input:
+        "original strategy rule ledger and rule/instrument identities; account/venue stay with their ledger owners",
+      output: "registered artifact id, source hash, clock and exact rule pointers",
+      blockedBy: "missing source or scope; metadata alone is not rule content",
+    },
+    {
+      node: "memory_recall",
+      owner: "src/agents/tools/artifact-memory-recall-tool.ts",
+      input: "one artifact id and an exact rule field selected for a concrete uncertainty",
+      output: "selectedValue or a named content gap with narrower child pointers",
+      blockedBy: "missing artifact/field or content omitted by the 4 KB step budget",
+    },
+    {
+      node: "central_agent_brain_proposal",
+      owner: "src/agents/central-harness/model-brain.ts",
+      input: "delivered rule content in the bounded perception and unresolved question",
+      output: "retain/change/unresolved, source-bound evidenceUse and short factual reason",
+      blockedBy: "transport deadline, content gap or unattributed judgment",
+    },
+    {
+      node: "central_agent_gate",
+      owner: "src/agents/central-harness/harness-loop.ts",
+      input: "proposed actions and references to actually delivered evidence",
+      output: "independent action gate result and host-verified reference",
+      blockedBy: "hash/scope/cutoff mismatch or forbidden execution authority",
+    },
+    {
+      node: "central_agent_latest_receipt",
+      owner: "src/agents/central-harness/harness-loop.ts",
+      input: "original dispatch results, verified references and diagnosed gaps",
+      output: "one original receipt plus bounded next-cycle feedback",
+      blockedBy: "reference validity does not prove semantic adoption, source trust or quality",
+    },
+  ],
+} as const satisfies {
+  scenario: LcxOntologyWorkflowScenarioId;
+  proof: string;
+  receipt: string;
+  stages: readonly {
+    node: LcxOntologyWorkflowNodeId;
+    owner: string;
+    input: string;
+    output: string;
+    blockedBy: string;
+  }[];
+};
+
 export const LCX_ONTOLOGY_REGISTRY = {
   version: LCX_ONTOLOGY_VERSION,
   entityTypes: LCX_ONTOLOGY_ENTITY_TYPES,
@@ -1807,6 +1898,8 @@ export const LCX_ONTOLOGY_REGISTRY = {
   policy: LCX_ONTOLOGY_REGISTRY_POLICY,
   stateChains: LCX_ONTOLOGY_STATE_CHAINS,
   orchestrationContracts: LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS,
+  financeRuleHandoff: LCX_FINANCE_RULE_HANDOFF_CONTRACT,
+  workflowProcesses: LCX_WORKFLOW_PROCESS_CONTRACTS,
   financeModelWorkflow: {
     version: LCX_FINANCE_MODEL_WORKFLOW_VERSION,
     roles: LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS,

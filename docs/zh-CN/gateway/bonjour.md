@@ -40,7 +40,11 @@ iOS/Android 节点同时浏览 `local.` 和你配置的广域域名。
 
 ```json5
 {
-  gateway: { bind: "tailnet" }, // 仅 tailnet（推荐）
+  gateway: {
+    bind: "tailnet",
+    tls: { enabled: true },
+    auth: { mode: "token", token: "replace-me" },
+  },
   discovery: { wideArea: { enabled: true } }, // 启用广域 DNS-SD 发布
 }
 ```
@@ -81,6 +85,7 @@ Gateway 网关 WS 端口（默认 `18789`）默认绑定到 loopback。对于局
 对于仅 Tailnet 的设置：
 
 - 在 `~/.openclaw/openclaw.json` 中设置 `gateway.bind: "tailnet"`。
+- 同时启用 `gateway.tls.enabled` 并配置认证；Gateway 会拒绝缺少任一项的直接非回环绑定。
 - 重启 Gateway 网关（`lcx gateway restart`）。
 
 ## 什么在广播

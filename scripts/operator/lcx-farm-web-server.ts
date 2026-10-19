@@ -284,6 +284,10 @@ function loadSnapshot(): JsonObject {
         stringAt(centralAgentOwner, "brainOutcome") ??
         stringAt(summary, "centralAgentBrainOutcome") ??
         "unknown",
+      brainReason:
+        stringAt(centralAgentOwner, "brainReason") ??
+        stringAt(summary, "centralAgentBrainReason") ??
+        null,
       brainAvailable:
         centralAgentOwner.brainAvailable === true || summary.centralAgentBrainAvailable === true,
       registryTools:

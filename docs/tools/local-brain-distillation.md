@@ -46,6 +46,21 @@ It does not directly rewrite the main agent. The training loop is:
 The main agent can use that helper as a draft planner, then still require API
 review, evidence checks, and normal LCX risk boundaries before replying.
 
+### Reproducible search inputs
+
+Each train-slice manifest records a `trainingSliceIdentity` derived from the
+source training file, the exact emitted train/valid/test bytes, the sampling
+policy, and—when vocabulary alignment is enabled—the exact evaluator source
+file. Its `ref` identifies a data-slice variant so later research can link the
+inputs used for a training attempt. It is not an adapter identity, an eval
+result, proof of weight absorption, or promotion evidence. Every changed model
+artifact still needs its own fresh hardened evaluation and promotion audit;
+failed or parent scores do not transfer to a new artifact. When train-slice is
+enabled, the training guard passes this manifest only to the newly trained
+candidate's eval; stable-adapter evals are not attributed to a newer slice. The
+eval verifies the manifest ref and emitted split bytes, then carries that ref
+into the guard log and training plan for later comparison.
+
 The prompt includes the current allowed module taxonomy so the auxiliary model
 learns to route work into concrete LCX modules instead of inventing broad labels.
 Do not duplicate the taxonomy in this doc; the source of truth is:

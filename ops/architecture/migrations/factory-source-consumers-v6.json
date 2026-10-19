@@ -1,0 +1,18 @@
+{
+  "version": 6,
+  "kind": "descriptive_process_source_alignment",
+  "scenarios": [
+    "universe_index_total_coverage_waterflow",
+    "external_agent_skill_distillation_waterflow",
+    "prediction_market_research_only_waterflow"
+  ],
+  "source": "original governance predecision fanout and actual upgrade radar diagnostics",
+  "changes": [
+    "Recovery runs independently from read-only Git/artifact/mind/flow inventories; cleanup v2 now consumes same-cycle recovery as a fourth pinned source. Remove false serial prerequisites, preserve all nodes and feedback obligations.",
+    "External radar static registration is a separate implemented diagnostic stage. Source/license/reading/distillation/security/business review and prediction resolution/cost/sample-out consumers remain explicitly unimplemented or unconnected."
+  ],
+  "compatibility": "Legacy schema1 three-source local cleanup review remains; original predecision helper uses schema2 with mandatory recovery.",
+  "retained": "Original owners, all required nodes and feedback edges, ontology relation and state vocabularies, 4KB/12KB budgets and broker unknown block.",
+  "authority": "No execution, deletion, publishing, service, scheduling, provider or protected-memory authority added.",
+  "verification": "Offline original functions and lowest source/transport substitutes; natural load and semantic adoption remain unproven."
+}

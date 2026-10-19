@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1862,6 +1863,147 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
     expect(targetCase?.initialOutputChars).toBeGreaterThan(0);
     expect(targetCase?.initialOutputSha256).toMatch(/^[a-f0-9]{16}$/u);
   });
+
+  it("blocks the original senior trader failure-focus case in strict native eval without promotion", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-senior-native-eval-"));
+    const proofDir = process.env.LCX_SENIOR_FAILURE_EVAL_PROOF_DIR;
+    const fakePython = path.join(tempDir, "python");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const receiptPath = path.join(tempDir, "senior-eval-receipt.json");
+    const sourcePath = path.join(
+      path.resolve(__dirname, ".."),
+      "scripts/operator/local-brain-distill-eval.ts",
+    );
+    const sourceBytes = readFileSync(sourcePath);
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "const args = process.argv.slice(2);",
+        "fs.appendFileSync(argLog, `${JSON.stringify(args)}\\n`);",
+        "console.log(JSON.stringify({task_family:'cross_market_finance_research_planning',primary_modules:['quant_math'],supporting_modules:[],required_tools:[],missing_data:['fresh_market_data_snapshot'],risk_boundaries:['research_only'],next_step:'request_missing_inputs',rejected_context:['old_external_conversation_history']}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const args = [
+      "--import",
+      "tsx",
+      "scripts/operator/local-brain-distill-eval.ts",
+      "--no-adapter",
+      "--python",
+      fakePython,
+      "--hardened",
+      "--blind",
+      "--no-response-prefill",
+      "--case-id",
+      "senior_trader_failure_focus_promotion_chain",
+      "--summary-only",
+      "--json",
+      "--receipt",
+      receiptPath,
+    ];
+    try {
+      const result = spawnSync(process.execPath, args, {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+        env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0", HF_HUB_OFFLINE: "1" },
+        timeout: 30_000,
+      });
+      const receiptBytes = readFileSync(receiptPath, "utf8");
+      const nativeChildArgumentsBytes = readFileSync(argLog, "utf8");
+      if (proofDir) {
+        const proofRoot = path.resolve(proofDir);
+        // The caller supplies this private proof directory; no protected state is read or written.
+        writeFileSync(path.join(proofRoot, "stdout.json"), result.stdout);
+        writeFileSync(path.join(proofRoot, "stderr.txt"), result.stderr);
+        writeFileSync(path.join(proofRoot, "native-receipt.json"), receiptBytes);
+        writeFileSync(
+          path.join(proofRoot, "native-child-arguments.jsonl"),
+          nativeChildArgumentsBytes,
+        );
+        writeFileSync(
+          path.join(proofRoot, "native-cli-result.json"),
+          JSON.stringify(
+            {
+              boundary:
+                "original_eval_cli_and_scorer_with_private_generation_executable_substitute",
+              executable: process.execPath,
+              args,
+              status: result.status,
+              signal: result.signal,
+              source: {
+                path: sourcePath,
+                sha256: createHash("sha256").update(sourceBytes).digest("hex"),
+              },
+              receipt: {
+                path: receiptPath,
+                sha256: createHash("sha256").update(receiptBytes).digest("hex"),
+              },
+              providerCalls: 0,
+              mlxExecuted: false,
+              trained: false,
+              wholeScene: "not_proven",
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        ok: boolean;
+        hierarchy: { requestedCaseIds: string[]; autoIncludedPrerequisiteCaseIds: string[] };
+        summary: { failedCaseIds: string[]; parseErrorCaseIds: string[]; promotionReady: boolean };
+      };
+      expect(payload.ok).toBe(false);
+      expect(payload.hierarchy.requestedCaseIds).toEqual([
+        "senior_trader_failure_focus_promotion_chain",
+      ]);
+      expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds.length).toBeGreaterThan(0);
+      expect(payload.summary.failedCaseIds).toContain(
+        "senior_trader_failure_focus_promotion_chain",
+      );
+      expect(payload.summary.parseErrorCaseIds).toEqual([]);
+      expect(payload.summary.promotionReady).toBe(false);
+      const receipt = JSON.parse(receiptBytes) as {
+        requested: { hardened: boolean; blind: boolean; contractOnly: boolean };
+        proof: { promotionReady: boolean; promotionProof: boolean; modelWeightAbsorbed: boolean };
+        caseReceipts: Array<{
+          id: string;
+          status: string;
+          acceptanceOk: boolean;
+          modelContractReady: boolean;
+        }>;
+      };
+      expect(receipt.requested).toMatchObject({ hardened: true, blind: true, contractOnly: false });
+      expect(receipt.proof).toMatchObject({
+        promotionReady: false,
+        promotionProof: false,
+        modelWeightAbsorbed: false,
+      });
+      expect(
+        receipt.caseReceipts.find(
+          (entry) => entry.id === "senior_trader_failure_focus_promotion_chain",
+        ),
+      ).toMatchObject({ status: "failed", acceptanceOk: false, modelContractReady: false });
+      const childArguments = nativeChildArgumentsBytes
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(childArguments.length).toBeGreaterThan(0);
+      const prompts = childArguments.map((entry) => entry[entry.indexOf("--prompt") + 1]);
+      expect(prompts.some((prompt) => prompt.includes("高级交易员失败族"))).toBe(true);
+      expect(
+        prompts.every((prompt) => !prompt.includes("Recommended module ids for this case")),
+      ).toBe(true);
+      expect(childArguments.every((entry) => !entry.includes("--adapter-path"))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("distinguishes a valid contract failure from a parse error and writes a compact receipt", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-receipt-"));

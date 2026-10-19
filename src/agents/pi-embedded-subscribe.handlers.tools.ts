@@ -430,7 +430,9 @@ export async function handleToolExecutionEnd(
   emitToolResultOutput({ ctx, toolName, meta, isToolError, result, sanitizedResult });
 
   // Run after_tool_call plugin hook (fire-and-forget)
-  const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();
+  const hookRunnerAfter = ctx.params.disableHooks
+    ? undefined
+    : (ctx.hookRunner ?? getGlobalHookRunner());
   if (hookRunnerAfter?.hasHooks("after_tool_call")) {
     const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
     const hookEvent: PluginHookAfterToolCallEvent = {

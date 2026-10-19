@@ -1,9 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-link-health.js";
-
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { appendFinanceBars } from "./finance-bar-ledger.js";
+import {
+  buildFinanceExecutionReceipt,
+  createPaperExecutionAdapter,
+} from "./finance-execution-adapter.js";
 /**
  * These tests exist because this check was wrong in the direction that is hardest to notice.
  * It called a recorded call with no result a broken loop, when a call inside its horizon has no
@@ -12,16 +15,26 @@ import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-li
  * saying it long enough that a report of an actual break would have arrived in a stream of
  * reports that never meant anything.
  */
+import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-link-health.js";
+import {
+  appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
+} from "./finance-position-ledger.js";
+import { financeCredentialsPath } from "./finance-state-dir.js";
+import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
 const AS_OF = "2026-09-21";
 
 let dir: string;
 
 beforeEach(async () => {
+  vi.stubEnv("ALPACA_API_KEY_ID", "");
+  vi.stubEnv("ALPACA_API_SECRET_KEY", "");
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-link-health-"));
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -49,8 +62,11 @@ const bet = (overrides: Record<string, unknown> = {}): Record<string, unknown> =
   ...overrides,
 });
 
-async function checkFor(id: string): Promise<FinanceLinkHealthCheck> {
-  const health = await readFinanceLinkHealth({ directory: dir, asOf: AS_OF });
+async function checkFor(
+  id: string,
+  schedulerAt = new Date("2026-09-21T22:00:00.000Z"),
+): Promise<FinanceLinkHealthCheck> {
+  const health = await readFinanceLinkHealth({ directory: dir, asOf: AS_OF, schedulerAt });
   const found = health.checks.find((entry) => entry.id === id);
   if (found === undefined) {
     throw new Error(`no check with id ${id}`);
@@ -59,6 +75,18 @@ async function checkFor(id: string): Promise<FinanceLinkHealthCheck> {
 }
 
 describe("readFinanceLinkHealth settlement supply", () => {
+  it("uses the New York session day before ET midnight instead of advancing with UTC", async () => {
+    await writeSamples([bet({ asOf: "2026-09-22T14:00:00.000Z", horizonDays: 1 })]);
+    const health = await readFinanceLinkHealth({
+      directory: dir,
+      schedulerAt: new Date("2026-09-23T02:00:00.000Z"),
+      env: {},
+    });
+    const check = health.checks.find((entry) => entry.id === "settlement_supply");
+    expect(check).toMatchObject({ ok: true, severity: "info" });
+    expect(check?.summary).toContain("earliest settles 2026-09-23");
+  });
+
   it("does not call a call that is still inside its horizon unsettled", async () => {
     await writeSamples([bet({ asOf: "2026-09-20T14:00:00.000Z", horizonDays: 30 })]);
     const check = await checkFor("settlement_supply");
@@ -109,6 +137,37 @@ describe("readFinanceLinkHealth settlement supply", () => {
   });
 });
 
+describe("readFinanceLinkHealth bar source consistency", () => {
+  it("reports close conflicts separately from bar freshness", async () => {
+    await appendFinanceBars(dir, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      provenance: { origin: "source-a", sourceUrlOrArtifact: "fixture://source-a" },
+      observedAt: "2026-09-18T20:00:00.000Z",
+      bars: [{ date: "2026-09-18", open: 100, high: 103, low: 99, close: 102 }],
+    });
+    await appendFinanceBars(dir, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      provenance: { origin: "source-b", sourceUrlOrArtifact: "fixture://source-b" },
+      observedAt: "2026-09-18T20:00:00.000Z",
+      bars: [{ date: "2026-09-18", open: 100, high: 101, low: 98, close: 99 }],
+    });
+
+    const health = await readFinanceLinkHealth({ directory: dir, asOf: "2026-09-21", env: {} });
+    expect(health.checks.find((check) => check.id === "bar_supply")).toMatchObject({
+      ok: true,
+      severity: "info",
+    });
+    expect(health.checks.find((check) => check.id === "bar_source_consistency")).toMatchObject({
+      ok: false,
+      severity: "warn",
+      summary: expect.stringContaining("1 instrument/date close conflict"),
+      detail: { conflictCount: 1 },
+    });
+  });
+});
+
 describe("readFinanceLinkHealth sample universe overlap", () => {
   it("has nothing to compare against when no rule is active", async () => {
     // Every call is outside an empty universe, which would be true of every call and mean
@@ -118,4 +177,353 @@ describe("readFinanceLinkHealth sample universe overlap", () => {
     expect(check.ok).toBe(true);
     expect(check.summary).toContain("no active rule universe");
   });
+});
+
+describe("scheduler success evidence", () => {
+  it("does not require future slots before their market time", async () => {
+    const check = await checkFor("scheduler_slots", new Date("2026-09-21T13:00:00.000Z"));
+    expect(check.ok).toBe(true);
+    expect(check.summary).toContain("no finance cycle slot is due yet");
+    expect(check.detail).toMatchObject({ dueSlots: [], unresolvedDueSlots: [] });
+  });
+
+  it("does not report a missing night attempt as ever fired", async () => {
+    const check = await checkFor("scheduler_slots");
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatchObject({ nightEverFired: false });
+  });
+
+  it("does not promote legacy attempt markers to successful completion", async () => {
+    await fs.writeFile(
+      path.join(dir, "daily-cycle-scheduler.json"),
+      JSON.stringify({ lastFired: { day: AS_OF, night: AS_OF } }),
+    );
+    const check = await checkFor("scheduler_slots");
+    expect(check.ok).toBe(false);
+    expect(check.summary).toContain("success unverified");
+  });
+
+  it.each(["failed", "timed_out", "cancelled", "running"])(
+    "reports the latest %s attempt even after an earlier same-day success",
+    async (status) => {
+      await fs.writeFile(
+        path.join(dir, "daily-cycle-scheduler.json"),
+        JSON.stringify({
+          lastFired: { day: AS_OF, night: AS_OF },
+          lastSucceeded: { day: AS_OF, night: AS_OF },
+          lastStatus: { day: "succeeded", night: "succeeded" },
+          lastRun: { status },
+        }),
+      );
+      expect((await checkFor("scheduler_slots")).ok).toBe(false);
+    },
+  );
+
+  it("recognizes both successfully completed slots without claiming freshness", async () => {
+    await fs.writeFile(
+      path.join(dir, "daily-cycle-scheduler.json"),
+      JSON.stringify({
+        lastFired: { day: AS_OF, night: AS_OF },
+        lastSucceeded: { day: AS_OF, night: AS_OF },
+        lastStatus: { day: "succeeded", night: "succeeded" },
+        lastRun: { status: "succeeded" },
+      }),
+    );
+    const check = await checkFor("scheduler_slots");
+    expect(check.ok).toBe(true);
+    expect(check.summary).toContain("not a freshness check");
+  });
+});
+
+it("does not hide a failed day rerun behind an earlier same-day success and a successful night", async () => {
+  await fs.writeFile(
+    path.join(dir, "daily-cycle-scheduler.json"),
+    JSON.stringify({
+      lastFired: { day: AS_OF, night: AS_OF },
+      lastSucceeded: { day: AS_OF, night: AS_OF },
+      lastStatus: { day: "failed", night: "succeeded" },
+      lastRun: { status: "succeeded", mode: "night" },
+    }),
+  );
+  expect((await checkFor("scheduler_slots")).ok).toBe(false);
+});
+
+function venueRead(positions: unknown = []) {
+  return vi.fn<FinanceUncachedFetch>(async (url) => ({
+    status: 200,
+    body: JSON.stringify(url.endsWith("/account") ? { id: "account-a" } : positions),
+  }));
+}
+const fakeEnv = { ALPACA_API_KEY_ID: "FAKE", ALPACA_API_SECRET_KEY: "FAKE" };
+async function storeReceipt(accountId?: string, venue = "paper") {
+  const at = "2026-09-20T00:00:00Z";
+  const receipt = buildFinanceExecutionReceipt({
+    intent: {
+      intentId: "test",
+      runAuthorizationId: "run",
+      instrument: "SPY",
+      side: "buy",
+      orderType: "market",
+      quantity: 1,
+      referencePrice: 100,
+      referencePriceAt: at,
+      rationale: "fixture",
+    },
+    adapter: { ...createPaperExecutionAdapter({ instruments: ["SPY"] }), venue },
+    fill: { filledQuantity: 1, fillPrice: 100, filledAt: at, venueRef: "fixture" },
+    recordedAt: at,
+    accountId,
+  });
+  await appendFinanceExecutionReceipt(dir, receipt);
+}
+it("binds credential file lookup to the explicit ledger root without mutating environment", async () => {
+  await fs.writeFile(
+    financeCredentialsPath(dir),
+    "ALPACA_API_KEY_ID=ROOT_FAKE\nALPACA_API_SECRET_KEY=ROOT_SECRET\n",
+  );
+  const read = venueRead();
+  await readFinanceLinkHealth({ directory: dir, env: {}, read });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls[0][1].headers["APCA-API-KEY-ID"]).toBe("ROOT_FAKE");
+  expect(process.env.ALPACA_API_KEY_ID).toBe("");
+});
+it("missing credentials is unavailable and cannot report successful parity", async () => {
+  const read = venueRead();
+  const report = await readFinanceLinkHealth({ directory: dir, read, env: {} });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: false,
+    severity: "error",
+    detail: { checked: false },
+  });
+  expect(report.ok).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+});
+it("does not compare internal paper or unknown-account fills against broker holdings", async () => {
+  await storeReceipt();
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: false,
+    detail: {
+      ledgerCount: 0,
+      onlyVenue: ["SPY"],
+      unassignedReceiptCount: 1,
+      historyStatus: "missing",
+    },
+  });
+});
+it("compares only matching account and venue execution history", async () => {
+  await storeReceipt("account-a", "alpaca:paper");
+  await storeReceipt("account-b", "alpaca:paper");
+  await storeReceipt("account-a", "paper");
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: true,
+    detail: { ledgerCount: 1, excludedReceiptCount: 2 },
+  });
+});
+
+it("uses a reconciled broker-history baseline while keeping receipt coverage explicit", async () => {
+  await storeReceipt("account-a", "alpaca:paper");
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "orders:window",
+    cursor: "",
+    payload: [{ id: "order-spy", status: "filled", filled_qty: "1" }],
+  });
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "activities:window",
+    cursor: "",
+    payload: [
+      {
+        id: "fill-spy",
+        activity_type: "FILL",
+        type: "fill",
+        order_id: "order-spy",
+        symbol: "SPY",
+        side: "buy",
+        qty: "1",
+        price: "100",
+        transaction_time: "2026-09-20T00:00:00Z",
+      },
+    ],
+  });
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "sync_receipt:window",
+    cursor: "",
+    payload: [
+      {
+        accountId: "account-a",
+        venue: "alpaca:paper",
+        status: "raw_history_synced",
+        accountCreatedAt: "2025-01-01T00:00:00Z",
+        after: "2025-01-01T00:00:00Z",
+        until: "2026-09-21T00:00:00Z",
+      },
+    ],
+  });
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: true,
+    detail: { baselineSource: "broker_history", executionLedgerCount: 1, brokerBaselineCount: 1 },
+  });
+  expect(report.checks.find((c) => c.id === "execution_receipt_coverage")).toMatchObject({
+    ok: false,
+    severity: "warn",
+  });
+});
+it.each([
+  null,
+  [{ symbol: "SPY", qty: null }],
+  [{ symbol: "SPY", qty: "" }],
+  [
+    { symbol: "SPY", qty: "1" },
+    { symbol: "SPY", qty: "2" },
+  ],
+])("rejects malformed venue positions %j", async (positions) => {
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead(positions),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: false,
+    severity: "error",
+    detail: { checked: false },
+  });
+});
+
+it.each([false, true])(
+  "reports resident placement mode independently of due slots: %s",
+  async (placementEnabled) => {
+    const at = new Date("2026-09-21T13:00:00.000Z");
+    await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+    const lock = path.join(dir, "daily-cycle-scheduler.lock");
+    await fs.mkdir(lock);
+    const filename = path.join(lock, "progress.json");
+    const progress = {
+      pid: process.pid,
+      observedAt: at.toISOString(),
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled,
+      venue: "paper",
+    };
+    await fs.writeFile(filename, JSON.stringify(progress));
+    expect((await checkFor("scheduler_slots", at)).ok).toBe(true);
+    const current = await checkFor("scheduler_execution_loop", at);
+    expect(current.ok).toBe(placementEnabled);
+    expect(current.summary).toContain(
+      placementEnabled ? "does not verify a broker fill" : "placement is disabled",
+    );
+    await fs.writeFile(
+      filename,
+      JSON.stringify({ ...progress, observedAt: new Date(at.getTime() - 180000).toISOString() }),
+    );
+    expect((await checkFor("scheduler_execution_loop", at)).ok).toBe(false);
+  },
+);
+
+it("keeps corrupt resident ownership visible without breaking unrelated diagnostics", async () => {
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), "not-a-pid");
+  const check = await checkFor("scheduler_execution_loop");
+  expect(check.ok).toBe(false);
+  expect(check.summary).toContain("ownership unreadable");
+});
+
+it("does not call an expired Alpaca policy ready just because its loop is responsive", async () => {
+  const at = new Date("2026-09-21T13:00:00.000Z");
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+  const lock = path.join(dir, "daily-cycle-scheduler.lock");
+  await fs.mkdir(lock);
+  await fs.writeFile(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt: at.toISOString(),
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyExpiresAt: at.toISOString(),
+    }),
+  );
+  const current = await checkFor("scheduler_execution_loop", at);
+  expect(current.ok).toBe(false);
+  expect(current.summary).toContain("expired");
+});
+
+it("accepts only explicit until-revoked progress and keeps mixed policy metadata unverified", async () => {
+  const at = new Date("2026-09-21T13:00:00.000Z");
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+  const lock = path.join(dir, "daily-cycle-scheduler.lock");
+  await fs.mkdir(lock);
+  const filename = path.join(lock, "progress.json");
+  const progress = {
+    pid: process.pid,
+    observedAt: at.toISOString(),
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: true,
+    venue: "alpaca",
+    executionPolicyAuthorizationMode: "until_revoked",
+    executionPolicyExpiresAt: null,
+  };
+  await fs.writeFile(filename, JSON.stringify(progress));
+  const standing = await checkFor("scheduler_execution_loop", at);
+  expect(standing.ok).toBe(true);
+  expect(standing.summary).toContain("does not verify a broker fill");
+
+  await fs.writeFile(
+    filename,
+    JSON.stringify({ ...progress, executionPolicyExpiresAt: "2026-09-22T13:00:00.000Z" }),
+  );
+  const mixed = await checkFor("scheduler_execution_loop", at);
+  expect(mixed.ok).toBe(false);
+  expect(mixed.summary).toContain("unavailable");
+});
+
+it("requires the resident intraday policy to be current when the file is until-revoked", async () => {
+  const at = new Date("2026-09-21T13:00:00.000Z");
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+  const lock = path.join(dir, "daily-cycle-scheduler.lock");
+  await fs.mkdir(lock);
+  await fs.writeFile(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt: at.toISOString(),
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyAuthorizationMode: "until_revoked",
+      executionPolicyExpiresAt: null,
+      intradayControllerPolicyAuthorizationMode: "until_expiry",
+      intradayControllerPolicyExpiresAt: "2026-09-21T12:59:00.000Z",
+      intraday: { enabled: true },
+    }),
+  );
+  const report = await checkFor("scheduler_execution_loop", at);
+  expect(report.ok).toBe(false);
+  expect(report.summary).toContain("intraday controller policy expired");
 });

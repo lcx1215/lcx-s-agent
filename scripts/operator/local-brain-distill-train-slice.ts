@@ -206,6 +206,14 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
 function completionRecord(record: JsonRecord): Record<string, unknown> | undefined {
   if (typeof record.completion !== "string") {
     return undefined;
@@ -685,19 +693,66 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     aligner,
   );
 
+  const [sourceTrainSha256, trainSha256, validSha256, testSha256, evalSourceSha256] =
+    await Promise.all([
+      sha256File(trainPath),
+      sha256File(trainOut),
+      sha256File(path.join(options.outDir, "valid.jsonl")),
+      sha256File(path.join(options.outDir, "test.jsonl")),
+      aligner ? sha256File(options.evalSource) : Promise.resolve(undefined),
+    ]);
+  const policy = {
+    repairContractTargets: options.repairContractTargets,
+    contractVocabAlign: options.contractVocabAlign,
+    evalVocabularySource: options.contractVocabAlign ? options.evalSource : undefined,
+    selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
+    maxReviewExamples: options.maxReviewExamples,
+    curatedRepeat: options.curatedRepeat,
+    nonReviewRepeat: options.nonReviewRepeat,
+  };
+  const identityPolicy = {
+    repairContractTargets: options.repairContractTargets,
+    contractVocabAlign: options.contractVocabAlign,
+    selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
+    maxReviewExamples: options.maxReviewExamples,
+    curatedRepeat: options.curatedRepeat,
+    nonReviewRepeat: options.nonReviewRepeat,
+    evalVocabularySourceSha256: evalSourceSha256,
+  };
+  const trainingSliceIdentityBasis = {
+    schemaVersion: "lcx_local_brain_training_slice_identity_v1",
+    candidateKind: "training_data_slice",
+    sourceTrainSha256,
+    outputSha256: {
+      train: trainSha256,
+      valid: validSha256,
+      test: testSha256,
+    },
+    policy: identityPolicy,
+  };
+  const trainingSliceDigest = createHash("sha256")
+    .update(JSON.stringify(trainingSliceIdentityBasis), "utf8")
+    .digest("hex");
+
   const manifest = {
     ok: true,
     boundary: "local_auxiliary_thought_flow_only",
     sourceDataDir: options.dataDir,
     outDir: options.outDir,
-    policy: {
-      repairContractTargets: options.repairContractTargets,
-      contractVocabAlign: options.contractVocabAlign,
-      evalVocabularySource: options.contractVocabAlign ? options.evalSource : undefined,
-      selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
-      maxReviewExamples: options.maxReviewExamples,
-      curatedRepeat: options.curatedRepeat,
-      nonReviewRepeat: options.nonReviewRepeat,
+    policy,
+    trainingSliceIdentity: {
+      schemaVersion: "lcx_local_brain_training_slice_identity_v1",
+      ref: `local_brain_training_slice:sha256:${trainingSliceDigest}`,
+      candidateKind: "training_data_slice",
+      identityBasis: trainingSliceIdentityBasis,
+      sourceTrainSha256,
+      outputSha256: {
+        train: trainSha256,
+        valid: validSha256,
+        test: testSha256,
+      },
+      evalVocabularySourceSha256: evalSourceSha256,
+      boundary: "data_slice_identity_only_not_model_eval_or_promotion_proof",
     },
     contractVocabAlignment: aligner
       ? {

@@ -9,9 +9,26 @@ const loadConfig = vi.fn(() => ({
     auth: { token: "ltok" },
   },
 }));
-const resolveGatewayPort = vi.fn((_cfg?: unknown) => 18789);
+const resolveGatewayPort = vi.fn((cfg?: unknown) => {
+  if (cfg && typeof cfg === "object") {
+    const port = (cfg as { gateway?: { port?: unknown } }).gateway?.port;
+    if (typeof port === "number" && Number.isFinite(port)) {
+      return port;
+    }
+  }
+  return 18789;
+});
 const discoverGatewayBeacons = vi.fn(
-  async (_opts?: unknown): Promise<Array<{ tailnetDns: string }>> => [],
+  async (
+    _opts?: unknown,
+  ): Promise<
+    Array<{
+      tailnetDns: string;
+      gatewayTls?: boolean;
+      gatewayTlsFingerprintSha256?: string;
+      gatewayPort?: number;
+    }>
+  > => [],
 );
 const pickPrimaryTailnetIPv4 = vi.fn(() => "100.64.0.10");
 const sshStop = vi.fn(async () => {});
@@ -182,6 +199,36 @@ describe("gateway-status command", () => {
     expect(targets.length).toBeGreaterThanOrEqual(2);
     expect(targets[0]?.health).toBeTruthy();
     expect(targets[0]?.summary).toBeTruthy();
+  });
+
+  it("uses WSS for TLS-enabled local probes and TLS discovery hints", async () => {
+    const { runtime, runtimeLogs } = createRuntimeCapture();
+    loadConfig.mockReturnValueOnce({
+      gateway: { mode: "local", bind: "lan", port: 19456, tls: { enabled: true } },
+    } as never);
+    discoverGatewayBeacons.mockResolvedValueOnce([
+      {
+        tailnetDns: "gateway.example",
+        gatewayTls: true,
+        gatewayTlsFingerprintSha256: "sha256:beacon-fingerprint",
+        gatewayPort: 19456,
+      },
+    ]);
+    probeGateway.mockClear();
+
+    await runGatewayStatus(runtime, { timeout: "1000", json: true });
+
+    const parsed = JSON.parse(runtimeLogs.join("\n")) as {
+      network: { localLoopbackUrl: string; localTailnetUrl: string | null };
+      discovery: { beacons: Array<{ wsUrl: string | null; tlsFingerprint: string | null }> };
+    };
+    expect(parsed.network.localLoopbackUrl).toBe("wss://127.0.0.1:19456");
+    expect(parsed.network.localTailnetUrl).toBe("wss://100.64.0.10:19456");
+    expect(parsed.discovery.beacons[0]?.wsUrl).toBe("wss://gateway.example:19456");
+    expect(parsed.discovery.beacons[0]?.tlsFingerprint).toBe("sha256:beacon-fingerprint");
+    expect(probeGateway).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "wss://127.0.0.1:19456", config: expect.any(Object) }),
+    );
   });
 
   it("supports SSH tunnel targets", async () => {

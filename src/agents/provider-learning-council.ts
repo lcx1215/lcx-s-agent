@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
@@ -27,20 +28,141 @@ import { writeFileWithinRoot } from "../infra/fs-safe.js";
 import { recordOperationalAnomaly } from "../infra/operational-anomalies.js";
 import { defaultRuntime } from "../runtime.js";
 import { summarizeLearningCouncilVisibleTopic } from "./learning-visible-topic.js";
+import type { EmbeddedPiRunMeta } from "./pi-embedded-runner/types.js";
 
 type LearningCouncilRole = "kimi" | "minimax" | "deepseek";
 type LearningCouncilCapability = "synthesis" | "challenge" | "extraction";
+type CouncilRoleRequestEvidence = {
+  role: LearningCouncilRole;
+  userMessageSha256: string;
+  sessionKey: string;
+  extraSystemPromptSha256: string;
+  thinking: "off" | "medium" | "high";
+  timeoutSeconds: number;
+  questionRequirementsContextSha256?: string;
+};
+export type LearningCouncilQuestionRequirements = {
+  askSha256: string;
+  needs: readonly { id: string; reason: string }[];
+};
+type CouncilPlanningCall = {
+  callId: string;
+  planningFields: Partial<LearningCouncilDirectives>;
+  builderInputSha256: string;
+  builtSystemPromptSha256: string;
+  dispatchInput?: CouncilRoleRequestEvidence;
+  dispatchInputSha256?: string;
+  receivedInput?: CouncilRoleRequestEvidence;
+  receivedInputSha256?: string;
+};
 
 type LearningCouncilRoleRun = {
   role: LearningCouncilRole;
   capability: LearningCouncilCapability;
   model: string;
   providerFamily: string;
+  actualProvider?: string;
+  actualModel?: string;
+  requestedModelHealth?: "healthy" | "failed" | "mismatched" | "unknown";
   heading: string;
   success: boolean;
   text: string;
   error?: string;
+  requestReadback?: { input: CouncilRoleRequestEvidence; sha256: string };
+  processEvidence?: {
+    boundary: "original_transport_and_attribution_inputs_only";
+    responseResultInputSha256: string;
+    attributionOutputSha256: string;
+  };
 };
+
+function councilAttribution(role: {
+  actualProvider?: string;
+  actualModel?: string;
+  requestedModelHealth?: string;
+  success: boolean;
+}) {
+  return {
+    actualProvider: role.actualProvider,
+    actualModel: role.actualModel,
+    requestedModelHealth: role.requestedModelHealth,
+    success: role.success,
+  };
+}
+
+const councilHash = (value: unknown) =>
+  createHash("sha256")
+    .update(JSON.stringify(value ?? null))
+    .digest("hex");
+
+const QUESTION_REQUIREMENTS_START =
+  "[LCX question requirements: advisory only; checks not completed; no source approval]";
+const QUESTION_REQUIREMENTS_END = "[/LCX question requirements]";
+
+function questionRequirementsContextHash(
+  prompt: string,
+  expectedContext?: string,
+): string | undefined {
+  if (
+    !expectedContext ||
+    !(prompt === expectedContext || prompt.startsWith(`${expectedContext}\n\n`))
+  ) {
+    return undefined;
+  }
+  return councilHash(prompt.slice(0, expectedContext.length));
+}
+
+function buildQuestionRequirementsContext(
+  ask: string,
+  request?: LearningCouncilQuestionRequirements,
+) {
+  if (!request) {
+    return { context: "", evidence: undefined };
+  }
+  const actualAskSha256 = createHash("sha256").update(ask).digest("hex");
+  const receivedInputSha256 = councilHash(request);
+  if (request.askSha256 !== actualAskSha256) {
+    const input = { askSha256: request.askSha256, needs: [] };
+    return {
+      context: "",
+      evidence: {
+        status: "scope_conflict" as const,
+        receivedInputSha256,
+        actualAskSha256,
+        input,
+        inputSha256: councilHash(input),
+        inputBoundary: "bounded_projection_not_complete_received_input" as const,
+        omittedNeeds: request.needs.length,
+      },
+    };
+  }
+  const needs = request.needs.map(({ id, reason }) => ({ id, reason: reason.slice(0, 96) }));
+  const render = () =>
+    `${QUESTION_REQUIREMENTS_START}\n${JSON.stringify({
+      askSha256: request.askSha256,
+      needs,
+      omittedNeeds: request.needs.length - needs.length,
+    })}\n${QUESTION_REQUIREMENTS_END}`;
+  let context = render();
+  while (Buffer.byteLength(context, "utf8") > 1024 && needs.length) {
+    needs.pop();
+    context = render();
+  }
+  const input = { askSha256: request.askSha256, needs };
+  return {
+    context,
+    evidence: {
+      status: "provided" as const,
+      receivedInputSha256,
+      actualAskSha256,
+      input,
+      inputSha256: councilHash(input),
+      inputBoundary: "bounded_projection_not_complete_received_input" as const,
+      contextSha256: councilHash(context),
+      omittedNeeds: request.needs.length - needs.length,
+    },
+  };
+}
 
 type LearningCouncilArtifact = {
   version: 2;
@@ -54,6 +176,28 @@ type LearningCouncilArtifact = {
   rescues?: LearningCouncilRescueRun[];
   runPacket: LearningCouncilRunPacket;
   finalReply: string;
+  processEvidence?: {
+    boundary: "original_artifact_role_input_attribution_only";
+    roleInputs: Array<{ role: LearningCouncilRole; attributionSha256: string }>;
+    planner?: {
+      userMessageSha256: string;
+      sessionKey: string;
+      messageId: string;
+      directives: LearningCouncilDirectives;
+      inputSha256: string;
+    };
+    planningCalls?: CouncilPlanningCall[];
+    questionRequirements?: {
+      status: "provided" | "scope_conflict";
+      receivedInputSha256: string;
+      actualAskSha256: string;
+      input: LearningCouncilQuestionRequirements;
+      inputSha256: string;
+      inputBoundary: "bounded_projection_not_complete_received_input";
+      contextSha256?: string;
+      omittedNeeds: number;
+    };
+  };
 };
 
 type LearningCouncilAnchorContext = {
@@ -104,6 +248,7 @@ type LearningCouncilRescueRun = {
 
 type GatewayAgentPayload = {
   text?: string;
+  isError?: boolean;
 };
 
 type GatewayAgentResponse = {
@@ -111,13 +256,14 @@ type GatewayAgentResponse = {
   status?: string;
   result?: {
     payloads?: GatewayAgentPayload[];
+    meta?: Partial<EmbeddedPiRunMeta>;
   };
 };
 
 const LEARNING_COUNCIL_HEADINGS: Record<LearningCouncilRole, string> = {
-  kimi: "Kimi synthesis",
-  minimax: "MiniMax challenge",
-  deepseek: "DeepSeek extraction",
+  kimi: "Synthesis",
+  minimax: "Challenge",
+  deepseek: "Extraction",
 };
 
 const LEARNING_COUNCIL_CAPABILITIES: Record<LearningCouncilRole, LearningCouncilCapability> = {
@@ -160,20 +306,28 @@ function findAllowedLearningCouncilModel(
   return candidates.find((candidate) => Object.hasOwn(allowedModels, candidate));
 }
 
+const OPTIONAL_COUNCIL_MODEL_CANDIDATES = {
+  kimi: ["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"],
+  minimax: [
+    `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
+    `minimax/${resolveMinimaxDefaultTextModelId()}`,
+  ],
+} as const;
+
+function resolveOptionalCouncilModel(
+  role: "kimi" | "minimax",
+  cfg: OpenClawConfig,
+): string | undefined {
+  return (
+    process.env[`OPENCLAW_LEARNING_COUNCIL_${role.toUpperCase()}_MODEL`]?.trim() ||
+    findAllowedLearningCouncilModel(cfg, OPTIONAL_COUNCIL_MODEL_CANDIDATES[role])
+  );
+}
+
 export function resolveLearningCouncilDisabledRoles(cfg: OpenClawConfig): LearningCouncilRole[] {
-  // A council role whose provider family is absent from the runtime config is
-  // retired, not failed: skip it instead of burning a gateway call and forcing
-  // the artifact into degraded status. An explicit env override still wins.
-  if (
-    process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL?.trim() ||
-    findAllowedLearningCouncilModel(cfg, [
-      `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
-      `minimax/${resolveMinimaxDefaultTextModelId()}`,
-    ]) !== undefined
-  ) {
-    return [];
-  }
-  return ["minimax"];
+  // Unselected optional roles are retired, not failed. Trusted env overrides
+  // explicitly select a replacement model and retain priority over the allowlist.
+  return (["kimi", "minimax"] as const).filter((role) => !resolveOptionalCouncilModel(role, cfg));
 }
 
 function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: OpenClawConfig): string {
@@ -184,17 +338,13 @@ function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: OpenClawCon
   }
   switch (role) {
     case "kimi":
-      return (
-        findAllowedLearningCouncilModel(cfg, ["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"]) ??
-        "moonshot/kimi-k2.5"
-      );
-    case "minimax":
-      return (
-        findAllowedLearningCouncilModel(cfg, [
-          `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
-          `minimax/${resolveMinimaxDefaultTextModelId()}`,
-        ]) ?? `minimax/${resolveMinimaxDefaultTextModelId()}`
-      );
+    case "minimax": {
+      const model = resolveOptionalCouncilModel(role, cfg);
+      if (!model) {
+        throw new Error(`learning council role ${role} is retired: no model explicitly selected`);
+      }
+      return model;
+    }
     case "deepseek":
       return (
         // The extraction lane is latency-sensitive inside the External reply loop.
@@ -314,7 +464,56 @@ function pickGatewayText(response: GatewayAgentResponse): string {
   if (texts.length > 0) {
     return texts.join("\n\n").trim();
   }
-  return response.summary?.trim() ?? "";
+  return "";
+}
+
+/** One result contract shared by both transports; control summaries are never answer text. */
+function assessLearningCouncilResponse(response: GatewayAgentResponse, requestedModel: string) {
+  const meta = response.result?.meta;
+  const actualProvider = meta?.agentMeta?.provider?.trim() || undefined;
+  const actualModel = meta?.agentMeta?.model?.trim() || undefined;
+  const identity = actualProvider && actualModel ? `${actualProvider}/${actualModel}` : undefined;
+  const text = pickGatewayText(response);
+  const completedBeforeCompactionTimeout =
+    meta?.timedOut === true &&
+    meta.timedOutDuringCompaction === true &&
+    meta.promptCompleted === true;
+  let error: string | undefined;
+  if (response.status !== "ok") {
+    error = "agent response status is not ok";
+  } else if (response.result?.payloads?.some((payload) => payload.isError)) {
+    error = "agent returned an error payload";
+  } else if (meta?.error) {
+    error = "agent metadata reports an error";
+  } else if (meta?.stopReason === "error") {
+    error = "agent stopped with an error";
+  } else if (
+    meta?.pendingToolCalls?.length ||
+    meta?.stopReason === "tool_calls" ||
+    meta?.stopReason === "toolUse"
+  ) {
+    error = "agent has unfinished tool calls";
+  } else if ((meta?.timedOut || meta?.aborted) && !completedBeforeCompactionTimeout) {
+    error = "agent timed out or was aborted";
+  } else if (!text) {
+    error = "empty response";
+  }
+  const requestedModelHealth: NonNullable<LearningCouncilRoleRun["requestedModelHealth"]> =
+    !identity
+      ? "unknown"
+      : identity !== requestedModel
+        ? "mismatched"
+        : error
+          ? "failed"
+          : "healthy";
+  return {
+    actualProvider,
+    actualModel,
+    requestedModelHealth,
+    success: !error,
+    text: error ? "" : text,
+    error,
+  };
 }
 
 function normalizeBulletValue(value: string): string {
@@ -1034,7 +1233,7 @@ function buildMiniMaxSystemPrompt(params: {
 }
 
 function resolveDistilledOperatingPack(params: {
-  kimi: LearningCouncilRoleRun;
+  kimi?: LearningCouncilRoleRun;
   minimax?: LearningCouncilRoleRun;
   deepseek: LearningCouncilRoleRun;
   rescues: LearningCouncilRescueRun[];
@@ -1055,7 +1254,7 @@ function resolveDistilledOperatingPack(params: {
 
   const rescueFor = (role: LearningCouncilRole) =>
     params.rescues.find((rescue) => rescue.targetRole === role && rescue.success)?.text ?? "";
-  const kimiSource = params.kimi.success ? params.kimi.text : rescueFor("kimi");
+  const kimiSource = params.kimi?.success ? params.kimi.text : rescueFor("kimi");
   const minimaxSource = params.minimax?.success ? params.minimax.text : rescueFor("minimax");
   const deepseekSource = params.deepseek.success ? params.deepseek.text : rescueFor("deepseek");
 
@@ -1381,6 +1580,30 @@ function readPayloadTexts(result: unknown): string[] {
  * `operator.admin` scope; the council client only holds `operator.write`, so
  * `senderIsOwner` is false here as well.
  */
+function assertCouncilNotCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("learning_council_cancelled");
+  }
+}
+
+async function settleCouncilRolePair(
+  roles: readonly [Promise<LearningCouncilRoleRun> | undefined, Promise<LearningCouncilRoleRun>],
+  signal?: AbortSignal,
+) {
+  if (!signal) {
+    return Promise.all(roles);
+  }
+  // A rejected sibling does not prove that all local role operations stopped.
+  const [first, second] = await Promise.allSettled(roles);
+  if (first.status === "rejected") {
+    throw first.reason;
+  }
+  if (second.status === "rejected") {
+    throw second.reason;
+  }
+  return [first.value, second.value] as const;
+}
+
 async function runLearningCouncilRoleInProcess(params: {
   agentId: string;
   sessionKey: string;
@@ -1389,7 +1612,12 @@ async function runLearningCouncilRoleInProcess(params: {
   thinking: "off" | "medium" | "high";
   timeoutSeconds: number;
   extraSystemPrompt: string;
+  abortSignal?: AbortSignal;
 }): Promise<GatewayAgentResponse> {
+  // The council consumes this payload itself. Keep the agent's CLI-facing reply out of stdout so
+  // operator commands that promise JSON can emit one machine-readable document.
+  assertCouncilNotCancelled(params.abortSignal);
+  const councilRuntime = { ...defaultRuntime, log: () => {} };
   const result = await agentCommand(
     {
       message: params.message,
@@ -1401,14 +1629,15 @@ async function runLearningCouncilRoleInProcess(params: {
       lane: "learning-council",
       extraSystemPrompt: params.extraSystemPrompt,
       senderIsOwner: false,
+      ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
     },
-    defaultRuntime,
+    councilRuntime,
     createDefaultDeps(),
   );
   return {
     status: "ok",
     summary: "completed",
-    result: { payloads: readPayloadTexts(result).map((text) => ({ text })) },
+    result: result ?? undefined,
   };
 }
 
@@ -1423,14 +1652,44 @@ async function runLearningCouncilRole(params: {
   extraSystemPrompt: string;
   /** Overrides the env-resolved transport; used by tests and explicit callers. */
   transport?: LearningCouncilTransport;
+  captureProcessEvidence?: boolean;
+  questionRequirementsContext?: string;
+  abortSignal?: AbortSignal;
 }): Promise<LearningCouncilRoleRun> {
   const model = resolveLearningCouncilModel(params.role, params.cfg);
   const capability = LEARNING_COUNCIL_CAPABILITIES[params.role];
   const providerFamily = resolveLearningCouncilProviderFamily(model);
-  const heading = LEARNING_COUNCIL_HEADINGS[params.role];
+  const heading = `${LEARNING_COUNCIL_HEADINGS[params.role]} (${model})`;
   const transport = params.transport ?? resolveLearningCouncilTransport();
   const sessionKey = `${params.baseSessionKey}:${params.role}`;
+  const requestReadback = params.captureProcessEvidence
+    ? {
+        input: {
+          role: params.role,
+          userMessageSha256: councilHash(params.userMessage),
+          sessionKey,
+          extraSystemPromptSha256: councilHash(params.extraSystemPrompt),
+          thinking: params.thinking,
+          timeoutSeconds: params.timeoutSeconds,
+          ...(questionRequirementsContextHash(
+            params.extraSystemPrompt,
+            params.questionRequirementsContext,
+          )
+            ? {
+                questionRequirementsContextSha256: questionRequirementsContextHash(
+                  params.extraSystemPrompt,
+                  params.questionRequirementsContext,
+                ),
+              }
+            : {}),
+        },
+      }
+    : undefined;
+  const receivedEvidence = requestReadback
+    ? { requestReadback: { ...requestReadback, sha256: councilHash(requestReadback.input) } }
+    : {};
   try {
+    assertCouncilNotCancelled(params.abortSignal);
     const response =
       transport === "gateway"
         ? await callGateway<GatewayAgentResponse>({
@@ -1458,28 +1717,31 @@ async function runLearningCouncilRole(params: {
             thinking: params.thinking,
             timeoutSeconds: params.timeoutSeconds,
             extraSystemPrompt: params.extraSystemPrompt,
+            abortSignal: params.abortSignal,
           });
-    const text = pickGatewayText(response);
-    if (!text) {
-      return {
-        role: params.role,
-        capability,
-        model,
-        providerFamily,
-        heading,
-        success: false,
-        text: "",
-        error: "empty response",
-      };
-    }
+    assertCouncilNotCancelled(params.abortSignal);
+    const responseResultInputSha256 = params.captureProcessEvidence
+      ? councilHash(response.result)
+      : undefined;
+    const assessed = assessLearningCouncilResponse(response, model);
     return {
       role: params.role,
       capability,
       model,
       providerFamily,
       heading,
-      success: true,
-      text: trimSectionText(text),
+      ...assessed,
+      text: trimSectionText(assessed.text),
+      ...receivedEvidence,
+      ...(responseResultInputSha256
+        ? {
+            processEvidence: {
+              boundary: "original_transport_and_attribution_inputs_only" as const,
+              responseResultInputSha256,
+              attributionOutputSha256: councilHash(councilAttribution(assessed)),
+            },
+          }
+        : {}),
     };
   } catch (error) {
     return {
@@ -1491,6 +1753,8 @@ async function runLearningCouncilRole(params: {
       success: false,
       text: "",
       error: String(error),
+      requestedModelHealth: "unknown",
+      ...receivedEvidence,
     };
   }
 }
@@ -1517,8 +1781,10 @@ async function runLearningCouncilRescue(params: {
   kimiText: string;
   minimaxText: string;
   deepseekText: string;
+  abortSignal?: AbortSignal;
 }): Promise<LearningCouncilRescueRun> {
   const rescue = await runLearningCouncilRole({
+    abortSignal: params.abortSignal,
     cfg: params.cfg,
     role: params.helperRole,
     userMessage: params.userMessage,
@@ -1549,7 +1815,7 @@ function renderRoleSection(
   result: LearningCouncilRoleRun,
   rescue?: LearningCouncilRescueRun,
 ): string {
-  const laneReceipt = `Lane receipt: contract=${result.capability} (configured role: ${result.role}); runtime provider=${result.providerFamily}; runtime model=${result.model}`;
+  const laneReceipt = `Lane receipt: contract=${result.capability} (configured role: ${result.role}); requested model=${result.model}; runtime provider=${result.actualProvider ?? "unknown"}; runtime model=${result.actualModel ?? "unknown"}; requested model health=${result.requestedModelHealth ?? "unknown"}`;
   if (result.success) {
     return `## ${result.heading}\n${laneReceipt}\n\n${result.text}`.trim();
   }
@@ -1568,6 +1834,14 @@ function renderRoleSection(
   return `## ${result.heading}\n${laneReceipt}\n- run_failed: ${result.error ?? "unknown error"}\n- status: low-fidelity for this role in this turn.`.trim();
 }
 
+function actualCouncilModel(
+  result: Pick<LearningCouncilRoleRun, "actualProvider" | "actualModel"> | undefined,
+): string {
+  return result?.actualProvider && result.actualModel
+    ? `${result.actualProvider}/${result.actualModel}`
+    : "unknown";
+}
+
 function renderLearningCouncilReadableLead(params: {
   userMessage: string;
   status: LearningCouncilArtifact["status"];
@@ -1583,16 +1857,21 @@ function renderLearningCouncilReadableLead(params: {
     .filter((rescue) => rescue.success)
     .map((rescue) => `${rescue.targetRole}<=${rescue.helperRole}`);
   const statusLine =
-    params.status === "degraded"
-      ? `本轮没有三模型全绿：${succeeded.join("、") || "暂无模型"} 已产出，${failed.join("、") || "无"} 失败或超时。`
-      : params.status === "full_with_mutable_fact_warnings"
-        ? "三模型审阅已完成，但里面有可变事实或新鲜度提醒，不能直接当成最终事实。"
-        : "三模型审阅已完成，可以进入压缩、复核和后续内化检查。";
+    `本轮角色产出：${succeeded.join("、") || "暂无"}；` +
+    `失败或未完成：${failed.join("、") || "无"}。`;
+  const healthWarnings = params.roles
+    .filter((role) => role.requestedModelHealth !== "healthy")
+    .map((role) =>
+      role.requestedModelHealth === "mismatched"
+        ? `${role.role}: 由替代模型 ${actualCouncilModel(role)} 产出，请求模型健康未证实`
+        : `${role.role}: 请求模型健康未证实 (${role.requestedModelHealth ?? "unknown"})`,
+    );
   const reliability =
     params.status === "degraded"
       ? "结论只能当作临时学习材料：能用成功通道的高信号部分，但不能说已经完整内化。"
       : "结论仍然要经过证据门和后续 receipt，才能升级成稳定规则或长期记忆。";
   const warnings = [
+    ...healthWarnings,
     ...(rescued.length > 0 ? [`兜底覆盖: ${rescued.join("; ")}`] : []),
     ...(params.mutableFactWarnings.length > 0 ? ["存在可变事实新鲜度风险"] : []),
     ...(params.sourceCoverageWarnings.length > 0 ? ["来源覆盖可能偏窄"] : []),
@@ -1758,7 +2037,7 @@ function mergeMiniMaxRuns(
 }
 
 function renderConsensus(params: {
-  kimi: LearningCouncilRoleRun;
+  kimi?: LearningCouncilRoleRun;
   minimax?: LearningCouncilRoleRun;
   deepseek: LearningCouncilRoleRun;
   rescues: LearningCouncilRescueRun[];
@@ -1950,157 +2229,296 @@ export async function runExternalLearningCouncil(params: {
   sessionKey: string;
   messageId: string;
   workspaceDir?: string;
+  /** Opt-in byte custody at existing transport/assessment/artifact seams, not source approval. */
+  captureProcessEvidence?: boolean;
+  questionRequirements?: LearningCouncilQuestionRequirements;
+  /** Optional caller deadline; it does not authorize remote gateway cancellation. */
+  abortSignal?: AbortSignal;
 }): Promise<string> {
+  assertCouncilNotCancelled(params.abortSignal);
   const runtimeConfig = params.cfg;
   const baseSessionKey = `${params.sessionKey}:learning-council:${params.messageId}`;
   const directives = resolveLearningCouncilDirectives(params.userMessage);
+  const questionRequirements = buildQuestionRequirementsContext(
+    params.userMessage,
+    params.questionRequirements,
+  );
+  const planner = params.captureProcessEvidence
+    ? {
+        userMessageSha256: councilHash(params.userMessage),
+        sessionKey: params.sessionKey,
+        messageId: params.messageId,
+        directives: { ...directives },
+        inputSha256: councilHash({
+          userMessage: params.userMessage,
+          sessionKey: params.sessionKey,
+          messageId: params.messageId,
+          directives,
+        }),
+      }
+    : undefined;
+  const planningCalls: CouncilPlanningCall[] = [];
+  const capturePrompt = <T extends object>(
+    callId: string,
+    input: T,
+    builder: (input: T) => string,
+  ) => {
+    const built = builder(input);
+    if (params.captureProcessEvidence) {
+      planningCalls.push({
+        callId,
+        planningFields: Object.fromEntries(
+          Object.entries(input).filter(([, value]) => typeof value === "boolean"),
+        ),
+        builderInputSha256: councilHash(input),
+        builtSystemPromptSha256: councilHash(built),
+      });
+    }
+    return built;
+  };
+  const dispatchRole = async (
+    callId: string,
+    input: Parameters<typeof runLearningCouncilRole>[0],
+  ) => {
+    const record = params.captureProcessEvidence
+      ? planningCalls.find((call) => call.callId === callId)
+      : undefined;
+    if (record) {
+      record.dispatchInput = {
+        role: input.role,
+        userMessageSha256: councilHash(input.userMessage),
+        sessionKey: `${input.baseSessionKey}:${input.role}`,
+        extraSystemPromptSha256: councilHash(input.extraSystemPrompt),
+        thinking: input.thinking,
+        timeoutSeconds: input.timeoutSeconds,
+        ...(questionRequirementsContextHash(
+          input.extraSystemPrompt,
+          input.questionRequirementsContext,
+        )
+          ? {
+              questionRequirementsContextSha256: questionRequirementsContextHash(
+                input.extraSystemPrompt,
+                input.questionRequirementsContext,
+              ),
+            }
+          : {}),
+      };
+      record.dispatchInputSha256 = councilHash(record.dispatchInput);
+    }
+    const result = await runLearningCouncilRole(input);
+    if (record && result.requestReadback) {
+      record.receivedInput = result.requestReadback.input;
+      record.receivedInputSha256 = result.requestReadback.sha256;
+    }
+    return result;
+  };
   const learningAnchorContext = await resolveLearningCouncilAnchorContext({
     cfg: params.cfg,
     workspaceDir: params.workspaceDir,
     userMessage: params.userMessage,
   });
+  assertCouncilNotCancelled(params.abortSignal);
   const languageCoveragePreamble = directives.bilingualComprehension
     ? `${buildLanguageCoverageNote().join("\n")}\n`
     : "";
 
-  const [kimi, deepseek] = await Promise.all([
-    runLearningCouncilRole({
-      cfg: runtimeConfig,
-      role: "kimi",
-      userMessage: params.userMessage,
-      routeAgentId: params.routeAgentId,
-      baseSessionKey,
-      timeoutSeconds: 420,
-      // kimi-k2.5 on Moonshot CN can consume the entire completion budget in
-      // reasoning_content when thinking is enabled, leaving assistant content empty.
-      // Keep Kimi's council lane in direct-answer mode so the synthesis section
-      // stays user-visible while DeepSeek and MiniMax still do heavier auditing.
-      thinking: "off",
-      extraSystemPrompt: [
-        languageCoveragePreamble.trim(),
-        learningAnchorContext.prompt,
-        buildKimiSystemPrompt({
-          kimiHeavy: directives.kimiHeavy,
-          internalizationFocus: directives.internalizationFocus,
-          antiShallowSummary: directives.antiShallowSummary,
-          durableLearningDiscipline: directives.durableLearningDiscipline,
-          broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
-        }),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    }),
-    runLearningCouncilRole({
-      cfg: runtimeConfig,
-      role: "deepseek",
-      userMessage: params.userMessage,
-      routeAgentId: params.routeAgentId,
-      baseSessionKey,
-      timeoutSeconds: 300,
-      thinking: "medium",
-      extraSystemPrompt: [
-        languageCoveragePreamble.trim(),
-        learningAnchorContext.prompt,
-        buildDeepSeekSystemPrompt({
-          internalizationFocus: directives.internalizationFocus,
-          antiShallowSummary: directives.antiShallowSummary,
-          durableLearningDiscipline: directives.durableLearningDiscipline,
-          broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
-        }),
-        directives.bilingualComprehension
-          ? "Add compact bilingual terminology pairs, ambiguity traps, and workflow-trigger mapping when useful."
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    }),
-  ]);
-
   const disabledRoles = resolveLearningCouncilDisabledRoles(runtimeConfig);
+  const kimiDisabled = disabledRoles.includes("kimi");
   const minimaxDisabled = disabledRoles.includes("minimax");
+  const [kimi, deepseek] = await settleCouncilRolePair(
+    [
+      kimiDisabled
+        ? undefined
+        : dispatchRole("kimi", {
+            cfg: runtimeConfig,
+            role: "kimi",
+            captureProcessEvidence: params.captureProcessEvidence,
+            ...(questionRequirements.context
+              ? { questionRequirementsContext: questionRequirements.context }
+              : {}),
+            abortSignal: params.abortSignal,
+            userMessage: params.userMessage,
+            routeAgentId: params.routeAgentId,
+            baseSessionKey,
+            timeoutSeconds: 420,
+            // kimi-k2.5 on Moonshot CN can consume the entire completion budget in
+            // reasoning_content when thinking is enabled, leaving assistant content empty.
+            // Keep Kimi's council lane in direct-answer mode so the synthesis section
+            // stays user-visible while DeepSeek and MiniMax still do heavier auditing.
+            thinking: "off",
+            extraSystemPrompt: [
+              questionRequirements.context,
+              languageCoveragePreamble.trim(),
+              learningAnchorContext.prompt,
+              capturePrompt(
+                "kimi",
+                {
+                  kimiHeavy: directives.kimiHeavy,
+                  internalizationFocus: directives.internalizationFocus,
+                  antiShallowSummary: directives.antiShallowSummary,
+                  durableLearningDiscipline: directives.durableLearningDiscipline,
+                  broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+                },
+                buildKimiSystemPrompt,
+              ),
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          }),
+      dispatchRole("deepseek", {
+        cfg: runtimeConfig,
+        role: "deepseek",
+        captureProcessEvidence: params.captureProcessEvidence,
+        ...(questionRequirements.context
+          ? { questionRequirementsContext: questionRequirements.context }
+          : {}),
+        abortSignal: params.abortSignal,
+        userMessage: params.userMessage,
+        routeAgentId: params.routeAgentId,
+        baseSessionKey,
+        timeoutSeconds: 300,
+        thinking: "medium",
+        extraSystemPrompt: [
+          questionRequirements.context,
+          languageCoveragePreamble.trim(),
+          learningAnchorContext.prompt,
+          capturePrompt(
+            "deepseek",
+            {
+              internalizationFocus: directives.internalizationFocus,
+              antiShallowSummary: directives.antiShallowSummary,
+              durableLearningDiscipline: directives.durableLearningDiscipline,
+              broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+            },
+            buildDeepSeekSystemPrompt,
+          ),
+          directives.bilingualComprehension
+            ? "Add compact bilingual terminology pairs, ambiguity traps, and workflow-trigger mapping when useful."
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      }),
+    ],
+    params.abortSignal,
+  );
+
+  assertCouncilNotCancelled(params.abortSignal);
   const skippedRoles = disabledRoles.map((role) => ({
     role,
-    reason: "provider family absent from runtime config (role retired, not failed)",
+    reason:
+      "no model explicitly selected in allowlist or trusted env override (role retired, not failed)",
   }));
 
   const minimaxPrimary = minimaxDisabled
     ? undefined
-    : await runLearningCouncilRole({
+    : await dispatchRole("minimax_primary", {
         cfg: runtimeConfig,
         role: "minimax",
+        captureProcessEvidence: params.captureProcessEvidence,
+        ...(questionRequirements.context
+          ? { questionRequirementsContext: questionRequirements.context }
+          : {}),
+        abortSignal: params.abortSignal,
         userMessage: params.userMessage,
         routeAgentId: params.routeAgentId,
         baseSessionKey,
         timeoutSeconds: 360,
         thinking: "high",
         extraSystemPrompt: [
+          questionRequirements.context,
           learningAnchorContext.prompt,
-          buildMiniMaxSystemPrompt({
-            userMessage: params.userMessage,
-            kimiText: kimi.text || kimi.error || "kimi run unavailable",
-            kimiModel: kimi.model,
-            deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
-            deepseekModel: deepseek.model,
-            minimaxHeavy: directives.minimaxHeavy,
-            bilingualComprehension: directives.bilingualComprehension,
-            internalizationFocus: directives.internalizationFocus,
-            antiShallowSummary: directives.antiShallowSummary,
-            durableLearningDiscipline: directives.durableLearningDiscipline,
-            broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
-          }),
+          capturePrompt(
+            "minimax_primary",
+            {
+              userMessage: params.userMessage,
+              kimiText: kimi?.text || kimi?.error || "kimi run unavailable",
+              kimiModel: actualCouncilModel(kimi),
+              deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
+              deepseekModel: actualCouncilModel(deepseek),
+              minimaxHeavy: directives.minimaxHeavy,
+              bilingualComprehension: directives.bilingualComprehension,
+              internalizationFocus: directives.internalizationFocus,
+              antiShallowSummary: directives.antiShallowSummary,
+              durableLearningDiscipline: directives.durableLearningDiscipline,
+              broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+            },
+            buildMiniMaxSystemPrompt,
+          ),
         ]
           .filter(Boolean)
           .join("\n\n"),
       });
+  assertCouncilNotCancelled(params.abortSignal);
   const minimaxExtra =
     // `minimaxPrimary` is `undefined` exactly when minimax is disabled, so
     // `!minimaxDisabled` is redundant here; kept explicit so the guard reads
     // the same as the retirement check above instead of relying on that link.
     !minimaxDisabled && directives.minimaxHeavy && minimaxPrimary
-      ? await runLearningCouncilRole({
+      ? await dispatchRole("minimax_extra", {
           cfg: runtimeConfig,
           role: "minimax",
+          captureProcessEvidence: params.captureProcessEvidence,
+          ...(questionRequirements.context
+            ? { questionRequirementsContext: questionRequirements.context }
+            : {}),
+          abortSignal: params.abortSignal,
           userMessage: params.userMessage,
           routeAgentId: params.routeAgentId,
           baseSessionKey: `${baseSessionKey}:redteam`,
           timeoutSeconds: 360,
           thinking: "high",
           extraSystemPrompt: [
+            questionRequirements.context,
             learningAnchorContext.prompt,
-            buildMiniMaxSystemPrompt({
-              userMessage: params.userMessage,
-              kimiText: kimi.text || kimi.error || "kimi run unavailable",
-              kimiModel: kimi.model,
-              deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
-              deepseekModel: deepseek.model,
-              minimaxHeavy: true,
-              priorAuditText:
-                minimaxPrimary.text || minimaxPrimary.error || "prior minimax audit unavailable",
-              bilingualComprehension: directives.bilingualComprehension,
-              internalizationFocus: directives.internalizationFocus,
-              antiShallowSummary: directives.antiShallowSummary,
-              durableLearningDiscipline: directives.durableLearningDiscipline,
-              broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
-            }),
+            capturePrompt(
+              "minimax_extra",
+              {
+                userMessage: params.userMessage,
+                kimiText: kimi?.text || kimi?.error || "kimi run unavailable",
+                kimiModel: actualCouncilModel(kimi),
+                deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
+                deepseekModel: actualCouncilModel(deepseek),
+                minimaxHeavy: true,
+                priorAuditText:
+                  minimaxPrimary.text || minimaxPrimary.error || "prior minimax audit unavailable",
+                bilingualComprehension: directives.bilingualComprehension,
+                internalizationFocus: directives.internalizationFocus,
+                antiShallowSummary: directives.antiShallowSummary,
+                durableLearningDiscipline: directives.durableLearningDiscipline,
+                broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+              },
+              buildMiniMaxSystemPrompt,
+            ),
           ]
             .filter(Boolean)
             .join("\n\n"),
         })
       : undefined;
+  assertCouncilNotCancelled(params.abortSignal);
   const minimax = minimaxPrimary ? mergeMiniMaxRuns(minimaxPrimary, minimaxExtra) : undefined;
+  assertCouncilNotCancelled(params.abortSignal);
   const rescues: LearningCouncilRescueRun[] = [];
 
   const rescueTargets: Array<{
     failed: LearningCouncilRole;
     helper: LearningCouncilRole | undefined;
   }> = [
-    {
-      failed: "kimi",
-      helper: deepseek.success ? "deepseek" : minimax?.success ? "minimax" : undefined,
-    },
+    ...(kimiDisabled
+      ? []
+      : [
+          {
+            failed: "kimi" as const,
+            helper: deepseek.success
+              ? ("deepseek" as const)
+              : minimax?.success
+                ? ("minimax" as const)
+                : undefined,
+          },
+        ]),
     {
       failed: "deepseek",
-      helper: kimi.success ? "kimi" : minimax?.success ? "minimax" : undefined,
+      helper: kimi?.success ? "kimi" : minimax?.success ? "minimax" : undefined,
     },
     ...(minimaxDisabled
       ? []
@@ -2109,7 +2527,7 @@ export async function runExternalLearningCouncil(params: {
             failed: "minimax" as const,
             helper: deepseek.success
               ? ("deepseek" as const)
-              : kimi.success
+              : kimi?.success
                 ? ("kimi" as const)
                 : undefined,
           },
@@ -2117,6 +2535,7 @@ export async function runExternalLearningCouncil(params: {
   ];
 
   for (const target of rescueTargets) {
+    assertCouncilNotCancelled(params.abortSignal);
     const failedRole =
       target.failed === "kimi" ? kimi : target.failed === "deepseek" ? deepseek : minimax;
     if (!failedRole || failedRole.success || !target.helper) {
@@ -2124,19 +2543,21 @@ export async function runExternalLearningCouncil(params: {
     }
     rescues.push(
       await runLearningCouncilRescue({
+        abortSignal: params.abortSignal,
         cfg: runtimeConfig,
         failedRole: target.failed,
         helperRole: target.helper,
         userMessage: params.userMessage,
         routeAgentId: params.routeAgentId,
         baseSessionKey,
-        kimiText: kimi.text || kimi.error || "unavailable",
+        kimiText: kimi?.text || kimi?.error || "unavailable",
         minimaxText: minimax?.text || minimax?.error || "skipped: provider disabled",
         deepseekText: deepseek.text || deepseek.error || "unavailable",
       }),
     );
   }
 
+  assertCouncilNotCancelled(params.abortSignal);
   const attemptedRoles = [kimi, minimax, deepseek].filter(
     (result): result is LearningCouncilRoleRun => result !== undefined,
   );
@@ -2151,6 +2572,7 @@ export async function runExternalLearningCouncil(params: {
       error: result.error,
     }),
   );
+  assertCouncilNotCancelled(params.abortSignal);
   if (failures.length > 0) {
     await recordOperationalAnomaly({
       cfg: params.cfg,
@@ -2168,6 +2590,7 @@ export async function runExternalLearningCouncil(params: {
     });
   }
 
+  assertCouncilNotCancelled(params.abortSignal);
   if (mutableFactWarnings.length > 0) {
     await recordOperationalAnomaly({
       cfg: params.cfg,
@@ -2183,6 +2606,7 @@ export async function runExternalLearningCouncil(params: {
     });
   }
 
+  assertCouncilNotCancelled(params.abortSignal);
   if (sourceCoverageWarnings.length > 0) {
     await recordOperationalAnomaly({
       cfg: params.cfg,
@@ -2198,6 +2622,7 @@ export async function runExternalLearningCouncil(params: {
     });
   }
 
+  assertCouncilNotCancelled(params.abortSignal);
   const status: LearningCouncilArtifact["status"] =
     failures.length > 0
       ? "degraded"
@@ -2253,7 +2678,7 @@ export async function runExternalLearningCouncil(params: {
       sourceCoverageWarnings,
     }),
     "",
-    renderRoleSection(kimi),
+    ...(kimi ? [renderRoleSection(kimi)] : []),
     "",
     ...(minimax
       ? [
@@ -2291,6 +2716,7 @@ export async function runExternalLearningCouncil(params: {
     .join("\n")
     .trim();
 
+  const artifactInput = { roles: attemptedRoles };
   const artifact: LearningCouncilArtifact = {
     version: 2,
     generatedAt,
@@ -2298,13 +2724,30 @@ export async function runExternalLearningCouncil(params: {
     userMessage: params.userMessage,
     status,
     mutableFactWarnings,
-    roles: attemptedRoles,
+    roles: artifactInput.roles,
+    ...(params.captureProcessEvidence
+      ? {
+          processEvidence: {
+            boundary: "original_artifact_role_input_attribution_only" as const,
+            roleInputs: artifactInput.roles.map((role) => ({
+              role: role.role,
+              attributionSha256: councilHash(councilAttribution(role)),
+            })),
+            planner,
+            planningCalls,
+            ...(questionRequirements.evidence
+              ? { questionRequirements: questionRequirements.evidence }
+              : {}),
+          },
+        }
+      : {}),
     ...(skippedRoles.length > 0 ? { skippedRoles } : {}),
     rescues,
     runPacket,
     finalReply,
   };
 
+  assertCouncilNotCancelled(params.abortSignal);
   try {
     await writeLearningCouncilArtifact({
       cfg: params.cfg,
@@ -2328,10 +2771,18 @@ export async function runExternalLearningCouncil(params: {
     });
   }
 
+  assertCouncilNotCancelled(params.abortSignal);
   return finalReply;
 }
 
 export const __testing = {
+  questionRequirementsContextHash,
+  buildQuestionRequirementsContext,
   runLearningCouncilRoleInProcess,
+  runLearningCouncilRole,
+  assessLearningCouncilResponse,
+  renderLearningCouncilReadableLead,
+  actualCouncilModel,
+  buildMiniMaxSystemPrompt,
   readPayloadTexts,
 };

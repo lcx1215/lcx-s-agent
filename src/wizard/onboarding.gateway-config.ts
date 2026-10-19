@@ -151,6 +151,13 @@ export async function configureGatewayForOnboarding(
     authMode = "password";
   }
 
+  if (bind !== "loopback" && nextConfig.gateway?.tls?.enabled !== true) {
+    await prompter.note(
+      "Direct network binds require Gateway TLS. Enabling TLS; configure a trusted certificate for browser clients or pin the generated certificate in Gateway clients.",
+      "Gateway TLS",
+    );
+  }
+
   let gatewayToken: string | undefined;
   if (authMode === "token") {
     if (flow === "quickstart") {
@@ -236,6 +243,7 @@ export async function configureGatewayForOnboarding(
       ...nextConfig.gateway,
       port,
       bind: bind as GatewayBindMode,
+      ...(bind !== "loopback" ? { tls: { ...nextConfig.gateway?.tls, enabled: true } } : {}),
       ...(bind === "custom" && customBindHost ? { customBindHost } : {}),
       tailscale: {
         ...nextConfig.gateway?.tailscale,

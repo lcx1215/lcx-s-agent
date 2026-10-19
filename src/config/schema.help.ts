@@ -68,7 +68,7 @@ export const FIELD_HELP: Record<string, string> = {
   "gateway.mode":
     'Gateway operation mode: "local" runs channels and agent runtime on this host, while "remote" connects through remote transport. Keep "local" unless you intentionally run a split remote gateway topology.',
   "gateway.bind":
-    'Network bind profile: "auto", "lan", "loopback", "custom", or "tailnet" to control interface exposure. Keep "loopback" or "auto" for safest local operation unless external clients must connect.',
+    'Network bind profile: "auto", "lan", "loopback", "custom", or "tailnet" to control interface exposure. Every direct non-loopback bind requires TLS and authentication. Keep "loopback" or "auto" for safest local operation unless external clients must connect.',
   "gateway.customBindHost":
     "Explicit bind host/IP used when gateway.bind is set to custom for manual interface targeting. Use a precise address and avoid wildcard binds unless external exposure is required.",
   "gateway.controlUi":
@@ -112,9 +112,9 @@ export const FIELD_HELP: Record<string, string> = {
   "gateway.tls":
     "TLS certificate and key settings for terminating HTTPS directly in the gateway process. Use explicit certificates in production and avoid plaintext exposure on untrusted networks.",
   "gateway.tls.enabled":
-    "Enables TLS termination at the gateway listener so clients connect over HTTPS/WSS directly. Keep enabled for direct internet exposure or any untrusted network boundary.",
+    "Enables TLS termination at the gateway listener so clients connect over HTTPS/WSS directly. Required for every direct non-loopback bind, including LAN, custom, tailnet, and auto when it resolves beyond loopback.",
   "gateway.tls.autoGenerate":
-    "Auto-generates a local TLS certificate/key pair when explicit files are not configured. Use only for local/dev setups and replace with real certificates for production traffic.",
+    "Enable to auto-generate a self-signed TLS certificate/key pair when explicit files are not configured (requires openssl on PATH). Its SAN covers localhost, the machine hostname, and currently assigned local interface IPs; trust it only in clients you control, and provide a trusted certificate matching custom or production DNS names.",
   "gateway.tls.certPath":
     "Filesystem path to the TLS certificate file used by the gateway when TLS is enabled. Use managed certificate paths and keep renewal automation aligned with this location.",
   "gateway.tls.keyPath":

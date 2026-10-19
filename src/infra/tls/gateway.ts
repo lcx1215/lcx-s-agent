@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { X509Certificate } from "node:crypto";
 import fs from "node:fs/promises";
+import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { promisify } from "node:util";
@@ -9,6 +11,39 @@ import { CONFIG_DIR, ensureDir, resolveUserPath, shortenHomeInString } from "../
 import { normalizeFingerprint } from "./fingerprint.js";
 
 const execFileAsync = promisify(execFile);
+
+type GatewayTlsInterfaceAddress = {
+  address: string;
+  internal: boolean;
+};
+
+export function buildGatewayTlsSubjectAltNames(
+  params: {
+    hostname?: string;
+    interfaces?: GatewayTlsInterfaceAddress[];
+  } = {},
+): string[] {
+  const subjectAltNames = new Set(["DNS:localhost", "IP:127.0.0.1", "IP:::1"]);
+  const hostname = params.hostname?.trim().replace(/\.$/u, "").toLowerCase();
+  if (
+    hostname &&
+    hostname.length <= 253 &&
+    hostname.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))
+  ) {
+    subjectAltNames.add(`DNS:${hostname}`);
+  }
+  for (const iface of params.interfaces ?? []) {
+    if (iface.internal) {
+      continue;
+    }
+    const address = iface.address.split("%", 1)[0];
+    if (!address || net.isIP(address) === 0 || address === "0.0.0.0" || address === "::") {
+      continue;
+    }
+    subjectAltNames.add(`IP:${address}`);
+  }
+  return [...subjectAltNames];
+}
 
 export type GatewayTlsRuntime = {
   enabled: boolean;
@@ -20,6 +55,23 @@ export type GatewayTlsRuntime = {
   tlsOptions?: tls.TlsOptions;
   error?: string;
 };
+
+export async function readGatewayTlsFingerprint(
+  cfg: GatewayTlsConfig | undefined,
+): Promise<string | undefined> {
+  if (!cfg || cfg.enabled !== true) {
+    return undefined;
+  }
+  const baseDir = path.join(CONFIG_DIR, "gateway", "tls");
+  const certPath = resolveUserPath(cfg.certPath ?? path.join(baseDir, "gateway-cert.pem"));
+  try {
+    const cert = await fs.readFile(certPath, "utf8");
+    const fingerprintSha256 = normalizeFingerprint(new X509Certificate(cert).fingerprint256 ?? "");
+    return fingerprintSha256 || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -33,6 +85,7 @@ async function fileExists(filePath: string): Promise<boolean> {
 async function generateSelfSignedCert(params: {
   certPath: string;
   keyPath: string;
+  subjectAltNames: string[];
   log?: { info?: (msg: string) => void };
 }): Promise<void> {
   const certDir = path.dirname(params.certPath);
@@ -54,6 +107,8 @@ async function generateSelfSignedCert(params: {
     params.keyPath,
     "-out",
     params.certPath,
+    "-addext",
+    `subjectAltName=${params.subjectAltNames.join(",")}`,
     "-subj",
     "/CN=lcx-gateway",
   ]);
@@ -83,7 +138,16 @@ export async function loadGatewayTlsRuntime(
 
   if (!hasCert && !hasKey && autoGenerate) {
     try {
-      await generateSelfSignedCert({ certPath, keyPath, log });
+      const interfaces = Object.values(os.networkInterfaces()).flatMap((entries) => entries ?? []);
+      await generateSelfSignedCert({
+        certPath,
+        keyPath,
+        log,
+        subjectAltNames: buildGatewayTlsSubjectAltNames({
+          hostname: os.hostname(),
+          interfaces,
+        }),
+      });
     } catch (err) {
       return {
         enabled: false,

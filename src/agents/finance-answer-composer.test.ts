@@ -54,11 +54,11 @@ async function buildBlockedSnapshot() {
 }
 
 describe("composeFinanceAnswer grounding attachment", () => {
-  it("passes the gate when the answer declares the number the snapshot actually contained", async () => {
+  it("does not certify a matching number from a blocked snapshot", async () => {
     const snapshot = await buildBlockedSnapshot();
     const reply =
       "QQQ last price 725.17.\n\n```figures\n" +
-      JSON.stringify([{ kind: "observed", name: "last_price", value: 725.17 }]) +
+      JSON.stringify([{ kind: "observed", name: "last_price", value: 725.17, unit: "USD" }]) +
       "\n```";
     const model = recordingModel(reply);
     const result = await composeFinanceAnswer({
@@ -67,8 +67,8 @@ describe("composeFinanceAnswer grounding attachment", () => {
       model: "moonshot/kimi-k2.5",
       callModel: model.caller,
     });
-    expect(result.grounding.verdict).toBe("verified");
-    expect(result.grounding.grounded).toHaveLength(1);
+    expect(result.grounding.verdict).toBe("not_verifiable");
+    expect(result.grounding.grounded).toHaveLength(0);
   });
 
   it("reports an answer with no declaration block as unverifiable rather than passing it", async () => {
@@ -126,9 +126,9 @@ describe("composeFinanceAnswer", () => {
     expect(result.dataPosture).toBe("data_blocked");
     expect(result.modelUsed).toBe("moonshot/kimi-k2.5");
     expect(result.candidateAnswer).toContain("725.17");
-    // The model must have been handed the research-only preamble + grounding.
+    // The model receives concrete decision language plus the grounded data.
     expect(model.seen).toHaveLength(1);
-    expect(model.seen[0].systemContext).toContain("research-only");
+    expect(model.seen[0].systemContext).toContain("Decision mode: research_only");
     expect(model.seen[0].systemContext).toContain("725.17");
     expect(model.seen[0].userMessage).toBe("QQQ 最近风险怎么看?");
   });

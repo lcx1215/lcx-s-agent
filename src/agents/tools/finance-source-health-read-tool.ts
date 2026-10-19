@@ -97,8 +97,9 @@ function countBy(routes: readonly Route[], key: (route: Route) => string): Recor
  *     actions: the first needs credentials, the second has them and simply has never been called.
  *   - `recent_failure` is evidence the source was reached and refused, which is a different fact
  *     from `unverified` (never reached at all).
- *   - This is an inventory plus the most recent stored call. It performs **no network probe** and
- *     makes no uptime promise, so `noNetworkCalled` is always true and is reported as such.
+ *   - This is an inventory plus the most recent stored call and provider-level heartbeat. It
+ *     performs **no network probe** and makes no uptime promise on read, so `noNetworkCalled` is
+ *     always true and is reported as such.
  */
 export function createFinanceSourceHealthReadTool(
   options: {
@@ -180,9 +181,16 @@ export function createFinanceSourceHealthReadTool(
         // Stated rather than implied: an agent that reads "health" and hears "uptime" will treat
         // "no recent success" as "the source is down", which is not what this evidence says.
         boundary: "inventory_and_recent_call_evidence_not_continuous_uptime",
+        evidenceScope: {
+          assessed: "stored_route_call_receipts_only",
+          systemWideFreshDataAvailability: "not_assessed",
+          sourceIndependence: "not_assessed",
+          rule: "Zero recent successes in this inventory does not prove no fresh data exists elsewhere. Route count is not independent-source count. Inspect the relevant collection or research-run receipt before making a system-wide claim.",
+        },
         asOf: health.asOf,
         inspectedFrom: { workspaceDir: root },
         noNetworkCalled: health.noNetworkCalled,
+        heartbeat: health.heartbeat,
         counts: {
           routes: allRoutes.length,
           configured: allRoutes.filter((route) => route.configured).length,

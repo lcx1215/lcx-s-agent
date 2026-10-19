@@ -12,7 +12,7 @@ x-i18n:
 
 # Fly.io 部署
 
-**目标：** LCX Agent Gateway 网关运行在 [Fly.io](https://fly.io) 机器上，具有持久存储、自动 HTTPS 和 Discord/渠道访问。
+**目标：** LCX Agent Gateway 网关运行在 [Fly.io](https://fly.io) 机器上，具有持久存储、Gateway 端 HTTPS 和 Discord/渠道访问。
 
 ## 你需要什么
 
@@ -50,6 +50,8 @@ fly volumes create openclaw_data --size 1 --region iad
 
 **安全注意事项：** 默认配置暴露公共 URL。对于没有公共 IP 的加固部署，参见[私有部署](#私有部署加固)或使用 `fly.private.toml`。
 
+Fly 默认会在边缘终止 TLS，再通过 Fly 加密的 WireGuard 网格向应用转发应用层明文流。本示例改为在 443 端口透传 TCP，由 Gateway 自己终止 TLS。公开服务前，必须在持久化 Gateway 配置中启用 `gateway.tls.enabled` 和认证。透传模式不使用 Fly 管理的边缘证书；请提供客户端信任的证书。参见 [Fly TLS 终止文档](https://fly.io/docs/security/tls-termination/)和 [连接处理器文档](https://fly.io/docs/networking/services/#tcp-pass-through)。
+
 ```toml
 app = "my-openclaw"  # Your app name
 primary_region = "iad"
@@ -64,15 +66,19 @@ primary_region = "iad"
   NODE_OPTIONS = "--max-old-space-size=1536"
 
 [processes]
-  app = "node dist/index.js gateway --allow-unconfigured --port 3000 --bind lan"
+  app = "node dist/index.js gateway --allow-unconfigured --port 3000"
 
-[http_service]
+[[services]]
+  protocol = "tcp"
   internal_port = 3000
-  force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
+
+  [[services.ports]]
+    port = 443
+    # 不配置 handler：将 TLS 流原样转发给 Gateway。
 
 [[vm]]
   size = "shared-cpu-2x"
@@ -85,13 +91,13 @@ primary_region = "iad"
 
 **关键设置：**
 
-| 设置                           | 原因                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `--bind lan`                   | 绑定到 `0.0.0.0` 以便 Fly 的代理可以访问 Gateway 网关                     |
-| `--allow-unconfigured`         | 无需配置文件启动（你稍后会创建一个）                                      |
-| `internal_port = 3000`         | 必须与 `--port 3000`（或 `OPENCLAW_GATEWAY_PORT`）匹配以进行 Fly 健康检查 |
-| `memory = "2048mb"`            | 512MB 太小；推荐 2GB                                                      |
-| `OPENCLAW_STATE_DIR = "/data"` | 在卷上持久化状态                                                          |
+| 设置                           | 原因                                                   |
+| ------------------------------ | ------------------------------------------------------ |
+| `--allow-unconfigured`         | 允许先启动机器，再通过 SSH 创建配置                    |
+| `internal_port = 3000`         | 必须与 `--port 3000`（或 `OPENCLAW_GATEWAY_PORT`）一致 |
+| 无 handler 的 TCP 443          | 透传 HTTPS/WSS，由 Gateway TLS 保护完整连接            |
+| `memory = "2048mb"`            | 512MB 太小；推荐 2GB                                   |
+| `OPENCLAW_STATE_DIR = "/data"` | 在卷上持久化状态                                       |
 
 ## 3）设置密钥
 
@@ -112,7 +118,10 @@ fly secrets set DISCORD_BOT_TOKEN=MTQ...
 
 **注意事项：**
 
-- 非 loopback 绑定（`--bind lan`）出于安全需要 `OPENCLAW_GATEWAY_TOKEN`。
+- 对外开放前，在 `/data/openclaw.json` 设置 `gateway.bind: "lan"`、`gateway.tls.enabled: true` 和 `gateway.auth.mode: "token"`；`OPENCLAW_GATEWAY_TOKEN` 提供认证 token。
+- 将与 Fly 域名匹配的 CA 签发证书和私钥放到持久卷，并在 `gateway.tls.certPath` / `gateway.tls.keyPath` 中填写路径。自动生成的自签名证书只有在客户端明确安装信任后才适用。
+- 使用控制 UI 时，将 `gateway.controlUi.allowedOrigins` 设为公开 HTTPS 来源。
+- 原始 TCP/TLS 透传可能需要 Fly 专用 IPv4 地址；部署前核对 Fly 当前 IP 要求。`force_https` 需要 HTTP handler，不能与本透传配置一起使用。
 - 像对待密码一样对待这些 token。
 - **优先使用环境变量而不是配置文件**来存储所有 API 密钥和 token。这可以避免密钥出现在 `openclaw.json` 中，防止意外暴露或记录。
 
@@ -123,6 +132,7 @@ fly deploy
 ```
 
 首次部署构建 Docker 镜像（约 2-3 分钟）。后续部署更快。
+引导阶段 Gateway 先监听 loopback，直到第 5 步创建配置；设置 LAN 绑定和 Gateway TLS 并重启机器后，公网入口才会开始服务。
 
 部署后验证：
 
@@ -134,7 +144,7 @@ fly logs
 你应该看到：
 
 ```
-[gateway] listening on ws://0.0.0.0:3000 (PID xxx)
+[gateway] listening on wss://0.0.0.0:3000 (PID xxx)
 [discord] logged in to discord as xxx
 ```
 
@@ -193,7 +203,14 @@ cat > /data/openclaw.json << 'EOF'
   },
   "gateway": {
     "mode": "local",
-    "bind": "auto"
+    "bind": "lan",
+    "tls": {
+      "enabled": true,
+      "certPath": "/data/gateway-cert.pem",
+      "keyPath": "/data/gateway-key.pem"
+    },
+    "auth": { "mode": "token" },
+    "controlUi": { "allowedOrigins": ["https://my-openclaw.fly.dev"] }
   },
   "meta": {
     "lastTouchedVersion": "2026.1.29"

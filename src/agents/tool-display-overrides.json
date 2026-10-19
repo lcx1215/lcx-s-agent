@@ -242,11 +242,6 @@
       "title": "Doctrine Edit Handoff",
       "detailKeys": ["dateKey", "proposalId"]
     },
-    "external_live_probe": {
-      "emoji": "🧪",
-      "title": "External Probe",
-      "detailKeys": ["surface", "chatId", "waitMs", "limit"]
-    },
     "lobster_workface_app": {
       "emoji": "🦞",
       "title": "Workface App",

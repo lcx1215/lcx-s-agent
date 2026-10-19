@@ -148,6 +148,7 @@ describe("finance learning retrieval review tool", () => {
 
     const result = await tool.execute("review", {
       dateKey: "2026-04-27",
+      writeReview: true,
     });
 
     expect(result.details).toEqual(
@@ -280,13 +281,12 @@ describe("finance learning retrieval review tool", () => {
     );
   });
 
-  it("supports dry-run review when no receipts exist", async () => {
+  it("defaults to read-only review when no receipts exist", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-learning-review-");
     const tool = createFinanceLearningRetrievalReviewTool({ workspaceDir });
 
     const result = await tool.execute("dry", {
       dateKey: "2026-04-27",
-      writeReview: false,
     });
 
     expect(result.details).toEqual(

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -7,7 +8,7 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
-const lcxUserHome = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
+const lcxUserHome = process.env.LCX_USER_HOME ?? os.userInfo().homedir;
 const localOperatorPath = path.join(lcxUserHome, ".openclaw", "bin", "lcx-local-operator-loop.sh");
 
 async function runJsonScript(script: string) {

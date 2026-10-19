@@ -1,0 +1,206 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({
+  targets: vi.fn(),
+  session: vi.fn(),
+  monitor: vi.fn(),
+  execute: vi.fn(),
+  record: vi.fn(),
+  controller: vi.fn(),
+}));
+vi.mock("./finance-intraday-position.js", () => ({
+  readFinanceRetiredIntradayExitTargets: mocks.targets,
+}));
+vi.mock("./finance-intraday-monitor.js", () => ({
+  runFinanceIntradayMonitorTick: mocks.monitor,
+  resolveFinanceIntradayCashSession: mocks.session,
+}));
+vi.mock("./finance-result-recording.js", () => ({ recordFinanceIntradayResult: mocks.record }));
+vi.mock("./finance-intraday-execution.js", () => ({
+  executeFinanceIntradayDecision: mocks.execute,
+}));
+vi.mock("./finance-alpaca-cycle-controller.js", async (original) => ({
+  ...(await original<typeof import("./finance-alpaca-cycle-controller.js")>()),
+  createFinanceAlpacaCycleController: mocks.controller,
+}));
+import {
+  parseFinanceSchedulerArgs,
+  runFinanceRetiredIntradayExitTick,
+} from "../../scripts/operator/lcx-finance-scheduler.js";
+const directories: string[] = [];
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.resetAllMocks();
+  for (const dir of directories.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+it.each(["sell", "buy"] as const)(
+  "continues with no active strategy but only dispatches sells (%s)",
+  async (action) => {
+    mocks.session.mockResolvedValue({ status: "cash_session_open" });
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "retired-scheduler-"));
+    directories.push(directory);
+    const policyFile = path.join(directory, "policy.json");
+    fs.writeFileSync(
+      policyFile,
+      JSON.stringify({
+        schemaVersion: "lcx_alpaca_cycle_policy_v1",
+        accountId: "paper",
+        planId: "plan",
+        revision: "v1",
+        expiresAt: "2099-01-01T00:00:00Z",
+        peakEquity: 10000,
+        peakScope: "book",
+        unhedged: true,
+        maxPortfolioDrawdownFraction: 0.2,
+        maxGrossExposure: 10000,
+      }),
+    );
+    const options = parseFinanceSchedulerArgs([
+      "--loop",
+      "--intraday-monitor",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policyFile,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]);
+    if (!options.intraday) {
+      throw new Error("missing intraday config");
+    }
+    options.intraday = {
+      ...options.intraday,
+      instrumentSource: "active_rule",
+      instruments: [],
+      executionInstruments: [],
+      place: false,
+      placementEligibility: "active_rule_unavailable",
+    };
+    const contract = {
+      ruleId: "retired-rule",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+    };
+    mocks.targets.mockResolvedValue([{ instrument: "SPY", quantity: 1, contract }]);
+    mocks.controller.mockReturnValue({ accountId: "paper" });
+    mocks.monitor.mockResolvedValue({
+      status: "decision_pending_execution",
+      decision: { input: { action } },
+    });
+    const outcome = { signalId: "retired-signal", status: "placed", receiptId: "r", reasons: [] };
+    mocks.execute.mockResolvedValue({ status: "placed", outcome });
+    mocks.record.mockResolvedValue({
+      status: "unavailable",
+      reason: "artifact_recording_disabled",
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const context = {
+      root: { directory, source: "explicit" as const },
+      options,
+      signal: AbortSignal.timeout(5000),
+      resolveMarketSession: async () => null,
+    };
+    await runFinanceRetiredIntradayExitTick(context);
+    expect(mocks.monitor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exitOnly: true,
+        strategyContract: contract,
+        accountId: "paper",
+        scope: { kind: "strategy_universe" },
+      }),
+    );
+    expect(mocks.execute).toHaveBeenCalledTimes(action === "sell" ? 1 : 0);
+    expect(mocks.record).toHaveBeenCalledTimes(action === "sell" ? 1 : 0);
+    if (action === "sell") {
+      expect(mocks.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: "paper",
+          venue: "alpaca:paper",
+          directory,
+          outcome,
+        }),
+      );
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("artifact_recording_disabled"));
+    }
+
+    if (action === "sell") {
+      mocks.record.mockClear();
+      mocks.execute.mockResolvedValue({ status: "already_terminal", outcome });
+      await runFinanceRetiredIntradayExitTick(context);
+      expect(mocks.record).not.toHaveBeenCalled();
+    }
+
+    mocks.monitor.mockClear();
+    mocks.execute.mockClear();
+    options.intraday = { ...options.intraday, placementRequested: false };
+    await runFinanceRetiredIntradayExitTick(context);
+    expect(mocks.monitor).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  "outside_cash_session",
+  "market_closed",
+  "blocked_market_calendar_unavailable",
+  "blocked_invalid_market_calendar",
+] as const)(
+  "skips target and policy reads when the shared session gate returns %s",
+  async (status) => {
+    mocks.session.mockResolvedValue({ status });
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const options = parseFinanceSchedulerArgs([
+      "--loop",
+      "--intraday-monitor",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      "/missing-policy.json",
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]);
+    if (!options.intraday) {
+      throw new Error("missing intraday config");
+    }
+    options.intraday = { ...options.intraday, instrumentSource: "active_rule" };
+    const resolver = vi.fn(async () => null);
+    await runFinanceRetiredIntradayExitTick({
+      root: { directory: "/unused-book", source: "explicit" },
+      options,
+      signal: AbortSignal.timeout(5000),
+      resolveMarketSession: resolver,
+    });
+    expect(mocks.session).toHaveBeenCalledWith(
+      expect.objectContaining({ resolveMarketSession: resolver }),
+    );
+    expect(mocks.targets).not.toHaveBeenCalled();
+    expect(mocks.controller).not.toHaveBeenCalled();
+    expect(mocks.monitor).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  },
+);

@@ -65,6 +65,7 @@ Open:
 {
   gateway: {
     bind: "tailnet",
+    tls: { enabled: true },
     controlUi: { enabled: true },
     auth: { mode: "token", token: "your-token" },
   },
@@ -79,7 +80,7 @@ lcx gateway
 
 Open:
 
-- `http://<tailscale-ip>:18789/` (or your configured `gateway.controlUi.basePath`)
+- `https://<tailscale-ip>:18789/` (or your configured `gateway.controlUi.basePath`)
 
 ### Public internet (Funnel)
 

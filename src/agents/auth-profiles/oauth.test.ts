@@ -394,3 +394,60 @@ describe("resolveApiKeyForProfile secret refs", () => {
     }
   });
 });
+
+describe("read-only OAuth", () => {
+  it("rejects expired credentials before refresh or adoption", async () => {
+    const store: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        fixture: {
+          type: "oauth",
+          provider: "anthropic",
+          access: "fixture-access",
+          refresh: "fixture-refresh",
+          expires: 1,
+        },
+      },
+    };
+    const before = structuredClone(store);
+    await expect(
+      resolveApiKeyForProfile({ store, profileId: "fixture", readOnly: true }),
+    ).rejects.toThrow("cannot refresh");
+    expect(store).toEqual(before);
+  });
+  it("resolves a valid OAuth token without mutating the store", async () => {
+    const store: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        fixture: {
+          type: "oauth",
+          provider: "anthropic",
+          access: "fixture-access",
+          refresh: "fixture-refresh",
+          expires: Date.now() + 60000,
+        },
+      },
+    };
+    const before = structuredClone(store);
+    expect(
+      await resolveApiKeyForProfile({ store, profileId: "fixture", readOnly: true }),
+    ).toMatchObject({ apiKey: "fixture-access" });
+    expect(store).toEqual(before);
+  });
+});
+
+it("does not execute a secret command in read-only authentication", async () => {
+  const store: AuthProfileStore = {
+    version: 1,
+    profiles: {
+      fixture: {
+        type: "api_key",
+        provider: "anthropic",
+        keyRef: { source: "exec", provider: "fixture", id: "key" },
+      },
+    },
+  };
+  await expect(
+    resolveApiKeyForProfile({ store, profileId: "fixture", readOnly: true }),
+  ).rejects.toThrow("cannot execute a secret resolver");
+});

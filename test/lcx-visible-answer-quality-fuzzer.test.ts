@@ -93,6 +93,7 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
         }),
         expect.objectContaining({
           caseId: "user_given_arithmetic_with_boundary_positive",
+          ask: "6818，一天净增46条，大概涨多少？",
           actualDecision: "adopt_visible_answer",
           ok: true,
         }),
@@ -106,6 +107,15 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
     );
     expect(payload.negativeCases).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          caseId: "user_given_arithmetic_with_boundary_unsourced_number_as_truth",
+          ask: "6818，一天净增46条，大概涨多少？请核验真实增量及统计时间。",
+          actualDecision: "return_failed_reason",
+          ok: true,
+          failedReasons: expect.arrayContaining([
+            "finance_data_gateway_snapshot_missing_for_number",
+          ]),
+        }),
         expect.objectContaining({
           caseId: "entry_exit_no_fluff_vague_architecture_nonanswer",
           actualDecision: "return_failed_reason",

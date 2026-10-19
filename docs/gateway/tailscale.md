@@ -58,12 +58,13 @@ Open: `https://<magicdns>/` (or your configured `gateway.controlUi.basePath`)
 
 ### Tailnet-only (bind to Tailnet IP)
 
-Use this when you want the Gateway to listen directly on the Tailnet IP (no Serve/Funnel).
+Use this when you want the Gateway to listen directly on the Tailnet IP (no Serve/Funnel). Configure a trusted certificate for the Tailnet IP or MagicDNS name.
 
 ```json5
 {
   gateway: {
     bind: "tailnet",
+    tls: { enabled: true },
     auth: { mode: "token", token: "your-token" },
   },
 }
@@ -71,10 +72,12 @@ Use this when you want the Gateway to listen directly on the Tailnet IP (no Serv
 
 Connect from another Tailnet device:
 
-- Control UI: `http://<tailscale-ip>:18789/`
-- WebSocket: `ws://<tailscale-ip>:18789`
+- Control UI: `https://<tailscale-ip>:18789/`
+- WebSocket: `wss://<tailscale-ip>:18789`
 
-Note: loopback (`http://127.0.0.1:18789`) will **not** work in this mode.
+Trust or pin the Gateway certificate on clients. Browser clients need a
+certificate with the Tailnet IP or MagicDNS name in its SAN. Loopback
+(`http://127.0.0.1:18789`) will **not** work in this mode.
 
 ### Public internet (Funnel + shared password)
 
@@ -103,7 +106,7 @@ lcx gateway --tailscale funnel --auth password
 - `tailscale.mode: "funnel"` refuses to start unless auth mode is `password` to avoid public exposure.
 - Set `gateway.tailscale.resetOnExit` if you want LCX Agent to undo `tailscale serve`
   or `tailscale funnel` configuration on shutdown.
-- `gateway.bind: "tailnet"` is a direct Tailnet bind (no HTTPS, no Serve/Funnel).
+- `gateway.bind: "tailnet"` is a direct Tailnet bind (no Tailscale Serve/Funnel), and still requires Gateway TLS plus authentication. Binding a socket to a Tailnet IP does not prove that every inbound packet reached it through WireGuard; clients use `wss://` and trust or pin the Gateway certificate.
 - `gateway.bind: "auto"` prefers loopback; use `tailnet` if you want Tailnet-only.
 - Serve/Funnel only expose the **Gateway control UI + WS**. Nodes connect over
   the same Gateway WS endpoint, so Serve can work for node access.

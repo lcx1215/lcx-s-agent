@@ -322,6 +322,69 @@ describe("logical agent pool", () => {
     expect(result.pool.maxObservedModelConcurrency).toBe(1);
   });
 
+  it.each([false, true])(
+    "bounds provider calls and preserves mixed-route serialization (mixed=%s)",
+    async (mixed) => {
+      let active = 0;
+      let peak = 0;
+      const remote = {
+        id: "remote",
+        provider: "fixture",
+        modelId: "remote",
+        mode: "adapter" as const,
+        capabilities: ["json"],
+        requiredTools: [],
+        requiredSideEffects: ["provider_call" as const],
+        invoke: async () => {
+          active++;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return { ok: true };
+        },
+      };
+      const pool = new LogicalAgentPool({
+        maxConcurrency: 2,
+        allowProviderCalls: true,
+        modelRouting: {
+          revision: "provider-concurrency-test",
+          adapters: [
+            remote,
+            ...(mixed
+              ? [
+                  {
+                    ...remote,
+                    id: "local",
+                    mode: "injected" as const,
+                    requiredSideEffects: ["local_compute" as const],
+                  },
+                ]
+              : []),
+          ],
+          defaultPolicy: {
+            primary: "remote",
+            requiredCapabilities: ["json"],
+            maxInputBytes: 10000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [
+          { id: "one", agentId: "financial_extraction", input: {} },
+          { id: "two", agentId: "news_classification", input: {} },
+        ],
+        executor: async ({ modelSlot, signal }) => ({
+          output: await modelSlot.invoke({}, signal),
+          sideEffects: [],
+        }),
+      });
+      expect(result.status).toBe("completed");
+      expect(peak).toBe(mixed ? 1 : 2);
+    },
+  );
+
   it("blocks descendants after a failed role without running them", async () => {
     const plan = buildDefaultLogicalAgentPlan({ ask: "失败传播测试" });
     const executed: string[] = [];
@@ -341,6 +404,11 @@ describe("logical agent pool", () => {
       "input is malformed",
     );
     expect(result.tasks.filter((task) => task.status === "blocked")).toHaveLength(9);
+    expect(
+      result.tasks
+        .filter((task) => task.status === "blocked")
+        .every((task) => task.modelId === "not-executed"),
+    ).toBe(true);
     expect(executed).toEqual(["data_cleaning"]);
   });
 
@@ -444,6 +512,157 @@ describe("logical agent pool", () => {
     expect(pool.status.activeRuns).toBe(0);
   });
 
+  it("bounds unknown timeout cleanup, closes queued plans, and retains the occupied slot", async () => {
+    const pool = new LogicalAgentPool({ maxConcurrency: 1, taskTimeoutMs: 5 });
+    let release!: () => void;
+    let executions = 0;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [
+        { id: "stuck", agentId: "data_cleaning", input: {} },
+        { id: "independent", agentId: "news_classification", input: {} },
+        { id: "dependent", agentId: "final_precheck", input: {}, dependsOn: ["stuck"] },
+      ],
+      executor: async () => {
+        executions += 1;
+        await pending;
+        return { output: "late", sideEffects: [] };
+      },
+    });
+    expect(result.status).toBe("failed");
+    expect(result.tasks.map((task) => task.status)).toEqual(["failed", "failed", "blocked"]);
+    expect(result.tasks[0]?.error).toContain("timed out");
+    expect(result.tasks[0]?.error).toContain("cleanup_unconfirmed");
+    expect(result.tasks[1]?.error).toContain("execution_not_started");
+    expect(result.tasks[1]?.startedAt).toBeUndefined();
+    expect(result.tasks[1]?.modelCalls).toEqual([]);
+    expect(result.tasks[0]?.startedAt).toEqual(expect.any(Number));
+    expect(pool.status.activeRuns).toBe(1);
+    expect(executions).toBe(1);
+    const refused = await pool.submit(
+      { id: "retry", agentId: "data_cleaning", input: {} },
+      async () => {
+        executions += 1;
+        return { output: "retry", sideEffects: [] };
+      },
+    );
+    expect(refused.status).toBe("failed");
+    expect(refused.startedAt).toBeUndefined();
+    expect(refused.modelCalls).toEqual([]);
+    expect(executions).toBe(1);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pool.status.activeRuns).toBe(0);
+    const recovered = await pool.submit(
+      { id: "recovered", agentId: "data_cleaning", input: {} },
+      async () => ({ output: "ok", sideEffects: [] }),
+    );
+    expect(recovered.status).toBe("completed");
+    expect(result.tasks[0]?.status).toBe("failed");
+  });
+
+  it("returns on parent cancellation after timeout without releasing an unknown executor", async () => {
+    const pool = new LogicalAgentPool({ maxConcurrency: 1, taskTimeoutMs: 5 });
+    const parent = new AbortController();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = runLogicalAgentPlan({
+      pool,
+      signal: parent.signal,
+      tasks: [{ id: "stuck", agentId: "data_cleaning", input: {} }],
+      executor: async () => {
+        await pending;
+        return { output: "late", sideEffects: [] };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    parent.abort();
+    const result = await run;
+    expect(result.tasks[0]?.error).toContain("cleanup_unconfirmed");
+    expect(result.tasks[0]?.error).toContain("parent cancelled");
+    expect(pool.status.activeRuns).toBe(1);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
+  it("keeps quarantine until every cancelled running executor actually terminates", async () => {
+    const pool = new LogicalAgentPool({ maxConcurrency: 2, taskTimeoutMs: 1_000 });
+    const parent = new AbortController();
+    const releases: Array<() => void> = [];
+    const run = runLogicalAgentPlan({
+      pool,
+      signal: parent.signal,
+      tasks: [
+        { id: "a", agentId: "data_cleaning", input: {} },
+        { id: "b", agentId: "news_classification", input: {} },
+      ],
+      executor: async () => {
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return { output: "late", sideEffects: [] };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    parent.abort();
+    expect((await run).status).toBe("failed");
+    expect(pool.status.activeRuns).toBe(2);
+    releases[0]?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(pool.status.activeRuns).toBe(1);
+    const retry = await pool.submit(
+      { id: "retry", agentId: "data_cleaning", input: {} },
+      async () => ({ output: "unexpected", sideEffects: [] }),
+    );
+    expect(retry.error).toContain("prior_cleanup_unconfirmed");
+    releases[1]?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(pool.status.activeRuns).toBe(0);
+    expect(
+      (
+        await pool.submit({ id: "recovered", agentId: "data_cleaning", input: {} }, async () => ({
+          output: "ok",
+          sideEffects: [],
+        }))
+      ).status,
+    ).toBe("completed");
+  });
+
+  it("retains a noncooperative model invocation until its real termination", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pool = new LogicalAgentPool({
+      taskTimeoutMs: 5,
+      modelInvoker: async () => {
+        await pending;
+        return "late";
+      },
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "model", agentId: "data_cleaning", input: {} }],
+      executor: async ({ modelSlot, signal }) => ({
+        output: await modelSlot.invoke("test", signal),
+        sideEffects: [],
+      }),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("cleanup_unconfirmed");
+    expect(pool.status.activeRuns).toBe(1);
+    expect(pool.status.activeModelInvocations).toBe(1);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pool.status.activeRuns).toBe(0);
+    expect(pool.status.activeModelInvocations).toBe(0);
+    expect(result.tasks[0]?.status).toBe("failed");
+  });
+
   it("waits for executor termination before resolving a timed-out task", async () => {
     let terminated = false;
     const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
@@ -531,6 +750,8 @@ describe("logical agent pool", () => {
 
     const secondResult = await second;
     expect(secondResult.status).toBe("failed");
+    expect(secondResult.startedAt).toBeUndefined();
+    expect(secondResult.modelCalls).toEqual([]);
     expect(secondResult.error).toContain("cancelled before start");
     expect(secondStarted).toBe(false);
     expect(pool.status.queuedRuns).toBe(0);

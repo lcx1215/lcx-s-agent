@@ -143,61 +143,9 @@ function describeProcessError(error: unknown, stderr?: string): Error {
 
 function repetitionKey(segment: string): string {
   return segment
-    .replace(/^\s*[-*]?\s*\d+[.)]?\s*/u, "")
+    .replace(/^\s*[-*]?\s*\d+[.)]\s+/u, "")
     .replace(/\s+/gu, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function observationSignature(segment: string): string {
-  const numericTokens =
-    segment.match(/(?:[$€£¥]\s*)?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:%|[a-z]{1,8})?/giu) ?? [];
-  const entityTokens = segment.match(/\b[A-Z][A-Z0-9._-]{1,}\b/gu) ?? [];
-  return [...numericTokens, ...entityTokens]
-    .map((value) => value.replace(/\s+/gu, "").toLowerCase())
-    .toSorted()
-    .join("|");
-}
-
-const REPETITION_STOP_WORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "are",
-  "as",
-  "by",
-  "for",
-  "in",
-  "is",
-  "it",
-  "of",
-  "on",
-  "or",
-  "the",
-  "this",
-  "to",
-  "with",
-]);
-
-function semanticTokens(segment: string): Set<string> {
-  return new Set(
-    (segment.toLowerCase().match(/[a-z0-9\u4e00-\u9fff]+/gu) ?? []).filter(
-      (token) => !REPETITION_STOP_WORDS.has(token),
-    ),
-  );
-}
-
-function tokenSimilarity(left: Set<string>, right: Set<string>): number {
-  if (left.size === 0 || right.size === 0) {
-    return 0;
-  }
-  let intersection = 0;
-  for (const token of left) {
-    if (right.has(token)) {
-      intersection += 1;
-    }
-  }
-  return intersection / (left.size + right.size - intersection);
+    .trim();
 }
 
 export function collapseRepeatedVisionText(text: string): string {
@@ -206,27 +154,13 @@ export function collapseRepeatedVisionText(text: string): string {
     .map((segment) => segment.trim())
     .filter(Boolean);
   const kept: string[] = [];
-  const keptSemanticTokens: Set<string>[] = [];
-  const keptObservationSignatures: string[] = [];
   let previousKey = "";
   for (const segment of segments) {
     const key = repetitionKey(segment);
-    const tokens = semanticTokens(segment);
-    const signature = observationSignature(segment);
-    if (
-      (key && key === previousKey) ||
-      (tokens.size >= 8 &&
-        keptSemanticTokens.some(
-          (previous, index) =>
-            keptObservationSignatures[index] === signature &&
-            tokenSimilarity(tokens, previous) >= 0.72,
-        ))
-    ) {
+    if (key && key === previousKey) {
       continue;
     }
     kept.push(segment);
-    keptSemanticTokens.push(tokens);
-    keptObservationSignatures.push(signature);
     previousKey = key;
   }
   return kept.join(" ").trim();
@@ -289,7 +223,7 @@ export async function runLocalVisionVlm(params: {
     try {
       const result = await execFileAsync(pythonPath, buildLocalMlxCommand("mlx_vlm", args), {
         cwd: tempDir,
-        env: buildLocalModelProcessEnv(process.env, { PYTHONUNBUFFERED: "1" }),
+        env: buildLocalModelProcessEnv(process.env, { PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: "1" }),
         timeout: timeoutMs,
         signal: params.signal,
         maxBuffer: 2 * 1024 * 1024,

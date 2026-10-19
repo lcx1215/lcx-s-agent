@@ -21,6 +21,7 @@ type QualityFamily = {
   forbiddenVisibleText: RegExp[];
   badCandidates: {
     id: string;
+    ask?: string;
     answer: string;
     expectedAnyFailedReasons: string[];
   }[];
@@ -326,6 +327,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
     badCandidates: [
       {
         id: "unsourced_number_as_truth",
+        ask: "6818，一天净增46条，大概涨多少？请核验真实增量及统计时间。",
         answer: "一天净增 46 条，涨幅大概 0.68%。",
         expectedAnyFailedReasons: ["finance_data_gateway_snapshot_missing_for_number"],
       },
@@ -374,7 +376,8 @@ function runPositiveCase(family: QualityFamily) {
 }
 
 function runNegativeCase(family: QualityFamily, candidate: QualityFamily["badCandidates"][number]) {
-  const result = buildPipelineResult(family.ask, candidate.answer);
+  const ask = candidate.ask ?? family.ask;
+  const result = buildPipelineResult(ask, candidate.answer);
   const matchedExpectedReason = candidate.expectedAnyFailedReasons.some((reason) =>
     result.failedReasons.includes(reason),
   );
@@ -386,7 +389,7 @@ function runNegativeCase(family: QualityFamily, candidate: QualityFamily["badCan
     familyId: family.id,
     macroContractId: family.macroContractId,
     mode: "negative_rejection" as const,
-    ask: family.ask,
+    ask,
     expectedDecision: "return_failed_reason",
     actualDecision: result.terminalDecision,
     expectedAnyFailedReasons: candidate.expectedAnyFailedReasons,

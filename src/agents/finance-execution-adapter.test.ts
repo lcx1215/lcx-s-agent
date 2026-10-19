@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createPaperExecutionAdapter,
+  buildFinanceExecutionReceipt,
   DEFAULT_FINANCE_RISK_BUDGET,
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
@@ -10,6 +11,7 @@ import {
   missingUnattendedCaps,
   placeFinanceOrder,
 } from "./finance-execution-adapter.js";
+import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
 
 type PlacementRequest = Parameters<typeof placeFinanceOrder>[0];
 
@@ -34,7 +36,7 @@ const intent: FinanceExecutionIntent = {
   orderType: "market",
   quantity: 10,
   referencePrice: 231.4,
-  referencePriceAt: "2026-09-17T21:00:00Z",
+  referencePriceAt: new Date().toISOString(),
   runAuthorizationId: "run-1",
   rationale: "fixture",
 };
@@ -42,7 +44,7 @@ const intent: FinanceExecutionIntent = {
 const paper = createPaperExecutionAdapter({ instruments: ["AAPL"] });
 
 function request(overrides: Partial<PlacementRequest> = {}): PlacementRequest {
-  return {
+  const input: PlacementRequest = {
     mode: "live_execution",
     intent,
     budget,
@@ -53,6 +55,19 @@ function request(overrides: Partial<PlacementRequest> = {}): PlacementRequest {
     recordedAt: "2026-09-18T03:00:00Z",
     ...overrides,
   };
+  const adapter = input.adapters.find((candidate) => candidate.id === input.executionAdapterId);
+  if (adapter) {
+    return {
+      ...input,
+      safetyContext: syntheticSafetyContext({
+        intent: input.intent,
+        budget: input.budget,
+        adapterId: adapter.id,
+        venue: adapter.venue,
+      }),
+    };
+  }
+  return input;
 }
 
 function spyAdapter(): { adapter: FinanceExecutionAdapter; invoke: ReturnType<typeof vi.fn> } {
@@ -61,6 +76,7 @@ function spyAdapter(): { adapter: FinanceExecutionAdapter; invoke: ReturnType<ty
     fillPrice: 1,
     filledAt: "2026-09-18T03:00:00Z",
     venueRef: "spy",
+    terminalOrderIdentity: { orderId: "synthetic-terminal", terminal: true as const },
   }));
   return {
     invoke,
@@ -117,7 +133,36 @@ describe("finance execution adapter seam", () => {
 
   it("requires an explicit run authorization and a declared adapter", async () => {
     const noAuthorization = await placeFinanceOrder(
-      request({ intent: { ...intent, runAuthorizationId: "  " } }),
+      request({
+        intent: {
+          ...intent,
+          runAuthorizationId: "  ",
+          researchLineage: {
+            portfolioPlan: {
+              asOf: "2026-09-18T00:00:00.000Z",
+              validUntil: "2026-09-19T00:00:00.000Z",
+              accountId: "fixture-account",
+              venue: "paper",
+              provenance: {
+                kind: "finance_research_allocation",
+                receiptId: "quality:fixture",
+                evidenceIds: ["source:fixture"],
+              },
+            },
+            targetWeight: 0.25,
+            contributions: [
+              {
+                strategyId: "fixture-strategy",
+                evidenceReceiptId: "candidate:fixture",
+                stance: "accumulate",
+                sleeveWeight: 0.5,
+                accountWeight: 0.25,
+                evidenceIds: ["source:fixture"],
+              },
+            ],
+          },
+        },
+      }),
     );
     expect(noAuthorization.refusalReasons).toContain("explicit_run_authorization_required");
 
@@ -135,7 +180,48 @@ describe("finance execution adapter seam", () => {
     expect(result.receipt).toBeUndefined();
   });
 
-  it("admits an order under the default budget without deleting the allowlist", async () => {
+  it("refuses target authorization when it contradicts research lineage", async () => {
+    const { adapter, invoke } = spyAdapter();
+    const result = await placeFinanceOrder(
+      request({
+        intent: {
+          ...intent,
+          researchLineage: {
+            portfolioPlan: {
+              asOf: "2026-09-18T00:00:00.000Z",
+              validUntil: "2026-09-19T00:00:00.000Z",
+              accountId: "fixture-account",
+              venue: "paper",
+            },
+            targetWeight: 0.25,
+            contributions: [
+              {
+                strategyId: "fixture-strategy",
+                evidenceReceiptId: "candidate:fixture",
+                stance: "accumulate",
+                sleeveWeight: 0.5,
+                accountWeight: 0.25,
+              },
+            ],
+          },
+          targetWeightAuthorization: {
+            targetWeight: 0.3,
+            driftBandFraction: 0.05,
+            maxOrderNotional: 5_000,
+          },
+        },
+        adapters: [adapter],
+        executionAdapterId: adapter.id,
+      }),
+    );
+
+    expect(result.status).toBe("refused");
+    expect(result.refusalReasons).toContain("execution_intent_target_weight_lineage_mismatch");
+    expect(result.receipt).toBeUndefined();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("preserves the default allowlist but requires a complete risk-increase budget", async () => {
     expect(DEFAULT_FINANCE_RISK_BUDGET.allowedInstruments).toEqual([
       FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
     ]);
@@ -143,8 +229,8 @@ describe("finance execution adapter seam", () => {
       request({ budget: DEFAULT_FINANCE_RISK_BUDGET, adapters: [paper] }),
     );
 
-    expect(result.status).toBe("placed");
-    expect(result.refusalReasons).toEqual([]);
+    expect(result.status).toBe("refused");
+    expect(result.refusalReasons).toContain("execution_safety_increase_requires_complete_budget");
   });
 
   it("still refuses when the allowlist is explicitly empty or names another instrument", async () => {
@@ -204,7 +290,7 @@ describe("finance execution adapter seam", () => {
     ]);
   });
 
-  it("leaves an attended run's caps opt-in: a missing cap is not a boundary", async () => {
+  it("does not let attended mode bypass complete risk-increase caps", async () => {
     const bare = await placeFinanceOrder(
       request({
         budget: {
@@ -217,8 +303,8 @@ describe("finance execution adapter seam", () => {
       }),
     );
 
-    expect(bare.status).toBe("placed");
-    expect(bare.refusalReasons).toEqual([]);
+    expect(bare.status).toBe("refused");
+    expect(bare.refusalReasons).toContain("execution_safety_increase_requires_complete_budget");
     expect(missingUnattendedCaps({ ...budget, automation: "attended" })).toEqual([]);
   });
 
@@ -327,7 +413,17 @@ describe("finance execution adapter seam", () => {
   it("derives a stable receipt id from the intent rather than a random one", async () => {
     const first = await placeFinanceOrder(request());
     const second = await placeFinanceOrder(request());
-    expect(first.receipt?.receiptId).toBe(second.receipt?.receiptId);
+    expect(first.receipt?.receiptId).not.toBe(second.receipt?.receiptId);
+    const receipt = first.receipt!;
+    expect(
+      buildFinanceExecutionReceipt({
+        intent,
+        adapter: paper,
+        fill: receipt.fill,
+        recordedAt: receipt.recordedAt,
+        accountId: receipt.accountId,
+      }).receiptId,
+    ).toBe(receipt.receiptId);
   });
 });
 
@@ -371,6 +467,41 @@ describe("the stop price and the budget counters", () => {
     }
   });
 
+  it("requires an explicit crypto protection limit below the stop", async () => {
+    const missingStop = await placeFinanceOrder(
+      request({
+        intent: { ...intent, protectionLimitPrice: 219 } as FinanceExecutionIntent,
+      }),
+    );
+    expect(missingStop.refusalReasons).toContain(
+      "execution_intent_protection_limit_requires_stop_price",
+    );
+
+    const aboveStop = await placeFinanceOrder(
+      request({
+        intent: {
+          ...intent,
+          stopPrice: 220,
+          protectionLimitPrice: 221,
+        } as FinanceExecutionIntent,
+      }),
+    );
+    expect(aboveStop.refusalReasons).toContain(
+      "execution_intent_protection_limit_price_above_stop",
+    );
+
+    const sell = await placeFinanceOrder(
+      request({
+        intent: {
+          ...intent,
+          side: "sell",
+          protectionLimitPrice: 219,
+        } as FinanceExecutionIntent,
+      }),
+    );
+    expect(sell.refusalReasons).toContain("execution_intent_protection_limit_forbidden_for_sell");
+  });
+
   it("still places an order that carries no stop at all", async () => {
     // A stop is optional; refusing a bare order is a different control's job.
     const result = await placeFinanceOrder(request());
@@ -393,5 +524,91 @@ describe("the stop price and the budget counters", () => {
     const widened = await placeFinanceOrder(request({ ordersPlacedThisRun: -100 }));
     expect(widened.status).toBe("refused");
     expect(widened.refusalReasons).toContain("orders_placed_this_run_must_be_non_negative");
+  });
+});
+
+it("uses only explicit terminal venue identity for replay-stable receipts", async () => {
+  const adapter: FinanceExecutionAdapter = {
+    ...paper,
+    id: "venue-test",
+    kind: "venue",
+    venue: "fixture",
+    execute: async () => ({
+      filledQuantity: 10,
+      fillPrice: 231.4,
+      filledAt: "2026-09-17T21:00:00Z",
+      venueRef: "not-assumed-unique",
+      terminalOrderIdentity: { orderId: "order-one", terminal: true },
+    }),
+  };
+  const first = await placeFinanceOrder(
+    request({ adapters: [adapter], executionAdapterId: adapter.id }),
+  );
+  const second = await placeFinanceOrder(
+    request({
+      adapters: [adapter],
+      executionAdapterId: adapter.id,
+      recordedAt: "2026-09-19T03:00:00Z",
+    }),
+  );
+  expect(second.receipt?.receiptId).not.toBe(first.receipt?.receiptId);
+  expect(
+    buildFinanceExecutionReceipt({
+      intent,
+      adapter,
+      fill: first.receipt!.fill,
+      recordedAt: "2026-09-19T03:00:00Z",
+      accountId: first.receipt!.accountId,
+    }).receiptId,
+  ).toBe(first.receipt!.receiptId);
+  const paperFirst = await placeFinanceOrder(request());
+  const paperSecond = await placeFinanceOrder(request({ recordedAt: "2026-09-19T03:00:00Z" }));
+  expect(paperSecond.receipt?.receiptId).not.toBe(paperFirst.receipt?.receiptId);
+});
+
+describe("declared final execution contracts cannot disable the gate", () => {
+  it.each(["maxOrderNotional", "maxInstrumentNotional", "maxOrdersPerRun"] as const)(
+    "rejects invalid declared %s even when attended",
+    async (key) => {
+      for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, null, "100"]) {
+        const { adapter, invoke } = spyAdapter();
+        const declaredBudget = { ...budget };
+        Reflect.set(declaredBudget, key, value);
+        const result = await placeFinanceOrder(
+          request({ budget: declaredBudget, adapters: [adapter], executionAdapterId: adapter.id }),
+        );
+        expect(result.status).toBe("refused");
+        expect(
+          result.refusalReasons.some(
+            (reason) => reason.startsWith("risk_budget_max_") && reason.endsWith("_invalid"),
+          ),
+        ).toBe(true);
+        expect(invoke).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it("rejects fractional order ceilings", async () => {
+    const { adapter, invoke } = spyAdapter();
+    const result = await placeFinanceOrder(
+      request({
+        budget: { ...budget, maxOrdersPerRun: 1.5 },
+        adapters: [adapter],
+        executionAdapterId: adapter.id,
+      }),
+    );
+    expect(result.refusalReasons).toContain("risk_budget_max_orders_per_run_invalid");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it.each(["automation", "side", "orderType"])("rejects an unknown runtime %s", async (field) => {
+    const { adapter, invoke } = spyAdapter();
+    const input = request({
+      budget: { ...budget },
+      intent: { ...intent },
+      adapters: [adapter],
+      executionAdapterId: adapter.id,
+    });
+    Reflect.set(field === "automation" ? input.budget : input.intent, field, "unrecognized");
+    expect((await placeFinanceOrder(input)).status).toBe("refused");
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

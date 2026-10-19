@@ -1,10 +1,177 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildPipelineResult,
+  planCommercialAnswerRequirements,
+} from "../scripts/operator/lcx-commercial-answer-pipeline.js";
+import {
+  createCommercialAnswerReplyGate,
+  buildCommercialAnswerLanguageInstruction,
+  buildCommercialAnswerPlanningSystemPrompt,
+} from "../src/agents/commercial-answer-reply-gate.js";
+import { getSharedCalculationLedger } from "../src/agents/finance-calculation-ledger.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
+
+describe("provider council host message binding", () => {
+  const ask = "Kimi、MiniMax、DeepSeek 三个模型意见不一致时，谁来裁决？";
+  const answer =
+    "Kimi、MiniMax、DeepSeek 已完成独立审阅，各自角色产出已经分别记录。裁决原则：证据排序优先，先查原始来源、时间戳和可复现的事实，再比较反例和证据缺口。LCX 本地 gate 和审阅流程是最终裁判，不按模型多数票、模型名气或本地记忆直接选结论。当前没有原始来源，分歧维持未解决；下一步补原文与数据口径。";
+  const sourceMessageId = "private-provider-source-message";
+  const caller = {
+    runId: "private-reply-run",
+    messageId: sourceMessageId,
+    sessionKey: "private-session",
+  };
+  const content = JSON.stringify({
+    version: 2,
+    generatedAt: "2026-02-02T12:00:00.000Z",
+    messageId: sourceMessageId,
+    userMessage: ask,
+    status: "full",
+    roles: [
+      {
+        role: "kimi",
+        model: "moonshot/kimi-k2.6",
+        actualProvider: "moonshot",
+        actualModel: "kimi-k2.6",
+      },
+      {
+        role: "minimax",
+        model: "minimax-portal/MiniMax-M2.7",
+        actualProvider: "minimax-portal",
+        actualModel: "MiniMax-M2.7",
+      },
+      {
+        role: "deepseek",
+        model: "deepseek/deepseek-chat",
+        actualProvider: "deepseek",
+        actualModel: "deepseek-chat",
+      },
+    ].map((role) => ({
+      ...role,
+      success: true,
+      requestedModelHealth: "healthy",
+      text: "Private synthetic role output; source truth remains unverified.",
+    })),
+  });
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const input = {
+    providerEvidence: { messageId: sourceMessageId, content, sha256 },
+    calculations: [],
+  };
+  it("rejects a verified different-message artifact when the actual reply host is observed", () => {
+    const result = buildPipelineResult(ask, answer, input, {
+      ...caller,
+      messageId: "private-current-message",
+    });
+    expect(result.consumedEvidence.providerCouncil.status).toBe("verified");
+    expect(result.consumedEvidence.providerCouncil.sourceSha256).toBe(sha256);
+    expect(result.auditInvocation.caller).toMatchObject({
+      runId: caller.runId,
+      messageId: "private-current-message",
+    });
+    expect(result.terminalDecision).toBe("return_failed_reason");
+    expect(result.failedReasons).toContain("provider_council_host_message_scope_conflict");
+    expect(result.consumedEvidence.providerCouncilHostBinding).toMatchObject({
+      status: "conflict",
+      expectedMessageId: "private-current-message",
+      artifactMessageId: sourceMessageId,
+      sourceSha256: sha256,
+    });
+    expect(result.controlRoomSummary.status).toBe("blocked");
+  });
+  it("retains matching-host role attribution without equating message and run identity", () => {
+    const result = buildPipelineResult(ask, answer, input, caller);
+    expect(result.terminalDecision).toBe("adopt_visible_answer");
+    expect(result.consumedEvidence.providerCouncil.messageId).toBe(sourceMessageId);
+    expect(result.consumedEvidence.providerCouncilHostBinding?.status).toBe("matched");
+    expect(result.auditInvocation.caller?.runId).toBe("private-reply-run");
+    expect(result.auditInvocation.caller?.runId).not.toBe(sourceMessageId);
+  });
+  it("preserves legacy no-caller and partial-caller attribution without claiming host binding", () => {
+    for (const host of [undefined, { messageId: "legacy-other-message" }]) {
+      const result = buildPipelineResult(ask, answer, input, host);
+      expect(result.terminalDecision).toBe("adopt_visible_answer");
+      expect(result.auditInvocation.status).toBe("not_observed");
+      expect(result.consumedEvidence.providerCouncilHostBinding).toBeUndefined();
+      expect(result.failedReasons).not.toContain("provider_council_host_message_scope_conflict");
+    }
+  });
+});
+
+describe("commercial planning advisory", () => {
+  const ask = "当前 QQQ 和 TLT 的报价为什么不一致？先核对数据来源和风险。";
+  const params = {
+    ask,
+    messageId: "planning-message",
+    runId: "planning-current-run",
+    extraSystemPrompt: "existing host instruction",
+    request: {
+      messageId: "planning-message",
+      askSha256: createHash("sha256").update(ask).digest("hex"),
+      input: { calculations: [] },
+    },
+  };
+  it("projects the same pure ask needs before candidate audit without forcing providers", () => {
+    const planning = planCommercialAnswerRequirements(ask);
+    const originalAudit = buildPipelineResult(ask, "当前证据缺失，不能判断。", {
+      calculations: [],
+    });
+    expect(planning.needs).toEqual(originalAudit.needs);
+    const projected = buildCommercialAnswerPlanningSystemPrompt(params)!;
+    expect(projected).toContain("finance_data_gateway");
+    expect(projected).toContain("planning only");
+    expect(projected).toContain("not instructions to call council, MiniMax, Qwen or any provider");
+    expect(projected).toContain("Use sufficient supplied evidence to decide");
+    expect(
+      Buffer.byteLength(projected.slice("existing host instruction\n\n".length), "utf8"),
+    ).toBeLessThanOrEqual(1024);
+  });
+  it("keeps supplied arithmetic outside extra source or full review work", () => {
+    const mathAsk = "100的10%是多少？";
+    const planning = planCommercialAnswerRequirements(mathAsk);
+    expect(planning.needs.filter((need) => need.required)).toEqual([]);
+    const hint = buildCommercialAnswerPlanningSystemPrompt({
+      ...params,
+      ask: mathAsk,
+      request: { ...params.request, askSha256: createHash("sha256").update(mathAsk).digest("hex") },
+    });
+    expect(hint).toContain("supplied arithmetic can be calculated directly");
+    expect(hint).not.toContain("Ask-based needs:");
+  });
+  it.each([
+    "legacy",
+    "wrong_ask",
+    "wrong_message",
+    "wrong_hash",
+    "missing_run",
+    "aborted",
+  ] as const)("preserves the exact existing prompt for %s", (fault) => {
+    const controller = new AbortController();
+    if (fault === "aborted") {
+      controller.abort();
+    }
+    const projected = buildCommercialAnswerPlanningSystemPrompt({
+      ...params,
+      request:
+        fault === "legacy"
+          ? undefined
+          : fault === "wrong_hash"
+            ? { ...params.request, askSha256: "0".repeat(64) }
+            : params.request,
+      ask: fault === "wrong_ask" ? "another ask" : params.ask,
+      messageId: fault === "wrong_message" ? "another-message" : params.messageId,
+      runId: fault === "missing_run" ? "" : params.runId,
+      signal: controller.signal,
+    });
+    expect(projected).toBe(params.extraSystemPrompt);
+  });
+});
 
 async function runPipeline(args: string[]) {
   const { stdout } = await execFileAsync(
@@ -19,7 +186,360 @@ async function runPipeline(args: string[]) {
   return JSON.parse(stdout) as Record<string, unknown>;
 }
 
+describe("commercial response language", () => {
+  const ask = "请解释这个结果。";
+  const host = {
+    runId: "private-language-run",
+    messageId: "private-language-message",
+    sessionKey: "private-language-session",
+  };
+  it.each(["zh", "en"] as const)(
+    "routes %s only with the original bound host and exact candidate bytes",
+    (responseLanguage) => {
+      const matchedBody = responseLanguage === "zh" ? "答案是十。" : "The answer is ten.";
+      const conflictBody = responseLanguage === "zh" ? "The answer is ten." : "答案是十。";
+      const matched = buildPipelineResult(
+        ask,
+        matchedBody,
+        { calculations: [], responseLanguage },
+        host,
+      );
+      expect(matched.languageRoute).toMatchObject({
+        selectedLanguage: responseLanguage,
+        status: "matched",
+        candidateLanguage: responseLanguage,
+        candidateSha256: createHash("sha256").update(matchedBody).digest("hex"),
+        requestSource: "bound_reply_host",
+      });
+      expect(matched.failedReasons).not.toContain("commercial_response_language_conflict");
+      const conflict = buildPipelineResult(
+        ask,
+        conflictBody,
+        { calculations: [], responseLanguage },
+        host,
+      );
+      expect(conflict.languageRoute).toMatchObject({
+        selectedLanguage: responseLanguage,
+        status: "conflict",
+        candidateLanguage: responseLanguage === "zh" ? "en" : "zh",
+        candidateSha256: createHash("sha256").update(conflictBody).digest("hex"),
+        requestSource: "bound_reply_host",
+      });
+      expect(conflict.failedReasons).toContain("commercial_response_language_conflict");
+      expect(conflict.controlRoomSummary.status).toBe("blocked");
+      if (responseLanguage === "zh") {
+        const contraction = buildPipelineResult(
+          ask,
+          "don't use stale prices",
+          { calculations: [], responseLanguage },
+          host,
+        );
+        expect(contraction.languageRoute).toMatchObject({
+          status: "conflict",
+          candidateLanguage: "en",
+        });
+        expect(contraction.failedReasons).toContain("commercial_response_language_conflict");
+      }
+      if (responseLanguage === "en") {
+        expect(conflict.controlRoomSummary.text).toMatch(/[A-Za-z]/u);
+        expect(conflict.controlRoomSummary.text).not.toMatch(/[\u3400-\u9fff]/u);
+      }
+    },
+  );
+  it.each(["runId", "messageId", "sessionKey"] as const)(
+    "does not accept a selected language when bound host %s is missing",
+    (field) => {
+      const incomplete = { ...host, [field]: "" };
+      const receipt = buildPipelineResult(
+        ask,
+        "The answer is ten.",
+        { calculations: [], responseLanguage: "en" },
+        incomplete,
+      );
+      expect(receipt.languageRoute).toMatchObject({
+        status: "blocked",
+        requestSource: "unbound_input",
+      });
+      expect(receipt.failedReasons).toContain("commercial_language_host_binding_not_observed");
+    },
+  );
+  it.each([
+    "答案是十。The answer is ten.",
+    "```ts\nconst result = 10;\n```",
+    "10",
+    "'市场数据未知'",
+    "‘市场数据未知’",
+    "100 USD",
+    "QQQ",
+  ])("leaves mixed, code or numerical candidates unconfirmed: %s", (candidate) => {
+    const receipt = buildPipelineResult(
+      ask,
+      candidate,
+      { calculations: [], responseLanguage: "en" },
+      host,
+    );
+    expect(receipt.languageRoute.status).toBe("unconfirmed");
+    expect(receipt.languageRoute.candidateSha256).toBe(
+      createHash("sha256").update(candidate).digest("hex"),
+    );
+    expect(receipt.controlRoomSummary.semanticAdoption).toBe("not_proven");
+  });
+  it("keeps legacy replies unchanged when no response language was selected", () => {
+    const legacy = buildPipelineResult(ask, "答案是十。", { calculations: [] });
+    const bound = buildPipelineResult(ask, "答案是十。", { calculations: [] }, host);
+    expect(bound.languageRoute).toMatchObject({
+      status: "not_requested",
+      requestSource: "not_requested",
+    });
+    expect(bound.failedReasons).toEqual(legacy.failedReasons);
+    expect(bound.terminalDecision).toBe(legacy.terminalDecision);
+  });
+  it("builds an instruction only from the actual ask and message-bound language request", () => {
+    const request = {
+      messageId: host.messageId,
+      askSha256: createHash("sha256").update(ask).digest("hex"),
+      input: { responseLanguage: "en" as const },
+    };
+    expect(
+      buildCommercialAnswerLanguageInstruction({ request, messageId: host.messageId, ask }),
+    ).toContain("LCX reply language: en.");
+    expect(
+      buildCommercialAnswerLanguageInstruction({
+        request: { ...request, input: { responseLanguage: "zh" } },
+        messageId: host.messageId,
+        ask,
+      }),
+    ).toContain("LCX reply language: zh.");
+    expect(
+      buildCommercialAnswerLanguageInstruction({ request, messageId: "other-message", ask }),
+    ).toBeUndefined();
+    expect(
+      buildCommercialAnswerLanguageInstruction({
+        request,
+        messageId: host.messageId,
+        ask: "other ask",
+      }),
+    ).toBeUndefined();
+    expect(
+      buildCommercialAnswerLanguageInstruction({ messageId: host.messageId, ask }),
+    ).toBeUndefined();
+  });
+});
+
+describe("commercial process input consumption", () => {
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  it("pins the actual classification read by the planner and its actual requested review budget", () => {
+    const ask = "当前 QQQ 行情的数据源冲突，应如何核验？";
+    const receipt = buildPipelineResult(ask, "数据缺失，需先核验来源与时间，不作交易建议。", {
+      calculations: [],
+    });
+    const actualChallenge = receipt.needs.some(
+      (need) => need.id === "qwen_challenge" && need.required,
+    );
+    expect(receipt.processEvidence.intentClassifier).toEqual({
+      askSha256: hash(ask),
+      outputSha256: hash(JSON.stringify(receipt.orchestration)),
+    });
+    expect(receipt.processEvidence.localPlanner).toEqual({
+      inputAskSha256: hash(ask),
+      inputClassificationSha256: receipt.processEvidence.intentClassifier.outputSha256,
+      outputSha256: hash(JSON.stringify(receipt.needs)),
+      qwenChallengeRequested: actualChallenge,
+    });
+    expect(receipt.processEvidence.answerAuditBudget).toEqual({
+      inputQwenChallengeRequested: actualChallenge,
+      maxTotalReviewRounds: receipt.maxTotalReviewRounds,
+    });
+    expect(actualChallenge).toBe(true);
+    expect(receipt.maxTotalReviewRounds).toBe(5);
+    expect(receipt.consumedEvidence.sourceAssessment.required).toBe(true);
+    expect(receipt.consumedEvidence.sourceAssessment).toMatchObject({
+      status: "not_provided",
+      missingEvidence: ["finance_data_gateway_snapshot"],
+    });
+    expect(receipt.controlRoomSummary.reviewBudget.maxTotalReviewRounds).toBe(
+      receipt.maxTotalReviewRounds,
+    );
+    expect(receipt.languageRoute.status).toBe("not_requested");
+  });
+  it("changes native needs and the actual bounded review budget when a supplied arithmetic ask becomes current research", () => {
+    const simple = buildPipelineResult("100 的 10% 是多少？", "100 的 10% 是 10。", {
+      calculations: [],
+    });
+    const research = buildPipelineResult(
+      "当前 QQQ 行情的数据源冲突，应如何核验？",
+      "数据缺失，需先核验来源与时间，不作交易建议。",
+      { calculations: [] },
+    );
+    expect(simple.processEvidence.intentClassifier.askSha256).not.toBe(
+      research.processEvidence.intentClassifier.askSha256,
+    );
+    expect(simple.processEvidence.intentClassifier.outputSha256).not.toBe(
+      research.processEvidence.intentClassifier.outputSha256,
+    );
+    expect(simple.processEvidence.localPlanner.outputSha256).not.toBe(
+      research.processEvidence.localPlanner.outputSha256,
+    );
+    expect(simple.needs.find((need) => need.id === "qwen_challenge")?.required).toBe(false);
+    expect(research.needs.find((need) => need.id === "qwen_challenge")?.required).toBe(true);
+    expect(simple.processEvidence.answerAuditBudget).toMatchObject({
+      inputQwenChallengeRequested: false,
+      maxTotalReviewRounds: 4,
+    });
+    expect(research.processEvidence.answerAuditBudget).toMatchObject({
+      inputQwenChallengeRequested: true,
+      maxTotalReviewRounds: 5,
+    });
+    expect(simple.qwenRole).toBe("not_requested");
+    expect(research.qwenRole).toBe("challenger_only_not_final_authority");
+    expect(simple.consumedEvidence.sourceAssessment.required).toBe(false);
+    expect(research.consumedEvidence.sourceAssessment.required).toBe(true);
+  });
+  it("keeps native planning and review allocation stable for a candidate-only rewrite", () => {
+    const ask = "当前 QQQ 行情的数据源冲突，应如何核验？";
+    const first = buildPipelineResult(ask, "数据缺失，需核验来源和时间。", { calculations: [] });
+    const rewrite = buildPipelineResult(ask, "当前证据不足，需要先检查来源时间再形成研究结论。", {
+      calculations: [],
+    });
+    expect(rewrite.orchestration).toEqual(first.orchestration);
+    expect(rewrite.needs).toEqual(first.needs);
+    expect(rewrite.processEvidence).toEqual(first.processEvidence);
+    expect(rewrite.auditInvocation.inputs.candidateSha256).not.toBe(
+      first.auditInvocation.inputs.candidateSha256,
+    );
+    expect(rewrite.maxTotalReviewRounds).toBe(first.maxTotalReviewRounds);
+    expect(rewrite.languageRoute.status).toBe("not_requested");
+  });
+});
+
 describe("LCX commercial answer pipeline", () => {
+  it("derives a bounded control-room summary from the actual terminal without adding authority", () => {
+    const passed = buildPipelineResult("100 的 10% 是多少？", "100 的 10% 是 10。", {
+      calculations: [],
+    });
+    expect(passed.controlRoomSummary).toMatchObject({
+      status: "passed",
+      terminalDecision: passed.terminalDecision,
+      mode: "research_only",
+      sourceQuality: { required: false, status: "not_provided" },
+      authority: "diagnostic_only_no_adoption_or_execution",
+      semanticAdoption: "not_proven",
+      omitted: { failedReasons: 0, upstreamGaps: 0 },
+      textClipped: false,
+    });
+    expect(passed.controlRoomSummary.text).toContain("通过原发送审阅");
+    const blocked = buildPipelineResult(
+      "Kimi、MiniMax、DeepSeek 分歧如何处理？",
+      "Kimi、MiniMax、DeepSeek 已完成独立审阅。",
+      { calculations: [] },
+    );
+    expect(blocked.controlRoomSummary.status).toBe("blocked");
+    expect(blocked.controlRoomSummary.terminalDecision).toBe(blocked.terminalDecision);
+    expect(blocked.controlRoomSummary.text).toContain("provider_council_receipt_missing");
+    expect(blocked.controlRoomSummary.text).toContain(
+      "provider_council_completion_without_verified_receipt",
+    );
+    expect(blocked.controlRoomSummary.text.length).toBeLessThanOrEqual(1200);
+    expect(blocked.controlRoomSummary.failedReasonFields).toEqual(
+      blocked.failedReasons.slice(0, 4).map((_, index) => `/failedReasons/${index}`),
+    );
+    expect(blocked.controlRoomSummary.omitted.failedReasons).toBe(
+      Math.max(0, blocked.failedReasons.length - 4),
+    );
+    expect(blocked.liveTouched).toBe(false);
+    expect(blocked.providerConfigTouched).toBe(false);
+  });
+  it("exports the actual control-room summary through the existing pipeline CLI", async () => {
+    const result = await runPipeline([
+      "--ask",
+      "Kimi、MiniMax、DeepSeek 分歧如何处理？",
+      "--candidate-answer",
+      "Kimi、MiniMax、DeepSeek 已完成独立审阅。",
+    ]);
+    expect(result.controlRoomSummary).toMatchObject({
+      status: "blocked",
+      terminalDecision: result.terminalDecision,
+      semanticAdoption: "not_proven",
+    });
+    expect(JSON.stringify(result.controlRoomSummary)).toContain("provider_council_receipt_missing");
+    expect(result.failedReasons).toEqual(
+      expect.arrayContaining(["provider_council_completion_without_verified_receipt"]),
+    );
+  });
+  it("records optional caller identity without changing legacy adoption or claiming internal stages", () => {
+    const ask = "100 的 10% 是多少？";
+    const answer = "100 的 10% 是 10。";
+    const legacy = buildPipelineResult(ask, answer, { calculations: [] });
+    const caller = {
+      runId: "private-reply-run",
+      messageId: "private-message",
+      sessionKey: "private-session",
+      replyChannelAccountId: "private-channel-account",
+    };
+    const bound = buildPipelineResult(ask, answer, { calculations: [] }, caller);
+    expect(legacy.auditInvocation.status).toBe("not_observed");
+    expect(legacy.auditInvocation.caller).toBeUndefined();
+    expect(bound.auditInvocation).toMatchObject({
+      identityBoundary: "reply_caller_context_only",
+      status: "observed",
+      caller,
+      semanticAdoption: "not_proven",
+    });
+    expect(bound.terminalDecision).toBe(legacy.terminalDecision);
+    expect(bound.failedReasons).toEqual(legacy.failedReasons);
+    expect(bound.stages).toEqual(legacy.stages);
+    expect(bound.auditInvocation.inputs).toEqual(legacy.auditInvocation.inputs);
+    expect(
+      buildPipelineResult(ask, answer, { calculations: [] }, { messageId: "private-message" })
+        .auditInvocation.status,
+    ).toBe("not_observed");
+  });
+  it("fingerprints the single actual fallback ledger read and independently reconstructs the invocation inputs", () => {
+    const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+    const calculations = [
+      {
+        id: "private-calculation",
+        action: "percentage",
+        inputs: { value: 100, rate: 0.1 },
+        output: { result: 10 },
+        at: "2026-10-12T00:00:00.000Z",
+      },
+    ];
+    const ledger = vi.spyOn(getSharedCalculationLedger(), "list").mockReturnValue(calculations);
+    try {
+      const ask = "100 的 10% 是多少？";
+      const answer = "100 的 10% 是 10。";
+      const result = buildPipelineResult(ask, answer);
+      expect(ledger).toHaveBeenCalledTimes(1);
+      const inputs = {
+        askSha256: hash(ask),
+        candidateSha256: hash(answer),
+        snapshotSha256: null,
+        optionsSha256: hash(
+          JSON.stringify({
+            financeDecisionMode: "research_only",
+            candidateContext: null,
+            calculations,
+            requireGrounding: false,
+            requireRealEvidenceMarking: false,
+            providerEvidence: null,
+          }),
+        ),
+      };
+      expect(result.auditInvocation.inputs).toEqual(inputs);
+      expect(result.auditInvocation.inputSha256).toBe(hash(JSON.stringify(inputs)));
+      expect(
+        buildPipelineResult(ask, answer + " 补充说明。", { calculations }).auditInvocation
+          .inputSha256,
+      ).not.toBe(result.auditInvocation.inputSha256);
+      expect(
+        buildPipelineResult(ask, answer, { calculations, requireGrounding: true }).auditInvocation
+          .inputSha256,
+      ).not.toBe(result.auditInvocation.inputSha256);
+    } finally {
+      ledger.mockRestore();
+    }
+  });
   it("passes built-in answer adoption and failed-reason scenarios", async () => {
     const payload = await runPipeline([]);
 
@@ -717,5 +1237,121 @@ describe("LCX commercial answer pipeline", () => {
     expect(payload.failedReasons).toEqual(
       expect.arrayContaining(["direct_trade_or_position_action_language"]),
     );
+  });
+});
+
+describe("original supplied-arithmetic handoff parity", () => {
+  it.each([
+    ["100 的 10% 是多少？", "100 的 10% 是 10。"],
+    ["What is 10% of 100?", "10% of 100 is 10."],
+    [
+      "6818一天净增46条，大概涨了多少比例？",
+      "按给定的两个数算：46 / 6818 约为 0.67%，这不证明真实增量。",
+    ],
+    [
+      "6818 gained 46 today, what percentage growth is that?",
+      "Using the supplied numbers: 46 / 6818 = about 0.67%. This is arithmetic, not evidence of the real count.",
+    ],
+  ])(
+    "accepts supplied arithmetic without inventing a market-data or council requirement: %s",
+    async (ask, answer) => {
+      const result = await runPipeline(["--ask", ask, "--candidate-answer", answer]);
+      expect(result.terminalDecision).toBe("adopt_visible_answer");
+      expect(result.consumedEvidence).toMatchObject({
+        sourceAssessment: { required: false, missingEvidence: [], requiredNextSteps: [] },
+        providerCouncil: { required: false, gaps: [] },
+      });
+      expect(result.needs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "finance_data_gateway", required: false }),
+          expect.objectContaining({ id: "provider_council_review", required: false }),
+        ]),
+      );
+    },
+  );
+  it.each([
+    ["今天 QQQ 价格是多少？", "QQQ 当前价格是 100。"],
+    ["6818，一天涨了大概多少", "一天净增 46 条，涨幅大概 0.68%。"],
+    ["核验6818一天净增46条是否真实，涨幅多少？", "今日真实净增46条，涨幅0.67%。"],
+  ])("preserves source requirements when actual facts are requested: %s", async (ask, answer) => {
+    const result = await runPipeline(["--ask", ask, "--candidate-answer", answer]);
+    expect(result.terminalDecision).toBe("return_failed_reason");
+    expect(result.needs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "finance_data_gateway", required: true }),
+      ]),
+    );
+  });
+});
+
+describe("original commercial final audit budget", () => {
+  it("stops further valid final candidates after the original allocated local audit limit", () => {
+    const ask = "What is 10% of 100?";
+    const messageId = "offline-budget-message";
+    const gate = createCommercialAnswerReplyGate({
+      ask,
+      messageId,
+      request: {
+        messageId,
+        askSha256: createHash("sha256").update(ask).digest("hex"),
+        input: { calculations: [] },
+      },
+    });
+    const caller = { messageId, runId: "offline-budget-run", sessionKey: "offline-budget-session" };
+    const candidate = { text: "10% of 100 is 10." };
+    for (let i = 0; i < 12; i++) {
+      expect(gate.check(candidate, "partial", false, caller).trace?.decision).toBe("held");
+    }
+    for (let i = 1; i <= 4; i++) {
+      const checked = gate.check(candidate, "final", false, caller);
+      expect(checked.trace?.decision).toBe("adopted");
+      expect(checked.trace).toMatchObject({
+        localAuditBudget: {
+          completedAudits: i,
+          maxAudits: 4,
+          scope: "selected_message_local_final_audits_only",
+        },
+      });
+    }
+    const exhausted = gate.check(candidate, "final", false, caller);
+    expect(exhausted.trace?.decision).toBe("blocked");
+    expect(exhausted.trace?.failedReasons).toContain("commercial_local_audit_budget_exhausted");
+    expect(exhausted.payload.isError).toBe(true);
+    expect(gate.check(candidate, "final", false, caller).trace?.decision).toBe("blocked");
+  });
+  it("keeps the same automatic run exhausted but starts a new host run with a fresh local budget", () => {
+    const ask = "What is 10% of 100?";
+    const messageId = "offline-auto-budget-message";
+    const gate = createCommercialAnswerReplyGate({ ask, messageId });
+    const decision = {
+      status: "verified" as const,
+      text: "",
+      reasons: [],
+      auditInput: { calculations: [] },
+    };
+    const candidate = { text: "10% of 100 is 10." };
+    const caller = (runId: string) => ({
+      messageId,
+      runId,
+      sessionKey: "offline-auto-budget-session",
+    });
+    gate.startFinanceRun("run-one");
+    gate.selectFinanceEvidence(decision, "run-one");
+    for (let i = 0; i < 4; i++) {
+      expect(gate.check(candidate, "final", false, caller("run-one")).trace?.decision).toBe(
+        "adopted",
+      );
+    }
+    gate.startFinanceRun("run-one");
+    expect(gate.check(candidate, "final", false, caller("run-one")).trace?.failedReasons).toContain(
+      "commercial_local_audit_budget_exhausted",
+    );
+    gate.startFinanceRun("run-two");
+    gate.selectFinanceEvidence(decision, "run-one");
+    expect(gate.hasRequest()).toBe(false);
+    gate.selectFinanceEvidence(decision, "run-two");
+    const fresh = gate.check(candidate, "final", false, caller("run-two"));
+    expect(fresh.trace?.decision).toBe("adopted");
+    expect(fresh.trace).toMatchObject({ localAuditBudget: { completedAudits: 1, maxAudits: 4 } });
   });
 });

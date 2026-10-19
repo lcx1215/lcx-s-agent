@@ -133,6 +133,7 @@ export type ResolvedProviderAuth = {
 };
 
 export async function resolveApiKeyForProvider(params: {
+  readOnly?: boolean;
   provider: string;
   cfg?: OpenClawConfig;
   profileId?: string;
@@ -141,7 +142,11 @@ export async function resolveApiKeyForProvider(params: {
   agentDir?: string;
 }): Promise<ResolvedProviderAuth> {
   const { provider, cfg, profileId, preferredProfile } = params;
-  const store = params.store ?? ensureAuthProfileStore(params.agentDir);
+  const store =
+    params.store ??
+    (params.readOnly
+      ? ensureAuthProfileStore(params.agentDir, { readOnly: true, allowKeychainPrompt: false })
+      : ensureAuthProfileStore(params.agentDir));
 
   if (profileId) {
     const resolved = await resolveApiKeyForProfile({
@@ -149,6 +154,7 @@ export async function resolveApiKeyForProvider(params: {
       store,
       profileId,
       agentDir: params.agentDir,
+      readOnly: params.readOnly,
     });
     if (!resolved) {
       throw new Error(`No credentials found for profile "${profileId}".`);
@@ -180,6 +186,7 @@ export async function resolveApiKeyForProvider(params: {
         store,
         profileId: candidate,
         agentDir: params.agentDir,
+        readOnly: params.readOnly,
       });
       if (resolved) {
         const mode = store.profiles[candidate]?.type;
@@ -388,6 +395,7 @@ export function resolveModelAuthMode(
 }
 
 export async function getApiKeyForModel(params: {
+  readOnly?: boolean;
   model: Model<Api>;
   cfg?: OpenClawConfig;
   profileId?: string;
@@ -402,6 +410,7 @@ export async function getApiKeyForModel(params: {
     preferredProfile: params.preferredProfile,
     store: params.store,
     agentDir: params.agentDir,
+    readOnly: params.readOnly,
   });
 }
 

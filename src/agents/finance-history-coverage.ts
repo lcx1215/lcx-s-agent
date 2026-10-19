@@ -5,7 +5,22 @@ import type {
 
 // Published exchange calendar; unknown years remain unverified, never guessed.
 // https://www.nyse.com/trade/hours-calendars (verified 2026-09-08)
+// 2025 dates: https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf
 const holidays: Record<string, readonly string[]> = {
+  "2025": [
+    "01-01",
+    // National Day of Mourning: NYSE regulatory memo RM-25-01 (2025-01-02).
+    "01-09",
+    "01-20",
+    "02-17",
+    "04-18",
+    "05-26",
+    "06-19",
+    "07-04",
+    "09-01",
+    "11-27",
+    "12-25",
+  ],
   "2026": [
     "01-01",
     "01-19",
@@ -41,6 +56,41 @@ function dateMs(value: string | undefined) {
   return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value
     ? parsed
     : NaN;
+}
+
+/** Undefined means the date or published calendar year is unverified. */
+export function isFinanceUsEquitySessionDate(date: string): boolean | undefined {
+  const time = dateMs(date);
+  const closures = holidays[date.slice(0, 4)];
+  if (!Number.isFinite(time) || !closures) {
+    return undefined;
+  }
+  const weekday = new Date(time).getUTCDay();
+  return weekday !== 0 && weekday !== 6 && !closures.includes(date.slice(5));
+}
+
+// Published 13:00 ET cash-equity closes from the same NYSE calendars above.
+const earlyCloses: Record<string, readonly string[]> = {
+  "2025": ["07-03", "11-28", "12-24"],
+  "2026": ["11-27", "12-24"],
+  "2027": ["11-26"],
+  "2028": ["07-03", "11-24"],
+};
+
+/** Offline verified cash-equity bounds; closures and unknown years are not sessions. */
+export function financeUsEquitySessionBounds(date: string):
+  | {
+      openMinute: number;
+      closeMinute: number;
+    }
+  | undefined {
+  if (isFinanceUsEquitySessionDate(date) !== true) {
+    return undefined;
+  }
+  return {
+    openMinute: 570,
+    closeMinute: earlyCloses[date.slice(0, 4)]?.includes(date.slice(5)) ? 780 : 960,
+  };
 }
 
 /** Calendar completeness is separate from freshness and cross-source price agreement. */
@@ -82,7 +132,8 @@ export function assessFinanceHistoryCoverage(
   for (let time = from; time <= to; time += dayMs) {
     const date = new Date(time);
     const label = date.toISOString().slice(0, 10);
-    if (equity && !holidays[label.slice(0, 4)]) {
+    const equitySession = equity ? isFinanceUsEquitySessionDate(label) : undefined;
+    if (equity && equitySession === undefined) {
       return {
         status: "unverified" as const,
         gaps: ["historical_calendar_year_unverified"],
@@ -90,12 +141,7 @@ export function assessFinanceHistoryCoverage(
         providers: [],
       };
     }
-    if (
-      crypto ||
-      (date.getUTCDay() !== 0 &&
-        date.getUTCDay() !== 6 &&
-        !holidays[label.slice(0, 4)].includes(label.slice(5)))
-    ) {
+    if (crypto || equitySession) {
       expected.push(label);
     }
   }

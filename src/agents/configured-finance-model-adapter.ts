@@ -1,12 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { z } from "zod";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import {
   loadAuthProfileStoreForSecretsRuntime,
   resolveApiKeyForProfile,
   resolveAuthProfileOrder,
   type AuthProfileStore,
 } from "./auth-profiles.js";
-import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
+import { FinanceHttpBodyAbortError, readBoundedFinanceResponseText } from "./finance-http-body.js";
+import { buildQualityHarnessModelPromptWithCoverage } from "./local-text-model-adapter.js";
 import {
   ModelAdapterError,
   type LogicalAgentModelAdapter,
@@ -14,8 +19,82 @@ import {
 } from "./logical-agent-model-router.js";
 import type { LogicalAgentId } from "./logical-agent-pool.js";
 import { getCustomProviderApiKey, resolveEnvApiKey } from "./model-auth.js";
+import {
+  recordModelRequestStart,
+  recordModelRequestUpdate,
+  normalizeModelRequestUsage,
+  type ModelRequestSource,
+} from "./model-request-trajectory.js";
 import { buildInlineProviderModels } from "./pi-embedded-runner/model.js";
-import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
+import {
+  FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES,
+  type QualityHarnessModelRequest,
+} from "./quality-harness-contract.js";
+
+export const FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS = 15 * 60_000;
+const paymentCooldowns = new Map<string, number>();
+
+/** Account-scoped operational facts, separate from credentials and auth configuration. */
+function paymentCooldownKey(provider: string, endpoint: string, apiKey: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([provider, endpoint, apiKey]))
+    .digest("hex");
+}
+
+function readPaymentCooldown(key: string, directory: string | undefined): number {
+  let until = paymentCooldowns.get(key) ?? 0;
+  if (directory) {
+    try {
+      const value: unknown = JSON.parse(
+        fs.readFileSync(path.join(directory, `${key}.json`), "utf8"),
+      );
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("schema" in value) ||
+        value.schema !== "finance_provider_payment_cooldown_v1" ||
+        !("until" in value) ||
+        typeof value.until !== "number" ||
+        !Number.isSafeInteger(value.until)
+      ) {
+        throw new ModelAdapterError("process_error");
+      }
+      until = Math.max(until, value.until);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new ModelAdapterError("process_error");
+      }
+    }
+  }
+  return until;
+}
+
+function markPaymentCooldown(key: string, directory: string | undefined): void {
+  const until = Date.now() + FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS;
+  paymentCooldowns.set(key, until);
+  if (!directory) {
+    return;
+  }
+  const filename = path.join(directory, `${key}.json`);
+  const temporary = `${filename}.${randomUUID()}.tmp`;
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ schema: "finance_provider_payment_cooldown_v1", until }),
+      { mode: 0o600 },
+    );
+    fs.renameSync(temporary, filename);
+  } catch {
+    // Keep the original payment failure and in-process block if persistence fails.
+  } finally {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // Temporary-file cleanup must not hide a classified payment failure.
+    }
+  }
+}
 
 /** One attempt budget shared by every model and fallback in a workflow. */
 export function createFinanceModelCallBudget(limit: number) {
@@ -114,11 +193,25 @@ function normalizeTerminalDelimiters(raw: string): unknown {
   ) as unknown;
 }
 
+export const ConfiguredFinanceCallStateSchema = z
+  .object({
+    requestIdSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    stage: z.enum(["request_started", "response_received", "body_complete", "cancelled", "failed"]),
+    cleanupStatus: z.enum(["not_required", "confirmed", "unconfirmed"]),
+    httpStatus: z.number().int().min(100).max(599).optional(),
+    requestDispatched: z.boolean().optional(),
+    paymentRefusalSource: z.enum(["provider_http", "local_cooldown"]).optional(),
+    cooldownUntil: z.string().datetime().optional(),
+  })
+  .strict();
+export type ConfiguredFinanceCallState = Readonly<z.infer<typeof ConfiguredFinanceCallStateSchema>>;
+
 /** Explicit opt-in to an already configured model. Never creates provider/auth configuration. */
 export function createConfiguredFinanceModelAdapter(
   cfg: OpenClawConfig,
   options: {
     maxTokens?: number;
+    maxTokensByRole?: Partial<Record<LogicalAgentId, number>>;
     buildPrompt?: (payload: unknown) => string;
     reasoningEffortByRole?: Partial<Record<LogicalAgentId, "low" | "high" | "max">>;
     timeoutMs?: number;
@@ -126,8 +219,12 @@ export function createConfiguredFinanceModelAdapter(
     /** Must resolve to an existing definition; never creates a provider. */
     modelRef?: string;
     callBudget?: ReturnType<typeof createFinanceModelCallBudget>;
+    /** Identifies the existing caller without changing provider or model selection. */
+    trajectorySource?: Exclude<ModelRequestSource, "agent_session">;
+    /** Isolated operational state for tests; production shares the existing state root. */
+    availabilityStateDirectory?: string;
   } = {},
-): LogicalAgentModelAdapter {
+): LogicalAgentModelAdapter & { inspectCall?: () => ConfiguredFinanceCallState | undefined } {
   const selection = cfg.agents?.defaults?.model;
   const primary =
     options.modelRef ?? (typeof selection === "string" ? selection : selection?.primary);
@@ -147,7 +244,12 @@ export function createConfiguredFinanceModelAdapter(
       "configured finance analysis requires an existing openai-completions model definition",
     );
   }
-  const maxTokens = options.maxTokens ?? 8_192;
+  // Read the raw declaration: inline model normalization inserts a fallback capacity.
+  const declaredMaxTokens = cfg.models?.providers?.[provider]?.models.find(
+    (candidate) => candidate.id === modelId,
+  )?.maxTokens;
+  const maxTokens = options.maxTokens ?? declaredMaxTokens;
+  let callState: ConfiguredFinanceCallState | undefined;
   const timeoutMs = options.timeoutMs ?? 120_000;
   const maxCalls = options.maxCalls ?? 48;
   if (!Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > 100) {
@@ -155,19 +257,32 @@ export function createConfiguredFinanceModelAdapter(
   }
   let calls = 0;
   if (
-    !Number.isSafeInteger(maxTokens) ||
-    maxTokens < 1 ||
-    maxTokens > 16_384 ||
+    (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) ||
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 1 ||
     timeoutMs > 300_000
   ) {
-    throw new Error("configured finance model requires bounded tokens and timeout");
+    throw new Error(
+      "configured finance model requires positive safe-integer tokens and bounded timeout",
+    );
+  }
+  if (
+    Object.values(options.maxTokensByRole ?? {}).some(
+      (value) => !Number.isSafeInteger(value) || value < 1,
+    )
+  ) {
+    throw new Error("configured finance model requires positive safe-integer role token limits");
   }
   const supportsReasoningEffort =
     model.compat?.supportsReasoningEffort === true ||
     (new URL(model.baseUrl).hostname === "api.deepseek.com" && modelId.startsWith("deepseek-v4-"));
   const endpoint = `${model.baseUrl.replace(/\/$/u, "")}/chat/completions`;
+  const availabilityDirectory =
+    options.availabilityStateDirectory ??
+    (process.env.NODE_ENV === "test"
+      ? undefined
+      : path.join(resolveStateDir(), "model-provider-cooldowns"));
+  let accountKey: string | undefined;
   const observations = new Map<
     string,
     {
@@ -175,6 +290,7 @@ export function createConfiguredFinanceModelAdapter(
       normalized?: boolean;
       reasoningEffort?: "low" | "high" | "max";
       credentialSource: "configuration" | "environment" | "auth_profile";
+      evidenceCoverage?: ModelCallObservation["evidenceCoverage"];
     }
   >();
   return {
@@ -185,14 +301,58 @@ export function createConfiguredFinanceModelAdapter(
     capabilities: ["quality_harness"],
     requiredTools: [],
     requiredSideEffects: ["provider_call"],
+    unavailableReason: () =>
+      accountKey && readPaymentCooldown(accountKey, availabilityDirectory) > Date.now()
+        ? "provider_payment_required"
+        : undefined,
+    inspectCall: () => callState,
     invoke: async (request, signal) => {
+      callState = undefined;
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
       }
       const reasoningEffort = supportsReasoningEffort
         ? options.reasoningEffortByRole?.[request.role]
         : undefined;
+      let promptText: string;
+      let evidenceCoverage: ModelCallObservation["evidenceCoverage"];
+      try {
+        if (options.buildPrompt) {
+          promptText = options.buildPrompt(request.payload);
+        } else {
+          const built = buildQualityHarnessModelPromptWithCoverage(
+            request.payload as QualityHarnessModelRequest,
+            { maxPromptBytes: FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES },
+          );
+          promptText = built.prompt;
+          evidenceCoverage = built.evidenceCoverage;
+        }
+        if (Buffer.byteLength(promptText, "utf8") > FINANCE_WORKFLOW_MAX_MODEL_INPUT_BYTES) {
+          throw new Error("rendered finance input exceeds prompt budget");
+        }
+      } catch (error) {
+        // Request assembly is local: preserve a safe category without charging a
+        // provider call or replaying the unchanged invalid packet on another model.
+        throw new ModelAdapterError(
+          error instanceof Error && /prompt budget/u.test(error.message)
+            ? "prompt_budget_exceeded"
+            : "prompt_input_invalid",
+        );
+      }
       const auth = await resolveConfiguredFinanceAuth(cfg, provider);
+      accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
+      const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      if (cooldownUntil > Date.now()) {
+        callState = {
+          requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
+          stage: "failed",
+          cleanupStatus: "not_required",
+          requestDispatched: false,
+          paymentRefusalSource: "local_cooldown",
+          cooldownUntil: new Date(cooldownUntil).toISOString(),
+        };
+        throw new ModelAdapterError("provider_payment_required");
+      }
       // Auth resolution may yield; recheck before the synchronous reservation.
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
@@ -202,15 +362,56 @@ export function createConfiguredFinanceModelAdapter(
       }
       options.callBudget?.reserve();
       calls += 1;
+      const trajectoryTicket = recordModelRequestStart({
+        source: options.trajectorySource ?? "finance_engine",
+        provider,
+        modelId,
+        modelApi: model.api,
+        callId: request.callId,
+        correlationId: request.correlationId,
+        taskId: request.taskId,
+        role: request.role,
+        attempt: request.attempt,
+        inputBytes: Buffer.byteLength(promptText, "utf8"),
+        messageCount: 1,
+      });
+      const requestMaxTokens = options.maxTokensByRole?.[request.role] ?? maxTokens;
       let response: {
         id?: string;
+        usage?: unknown;
         choices?: { finish_reason?: string; message?: { content?: string } }[];
       };
+      let receivedHttpResponse = false;
+      callState = {
+        requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
+        stage: "request_started",
+        requestDispatched: true,
+        cleanupStatus: "not_required",
+      };
+      const requestController = new AbortController();
+      const relayAbort = () => requestController.abort(signal.reason);
+      signal.addEventListener("abort", relayAbort, { once: true });
+      let abortRecorded = false;
+      const observeAbort = () => {
+        callState = { ...callState!, stage: "cancelled", cleanupStatus: "unconfirmed" };
+        if (!abortRecorded) {
+          recordModelRequestUpdate(trajectoryTicket, { stage: "request_aborted" });
+          abortRecorded = true;
+        }
+      };
+      requestController.signal.addEventListener("abort", observeAbort, { once: true });
+      const timer = setTimeout(
+        () => requestController.abort(new Error("model request timeout")),
+        timeoutMs,
+      );
+      if (signal.aborted) {
+        relayAbort();
+      }
       try {
         const http = await fetch(endpoint, {
           method: "POST",
           redirect: "error",
-          signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+          signal: requestController.signal,
           headers: {
             "Content-Type": "application/json",
             ...cfg.models?.providers?.[provider]?.headers,
@@ -218,39 +419,93 @@ export function createConfiguredFinanceModelAdapter(
           },
           body: JSON.stringify({
             model: modelId,
-            messages: [
-              {
-                role: "user",
-                content: options.buildPrompt
-                  ? options.buildPrompt(request.payload)
-                  : buildQualityHarnessModelPrompt(request.payload as QualityHarnessModelRequest),
-              },
-            ],
-            max_tokens: maxTokens,
+            messages: [{ role: "user", content: promptText }],
+            ...(requestMaxTokens !== undefined ? { max_tokens: requestMaxTokens } : {}),
             ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
             response_format: { type: "json_object" },
             stream: false,
           }),
         });
+        receivedHttpResponse = true;
+        callState = { ...callState, stage: "response_received", httpStatus: http.status };
+        recordModelRequestUpdate(trajectoryTicket, {
+          stage: "response_received",
+          httpStatus: http.status,
+        });
         if (!http.ok) {
-          await http.body?.cancel();
+          if (http.status === 402) {
+            markPaymentCooldown(accountKey, availabilityDirectory);
+            callState = {
+              ...callState,
+              paymentRefusalSource: "provider_http",
+              cooldownUntil: new Date(
+                readPaymentCooldown(accountKey, availabilityDirectory),
+              ).toISOString(),
+            };
+          }
+          await readBoundedFinanceResponseText(http, {
+            signal: requestController.signal,
+            discardBody: true,
+          });
           throw new ModelAdapterError(
             [401, 403].includes(http.status)
               ? "provider_auth"
-              : http.status === 429
-                ? "provider_rate_limit"
-                : "process_error",
+              : http.status === 402
+                ? "provider_payment_required"
+                : http.status === 429
+                  ? "provider_rate_limit"
+                  : "process_error",
           );
         }
-        response = (await http.json()) as typeof response;
+        const body = await readBoundedFinanceResponseText(http, {
+          signal: requestController.signal,
+          label: "finance model",
+        });
+        requestController.signal.throwIfAborted();
+        response = JSON.parse(body) as typeof response;
+        callState = { ...callState, stage: "body_complete" };
+        const usage = normalizeModelRequestUsage(response.usage);
+        if (usage) {
+          recordModelRequestUpdate(trajectoryTicket, { stage: "usage_received", ...usage });
+        }
       } catch (error) {
+        if (requestController.signal.aborted) {
+          callState = {
+            ...callState,
+            stage: "cancelled",
+            cleanupStatus:
+              error instanceof FinanceHttpBodyAbortError
+                ? error.cleanupStatus
+                : !receivedHttpResponse
+                  ? "confirmed"
+                  : "unconfirmed",
+          };
+          if (!abortRecorded) {
+            recordModelRequestUpdate(trajectoryTicket, { stage: "request_aborted" });
+            abortRecorded = true;
+          }
+        } else {
+          callState = { ...callState, stage: "failed" };
+        }
+        if (!receivedHttpResponse && !requestController.signal.aborted) {
+          recordModelRequestUpdate(trajectoryTicket, {
+            stage: "request_error",
+            errorKind: "transport",
+          });
+        }
         throw error instanceof ModelAdapterError ? error : new ModelAdapterError("process_error");
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", relayAbort);
+        requestController.signal.removeEventListener("abort", observeAbort);
       }
+      signal.throwIfAborted();
       if (response.id) {
         observations.set(request.callId, {
           id: response.id,
           credentialSource: auth.source,
           ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(evidenceCoverage ? { evidenceCoverage } : {}),
         });
       }
       const choice = response.choices?.[0];
@@ -274,6 +529,7 @@ export function createConfiguredFinanceModelAdapter(
               normalized: true,
               credentialSource: auth.source,
               ...(reasoningEffort ? { reasoningEffort } : {}),
+              ...(evidenceCoverage ? { evidenceCoverage } : {}),
             });
           }
           return value;
@@ -296,6 +552,7 @@ export function createConfiguredFinanceModelAdapter(
         kind: "provider_call",
         credentialSource: observation.credentialSource,
         ...(observation.reasoningEffort ? { reasoningEffort: observation.reasoningEffort } : {}),
+        ...(observation.evidenceCoverage ? { evidenceCoverage: observation.evidenceCoverage } : {}),
         ...(observation.normalized ? { outputNormalization: "terminal_delimiters" as const } : {}),
       };
     },

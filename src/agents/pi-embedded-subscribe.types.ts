@@ -11,6 +11,7 @@ export type SubscribeEmbeddedPiSessionParams = {
   session: AgentSession;
   runId: string;
   hookRunner?: HookRunner;
+  disableHooks?: boolean;
   verboseLevel?: VerboseLevel;
   reasoningMode?: ReasoningLevel;
   toolResultFormat?: ToolResultFormat;

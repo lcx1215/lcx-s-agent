@@ -19,8 +19,13 @@
 // candidate answer object plus the grounding it used, so the existing audit
 // (buildPipelineResult) stays the terminal authority.
 
-import { checkAnswerGrounding, type GroundingGateResult } from "./finance-answer-grounding-gate.js";
+import {
+  checkAnswerGrounding,
+  fingerprintFinanceAnswerEvidence,
+  type GroundingGateResult,
+} from "./finance-answer-grounding-gate.js";
 import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
+import { financeDecisionInstructions } from "./finance-decision-policy.js";
 
 /**
  * Minimal shape of the real gateway model call the agent already uses
@@ -58,20 +63,21 @@ export type FinanceComposeResult = {
    */
   grounding: GroundingGateResult;
   modelUsed: string;
+  handoffEvidence: ReturnType<typeof fingerprintFinanceAnswerEvidence>;
 };
 
 const RESEARCH_ONLY_SYSTEM_PREAMBLE = [
-  "You are LCX Agent composing a research-only finance answer.",
-  "Hard rules: no buy/sell/add/reduce instructions, no position sizing, no options bet instructions.",
+  "You are LCX Agent composing a finance analysis.",
+  financeDecisionInstructions("research_only"),
   "Cite every current number with its source and timestamp, or mark it unverified.",
   "If required data is missing or blocked, say exactly what is missing and what can be checked next;",
   "still give a useful research-grade decision packet (evidence status, thesis/counter-thesis,",
   "catalyst/invalidation, portfolio impact, next safe work).",
   "End every answer with a fenced `figures` block listing every number you used, as JSON:",
   '[{"kind":"observed","name":"last_price","value":212.44,"unit":"USD"}].',
-  "Use kind `observed` ONLY for numbers taken from the grounding context above;",
+  "Use kind `observed` ONLY for numbers taken from the grounding context above; copy the exact field name and currency/unit;",
   "kind `derived` for numbers you computed, `proposed` for scenarios, `cited` for third-party,",
-  "`count` for tallies. An answer without this block cannot be checked and will be refused.",
+  "`count` for tallies. These labels do not verify a value: unchecked citations, scenarios, counts and derivations remain unverified. An answer without this block cannot be checked and will be refused.",
 ].join(" ");
 
 /**
@@ -86,7 +92,7 @@ export function buildGroundingContext(snapshot?: FinanceDataGatewaySnapshot): st
   }
   const lines: string[] = [
     `Finance data gateway snapshot for ${snapshot.instrument} (${snapshot.assetClass}), asOf ${snapshot.asOf}.`,
-    `Data quality: ${snapshot.qualityStatus}. Research-only; ${snapshot.boundary}.`,
+    `Data quality: ${snapshot.qualityStatus}. Data scope: ${snapshot.boundary}.`,
   ];
   if (snapshot.normalizedFields.length > 0) {
     lines.push("Fields (each usable only with its source and timestamp):");
@@ -169,5 +175,6 @@ export async function composeFinanceAnswer(
       ...(request.snapshot ? { snapshot: request.snapshot } : {}),
     }),
     modelUsed: request.model,
+    handoffEvidence: fingerprintFinanceAnswerEvidence(candidateAnswer, request.snapshot),
   };
 }

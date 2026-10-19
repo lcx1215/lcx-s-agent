@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
-import { breakEvenFloor, type FloorSample } from "../finance-calibrated-floor.js";
+import {
+  deriveDirectionalCalibrationFloor,
+  type DirectionalOutcomeSample,
+} from "../finance-calibrated-floor.js";
 import { resolveFinanceStateDir } from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
@@ -22,7 +25,7 @@ import { jsonResult, readStringParam } from "./common.js";
  * Read-only: no network, no model, no writes.
  */
 
-export const FINANCE_CALIBRATION_READ_SCHEMA_VERSION = "lcx_finance_calibration_read_v1" as const;
+export const FINANCE_CALIBRATION_READ_SCHEMA_VERSION = "lcx_finance_calibration_read_v2" as const;
 
 const SCORED_FILENAME = "research-scored.jsonl";
 const SAMPLES_FILENAME = "research-samples.jsonl";
@@ -45,7 +48,7 @@ const FinanceCalibrationReadSchema = Type.Object({
   includeFloor: Type.Optional(
     Type.Boolean({
       description:
-        "Also report the conviction floor derived from these outcomes, if any can be derived. Defaults to true.",
+        "Also report a directional-accuracy calibration floor derived from these outcomes, if supported. It is not an economic break-even threshold or profitability proof. Defaults to true.",
     }),
   ),
 });
@@ -97,7 +100,7 @@ export function createFinanceCalibrationReadTool(): AnyAgentTool {
     name: "finance_calibration_read",
     label: "Finance calibration",
     description:
-      "Read-only summary of how accurate this system's own finance calls have been: hit rate, Brier score, overconfidence gap, and how many samples are still pending. Optionally reports the conviction floor derived from those outcomes, or states that none can be justified yet. Never calls the network or a model.",
+      "Read-only summary of forecast directional accuracy: hit rate, Brier score, overconfidence gap, and pending samples. Its optional conviction floor is a calibration reference only, not a trade break-even or profitability threshold. Never calls the network or a model.",
     parameters: FinanceCalibrationReadSchema,
     execute: async (_toolCallId, params) => {
       const workspaceDir = readStringParam(params, "workspaceDir");
@@ -112,12 +115,12 @@ export function createFinanceCalibrationReadTool(): AnyAgentTool {
       const scored = await readJsonl(scoredFile);
       const samples = await readJsonl(samplesFile);
 
-      const floorSamples: FloorSample[] = scored.flatMap((row) => {
+      const floorSamples: DirectionalOutcomeSample[] = scored.flatMap((row) => {
         const conviction = Number(row.conviction);
-        if (!Number.isFinite(conviction)) {
+        if (!Number.isFinite(conviction) || !isOutcome(row.outcome)) {
           return [];
         }
-        return [{ conviction, outcome: isOutcome(row.outcome) ? row.outcome : 0 }];
+        return [{ conviction, outcome: row.outcome }];
       });
 
       const outcomes: number[] = floorSamples.map((row) => row.outcome);
@@ -142,11 +145,12 @@ export function createFinanceCalibrationReadTool(): AnyAgentTool {
         refused: samples.filter((row) => row.direction === "none").length,
       };
 
-      const derived = includeFloor ? breakEvenFloor(floorSamples) : null;
+      const derived = includeFloor ? deriveDirectionalCalibrationFloor(floorSamples) : null;
 
       return jsonResult({
         ok: true,
         schemaVersion: FINANCE_CALIBRATION_READ_SCHEMA_VERSION,
+        calibrationScope: "forecast_directional_accuracy_only",
         // Which root was read, and how it was chosen: an empty count next to the wrong directory
         // is a routing bug, and next to the right one it is a fact about the system's record.
         inspectedFrom: {
@@ -165,10 +169,10 @@ export function createFinanceCalibrationReadTool(): AnyAgentTool {
           : null,
         note:
           floorSamples.length === 0
-            ? "No scored outcomes yet. Any calibration number would be invented, so none is reported."
+            ? "No scored directional outcomes yet. Any calibration number would be invented, so none is reported."
             : floorSamples.length < 30
-              ? `Only ${floorSamples.length} scored outcome(s). Treat these numbers as provisional, not as evidence about the strategy.`
-              : undefined,
+              ? `Only ${floorSamples.length} scored directional outcome(s). Treat these numbers as forecast-calibration evidence only, not as evidence of trade profitability.`
+              : "Directional hit rate, Brier score, and this floor measure forecast calibration; realized net trade P&L is owned by the execution ledger and is not reported here.",
       });
     },
   };

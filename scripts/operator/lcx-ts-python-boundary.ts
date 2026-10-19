@@ -18,6 +18,17 @@ const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const execFileAsync = promisify(execFile);
 
 const PYTHON_POLICIES: Record<string, Omit<PythonFilePolicy, "path">> = {
+  "scripts/local-model/lcx_text_worker.py": {
+    role: "keep_python_engine",
+    plainRole: "保留",
+    reason: "离线文本模型推理属于发动机层，工具与流程权限仍由 TS owner 持有。",
+    targetTsOwner: "src/agents/local-text-worker.ts",
+  },
+  "skills/test_lcx_skill_ownership.py": {
+    role: "keep_python_engine",
+    plainRole: "保留",
+    reason: "技能归属与配置隔离回归跟随技能工具保留，不授予运行或同步权限。",
+  },
   "evals/local-brain/inspect_local_brain.py": {
     role: "keep_python_engine",
     plainRole: "保留",

@@ -325,12 +325,13 @@ lcx logs --follow
 
 What to check:
 
-- Non-loopback binds (`lan`, `tailnet`, `custom`) need auth configured.
+- Direct `lan`/`custom`/`tailnet` binds (and `auto` when it resolves beyond loopback) need auth and `gateway.tls.enabled: true`. A Tailnet IP bind does not prove every inbound packet used WireGuard.
 - Old keys like `gateway.token` do not replace `gateway.auth.token`.
 
 Common signatures:
 
 - `refusing to bind gateway ... without auth` → bind+auth mismatch.
+- `non-loopback Gateway binds require gateway.tls.enabled=true` → enable Gateway TLS or keep the listener on loopback behind SSH/Tailscale Serve.
 - `RPC probe: failed` while runtime is running → gateway alive but inaccessible with current auth/url.
 
 ### 3) Pairing and device identity state changed

@@ -77,7 +77,7 @@ Optional env vars:
 
 After it finishes:
 
-- Open `http://127.0.0.1:18789/` in your browser.
+- Open `https://127.0.0.1:18789/` in your browser and trust the generated Gateway certificate.
 - Paste the token into the Control UI (Settings → token).
 - Need the URL again? Run `docker compose run --rm lcx-cli dashboard --no-open`.
 
@@ -439,8 +439,10 @@ URL you land on and paste it back into the wizard to finish auth.
 Container probe endpoints (no auth required):
 
 ```bash
-curl -fsS http://127.0.0.1:18789/healthz
-curl -fsS http://127.0.0.1:18789/readyz
+# Use the certificate generated in the mounted Gateway configuration directory.
+GATEWAY_CA="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}/gateway/tls/gateway-cert.pem"
+curl --cacert "$GATEWAY_CA" -fsS https://127.0.0.1:18789/healthz
+curl --cacert "$GATEWAY_CA" -fsS https://127.0.0.1:18789/readyz
 ```
 
 Aliases: `/health` and `/ready`.
@@ -471,10 +473,14 @@ pnpm test:docker:qr
 
 ### LAN vs loopback (Docker Compose)
 
-`docker-setup.sh` defaults `OPENCLAW_GATEWAY_BIND=lan` so host access to
-`http://127.0.0.1:18789` works with Docker port publishing.
+`docker-setup.sh` defaults `OPENCLAW_GATEWAY_BIND=lan` so host access works with
+Docker port publishing. Because this is a non-loopback listener, configure
+`gateway.tls.enabled: true` before startup; use HTTPS/WSS and trust the Gateway
+certificate in browsers (CLI clients can pin it). The
+setup script enables TLS automatically for `lan`/`tailnet`/`custom` binds. A plain
+HTTP/WS host-published connection is not accepted.
 
-- `lan` (default): host browser + host CLI can reach the published gateway port.
+- `lan` (default): host browser + host CLI can reach the published gateway port over TLS.
 - `loopback`: only processes inside the container network namespace can reach
   the gateway directly; host-published port access may fail.
 
@@ -491,7 +497,9 @@ errors from Docker CLI commands, run:
 ```bash
 docker compose run --rm lcx-cli config set gateway.mode local
 docker compose run --rm lcx-cli config set gateway.bind lan
-docker compose run --rm lcx-cli devices list --url ws://127.0.0.1:18789
+docker compose run --rm lcx-cli config set gateway.tls.enabled true
+docker compose run --rm lcx-cli config set gateway.controlUi.allowedOrigins '["https://127.0.0.1:18789"]' --strict-json
+docker compose run --rm lcx-cli devices list
 ```
 
 ### Notes

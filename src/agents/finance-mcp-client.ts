@@ -9,6 +9,7 @@
  */
 
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
+import { readBoundedFinanceResponseText } from "./finance-http-body.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18" as const;
 
@@ -111,7 +112,7 @@ export function detectVendorBusinessError(
 }
 
 async function readJsonRpc(response: Response): Promise<JsonRpcResponse> {
-  const body = await response.text();
+  const body = await readBoundedFinanceResponseText(response, { label: "finance MCP" });
   return decodeMcpJsonRpc(body, response.headers.get("content-type") ?? "");
 }
 

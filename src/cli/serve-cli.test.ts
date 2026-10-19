@@ -1,6 +1,8 @@
 import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FailoverError } from "../agents/failover-error.js";
+import { LocalTextWorker, type LocalTextWorkerSnapshot } from "../agents/local-text-worker.js";
 import { createDefaultDeps } from "./deps.js";
 import {
   DEFAULT_SERVE_PORT,
@@ -8,7 +10,10 @@ import {
   MAX_SERVE_BODY_BYTES,
   assertServeConfigSafe,
   createServeServer,
+  readServeResultFailure,
+  readServeResultError,
   readServePayloadTexts,
+  readServeThrownFailure,
   resolveServeBind,
   resolveServeConfig,
   resolveServePort,
@@ -25,10 +30,15 @@ const pendingClosers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   await Promise.all(pendingClosers.splice(0).map((close) => close()));
+  vi.restoreAllMocks();
 });
 
 async function startServer(
-  options: { config?: Partial<ServeConfig>; runAgent?: ServeAgentRunner } = {},
+  options: {
+    config?: Partial<ServeConfig>;
+    runAgent?: ServeAgentRunner;
+    readLocalTextWorker?: () => LocalTextWorkerSnapshot | undefined;
+  } = {},
 ): Promise<StartedServer> {
   const runAgent = vi.fn(
     options.runAgent ?? (async () => ({ payloads: [{ text: "agent reply" }], meta: { ok: true } })),
@@ -42,6 +52,7 @@ async function startServer(
     },
     deps: {} as ReturnType<typeof createDefaultDeps>,
     runAgent: runAgent as unknown as ServeAgentRunner,
+    readLocalTextWorker: options.readLocalTextWorker,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
@@ -164,6 +175,34 @@ describe("GET /healthz", () => {
     const { url } = await startServer();
     expect((await fetch(`${url}/healthz`, { method: "POST" })).status).toBe(405);
   });
+
+  it("exposes cold worker observations without starting or invoking inference", async () => {
+    const invoke = vi.spyOn(LocalTextWorker.prototype, "invoke");
+    const start = vi.spyOn(LocalTextWorker.prototype, "start");
+    const worker = new LocalTextWorker("unused", []);
+    const readLocalTextWorker = vi.fn(() => worker.snapshot());
+    const { url, runAgent } = await startServer({ readLocalTextWorker });
+    for (let probe = 0; probe < 2; probe++) {
+      const response = await fetch(`${url}/healthz`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        status: "ok",
+        localTextWorker: {
+          pid: null,
+          protocolReady: false,
+          weightsLoaded: false,
+          busy: false,
+          lastInferenceSucceededAt: null,
+          inferenceEvidence: "not_inference_proven",
+        },
+      });
+    }
+    expect(readLocalTextWorker).toHaveBeenCalledTimes(2);
+    expect(start).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
 });
 
 describe("serve routing", () => {
@@ -179,6 +218,24 @@ describe("serve routing", () => {
 });
 
 describe("POST /agent", () => {
+  it("does not promote model supplied verification or completion into verified answers", async () => {
+    const { url } = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "All safeguards are verified." }],
+        meta: { answerVerification: { status: "verified" } },
+      }),
+    });
+    const response = await postAgent(url, { message: "Audit system capability" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      answerVerification: {
+        status: "not_assessed",
+        capabilityClaims: "not_assessed",
+        semanticTruth: "not_assessed",
+      },
+    });
+  });
+
   it("maps the request onto the in-process agent command", async () => {
     const { url, runAgent } = await startServer();
     const response = await postAgent(url, {
@@ -250,11 +307,43 @@ describe("POST /agent", () => {
       },
     });
     const response = await postAgent(url, { message: "ping" });
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
       status: "error",
-      error: "provider exploded",
+      error: "agent request failed",
+    });
+  });
+
+  it("maps structured thrown failures without exposing provider details", async () => {
+    const timeout = await startServer({
+      runAgent: async () => {
+        throw new Error("all models failed", {
+          cause: new FailoverError("provider secret detail", {
+            reason: "timeout",
+            provider: "secret-provider",
+            profileId: "secret-profile",
+          }),
+        });
+      },
+    });
+    const timeoutResponse = await postAgent(timeout.url, { message: "ping" });
+    expect(timeoutResponse.status).toBe(504);
+    await expect(timeoutResponse.json()).resolves.toMatchObject({
+      ok: false,
+      error: "agent request timed out",
+    });
+
+    const upstream = await startServer({
+      runAgent: async () => {
+        throw new FailoverError("private auth detail", { reason: "auth" });
+      },
+    });
+    const upstreamResponse = await postAgent(upstream.url, { message: "ping" });
+    expect(upstreamResponse.status).toBe(502);
+    await expect(upstreamResponse.json()).resolves.toMatchObject({
+      ok: false,
+      error: "agent upstream failure",
     });
   });
 
@@ -263,6 +352,174 @@ describe("POST /agent", () => {
     const response = await postAgent(url, { message: "ping" });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true, payloads: [] });
+  });
+
+  it("returns the recovered assistant answer after transient payload errors", async () => {
+    const { url } = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "transient", isError: true }, { text: "recovered answer" }],
+        meta: {},
+      }),
+    });
+    const response = await postAgent(url, { message: "ping" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      payloads: [{ text: "recovered answer" }],
+    });
+  });
+
+  it("maps a provider error payload to a bad-gateway response", async () => {
+    const { url } = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "provider retry limit reached", isError: true }],
+        meta: { error: { kind: "retry_limit", message: "provider retry limit reached" } },
+      }),
+    });
+    const response = await postAgent(url, { message: "ping" });
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      status: "error",
+      error: "provider retry limit reached",
+    });
+  });
+
+  it("maps timeout and cancellation metadata to distinct HTTP responses", async () => {
+    const timeout = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "timed out", isError: true }],
+        meta: { timedOut: true, timedOutDuringCompaction: false },
+      }),
+    });
+    expect((await postAgent(timeout.url, { message: "ping" })).status).toBe(504);
+
+    const cancelled = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "cancelled", isError: true }],
+        meta: { aborted: true, timedOut: false },
+      }),
+    });
+    expect((await postAgent(cancelled.url, { message: "ping" })).status).toBe(409);
+
+    const completedAfterCompaction = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "answer" }],
+        meta: {
+          timedOut: true,
+          timedOutDuringCompaction: true,
+          promptCompleted: true,
+          aborted: true,
+        },
+      }),
+    });
+    const completedResponse = await postAgent(completedAfterCompaction.url, { message: "ping" });
+    expect(completedResponse.status).toBe(200);
+    await expect(completedResponse.json()).resolves.toMatchObject({
+      ok: true,
+      payloads: [{ text: "answer" }],
+    });
+  });
+});
+
+describe("POST /agent tokenless browser boundary", () => {
+  it.each<Record<string, string>>([
+    { origin: "https://attacker.invalid", "content-type": "text/plain" },
+    { origin: "null" },
+    { origin: "not a URL" },
+    { origin: "http:localhost" },
+    { origin: "http:///localhost" },
+    { origin: "http://localhost/" },
+    { origin: "" },
+    { origin: "file://localhost" },
+    { origin: "ftp://127.0.0.1" },
+    { origin: "http://localhost/foreign/path" },
+    { origin: "http://attacker@localhost" },
+    { "sec-fetch-site": "cross-site" },
+    { origin: "http://localhost", "sec-fetch-site": "cross-site" },
+    { referer: "https://attacker.invalid/form" },
+    { referer: "null" },
+    { referer: "http:localhost/path" },
+    { referer: "file://localhost/form" },
+    { host: "attacker.invalid" },
+    { host: "" },
+    { host: "0.0.0.0:8788" },
+    { host: "attacker.invalid", origin: "http://attacker.invalid" },
+    { host: "attacker.invalid", origin: "http://localhost" },
+    { host: "localhost.attacker.invalid" },
+    { host: "localhost@attacker.invalid" },
+    { host: "127.0.0.1/path" },
+  ])("rejects unsafe ingress before agent dispatch: %j", async (headers) => {
+    const { url, runAgent } = await startServer();
+    const response = await postAgentWithHeaders(url, headers);
+    expect(response.status).toBe(403);
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(["/agent", "/agent/", "/agent///?source=browser"])(
+    "guards route alias %s before reading malformed bodies",
+    async (route) => {
+      const { url, runAgent } = await startServer();
+      const response = await fetch(`${url}${route}`, {
+        method: "POST",
+        headers: { origin: "https://attacker.invalid", "content-type": "text/plain" },
+        body: "invalid JSON",
+      });
+      expect(response.status).toBe(403);
+      expect(runAgent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<Record<string, string>>([
+    {},
+    { origin: "http://localhost:3000" },
+    { origin: "https://127.0.0.1:3000" },
+    { origin: "http://[::1]:3000" },
+    { referer: "http://localhost:3000/app?view=agent" },
+    { origin: "http://localhost", "sec-fetch-site": "same-site" },
+    { host: "[::1]:8788" },
+  ])("preserves loopback clients: %j", async (headers) => {
+    const { url, runAgent } = await startServer();
+    const response = await postAgentWithHeaders(url, headers);
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves local requests through agent route aliases", async () => {
+    const { url, runAgent } = await startServer();
+    for (const route of ["/agent/", "/agent///?source=cli"]) {
+      const response = await fetch(`${url}${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "local request" }),
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(runAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves GET and HEAD health probes public", async () => {
+    const { url, runAgent } = await startServer();
+    for (const method of ["GET", "HEAD"]) {
+      const response = await fetch(`${url}/healthz`, {
+        method,
+        headers: { host: "health.internal", origin: "https://monitor.invalid" },
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicitly authenticated LAN clients with foreign browser headers", async () => {
+    const { url, runAgent } = await startServer({ config: { bind: "lan", token: "s3cret" } });
+    const response = await postAgentWithHeaders(url, {
+      authorization: "Bearer s3cret",
+      host: "agent.internal:8788",
+      origin: "https://client.invalid",
+      "sec-fetch-site": "cross-site",
+    });
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -406,5 +663,101 @@ describe("readServePayloadTexts", () => {
     expect(readServePayloadTexts(null)).toEqual([]);
     expect(readServePayloadTexts({ payloads: "nope" })).toEqual([]);
     expect(readServePayloadTexts({ meta: {} })).toEqual([]);
+  });
+});
+
+describe("readServeResultError", () => {
+  it("recognizes payload and meta error shapes", () => {
+    expect(readServeResultError({ payloads: [{ text: "payload failed", isError: true }] })).toBe(
+      "payload failed",
+    );
+    expect(readServeResultError({ meta: { error: { message: "meta failed" } } })).toBe(
+      "meta failed",
+    );
+    expect(readServeResultError({ payloads: [{ text: "ok" }], meta: {} })).toBeUndefined();
+  });
+});
+
+describe("readServeResultFailure", () => {
+  it("requires successful text after the last error and retains fatal run metadata", () => {
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: {},
+      }),
+    ).toBeUndefined();
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "answer" }, { text: "terminal", isError: true }],
+      }),
+    ).toEqual({ status: 502, error: "terminal" });
+    expect(
+      readServeResultFailure({ payloads: [{ text: "transient", isError: true }, { text: " " }] }),
+    ).toEqual({ status: 502, error: "transient" });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: { error: { message: "run failed" } },
+      }),
+    ).toEqual({ status: 502, error: "run failed" });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: { timedOut: true },
+      })?.status,
+    ).toBe(504);
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: { aborted: true },
+      })?.status,
+    ).toBe(409);
+  });
+
+  it("uses metadata for status classification and payload text for detail", () => {
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "slow provider", isError: true }],
+        meta: { timedOut: true },
+      }),
+    ).toEqual({ status: 504, error: "slow provider" });
+    expect(readServeResultFailure({ meta: { aborted: true } })).toEqual({
+      status: 409,
+      error: "agent request was cancelled",
+    });
+    expect(readServeResultFailure({ payloads: [{ isError: true }] })).toEqual({
+      status: 502,
+      error: "agent returned an error payload",
+    });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "partial", isError: true }],
+        meta: { timedOut: true, timedOutDuringCompaction: true, promptCompleted: false },
+      }),
+    ).toEqual({ status: 504, error: "partial" });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "answer" }],
+        meta: {
+          timedOut: true,
+          timedOutDuringCompaction: true,
+          promptCompleted: true,
+          aborted: true,
+        },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("readServeThrownFailure", () => {
+  it("follows a bounded structured cause chain", () => {
+    expect(
+      readServeThrownFailure(
+        new Error("wrapper", {
+          cause: new FailoverError("private detail", { reason: "timeout" }),
+        }),
+      ),
+    ).toEqual({ status: 504, error: "agent request timed out" });
+    expect(readServeThrownFailure(new Error("unclassified"))).toBeUndefined();
   });
 });

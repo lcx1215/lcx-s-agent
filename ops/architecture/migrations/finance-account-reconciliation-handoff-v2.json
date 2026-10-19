@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "finance_automatic_paper_trading_waterflow",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Original periodic and stream readbacks share the existing account reconciliation observation; successful idle reconciliation must reach the existing central finance consumer.",
+  "changes": {
+    "canonicalOntologyUnchanged": true,
+    "newBusinessStateStore": false,
+    "owners": [
+      "scripts/operator/lcx-finance-scheduler.ts",
+      "src/agents/finance-automatic-lifecycle-feedback.ts",
+      "src/agents/central-harness/harness-loop.ts"
+    ],
+    "receiptCompatibility": "Add optional lastSource and bounded lastFailure; accept pending/account_read_failed in the original diagnostic schema. Retain original pid, venue, timestamp and 5-minute observation/readback guards.",
+    "cancelledRead": "Late successful readbacks after cancellation remain unavailable; past success is not cleared or treated as a current success.",
+    "context": "Existing 12 KB prompt budget retains bounded safe failure details through normal and minimal finance projection; omitted/private fields remain omitted."
+  },
+  "verification": [
+    "Idle success/failure/cancellation reach the original receipt",
+    "Existing stream readback still works",
+    "Original lifecycle consumer sees safe diagnostic, pending and recovery",
+    "Unsafe diagnostic remains unavailable"
+  ],
+  "nonEffects": [
+    "No order/retry/provider/config/permission changes",
+    "No paid model or new automation",
+    "No quote freshness or execution gate changes"
+  ],
+  "rollback": "Revert projection and sink handling together; preserve broker and immutable history. Missing observation remains unconfirmed."
+}

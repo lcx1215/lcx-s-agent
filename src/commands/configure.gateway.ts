@@ -156,6 +156,13 @@ export async function promptGatewayConfig(
     tailscaleResetOnExit = false;
   }
 
+  if (bind !== "loopback" && cfg.gateway?.tls?.enabled !== true) {
+    note(
+      "Direct network binds require Gateway TLS. Enabling TLS; configure a trusted certificate for browser clients or pin the generated certificate in Gateway clients.",
+      "Gateway TLS",
+    );
+  }
+
   let gatewayToken: string | undefined;
   let gatewayPassword: string | undefined;
   let trustedProxyConfig:
@@ -278,6 +285,7 @@ export async function promptGatewayConfig(
       port,
       bind,
       auth: authConfig,
+      ...(bind !== "loopback" ? { tls: { ...next.gateway?.tls, enabled: true } } : {}),
       ...(customBindHost && { customBindHost }),
       ...(trustedProxies && { trustedProxies }),
       tailscale: {

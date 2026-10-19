@@ -1,13 +1,20 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { verifyProviderCouncilEvidence } from "../../src/agents/provider-council-evidence.js";
 import {
   runExternalLearningCouncil,
   resolveLearningCouncilDisabledRoles,
 } from "../../src/agents/provider-learning-council.js";
 import { loadConfig } from "../../src/config/config.js";
+import { buildLearningCouncilArtifactJsonRelativePath } from "../../src/hooks/bundled/lobster-brain-registry.js";
+import {
+  readProviderCouncilEvidence,
+  planCommercialAnswerRequirements,
+} from "./lcx-commercial-answer-pipeline.ts";
 import { DEFAULT_WORKSPACE_DIR, GOVERNANCE_AUTOPILOT_LATEST_PATH } from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
@@ -86,7 +93,7 @@ function usage(): never {
       "  [--workspace DIR] [--route-agent-id ID] [--profile balanced|aggressive]",
       "  [--focus TEXT] [--max-fresh-minutes N] [--timeout-ms N]",
       "",
-      "Plans or runs one bounded Kimi/MiniMax/DeepSeek learning-council acceleration pass.",
+      "Plans or runs one bounded configured-model learning-council acceleration pass.",
       "Default is dry-run. --write calls providers only when active eval/MLX is idle, git is clean,",
       "and no fresh complete three-role learning council already exists.",
     ].join("\n"),
@@ -476,7 +483,7 @@ function buildFocusPrompt(params: {
     params.options.focus ??
     [
       "LCX Agent provider-council acceleration review.",
-      "目标：多花 Kimi/DeepSeek token 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
+      "目标：使用已配置互审模型 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
       "重点失败族：single_stock_curve_technical_timing_preflight、external knowledge/module absorption、finance data provenance、review panel、direct buy/sell refusal。",
       "不要给交易建议，不要改 provider config，不要碰 external channel sender，不要碰 protected memory。",
     ].join(" ");
@@ -495,8 +502,8 @@ function buildFocusPrompt(params: {
     `- latest_council: ${params.latestCouncil?.path ?? "none"}`,
     "",
     params.minimaxDisabled ? "两模型分工：" : "三模型分工：",
-    "- Kimi：把失败样本压缩成一个可执行 SOP 小改动和验证集题目。",
-    "- DeepSeek：挑 source_registry、data_provenance_quality、eval_absorbed、direct_buy_sell_answer、technical_timing_as_standalone_alpha 的漏洞。",
+    "- 综合角色：把失败样本压缩成一个可执行 SOP 小改动和验证集题目。",
+    "- 提取角色：挑 source_registry、data_provenance_quality、eval_absorbed、direct_buy_sell_answer、technical_timing_as_standalone_alpha 的漏洞。",
     ...(params.minimaxDisabled
       ? [
           "- 注意：MiniMax provider 已从运行时配置停用，本 council 只有两个角色；不要等待或假设有 MiniMax 反例审查。",
@@ -514,38 +521,115 @@ async function runCouncil(
   prompt: string,
   options: CliOptions,
   minimaxDisabled: boolean,
-): Promise<string> {
-  process.env.OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL = "moonshot/kimi-k2.6";
-  process.env.OPENCLAW_LEARNING_COUNCIL_DEEPSEEK_MODEL =
-    "custom-api-deepseek-com/deepseek-v4-flash";
+  abortSignal?: AbortSignal,
+): Promise<{ text: string; messageId: string }> {
   if (!minimaxDisabled) {
     process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL = "minimax-portal/MiniMax-M2.7";
   }
   const messageId = `provider-council-acceleration-${new Date()
     .toISOString()
     .replaceAll(":", "-")}`;
-  return runExternalLearningCouncil({
+  const questionPlan = planCommercialAnswerRequirements(prompt);
+  const questionRequirements = {
+    askSha256: createHash("sha256").update(prompt).digest("hex"),
+    needs: questionPlan.needs
+      .filter((need) => need.required)
+      .map(({ id, reason }) => ({ id, reason })),
+  };
+  const text = await runExternalLearningCouncil({
     cfg: loadConfig(),
     userMessage: prompt,
     routeAgentId: options.routeAgentId,
     sessionKey: `agent:${options.routeAgentId}:provider-council-acceleration`,
     messageId,
     workspaceDir: options.workspaceDir,
+    questionRequirements,
+    captureProcessEvidence: true,
+    abortSignal,
   });
+  return { text, messageId };
 }
 
-function runCouncilWithTimeout(
+/** Reuse the original artifact reader and attribution verifier; completion prose is not readback. */
+export async function readCouncilRunEvidence(
+  workspaceDir: string,
+  messageId: string,
+  prompt: string,
+  requiredRoles: readonly string[],
+) {
+  const evidence = await readProviderCouncilEvidence(
+    path.join(workspaceDir, buildLearningCouncilArtifactJsonRelativePath(messageId)),
+    messageId,
+  );
+  return verifyProviderCouncilEvidence(
+    prompt,
+    `${requiredRoles.map((role) => `${role}角色`).join("、")} 模型会审已完成独立审阅。`,
+    evidence,
+  );
+}
+
+export class ProviderCouncilDeadlineError extends Error {
+  readonly cancellationRequested = true;
+  readonly cleanupScope = "local_council_operation_only_remote_execution_not_confirmed";
+  constructor(
+    timeoutMs: number,
+    readonly cleanupStatus: "local_operation_settled" | "cleanup_unconfirmed",
+  ) {
+    super(`provider council timeout after ${timeoutMs}ms`);
+  }
+}
+
+export function runCouncilWithTimeout(
   prompt: string,
   options: CliOptions,
   minimaxDisabled: boolean,
-): Promise<string> {
+): Promise<{ text: string; messageId: string }> {
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  let settled = false;
+  const running = runCouncil(prompt, options, minimaxDisabled, controller.signal).finally(() => {
+    settled = true;
+  });
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`provider council timeout after ${options.timeoutMs}ms`));
+      timedOut = true;
+      controller.abort();
+      void (async () => {
+        let cleanupTimer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          running.then(
+            () => undefined,
+            () => undefined,
+          ),
+          new Promise<void>((resolve) => {
+            cleanupTimer = setTimeout(resolve, 1000);
+          }),
+        ]);
+        if (cleanupTimer) {
+          clearTimeout(cleanupTimer);
+        }
+        reject(
+          new ProviderCouncilDeadlineError(
+            options.timeoutMs,
+            settled ? "local_operation_settled" : "cleanup_unconfirmed",
+          ),
+        );
+      })();
     }, options.timeoutMs);
   });
-  return Promise.race([runCouncil(prompt, options, minimaxDisabled), timeout]).finally(() => {
+  // After the deadline, even an abort rejection or a late successful result must
+  // remain the timeout verdict while bounded local settlement is checked.
+  const guarded = running.then(
+    (result) => (timedOut ? timeout : result),
+    (error: unknown) => {
+      if (timedOut) {
+        return timeout;
+      }
+      throw error;
+    },
+  );
+  return Promise.race([guarded, timeout]).finally(() => {
     if (timer) {
       clearTimeout(timer);
     }
@@ -575,7 +659,7 @@ async function main() {
   const disabledRoles = resolveLearningCouncilDisabledRoles(loadConfig());
   const minimaxDisabled = disabledRoles.includes("minimax");
   const requiredRoles = REQUIRED_ROLES.filter((role) => !disabledRoles.includes(role));
-  const [gitLines, activePids, snapshot, council, dailyUse] = await Promise.all([
+  const [gitLines, activePids, snapshot, councilBeforeRun, dailyUseBeforeRun] = await Promise.all([
     gitStatusLines(),
     activePidSummary(options),
     readJsonIfExists(
@@ -586,12 +670,14 @@ async function main() {
     latestCouncil(options.workspaceDir),
     dailyUseCoverage(options.workspaceDir, Date.now(), 24, requiredRoles),
   ]);
+  let council = councilBeforeRun;
+  let dailyUse = dailyUseBeforeRun;
   const trainingTruth = extractTrainingTruth(snapshot);
   const gitClean = gitLines.length <= 1;
   const activeCounts = activePidCounts(activePids);
   const activeEvalOrMlx =
     !activePids.available || activePids.eval.length > 0 || activePids.mlx.length > 0;
-  const freshCompleteCouncil = councilFreshAndComplete(
+  let freshCompleteCouncil = councilFreshAndComplete(
     council,
     options.maxFreshMinutes,
     requiredRoles,
@@ -611,7 +697,11 @@ async function main() {
   let providerResultSnippet: string | undefined;
   let providerRunError: string | undefined;
   let providerRunTimedOut = false;
+  let councilRunEvidence: Awaited<ReturnType<typeof readCouncilRunEvidence>> | undefined;
   let forceExitAfterOutput = false;
+  let providerRunCleanup:
+    | { status: string; scope: string; cancellationRequested: boolean }
+    | undefined;
   let action = options.write ? "deferred" : "dry_run_plan_only";
   let status = options.write ? "deferred_by_safety_gate" : "ready_plan";
   let ok = !options.write || canRunProviderCouncilNow;
@@ -619,12 +709,39 @@ async function main() {
   if (options.write && canRunProviderCouncilNow) {
     try {
       const result = await runCouncilWithTimeout(prompt, options, minimaxDisabled);
-      providerResultSnippet = result.slice(0, 2_000);
+      providerResultSnippet = result.text.slice(0, 2_000);
+      councilRunEvidence = await readCouncilRunEvidence(
+        options.workspaceDir,
+        result.messageId,
+        prompt,
+        requiredRoles,
+      );
+      [council, dailyUse] = await Promise.all([
+        latestCouncil(options.workspaceDir),
+        dailyUseCoverage(options.workspaceDir, Date.now(), 24, requiredRoles),
+      ]);
+      freshCompleteCouncil = councilFreshAndComplete(
+        council,
+        options.maxFreshMinutes,
+        requiredRoles,
+      );
       action = "provider_council_run_completed";
       status = "provider_council_acceleration_receipt_written";
-      ok = true;
+      ok = councilRunEvidence.status === "verified";
+      if (!ok) {
+        action = "provider_council_run_incomplete";
+        status = "provider_council_acceleration_incomplete";
+        providerRunError = councilRunEvidence.gaps.join("; ");
+      }
     } catch (error) {
       providerRunError = error instanceof Error ? error.message : String(error);
+      if (error instanceof ProviderCouncilDeadlineError) {
+        providerRunCleanup = {
+          status: error.cleanupStatus,
+          scope: error.cleanupScope,
+          cancellationRequested: error.cancellationRequested,
+        };
+      }
       providerRunTimedOut = providerRunError.includes("provider council timeout");
       forceExitAfterOutput = providerRunTimedOut;
       action = providerRunTimedOut
@@ -669,7 +786,9 @@ async function main() {
     plannedPrompt: prompt,
     providerResultSnippet,
     providerRunError,
+    ...(providerRunCleanup ? { providerRunCleanup } : {}),
     providerRunTimedOut,
+    councilRunEvidence,
     nextSafeCommand:
       "node --import tsx scripts/operator/lcx-provider-council-acceleration.ts --write --json --profile aggressive",
     outputsFeed: [
@@ -694,4 +813,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

@@ -17,6 +17,7 @@ import {
   STRATEGY_METHOD_IDS,
   type StrategyMethodId,
 } from "../../src/agents/finance-strategy-method-catalog.ts";
+import { buildStressVariants } from "./finance-strategy-method-benchmark.ts";
 
 type JsonObject = Record<string, unknown>;
 type MethodReceipt = Readonly<{
@@ -40,7 +41,7 @@ type MethodReceipt = Readonly<{
 }>;
 
 type AllMethodsReceipt = Readonly<{
-  schemaVersion: "lcx_finance_strategy_all_methods_v1";
+  schemaVersion: "lcx_finance_strategy_all_methods_v2";
   status: "completed";
   boundary: "research_only_no_execution";
   runAt: string;
@@ -104,6 +105,26 @@ function requiredText(value: unknown, label: string): string {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+function requiredFiniteNumber(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number`);
+  }
+  return value;
+}
+
+function requiredPeriodMetrics(value: unknown, label: string): JsonObject[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`);
+  }
+  return value.map((entry, index) => {
+    const period = requiredObject(entry, `${label}[${index}]`);
+    return {
+      window: requiredText(period.window, `${label}[${index}].window`),
+      metric: requiredObject(period.metric, `${label}[${index}].metric`),
+    };
+  });
 }
 
 function sourceGroupReady(receipts: JsonObject): boolean {
@@ -340,10 +361,54 @@ function buildMethods(
   const benchmarkChecks = requiredObject(benchmark.checks, "benchmark.checks");
   const benchmarkPortfolio = requiredObject(benchmark.portfolio, "benchmark.portfolio");
   const benchmarkData = requiredObject(benchmark.data, "benchmark.data");
-  const stressSummary = requiredObject(
-    requiredObject(stress.stressMatrix, "stress.stressMatrix").summary,
-    "stress summary",
+  const stressMatrix = requiredObject(stress.stressMatrix, "stress.stressMatrix");
+  const stressSummary = requiredObject(stressMatrix.summary, "stress summary");
+  if (!Array.isArray(stressMatrix.variants)) {
+    throw new Error("stress.stressMatrix.variants must be an array of evaluated sensitivity cells");
+  }
+  const m02StressVariants = stressMatrix.variants.map((value, index) => {
+    const row = requiredObject(value, `stress.stressMatrix.variants[${index}]`);
+    const lookback = requiredFiniteNumber(row.lookback, `M02 variant ${index} lookback`);
+    const costBps = requiredFiniteNumber(row.costBps, `M02 variant ${index} costBps`);
+    const breadth = requiredFiniteNumber(row.breadth, `M02 variant ${index} breadth`);
+    return {
+      variantKind: "parameter_sensitivity_cell_not_search_candidate",
+      variantKey: `lookback=${lookback};costBps=${costBps};breadth=${breadth}`,
+      lookback,
+      costBps,
+      breadth,
+      baseline: requiredObject(row.baseline, `M02 variant ${index} baseline`),
+      enriched: requiredObject(row.enriched, `M02 variant ${index} enriched`),
+      baselinePeriods: requiredPeriodMetrics(
+        row.baselinePeriods,
+        `M02 variant ${index} baselinePeriods`,
+      ),
+      enrichedPeriods: requiredPeriodMetrics(
+        row.enrichedPeriods,
+        `M02 variant ${index} enrichedPeriods`,
+      ),
+      cagrDeltaPp: requiredFiniteNumber(row.cagrDeltaPp, `M02 variant ${index} cagrDeltaPp`),
+      maxDrawdownDeltaPp: requiredFiniteNumber(
+        row.maxDrawdownDeltaPp,
+        `M02 variant ${index} maxDrawdownDeltaPp`,
+      ),
+      totalReturnDeltaPp: requiredFiniteNumber(
+        row.totalReturnDeltaPp,
+        `M02 variant ${index} totalReturnDeltaPp`,
+      ),
+    };
+  });
+  const m02StressVariantKeys = new Set(m02StressVariants.map((variant) => variant.variantKey));
+  const expectedM02StressVariantKeys = new Set(
+    buildStressVariants().map(
+      ({ lookback, costBps, breadth }) =>
+        `lookback=${lookback};costBps=${costBps};breadth=${breadth}`,
+    ),
   );
+  const m02StressVariantRowsComplete =
+    m02StressVariants.length === expectedM02StressVariantKeys.size &&
+    m02StressVariantKeys.size === expectedM02StressVariantKeys.size &&
+    [...expectedM02StressVariantKeys].every((key) => m02StressVariantKeys.has(key));
   const strategyManifestReceipts = requiredObject(
     strategyManifest.source_receipts,
     "strategy manifest source_receipts",
@@ -393,6 +458,8 @@ function buildMethods(
     drawdownImprovementCount: stressSummary.drawdownImprovementCount,
     bothCagrAndDrawdownCount: stressSummary.bothCagrAndDrawdownCount,
     medianCagrDeltaPp: stressSummary.medianCagrDeltaPp,
+    variantRowsComplete: m02StressVariantRowsComplete,
+    variants: m02StressVariants,
   };
 
   const m05Medium = getMediumRows(m05, "m05_results");
@@ -441,7 +508,8 @@ function buildMethods(
       "research_candidate",
       localSourcesReady && strategySourcesReady,
       checkBooleans(benchmarkChecks, "benchmark.checks") &&
-        Number(stressSummary.variantCount) === 48,
+        Number(stressSummary.variantCount) === expectedM02StressVariantKeys.size &&
+        m02StressVariantRowsComplete,
       "research_only_no_outperformance",
       {
         baseline: requiredObject(m02Base.metric, "benchmark buy_hold.metric"),
@@ -720,7 +788,7 @@ export async function buildAllMethodsReceipt(
     throw new Error(`all-method contract failed: ${JSON.stringify(checks)}`);
   }
   return Object.freeze({
-    schemaVersion: "lcx_finance_strategy_all_methods_v1",
+    schemaVersion: "lcx_finance_strategy_all_methods_v2",
     status: "completed",
     boundary: "research_only_no_execution",
     runAt: new Date().toISOString(),

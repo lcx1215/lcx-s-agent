@@ -8,6 +8,7 @@ import {
   type LcxOntologyFinanceDataQualityStatus,
   type LcxOntologyFinanceDataSourceFamily,
 } from "../shared/lcx-ontology.js";
+import { evidenceSourceIdentity } from "./evidence-source-identity.js";
 
 /** Compatibility exports; the canonical values live in the shared ontology. */
 export const FINANCE_DATA_PROVIDER_ROLES = LCX_ONTOLOGY_FINANCE_DATA_PROVIDER_ROLES;
@@ -32,6 +33,8 @@ export type FinanceDataGatewayFieldInput = {
   fieldDefinition: string;
   sourceTimestamp: string;
   sourceUrlOrArtifact: string;
+  /** Caller-declared original document; an equality can disqualify a cross-check, never prove independence. */
+  upstreamSourceUrlOrArtifact?: string;
 };
 
 export type FinanceDataGatewayObservationInput = {
@@ -68,6 +71,7 @@ export type FinanceDataGatewayNormalizedField = {
   sourceTimestamp: string;
   fieldDefinition: string;
   sourceUrlOrArtifact: string;
+  upstreamSourceUrlOrArtifact?: string;
 };
 
 export type FinanceDataGatewayConflict = {
@@ -92,6 +96,13 @@ export type FinanceDataGatewaySnapshot = {
   asOf: string;
   qualityStatus: FinanceDataQualityStatus;
   providerRolesPresent: FinanceDataProviderRole[];
+  sourceIndependence?: {
+    assessed: "declared_provider_and_source_identity_only";
+    upstreamLineage: "not_assessed";
+    declaredUpstreamIdentityChecked?: true;
+    semanticTruth?: "not_assessed";
+    unverifiedCrossCheckFields: string[];
+  };
   sourceFamiliesPresent: FinanceDataSourceFamily[];
   normalizedFields: FinanceDataGatewayNormalizedField[];
   conflicts: FinanceDataGatewayConflict[];
@@ -165,6 +176,7 @@ function selectPrimaryField(
     sourceTimestamp: selected.field.sourceTimestamp.trim(),
     fieldDefinition: selected.field.fieldDefinition.trim(),
     sourceUrlOrArtifact: selected.field.sourceUrlOrArtifact.trim(),
+    upstreamSourceUrlOrArtifact: selected.field.upstreamSourceUrlOrArtifact?.trim() || undefined,
   };
 }
 
@@ -224,6 +236,41 @@ function buildCrossSourceTimestampWarnings(
       `${fieldName} source timestamps differ by ${Math.round(skewMinutes)}m across providers`,
     ];
   });
+}
+
+function unverifiedCrossCheckFields(
+  observations: readonly FinanceDataGatewayObservationInput[],
+): string[] {
+  const primary = observations.filter((entry) => entry.providerRole === "primary_market_data");
+  const cross = observations.filter((entry) => entry.providerRole === "cross_check_market_data");
+  return unique(
+    primary.flatMap((entry) =>
+      entry.fields
+        .filter(
+          (field) =>
+            !cross.some(
+              (candidate) =>
+                candidate.providerName.trim().toLowerCase() !==
+                  entry.providerName.trim().toLowerCase() &&
+                candidate.fields.some(
+                  (other) =>
+                    other.name.trim() === field.name.trim() &&
+                    ![other.sourceUrlOrArtifact, other.upstreamSourceUrlOrArtifact]
+                      .filter((value): value is string => !!value?.trim())
+                      .some((value) =>
+                        [field.sourceUrlOrArtifact, field.upstreamSourceUrlOrArtifact]
+                          .filter((origin): origin is string => !!origin?.trim())
+                          .some(
+                            (origin) =>
+                              evidenceSourceIdentity(value) === evidenceSourceIdentity(origin),
+                          ),
+                      ),
+                ),
+            ),
+        )
+        .map((field) => field.name.trim()),
+    ),
+  );
 }
 
 export function buildFinanceDataGatewaySnapshot(
@@ -356,6 +403,10 @@ export function buildFinanceDataGatewaySnapshot(
     missingEvidence.push("official_or_issuer_reference_provider");
   }
 
+  const unverifiedCrossChecks = unverifiedCrossCheckFields(eligibleObservations);
+  missingEvidence.push(
+    ...unverifiedCrossChecks.map((name) => `distinct_cross_check_source:${name}`),
+  );
   const requiredNextSteps: string[] = [];
   if (missingEvidence.length > 0) {
     requiredNextSteps.push("collect_missing_provider_evidence");
@@ -390,6 +441,13 @@ export function buildFinanceDataGatewaySnapshot(
     asOf,
     qualityStatus,
     providerRolesPresent,
+    sourceIndependence: {
+      assessed: "declared_provider_and_source_identity_only",
+      upstreamLineage: "not_assessed",
+      declaredUpstreamIdentityChecked: true,
+      semanticTruth: "not_assessed",
+      unverifiedCrossCheckFields: unverifiedCrossChecks,
+    },
     sourceFamiliesPresent,
     normalizedFields,
     conflicts,
@@ -405,7 +463,7 @@ export function buildFinanceDataGatewaySnapshot(
         "sourceUrlOrArtifact",
       ],
       providerRolePolicy:
-        "Use primary_market_data only with cross_check_market_data; add official_or_issuer_reference unless explicitly disabled for the use case.",
+        "Each primary field needs a matching cross-check field with a different declared provider and source identity; add official_or_issuer_reference unless explicitly disabled. Distinct labels or URLs do not prove independent upstream provenance; cross-site copying and source truth remain unassessed.",
       conflictPolicy:
         "Conflicted values are not resolved by model preference; route them to data_provenance_quality_review before visible use.",
       visibleAnswerPolicy:

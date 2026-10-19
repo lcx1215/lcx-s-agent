@@ -30,6 +30,7 @@
     "paper-loop/**/*",
     "test/**/*",
     "scripts/**/*",
+    "docs/experiments/research/**/*.mts",
     "*.ts",
     "packages/**/*",
     "ops/probes/**/*.ts"

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createLocalQualityHarnessAdapter,
+  resolveLocalTextModelRuntimeConfig,
+} from "./local-text-model-adapter.js";
+import {
   LogicalAgentModelRouter,
+  ModelAdapterError,
+  modelRoutingTaskTimeoutMs,
   type LogicalAgentModelAdapter,
   type LogicalAgentModelRouting,
   type LogicalAgentRoleModelPolicy,
@@ -64,6 +70,68 @@ const execute = async ({
 });
 
 describe("role model execution receipts", () => {
+  it("restores original receipts only into the next same-run attempt and rejects invalid lineage", async () => {
+    const pool = new LogicalAgentPool<string, unknown>({ modelRouting: routing() });
+    const result = await pool.submit(task, execute, {}, {}, "repair:attempt:1");
+    const original = structuredClone(result.modelCalls);
+    const router = new LogicalAgentModelRouter(routing());
+    router.restoreCompletedModelCalls(
+      "repair:attempt:2",
+      result.modelCalls ?? [],
+      "repair:attempt:1",
+    );
+    expect(result.modelCalls).toEqual(original);
+    expect(() =>
+      router.restoreCompletedModelCalls(
+        "other:attempt:2",
+        result.modelCalls ?? [],
+        "repair:attempt:1",
+      ),
+    ).toThrow("next attempt of the same run");
+    expect(() =>
+      router.restoreCompletedModelCalls(
+        "repair:attempt:3",
+        result.modelCalls ?? [],
+        "repair:attempt:1",
+      ),
+    ).toThrow("next attempt of the same run");
+    expect(() =>
+      router.restoreCompletedModelCalls("repair:attempt:2", result.modelCalls ?? []),
+    ).toThrow("correlation mismatch");
+    expect(() =>
+      router.restoreCompletedModelCalls(
+        "repair:attempt:2",
+        (result.modelCalls ?? []).map((call) => ({ ...call, adapterId: "unknown" })),
+        "repair:attempt:1",
+      ),
+    ).toThrow("invalid completed model receipt");
+  });
+
+  it.each(["prompt_input_invalid", "prompt_budget_exceeded"] as const)(
+    "does not repeat an unchanged %s request on a fallback model",
+    async (code) => {
+      const fallback = vi.fn(async () => "unexpected");
+      const pool = new LogicalAgentPool<string, unknown>({
+        modelRouting: routing({
+          adapters: [
+            adapter("small", {
+              invoke: async () => {
+                throw new ModelAdapterError(code);
+              },
+            }),
+            adapter("reviewer", { invoke: fallback }),
+          ],
+          defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        }),
+      });
+      const result = await pool.submit(task, execute);
+      expect(result.status).toBe("failed");
+      expect(result.modelCalls).toHaveLength(1);
+      expect(result.modelCalls?.[0]?.reason).toBe(code);
+      expect(fallback).not.toHaveBeenCalled();
+    },
+  );
+
   it("routes by registered role instead of trusting a role in the payload", async () => {
     const pool = new LogicalAgentPool<string, unknown>({
       modelRouting: routing({ roles: { evidence_integrity: { ...policy, primary: "reviewer" } } }),
@@ -540,4 +608,225 @@ it("preserves one artifact author so a reviewer remains available after provider
     ["reviewer", "model_separation_constraint"],
     ["small", undefined],
   ]);
+});
+
+it("rejects an unqualified local model for final review before dispatch", async () => {
+  const local = createLocalQualityHarnessAdapter(
+    resolveLocalTextModelRuntimeConfig({ adapterPath: "/not-loaded" }),
+  );
+  const router = new LogicalAgentModelRouter({
+    revision: "local-policy",
+    adapters: [local],
+    defaultPolicy: {
+      primary: local.id,
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 1024,
+      timeoutMs: 1000,
+    },
+  });
+  const receipts: { reason?: string; adapterInvoked: boolean }[] = [];
+  const dispatch = vi.fn(async (fn: () => Promise<unknown>) => fn());
+  await expect(
+    router.invoke({
+      role: "final_precheck",
+      taskId: "review",
+      correlationId: "review",
+      payload: {},
+      capabilities: NARROW_GRANT,
+      signal: new AbortController().signal,
+      dispatch,
+      record: (receipt) => receipts.push(receipt),
+    }),
+  ).rejects.toThrow();
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(receipts).toEqual([
+    expect.objectContaining({ reason: "role_scope_constraint", adapterInvoked: false }),
+  ]);
+});
+
+it("permits only one contract repair across fallback adapters and retains failure", async () => {
+  const invoked: string[] = [];
+  const router = new LogicalAgentModelRouter(
+    routing({
+      adapters: ["small", "reviewer"].map((id) =>
+        adapter(id, {
+          invoke: async () => {
+            invoked.push(id);
+            return {};
+          },
+        }),
+      ),
+      defaultPolicy: {
+        ...policy,
+        fallback: ["reviewer"],
+        retryOutputContractOnce: true,
+        outputContract: { revision: "strict-v1", validate: () => false },
+      },
+    }),
+  );
+  await expect(
+    router.invoke({
+      role: "research_draft",
+      taskId: "draft",
+      correlationId: "repair-limit",
+      payload: {},
+      capabilities: NARROW_GRANT,
+      signal: new AbortController().signal,
+      dispatch: async (fn) => fn(),
+      record: () => {},
+    }),
+  ).rejects.toThrow("output_contract");
+  expect(invoked).toEqual(["small", "small", "reviewer"]);
+});
+
+it.each(["output_truncated", "output_invalid"] as const)(
+  "repairs %s formatting with the same author only",
+  async (code) => {
+    const invoked: string[] = [];
+    let formattingAttempts = 0;
+    const router = new LogicalAgentModelRouter(
+      routing({
+        adapters: [
+          adapter("small", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:small`);
+              if (role === "formatting" && formattingAttempts++ === 0) {
+                throw new ModelAdapterError(code);
+              }
+              return role;
+            },
+          }),
+          adapter("reviewer", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:reviewer`);
+              return role;
+            },
+          }),
+        ],
+        roles: {
+          research_draft: { ...policy, primary: "small" },
+          formatting: {
+            ...policy,
+            primary: "reviewer",
+            fallback: ["small"],
+            sameModelAsRole: "research_draft",
+            retryAffinityTruncationOnce: true,
+          },
+        },
+      }),
+    );
+    const invoke = (role: "research_draft" | "formatting") =>
+      router.invoke({
+        role,
+        taskId: role,
+        correlationId: "affinity-truncation-retry",
+        payload: {},
+        capabilities: {
+          allowedTools: [],
+          allowedSideEffects: ["local_compute"],
+          forbiddenSideEffects: [],
+        },
+        signal: new AbortController().signal,
+        dispatch: async (fn) => fn(),
+        record: () => {},
+      });
+
+    await invoke("research_draft");
+    await expect(invoke("formatting")).resolves.toBe("formatting");
+    expect(invoked).toEqual(["research_draft:small", "formatting:small", "formatting:small"]);
+  },
+);
+
+it.each([
+  "output_truncated",
+  "output_invalid",
+  "provider_payment_required",
+  "provider_auth",
+  "runtime_timeout",
+] as const)(
+  "bounds affinity-bound formatting failure %s without switching authors",
+  async (code) => {
+    const invoked: string[] = [];
+    const router = new LogicalAgentModelRouter(
+      routing({
+        adapters: [
+          adapter("small", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:small`);
+              if (role === "formatting") {
+                throw new ModelAdapterError(code);
+              }
+              return role;
+            },
+          }),
+          adapter("reviewer", {
+            invoke: async ({ role }) => {
+              invoked.push(`${role}:reviewer`);
+              return role;
+            },
+          }),
+        ],
+        roles: {
+          research_draft: { ...policy, primary: "small" },
+          formatting: {
+            ...policy,
+            primary: "small",
+            fallback: ["reviewer"],
+            sameModelAsRole: "research_draft",
+            retryAffinityTruncationOnce: true,
+          },
+        },
+      }),
+    );
+    const invoke = (role: "research_draft" | "formatting") =>
+      router.invoke({
+        role,
+        taskId: role,
+        correlationId: "affinity-truncation-exhausted",
+        payload: {},
+        capabilities: {
+          allowedTools: [],
+          allowedSideEffects: ["local_compute"],
+          forbiddenSideEffects: [],
+        },
+        signal: new AbortController().signal,
+        dispatch: async (fn) => fn(),
+        record: () => {},
+      });
+
+    await invoke("research_draft");
+    await expect(invoke("formatting")).rejects.toThrow(
+      code === "output_truncated" || code === "output_invalid" ? code : "model_affinity_constraint",
+    );
+    expect(invoked).toEqual(
+      code === "output_truncated" || code === "output_invalid"
+        ? ["research_draft:small", "formatting:small", "formatting:small"]
+        : ["research_draft:small", "formatting:small"],
+    );
+  },
+);
+
+it("includes exactly one opted-in structural repair in the outer task deadline", () => {
+  const base = { ...policy, timeoutMs: 120_000, fallback: ["reviewer"] };
+  expect(
+    modelRoutingTaskTimeoutMs({ revision: "fixture", adapters: [], defaultPolicy: base }),
+  ).toBe(241_000);
+  expect(
+    modelRoutingTaskTimeoutMs({
+      revision: "fixture",
+      adapters: [],
+      defaultPolicy: { ...base, retryOutputContractOnce: true },
+    }),
+  ).toBe(361_000);
+  expect(
+    modelRoutingTaskTimeoutMs({
+      revision: "fixture",
+      adapters: [],
+      defaultPolicy: {
+        ...base,
+        sameModelAsRole: "research_draft",
+        retryAffinityTruncationOnce: true,
+      },
+    }),
+  ).toBe(361_000);
 });

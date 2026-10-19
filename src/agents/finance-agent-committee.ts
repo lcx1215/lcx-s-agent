@@ -192,6 +192,8 @@ export function evaluateFinanceCommitteeCoverage<TResult>(
 }
 
 export async function runFinanceCommittee<TResult>(params: {
+  purpose?: "full_review" | "producer_preparation";
+  maxConcurrency?: 1 | 2;
   allowProviderCalls?: boolean;
   signal?: AbortSignal;
   input: FinanceCommitteeInput;
@@ -203,6 +205,7 @@ export async function runFinanceCommittee<TResult>(params: {
   modelInvoker?: LogicalAgentModelInvoker;
   runId?: string;
 }): Promise<{
+  purpose: "full_review" | "producer_preparation";
   execution: LogicalAgentPlanResult<TResult>;
   context: FinanceCommitteeSharedContext;
   coverage: FinanceCommitteeCoverage;
@@ -225,20 +228,35 @@ export async function runFinanceCommittee<TResult>(params: {
       taskTimeoutMs: params.modelRouting
         ? modelRoutingTaskTimeoutMs(params.modelRouting)
         : undefined,
+      maxConcurrency: params.maxConcurrency,
       allowProviderCalls: params.allowProviderCalls,
       ...(params.modelRouting === undefined ? {} : { modelRouting: params.modelRouting }),
       ...(params.modelInvoker === undefined ? {} : { modelInvoker: params.modelInvoker }),
     });
+  const purpose = params.purpose ?? "full_review";
+  const fullPlan = buildDefaultLogicalAgentPlan(request);
+  const finalTaskId = purpose === "producer_preparation" ? "research_draft" : "final_precheck";
+  // Producer preparation is a provisional schema-building step, not a second
+  // review committee. The runner enables it only with full post-module quality.
+  const tasks =
+    purpose === "producer_preparation"
+      ? fullPlan
+          .filter((task) => task.id === "data_cleaning" || task.id === "research_draft")
+          .map((task) =>
+            task.id === "research_draft" ? { ...task, dependsOn: ["data_cleaning"] } : task,
+          )
+      : fullPlan;
   const execution = await runLogicalAgentPlan({
     signal: params.signal,
-    tasks: buildDefaultLogicalAgentPlan(request),
+    tasks,
     executor: params.executor,
     pool,
     ...(params.runId === undefined ? {} : { runId: params.runId }),
-    finalTaskId: "final_precheck",
+    finalTaskId,
     sharedContext: context,
   });
   return Object.freeze({
+    purpose,
     execution,
     context,
     coverage: evaluateFinanceCommitteeCoverage(execution),

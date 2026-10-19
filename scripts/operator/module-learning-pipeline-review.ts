@@ -9,6 +9,11 @@ type CliOptions = {
   workspaceDir: string;
   writeReview: boolean;
   json: boolean;
+  contentReviewRequestPath?: string;
+  contentReviewReceiptPath?: string;
+  contentReviewReceiptSha256?: string;
+  reviewAccountId?: string;
+  reviewRunId?: string;
 };
 
 function usage(): never {
@@ -18,6 +23,7 @@ function usage(): never {
       "",
       "Default reviews all dated batches; --date selects a single batch.",
       "Use --no-write for a dry run. This is local review only and does not touch live/provider/protected-memory state.",
+      "Optional: --content-review-request FILE or --content-review-receipt FILE --content-review-sha256 HASH, with --review-account-id ID --review-run-id ID. These identify this review attempt only. No model adapter is auto-enabled.",
     ].join("\n"),
   );
 }
@@ -64,6 +70,16 @@ function parseArgs(args: string[]): CliOptions {
       options.writeReview = true;
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--content-review-request") {
+      options.contentReviewRequestPath = readValue(args, index++);
+    } else if (arg === "--content-review-receipt") {
+      options.contentReviewReceiptPath = readValue(args, index++);
+    } else if (arg === "--content-review-sha256") {
+      options.contentReviewReceiptSha256 = readValue(args, index++);
+    } else if (arg === "--review-account-id") {
+      options.reviewAccountId = readValue(args, index++);
+    } else if (arg === "--review-run-id") {
+      options.reviewRunId = readValue(args, index++);
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -74,6 +90,16 @@ function parseArgs(args: string[]): CliOptions {
     options.dateKey &&
     options.dateKey !== "all" &&
     !/^\d{4}-\d{2}-\d{2}$/u.test(options.dateKey)
+  ) {
+    usage();
+  }
+  if (
+    (options.contentReviewRequestPath && options.contentReviewReceiptPath) ||
+    Boolean(options.contentReviewReceiptPath) !== Boolean(options.contentReviewReceiptSha256) ||
+    (options.contentReviewReceiptSha256 &&
+      !/^[a-f0-9]{64}$/u.test(options.contentReviewReceiptSha256)) ||
+    ((options.contentReviewRequestPath || options.contentReviewReceiptPath) &&
+      (!options.reviewAccountId || !options.reviewRunId))
   ) {
     usage();
   }
@@ -104,6 +130,12 @@ function renderText(details: Record<string, unknown>): string {
     `weak_module_learning=${numberValue(counts.weakModuleLearning)}`,
     `boundary_violations=${numberValue(counts.boundaryViolations)}`,
   ];
+  const sourceCoverage = details.sourceCoverage as Record<string, unknown> | undefined;
+  if (sourceCoverage) {
+    lines.push(`registered_sources=${numberValue(sourceCoverage.registeredSources)}`);
+    lines.push(`sources_without_receipts=${numberValue(sourceCoverage.sourcesWithoutReceipts)}`);
+    lines.push(`unresolved_sources=${numberValue(sourceCoverage.unresolvedSources)}`);
+  }
   const reviewPath = stringValue(details.reviewPath, "");
   if (reviewPath) {
     lines.push(`review_path=${reviewPath}`);
@@ -137,6 +169,16 @@ function renderText(details: Record<string, unknown>): string {
       )} status=${stringValue(entry.status)}`,
     );
   }
+  const content = details.contentReviewReadback as Record<string, unknown> | undefined;
+  if (content) {
+    lines.push(`content_review=${stringValue(content.status)}`);
+    for (const gap of Array.isArray(content.gaps) ? content.gaps : []) {
+      lines.push(`content_review_gap=${String(gap)}`);
+    }
+    for (const finding of (Array.isArray(content.findings) ? content.findings : []).slice(0, 5)) {
+      lines.push(`content_review_finding=${String(finding)}`);
+    }
+  }
   if (!details.updated) {
     lines.push("next=rerun without --no-write when the dry-run output is acceptable");
   }
@@ -144,12 +186,22 @@ function renderText(details: Record<string, unknown>): string {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const tool = createModuleLearningPipelineReviewTool({ workspaceDir: options.workspaceDir });
+const tool = createModuleLearningPipelineReviewTool({
+  workspaceDir: options.workspaceDir,
+  scope:
+    options.reviewAccountId && options.reviewRunId
+      ? { accountId: options.reviewAccountId, runId: options.reviewRunId }
+      : undefined,
+});
 const result = await tool.execute("module-learning-pipeline-review-cli", {
   dateKey: options.dateKey,
   targetModule: options.targetModule,
   maxFiles: options.maxFiles,
   writeReview: options.writeReview,
+  contentReviewRequestPath: options.contentReviewRequestPath,
+  contentReviewReceipt: options.contentReviewReceiptPath
+    ? { path: options.contentReviewReceiptPath, sha256: options.contentReviewReceiptSha256 }
+    : undefined,
 });
 const details = result.details as Record<string, unknown>;
 

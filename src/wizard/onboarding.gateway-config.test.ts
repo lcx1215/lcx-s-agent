@@ -22,6 +22,11 @@ vi.mock("../infra/tailscale.js", () => ({
   getTailnetHostname: mocks.getTailnetHostname,
 }));
 
+vi.mock("../gateway/net.js", async (importActual) => ({
+  ...(await importActual<typeof import("../gateway/net.js")>()),
+  pickPrimaryLanIPv4: () => "192.168.2.8",
+}));
+
 import { configureGatewayForOnboarding } from "./onboarding.gateway-config.js";
 
 describe("configureGatewayForOnboarding", () => {
@@ -93,6 +98,12 @@ describe("configureGatewayForOnboarding", () => {
     expect(result.nextConfig.gateway?.nodes?.denyCommands).toEqual(DEFAULT_DANGEROUS_NODE_COMMANDS);
   });
 
+  it("enables Gateway TLS for non-loopback binds", async () => {
+    const result = await runGatewayConfig({ bindChoice: "tailnet" });
+
+    expect(result.nextConfig.gateway?.tls?.enabled).toBe(true);
+  });
+
   it("prefers OPENCLAW_GATEWAY_TOKEN during quickstart token setup", async () => {
     const prevToken = process.env.OPENCLAW_GATEWAY_TOKEN;
     process.env.OPENCLAW_GATEWAY_TOKEN = "token-from-env";
@@ -134,8 +145,9 @@ describe("configureGatewayForOnboarding", () => {
     });
 
     expect(result.nextConfig.gateway?.controlUi?.allowedOrigins).toEqual([
-      "http://localhost:18789",
-      "http://127.0.0.1:18789",
+      "https://localhost:18789",
+      "https://127.0.0.1:18789",
+      "https://192.168.2.8:18789",
     ]);
   });
 

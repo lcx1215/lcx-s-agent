@@ -17,6 +17,20 @@
  */
 
 export const FINANCE_UNIVERSE_SELECTION_SCHEMA = "lcx_finance_universe_selection_v1" as const;
+export const FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME =
+  "finance-universe-selection-latest.json" as const;
+export const FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS =
+  "latest_completed_weekday_16_00_et_without_holiday_calendar" as const;
+export const FINANCE_UNIVERSE_SELECTION_SOURCES = Object.freeze({
+  assetListing: "alpaca_active_us_equity_assets",
+  liquidityPreScreen: "alpaca_snapshot_latest_completed_daily_bar_close_times_volume",
+  finalLiquidityRanking: "china_reachable_us_eod_history_median_daily_dollar_volume",
+  eligibilityHistory: "china_reachable_us_eod_history_complete_regular_session_bars",
+} as const);
+
+/** Candidate-evaluation ceiling, not a requested or promised final universe size. */
+export const DEFAULT_UNIVERSE_SCREEN_SIZE = 120;
+export const MAX_UNIVERSE_SCREEN_SIZE = 500;
 
 /** A row of the venue's tradable-asset list, reduced to what selection needs. */
 export type UniverseAsset = Readonly<{
@@ -28,8 +42,8 @@ export type UniverseAsset = Readonly<{
   fractionable?: boolean;
 }>;
 
-/** One day of observable liquidity from the venue. */
-export type UniverseQuote = Readonly<{ close?: number; volume?: number }>;
+/** One completed market session of observable liquidity from the venue. */
+export type UniverseQuote = Readonly<{ close?: number; volume?: number; sessionDate?: string }>;
 
 export type UniverseBar = Readonly<{ date: string; close: number; volume?: number }>;
 
@@ -53,6 +67,21 @@ export type UniverseMetrics = Readonly<{
    */
   maxGapDays: number;
 }>;
+
+/** Keeps selected metric receipts in the exact order used by diversification evidence. */
+export function orderSelectedUniverseMetrics(
+  selectedSymbols: readonly string[],
+  eligibleMetrics: readonly UniverseMetrics[],
+): readonly UniverseMetrics[] {
+  const bySymbol = new Map(eligibleMetrics.map((metrics) => [metrics.symbol, metrics] as const));
+  return selectedSymbols.map((symbol) => {
+    const metrics = bySymbol.get(symbol);
+    if (!metrics) {
+      throw new Error(`selected universe symbol is missing eligibility metrics: ${symbol}`);
+    }
+    return metrics;
+  });
+}
 
 export type UniverseThresholds = Readonly<{
   /** Minimum EOD bars. A monthly signal needs 13 month-ends; this leaves room to spare. */
@@ -83,12 +112,7 @@ export const DEFAULT_UNIVERSE_THRESHOLDS: UniverseThresholds = Object.freeze({
   maxGapDays: 10,
 });
 
-const SYMBOL_SHAPE = /^[A-Z]{1,5}$/u;
-/**
- * Deliberately does not match a bare `Shares`: that also matches "American Depositary Shares",
- * which is how foreign single stocks (ADRs) were entering the pool.
- */
-const FUND_HINT = /ETF|Fund|Trust|Index|iShares|SPDR|Portfolio|ProShares|Invesco|Vanguard/i;
+const SYMBOL_SHAPE = /^[A-Z]{1,5}(?:\.[A-Z])?$/u;
 /**
  * Leveraged, inverse and volatility products are excluded rather than "handled": their daily
  * compounding makes a monthly trend signal meaningless, and a 3x product is not three times the
@@ -98,12 +122,13 @@ const FUND_HINT = /ETF|Fund|Trust|Index|iShares|SPDR|Portfolio|ProShares|Invesco
  * which would also drop short-duration bond funds that are legitimate holdings.
  */
 const PRODUCT_EXCLUDE =
-  /2X|3X|1\.5X|-1X|Ultra|Inverse|Leveraged|Bear\b|Bull\b|Volatility|VIX\b|ProShares Short|1X Short|Daily Short/i;
+  /2X|3X|1\.5X|-1X|Ultra|Inverse|Leveraged|Bear\b|Bull\b|Volatility|VIX\b|ProShares Short|1X Short|Daily Short|Warrant|Right\b|Unit\b/i;
 
 /**
  * Structural screen. This is intentionally shallow: it removes what is obviously untradeable
- * (non-tradable, OTC, warrant/unit symbols, leveraged products) and leaves the ranking to real
- * market data rather than to more name matching.
+ * (non-tradable, OTC, warrant/unit symbols, leveraged products) across venue-listed U.S. equities;
+ * it includes both common stocks and funds, then leaves eligibility to measured market data rather
+ * than to a hand-picked asset-class/name allowlist.
  */
 export function filterUniverseAssets(assets: readonly UniverseAsset[]): readonly UniverseAsset[] {
   return assets.filter((asset) => {
@@ -120,22 +145,26 @@ export function filterUniverseAssets(assets: readonly UniverseAsset[]): readonly
     if (PRODUCT_EXCLUDE.test(name)) {
       return false;
     }
-    return FUND_HINT.test(name) || asset.exchange === "ARCA";
+    return true;
   });
 }
 
 /** Ranks by the venue's own dollar volume. Symbols with no usable bar sort last, then drop out. */
 export function rankByDollarVolume(
   quotes: Readonly<Record<string, UniverseQuote>>,
-): readonly { symbol: string; dollarVolume: number }[] {
-  const ranked: { symbol: string; dollarVolume: number }[] = [];
+): readonly { symbol: string; dollarVolume: number; sessionDate?: string }[] {
+  const ranked: { symbol: string; dollarVolume: number; sessionDate?: string }[] = [];
   for (const [symbol, quote] of Object.entries(quotes)) {
     const close = Number(quote?.close);
     const volume = Number(quote?.volume);
     if (!Number.isFinite(close) || close <= 0 || !Number.isFinite(volume) || volume <= 0) {
       continue;
     }
-    ranked.push({ symbol, dollarVolume: close * volume });
+    ranked.push({
+      symbol,
+      dollarVolume: close * volume,
+      ...(typeof quote.sessionDate === "string" ? { sessionDate: quote.sessionDate } : {}),
+    });
   }
   return ranked.toSorted((a, b) => b.dollarVolume - a.dollarVolume);
 }
@@ -242,10 +271,10 @@ export function universeRejectionReason(
   if (metrics.annualisedVol > thresholds.maxVol) {
     return `volatility too high (${metrics.annualisedVol.toFixed(3)})`;
   }
-  if (
-    Number.isFinite(metrics.medianDollarVolume) &&
-    metrics.medianDollarVolume < thresholds.minMedianDollarVolume
-  ) {
+  if (!Number.isFinite(metrics.medianDollarVolume)) {
+    return "liquidity not computable";
+  }
+  if (metrics.medianDollarVolume < thresholds.minMedianDollarVolume) {
     return `too illiquid (median $${Math.round(metrics.medianDollarVolume)} < $${thresholds.minMedianDollarVolume})`;
   }
   return "";
@@ -296,13 +325,34 @@ export function logReturnSeries(closes: readonly number[]): readonly number[] {
  * repeatedly add the candidate whose worst correlation to anything already chosen is lowest.
  *
  * `maxCorrelation` caps how related a new member may be to the set; when nothing fits, the set
- * is returned shorter rather than padded with a near-duplicate.
+ * is returned shorter rather than padded with a near-duplicate. There is no fixed final member
+ * count: selection stops when no eligible candidate remains, or an explicit resource ceiling is
+ * reached. The venue screen is applied before this function and is not a target universe size.
  */
-export function selectDiversifiedUniverse(
+export type UniverseSelectionEvidence = Readonly<{
+  selected: readonly string[];
+  selectedEvidence: readonly Readonly<{
+    symbol: string;
+    rank: number;
+    reason: "highest_liquidity_eligible_seed" | "lowest_correlation_to_selected";
+    maxCorrelationToPriorMembers?: number;
+  }>[];
+  exclusions: readonly Readonly<{
+    symbol: string;
+    reason:
+      | "insufficient_return_history"
+      | "correlation_unavailable"
+      | "max_correlation_exceeded"
+      | "resource_ceiling_reached"
+      | "incoherent_selection_config";
+    maxCorrelationToSelected?: number;
+  }>[];
+}>;
+
+export function selectDiversifiedUniverseWithEvidence(
   candidates: readonly { symbol: string; returns: readonly number[] }[],
-  options: { target: number; maxCorrelation?: number } = { target: 8 },
-): readonly string[] {
-  const target = Math.max(1, options.target);
+  options: { maxMembers?: number; maxCorrelation?: number } = {},
+): UniverseSelectionEvidence {
   const maxCorrelation = options.maxCorrelation ?? 0.95;
 
   // `maxCorrelation` outside [-1, 1] (or NaN) silently removed the diversification constraint this
@@ -312,23 +362,39 @@ export function selectDiversifiedUniverse(
   // incoherent configuration selects nothing instead of padding, which is the same outcome this
   // module already documents for "nothing fits".
   const configCoherent =
-    Number.isFinite(options.target) &&
-    options.target >= 1 &&
+    (options.maxMembers === undefined ||
+      (Number.isSafeInteger(options.maxMembers) && options.maxMembers >= 1)) &&
     Number.isFinite(maxCorrelation) &&
     maxCorrelation >= -1 &&
     maxCorrelation <= 1;
   if (!configCoherent) {
-    return [];
+    return {
+      selected: [],
+      selectedEvidence: [],
+      exclusions: candidates.map(({ symbol }) => ({
+        symbol,
+        reason: "incoherent_selection_config",
+      })),
+    };
   }
 
+  const exclusions: Array<UniverseSelectionEvidence["exclusions"][number]> = candidates
+    .filter((entry) => entry.returns.length < 30)
+    .map(({ symbol }) => ({ symbol, reason: "insufficient_return_history" }));
   const pool = candidates.filter((entry) => entry.returns.length >= 30);
   if (pool.length === 0) {
-    return [];
+    return { selected: [], selectedEvidence: [], exclusions };
   }
   const chosen: { symbol: string; returns: readonly number[] }[] = [pool[0]];
+  const selectedEvidence: Array<UniverseSelectionEvidence["selectedEvidence"][number]> = [
+    { symbol: pool[0].symbol, rank: 1, reason: "highest_liquidity_eligible_seed" },
+  ];
   const remaining = pool.slice(1);
 
-  while (chosen.length < target && remaining.length > 0) {
+  while (
+    (options.maxMembers === undefined || chosen.length < options.maxMembers) &&
+    remaining.length > 0
+  ) {
     let bestIndex = -1;
     let bestWorst = Number.POSITIVE_INFINITY;
     for (let index = 0; index < remaining.length; index += 1) {
@@ -352,10 +418,50 @@ export function selectDiversifiedUniverse(
       }
     }
     if (bestIndex < 0 || bestWorst > maxCorrelation) {
+      for (const candidate of remaining) {
+        const values = chosen.map((member) => correlation(candidate.returns, member.returns));
+        if (values.some((value) => !Number.isFinite(value))) {
+          exclusions.push({ symbol: candidate.symbol, reason: "correlation_unavailable" });
+          continue;
+        }
+        const worst = Math.max(...values);
+        exclusions.push({
+          symbol: candidate.symbol,
+          reason: worst > maxCorrelation ? "max_correlation_exceeded" : "correlation_unavailable",
+          maxCorrelationToSelected: worst,
+        });
+      }
       break;
     }
-    chosen.push(remaining[bestIndex]);
+    const selected = remaining[bestIndex];
+    chosen.push(selected);
+    selectedEvidence.push({
+      symbol: selected.symbol,
+      rank: chosen.length,
+      reason: "lowest_correlation_to_selected",
+      maxCorrelationToPriorMembers: bestWorst,
+    });
     remaining.splice(bestIndex, 1);
   }
-  return chosen.map((entry) => entry.symbol);
+  if (
+    remaining.length > 0 &&
+    options.maxMembers !== undefined &&
+    chosen.length >= options.maxMembers
+  ) {
+    exclusions.push(
+      ...remaining.map(({ symbol }) => ({ symbol, reason: "resource_ceiling_reached" as const })),
+    );
+  }
+  return {
+    selected: chosen.map((entry) => entry.symbol),
+    selectedEvidence,
+    exclusions,
+  };
+}
+
+export function selectDiversifiedUniverse(
+  candidates: readonly { symbol: string; returns: readonly number[] }[],
+  options: { maxMembers?: number; maxCorrelation?: number } = {},
+): readonly string[] {
+  return selectDiversifiedUniverseWithEvidence(candidates, options).selected;
 }

@@ -175,6 +175,8 @@ export type FinanceMandateContext = Readonly<{
   drawdownFraction: number;
   /** True when this order adds to an existing losing position. */
   averagingDown?: boolean;
+  /** True only when the losing-position add was pre-budgeted as a scale-in plan. */
+  plannedScaleIn?: boolean;
   /** True when size was increased after a loss to win it back. */
   revengeSizing?: boolean;
   /** Present only when the class requires it. */
@@ -248,6 +250,9 @@ export function evaluateFinanceMandate(
     };
   }
 
+  if (context.regime !== undefined && !FINANCE_REGIMES.includes(context.regime)) {
+    return { strategyClass, verdict: "refuse", reasons: ["refuse: unknown regime"], rules: null };
+  }
   // A regime tightens the caps; it never widens them.
   const classRules =
     context.regime === undefined
@@ -268,16 +273,39 @@ export function evaluateFinanceMandate(
   // A NaN is not a small number, it is an unknown one. Every comparison below
   // is false against NaN, so a NaN risk or drawdown would sail past every cap
   // and be reported as safe. Unknown risk is not low risk.
-  if (!Number.isFinite(context.riskFractionOfEquity)) {
-    reasons.push("refuse: risk is not a finite number; unknown risk is not low risk");
+  if (!Number.isFinite(context.riskFractionOfEquity) || context.riskFractionOfEquity < 0) {
+    reasons.push(
+      "refuse: risk is not a finite number or is negative; unknown risk is not low risk",
+    );
   }
-  if (!Number.isFinite(context.drawdownFraction)) {
-    reasons.push("refuse: drawdown is not a finite number; unknown drawdown is not a safe one");
+  if (!Number.isFinite(context.drawdownFraction) || context.drawdownFraction < 0) {
+    reasons.push(
+      "refuse: drawdown is not a finite number or is negative; unknown drawdown is not a safe one",
+    );
   }
 
+  if (
+    context.realizedVolatilityFraction !== undefined &&
+    (!Number.isFinite(context.realizedVolatilityFraction) || context.realizedVolatilityFraction < 0)
+  ) {
+    reasons.push("refuse: realized volatility must be finite and nonnegative");
+  }
+  for (const key of [
+    "averagingDown",
+    "plannedScaleIn",
+    "revengeSizing",
+    "hasSignificantAutocorrelation",
+    "stopLossDefined",
+  ] as const) {
+    if (context[key] !== undefined && typeof context[key] !== "boolean") {
+      reasons.push(`refuse: ${key} must be a boolean`);
+    }
+  }
   // Class-independent: these come from the owner's own words.
   if (context.averagingDown === true) {
-    reasons.push("refuse: adding to a losing position");
+    if (context.plannedScaleIn !== true) {
+      reasons.push("refuse: adding to a losing position without a pre-budgeted scale-in plan");
+    }
   }
   if (context.revengeSizing === true) {
     reasons.push("refuse: increasing size to win back a loss");

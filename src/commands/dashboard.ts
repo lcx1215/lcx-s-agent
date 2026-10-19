@@ -25,13 +25,13 @@ export async function dashboardCommand(
   const customBindHost = cfg.gateway?.customBindHost;
   const token = cfg.gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
 
-  // LAN URLs fail secure-context checks in browsers.
-  // Coerce only lan->loopback and preserve other bind modes.
+  // Prefer loopback for LAN binds while preserving the configured HTTP/TLS scheme.
   const links = resolveControlUiLinks({
     port,
     bind: bind === "lan" ? "loopback" : bind,
     customBindHost,
     basePath,
+    tlsEnabled: cfg.gateway?.tls?.enabled === true,
   });
   // Prefer URL fragment to avoid leaking auth tokens via query params.
   const dashboardUrl = token
@@ -55,6 +55,7 @@ export async function dashboardCommand(
         port,
         basePath,
         token: token || undefined,
+        tlsEnabled: cfg.gateway?.tls?.enabled === true,
       });
     }
   } else {

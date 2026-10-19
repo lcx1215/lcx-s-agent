@@ -12,6 +12,7 @@ import {
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, ToolInputError } from "./common.js";
+import { financeDataGatewayFollowUp } from "./finance-data-gateway-tool.js";
 
 const FinanceRealtimeRefreshSchema = Type.Object({
   instrument: Type.String(),
@@ -36,7 +37,7 @@ function safeReceiptStem(value: string): string {
       .replace(/[^a-z0-9._-]+/gu, "-")
       .replace(/-+/gu, "-")
       .replace(/^-|-$/gu, "") || "finance-realtime"
-  );
+  ).slice(0, 80);
 }
 
 async function writeReceipt(
@@ -44,6 +45,7 @@ async function writeReceipt(
   instrument: string,
   receiptId: string,
   payload: unknown,
+  signal?: AbortSignal,
 ) {
   const now = new Date().toISOString();
   const relPath = path.join(
@@ -53,8 +55,22 @@ async function writeReceipt(
     `${now.slice(0, 10)}-${safeReceiptStem(instrument)}-${safeReceiptStem(receiptId)}-${randomUUID()}.json`,
   );
   const absolutePath = path.join(workspaceDir, relPath);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  signal?.throwIfAborted();
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true, mode: 0o700 });
+  signal?.throwIfAborted();
+  const temporary = `${absolutePath}.tmp`;
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+      signal,
+    });
+    signal?.throwIfAborted();
+    await fs.rename(temporary, absolutePath);
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
   return relPath;
 }
 
@@ -153,17 +169,17 @@ export function createFinanceRealtimeRefreshTool(options?: {
               request.instrument,
               `${String(toolCallId)}-${receipt.refreshId}`,
               receipt,
+              callerSignal,
             )
           : undefined;
+        callerSignal?.throwIfAborted();
         return jsonResult({
           ...receipt,
           receiptPath,
-          nextTool:
-            receipt.status === "ready"
-              ? "finance_framework_core_inspect"
-              : "data_provenance_quality_review_input",
+          ...financeDataGatewayFollowUp(receipt.status === "ready" ? "ready" : "blocked"),
         });
       } catch (error) {
+        callerSignal?.throwIfAborted();
         if (error instanceof ToolInputError) {
           throw error;
         }

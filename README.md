@@ -9,10 +9,21 @@ vendor-neutral External Message Channel for connecting software over HTTP,
 routes natural-language requests into specialist workflows, and keeps durable
 evidence about what was read, tested, learned, promoted, or blocked.
 
-The project is not an autonomous trading bot. Its finance scope is research
-only: ETF, major asset, macro, large-cap company, risk, and timing discipline.
-The goal is steady daily improvement with hard boundaries, not hype, hidden
-execution, or fake user-visible proof.
+Finance defaults to `research_only`. Explicit strategy modes may produce
+reviewable candidates. Authorized autonomous Paper trading uses the existing
+finance scheduler, controller and shared execution gate; it still requires
+source, funding, risk, deduplication, reconciliation and position-protection
+evidence. Paper authorization never grants Live authority. Live execution needs
+separate authorization for the declared venue, instrument, size and run.
+The Central Agent Harness proposes bounded capability actions and has no
+trading authority. See the [finance scheduler](docs/tools/finance-scheduler.md)
+for the execution owner and the [architecture map](ops/architecture/LCX-SYSTEM-ARCHITECTURE.md)
+for responsibilities; capability presence alone does not prove execution or profit.
+
+`gateway` and `serve` are equal runtime entries with different coverage. Use the
+existing [daemon-free HTTP entry](docs/cli/serve.md) when that entry fits the task;
+it does not require a Gateway. Model providers and local Qwen/MLX training are
+optional adapters, not system-wide prerequisites.
 
 ## What It Does
 
@@ -21,7 +32,7 @@ execution, or fake user-visible proof.
 | Control room | External Message Channel natural-language entrypoint for one real user.  |
 | Harness      | Permission, risk, eval, promotion, and user-visible proof gates.         |
 | Hermes       | Context packets, handoffs, receipts, review artifacts, and message flow. |
-| Local brain  | Qwen / MLX local adapter training, eval, and durable learning surfaces.  |
+| Model lane   | Replaceable model providers; optional Qwen / MLX training and eval.      |
 | Governance   | Doctor, radar, mind model, flow graph, head-tail, and recovery checks.   |
 
 Product rule: 用户入口简单, internal roles can be specialized. The control-room
@@ -35,7 +46,8 @@ labels stay behind operator surfaces unless the user asks for them.
 - A receipt is not model-weight absorption.
 - A `parseRecovered` eval case is not a clean promotion pass.
 - One runtime uses one selected clean local-brain adapter, not stacked LoRAs.
-- Finance outputs are research-only and are not investment advice.
+- Finance mode, execution authority and actual order/fill evidence are separate;
+  research-only output cannot place orders or imply Paper or Live authorization.
 - Current market, price, fundamental, ETF, option, macro, or vendor numbers must
   pass `finance_data_gateway_snapshot` / 金融数据网关 and carry provenance before
   reaching Qwen, the external message channel, memory, or a visible summary.

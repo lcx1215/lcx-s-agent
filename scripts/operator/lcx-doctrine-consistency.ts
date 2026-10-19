@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 type DoctrineCheck = {
   id: string;
@@ -11,8 +11,9 @@ type DoctrineCheck = {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
-const home = process.env.HOME ?? "";
-const codexSkillsRoot = process.env.LCX_CODEX_SKILLS_ROOT ?? path.join(home, ".codex", "skills");
+// LCX Skills are repository-owned; retain the old override for isolated callers.
+const codexSkillsRoot =
+  process.env.LCX_SKILLS_ROOT ?? process.env.LCX_CODEX_SKILLS_ROOT ?? path.join(repoRoot, "skills");
 
 function usage(): never {
   throw new Error(
@@ -68,6 +69,7 @@ function checkTextContains(params: {
   text: string | null;
   fileLabel: string;
   required: string[];
+  requiredAny?: string[];
   summary: string;
 }): DoctrineCheck {
   if (params.text === null) {
@@ -77,13 +79,65 @@ function checkTextContains(params: {
       summary: `${params.fileLabel} missing`,
     };
   }
-  const missing = params.required.filter((needle) => !params.text?.includes(needle));
+  const normalizedText = params.text.replace(/\s+/gu, " ").toLowerCase();
+  const missing = params.required
+    .filter((needle) => !normalizedText.includes(needle.toLowerCase()))
+    .map((needle) => `missing: ${needle}`);
+  if (
+    params.requiredAny !== undefined &&
+    params.requiredAny.length > 0 &&
+    !params.requiredAny.some((needle) => normalizedText.includes(needle.toLowerCase()))
+  ) {
+    missing.push(`missing one of: ${params.requiredAny.join(" | ")}`);
+  }
   return {
     id: params.id,
     ok: missing.length === 0,
     summary: params.summary,
-    evidence: missing.map((needle) => `missing: ${needle}`),
+    evidence: missing,
   };
+}
+
+export function repoGuidanceChecks(agents: string | null): DoctrineCheck[] {
+  const lines = (agents ?? "")
+    .split(/\r?\n/u)
+    .filter((line) => !/\b(?:do not|never)\b|不得|禁止/iu.test(line));
+  const identityOk =
+    !!agents?.includes("https://github.com/lcx1215/lcx-s-agent") &&
+    /Upstream LCX Agent remains the runtime lineage|upstream is lineage/iu.test(agents);
+  const relativeOnly = lines.filter((line) =>
+    /(?:always|must|only).*repo-root-relative.*(?:file links|file references)|(?:file links|file references).*must.*(?:relative|repo-root)/iu.test(
+      line,
+    ),
+  );
+  const delegationOverride = lines.filter(
+    (line) =>
+      /(?:always|by default).*?(?:spawn|delegate|use).*?(?:subagents|sub-agents)|(?:spawn|delegate|use).*?(?:subagents|sub-agents).*?(?:by default|regardless of)/iu.test(
+        line,
+      ) && !/only when.*(?:allowed delegation|authoriz)|only if.*authoriz/iu.test(line),
+  );
+  return [
+    {
+      id: "repo_identity_lcx",
+      ok: identityOk,
+      summary: "repo guidance identifies LCX Agent and retains upstream lineage",
+      evidence: identityOk ? [] : ["missing canonical repository identity or upstream lineage"],
+    },
+    {
+      id: "codex_chat_file_link_precedence",
+      ok: agents !== null && relativeOnly.length === 0,
+      summary:
+        "repo file-link guidance inherits higher-priority app rules unless an actual conflict is declared",
+      evidence: agents === null ? ["AGENTS.md missing"] : relativeOnly,
+    },
+    {
+      id: "subagent_authorization_precedence",
+      ok: agents !== null && delegationOverride.length === 0,
+      summary:
+        "repo delegation guidance inherits platform and user authority; unconditional delegation remains a conflict",
+      evidence: agents === null ? ["AGENTS.md missing"] : delegationOverride,
+    },
+  ];
 }
 
 async function main() {
@@ -103,7 +157,6 @@ async function main() {
     l5Skill,
     l4Skill,
     l5SkillScript,
-    l4SkillScript,
   ] = await Promise.all([
     readOptionalText(path.join(repoRoot, "AGENTS.md")),
     readOptionalText(path.join(repoRoot, "README.md")),
@@ -120,9 +173,6 @@ async function main() {
     readOptionalText(path.join(codexSkillsRoot, "l4-regression-batterer", "SKILL.md")),
     readOptionalText(
       path.join(codexSkillsRoot, "l5-regression-batterer", "scripts", "l5-regression-batterer.sh"),
-    ),
-    readOptionalText(
-      path.join(codexSkillsRoot, "l4-regression-batterer", "scripts", "l4-regression-batterer.sh"),
     ),
   ]);
 
@@ -155,7 +205,8 @@ async function main() {
       id: "l4_legacy_alias_only",
       text: [agents, runbook, evolutionSkill, l4Skill].filter(Boolean).join("\n"),
       fileLabel: "L4 alias entrypoints",
-      required: ["legacy compatibility alias", "Prefer the L5 skill"],
+      required: ["legacy compatibility alias"],
+      requiredAny: ["Prefer the L5 skill"],
       summary: "legacy L4 path must be described as compatibility only",
     }),
   );
@@ -165,7 +216,8 @@ async function main() {
       id: "baseline_failure_family_not_tiny_patch",
       text: [agents, readme, baselineSkill].filter(Boolean).join("\n"),
       fileLabel: "baseline doctrine",
-      required: ["failure family", "smallest coherent system upgrade", "over a tiny symptom patch"],
+      required: ["failure family", "smallest coherent system upgrade"],
+      requiredAny: ["over a tiny symptom patch", "over a symptom-only patch"],
       summary: "baseline hardening should repair shared failure families, not isolated symptoms",
     }),
   );
@@ -301,47 +353,7 @@ async function main() {
     evidence: packageEvidence,
   });
 
-  checks.push(
-    checkTextContains({
-      id: "repo_identity_lcx",
-      text: agents,
-      fileLabel: "AGENTS.md repository identity",
-      required: [
-        "https://github.com/lcx1215/lcx-s-agent",
-        "Upstream LCX Agent remains the runtime lineage",
-      ],
-      summary:
-        "repo guidance should identify the LCX fork without erasing upstream runtime lineage",
-    }),
-  );
-
-  checks.push(
-    checkTextContains({
-      id: "codex_chat_file_link_precedence",
-      text: agents,
-      fileLabel: "AGENTS.md file-reference rules",
-      required: [
-        "Codex Desktop chat",
-        "higher-priority app instructions require absolute local file links",
-      ],
-      summary:
-        "repo-root file references should not conflict with higher-priority Codex Desktop clickable-link rules",
-    }),
-  );
-
-  checks.push(
-    checkTextContains({
-      id: "subagent_authorization_precedence",
-      text: agents,
-      fileLabel: "AGENTS.md subagent rules",
-      required: [
-        "only when the active Codex/platform rules and the user have allowed delegation",
-        "explicit user authorization",
-      ],
-      summary:
-        "subagent preference should not override higher-priority Codex delegation restrictions",
-    }),
-  );
+  checks.push(...repoGuidanceChecks(agents));
 
   checks.push(
     checkTextContains({
@@ -369,34 +381,38 @@ async function main() {
   checks.push({
     id: "l5_skill_script_installed",
     ok: l5ScriptInstalled,
-    summary: "local Codex L5 regression skill should be installed for future windows",
+    summary: "repository L5 regression package should be available to project and runtime loaders",
     evidence: l5ScriptInstalled ? [] : [`missing: ${l5ScriptPath}`],
   });
 
-  const l5RuntimeScriptText = [l5SkillScript, l4SkillScript].filter(Boolean).join("\n");
-  const l5RuntimePinned =
-    l5RuntimeScriptText.includes("PINNED_NODE_BIN") &&
-    l5RuntimeScriptText.includes("node-v22.14.0-darwin-arm64/bin") &&
+  const l5RuntimeScriptText = l5SkillScript ?? "";
+  const l5RuntimeValidated =
+    l5RuntimeScriptText.includes("LCX_NODE_BIN") &&
+    l5RuntimeScriptText.includes("command -v node") &&
+    l5RuntimeScriptText.includes("process.versions.node") &&
+    l5RuntimeScriptText.includes("major < 22") &&
+    l5RuntimeScriptText.includes("minor < 12") &&
     l5RuntimeScriptText.includes("export PATH=") &&
-    l5RuntimeScriptText.includes("pnpm");
+    l5RuntimeScriptText.includes("pnpm exec");
   checks.push({
-    id: "l5_skill_runtime_path_pinned",
-    ok: l5RuntimePinned,
+    id: "l5_skill_runtime_is_validated",
+    ok: l5RuntimeValidated,
     summary:
-      "L5 regression skill runtime should pin the Node 22 pnpm path or future windows can fail from PATH drift",
-    evidence: l5RuntimePinned
+      "L5 regression skill should discover or accept Node, enforce Node 22.12+, and expose that runtime to pnpm",
+    evidence: l5RuntimeValidated
       ? []
       : [
-          `missing pinned runtime in ${path.join(
+          `missing portable Node/version/PATH contract in ${path.join(
             codexSkillsRoot,
             "l5-regression-batterer/scripts/l5-regression-batterer.sh",
-          )} or delegated legacy script`,
+          )}`,
         ],
   });
 
   const failed = checks.filter((check) => !check.ok);
   const result = {
     ok: failed.length === 0,
+    skillRoot: codexSkillsRoot,
     boundary: "local_doctrine_consistency_only",
     checkedAt: new Date().toISOString(),
     summary: {
@@ -420,4 +436,6 @@ async function main() {
   process.exitCode = result.ok ? 0 : 1;
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
+}

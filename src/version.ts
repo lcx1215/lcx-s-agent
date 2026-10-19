@@ -1,7 +1,9 @@
 import { createRequire } from "node:module";
 
 declare const __OPENCLAW_VERSION__: string | undefined;
-const CORE_PACKAGE_NAME = "openclaw";
+// `openclaw` remains a compatibility package name for upstream-derived builds.
+// LCX Agent is the canonical product package and must resolve its own version too.
+const CORE_PACKAGE_NAMES = new Set(["lcx-agent", "openclaw"]);
 
 const PACKAGE_JSON_CANDIDATES = [
   "../package.json",
@@ -30,7 +32,7 @@ function readVersionFromJsonCandidates(
         if (!version) {
           continue;
         }
-        if (opts.requirePackageName && parsed.name !== CORE_PACKAGE_NAME) {
+        if (opts.requirePackageName && !CORE_PACKAGE_NAMES.has(parsed.name ?? "")) {
           continue;
         }
         return version;
@@ -105,8 +107,9 @@ export function resolveUsableRuntimeVersion(version: string | undefined): string
 export function resolveRuntimeServiceVersion(
   env: RuntimeVersionEnv = process.env as RuntimeVersionEnv,
   fallback = RUNTIME_SERVICE_VERSION_FALLBACK,
+  runtimeVersionCandidate = VERSION,
 ): string {
-  const runtimeVersion = resolveUsableRuntimeVersion(VERSION);
+  const runtimeVersion = resolveUsableRuntimeVersion(runtimeVersionCandidate);
 
   return (
     firstNonEmpty(

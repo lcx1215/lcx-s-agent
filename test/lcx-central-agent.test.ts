@@ -4,12 +4,22 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { projectGovernanceDigest } from "../scripts/operator/lcx-central-agent.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildPerception,
+  extractOwnerTotals,
+  loadPersistedReceipts,
+  readCentralGovernanceInput,
+  receiptsForHostTask,
+  projectGovernanceDigest,
+  projectRuntimeFreshness,
+  selectPersistedReceipts,
+} from "../scripts/operator/lcx-central-agent.js";
 import {
   runCentralHarnessCycle,
   boundPerception,
   compactReceipts,
+  nextCycleContinuation,
   resumableReceipts,
   CENTRAL_BACKLOG_MAX_OUTCOMES,
   CENTRAL_PERCEPTION_BUDGET_BYTES,
@@ -18,10 +28,18 @@ import {
 } from "../src/agents/central-harness/harness-loop.js";
 import {
   buildCentralBrainPrompt,
+  buildCentralFinanceCatalog,
+  buildCentralToolCatalog,
+  CENTRAL_FINANCE_CATALOG_BUDGET_BYTES,
+  CENTRAL_TOOL_CATALOG_BUDGET_BYTES,
   createCentralBrain,
   validateCentralActionPlan,
 } from "../src/agents/central-harness/model-brain.js";
-import { resolveLatestPointer, runSnapshotPath } from "../src/agents/central-harness/run-store.js";
+import {
+  resolveLatestPointer,
+  runSnapshotPath,
+  writeRunSnapshot,
+} from "../src/agents/central-harness/run-store.js";
 import {
   createCentralToolRegistry,
   approveOwner,
@@ -32,8 +50,161 @@ import {
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../src/agents/central-harness/tool-registry.js";
 import type { CentralPerception, CentralRunReceipt } from "../src/agents/central-harness/types.js";
+import { appendFinanceBars } from "../src/agents/finance-bar-ledger.js";
+import { appendFinanceBrokerHistory } from "../src/agents/finance-position-ledger.js";
+
+const centralTestRoots: string[] = [];
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await Promise.all(
+    centralTestRoots.splice(0).map((root) => fsp.rm(root, { recursive: true, force: true })),
+  );
+});
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("central immutable cycle snapshots", () => {
+  async function root() {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "central-snapshot-identity-"));
+    centralTestRoots.push(dir);
+    return dir;
+  }
+
+  it("rejects conflicting same-id evidence without replacing the original", async () => {
+    const dir = await root();
+    const original = receipt({ runId: "same-cycle" });
+    const file = await writeRunSnapshot(dir, original);
+    const bytes = await fsp.readFile(file);
+    await expect(
+      writeRunSnapshot(dir, { ...original, nextAction: "different-decision" }),
+    ).rejects.toThrow("central_run_snapshot_conflict");
+    expect(await fsp.readFile(file)).toEqual(bytes);
+    expect(await fsp.readdir(dir)).toEqual(["same-cycle.json"]);
+  });
+
+  it("accepts parallel identical retries with one complete original and no temporary residue", async () => {
+    const dir = await root();
+    const original = receipt({ runId: "same-cycle" });
+    const paths = await Promise.all(
+      Array.from({ length: 3 }, () => writeRunSnapshot(dir, original)),
+    );
+    expect(new Set(paths).size).toBe(1);
+    expect(JSON.parse(await fsp.readFile(paths[0], "utf8"))).toEqual(original);
+    expect(await fsp.readdir(dir)).toEqual(["same-cycle.json"]);
+  });
+
+  it("publishes exactly one original when conflicting same-id writes race", async () => {
+    const dir = await root();
+    const versions = [
+      receipt({ runId: "same-cycle", nextAction: "first-decision" }),
+      receipt({ runId: "same-cycle", nextAction: "second-decision" }),
+    ];
+    const results = await Promise.allSettled(versions.map((item) => writeRunSnapshot(dir, item)));
+    expect(results.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((item) => item.status === "rejected")).toHaveLength(1);
+    const winner = results.findIndex((item) => item.status === "fulfilled");
+    const failed = results.find((item) => item.status === "rejected");
+    expect(String(failed?.status === "rejected" ? failed.reason : "")).toContain(
+      "central_run_snapshot_conflict",
+    );
+    expect(JSON.parse(await fsp.readFile(path.join(dir, "same-cycle.json"), "utf8"))).toEqual(
+      versions[winner],
+    );
+    expect(await fsp.readdir(dir)).toEqual(["same-cycle.json"]);
+  });
+});
+
+describe("central perception snapshot read feedback", () => {
+  it.each([
+    ["{", "invalid_json"],
+    ["null", "invalid_shape"],
+    ["[]", "invalid_shape"],
+    ['"not a snapshot"', "invalid_shape"],
+    ["ENOENT", "missing"],
+    ["EACCES", "read_failed"],
+  ])("carries %s failure through the bounded prompt and cycle receipt", async (input, status) => {
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        if (input === "ENOENT" || input === "EACCES") {
+          throw Object.assign(new Error("fixture file unavailable"), { code: input });
+        }
+        return input;
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 2 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const perceived = await buildPerception(
+        [],
+        { objective: "Recover missing perception evidence", focus: "general" },
+        { checkedAt: "2026-10-08T07:00:00.000Z", owners: {} },
+      );
+      const proposed = vi.fn(async (observed: CentralPerception) => {
+        expect(observed.controlRoom.runtimeFreshness).toMatchObject({
+          snapshotReadFailures: { controlRoom: status },
+        });
+        expect(observed.controlRoom.learningWorkflow).toMatchObject({ pending: 2 });
+        expect(buildCentralBrainPrompt(observed)).toContain(status);
+        return {
+          kind: "proposed" as const,
+          provider: "offline-fixture",
+          modelId: "scripted-feedback",
+          plan: { actions: [], note: `unresolved controlRoom read: ${status}` },
+        };
+      });
+      const receipt = await runCentralHarnessCycle({
+        perception: perceived,
+        registry: new Map(),
+        brain: { propose: proposed },
+      });
+      expect(proposed).toHaveBeenCalledOnce();
+      expect(receipt.contextBudget?.overBudget).toBe(false);
+      expect(receipt.runtimeFreshness).toMatchObject({
+        snapshotReadFailures: { controlRoom: status },
+      });
+      expect(receipt.brainCall.note).toBe(`unresolved controlRoom read: ${status}`);
+      expect(receipt.brainCall.modelCall).toBeUndefined();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("reads a recovered partial snapshot next cycle without retaining the old failure", async () => {
+    let damaged = true;
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return damaged
+          ? "{"
+          : JSON.stringify({ checkedAt: "2026-10-08T07:02:00.000Z", observedFillCount: 1 });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 0 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const task = { objective: "Read recovery feedback", focus: "general" as const };
+      const governance = { checkedAt: "2026-10-08T07:00:00.000Z", owners: {} };
+      const first = await buildPerception([], task, governance);
+      expect(first.controlRoom.runtimeFreshness).toMatchObject({
+        snapshotReadFailures: { controlRoom: "invalid_json" },
+      });
+      damaged = false;
+      const next = boundPerception(await buildPerception([], task, governance));
+      expect(next.perception.controlRoom.observedFillCount).toBe(1);
+      expect(next.perception.controlRoom.runtimeFreshness).not.toHaveProperty(
+        "snapshotReadFailures",
+      );
+      expect(buildCentralBrainPrompt(next.perception)).not.toContain("invalid_json");
+    } finally {
+      read.mockRestore();
+    }
+  });
+});
 
 /** The canonical read-only owner surface the harness must be able to drive.
  * Kept here (not imported from the side-effectful autopilot module) so a silent
@@ -79,6 +250,21 @@ function brainWithActions(actions: unknown) {
 const registry = createCentralToolRegistry();
 
 describe("central agent harness gate", () => {
+  it("retains runtime freshness evidence in the cycle receipt", async () => {
+    const runtimeFreshness = {
+      sourceBoundary: "published_latest_snapshots_only",
+      freshnessPolicy: "age_reported_no_cutoff",
+      sources: { governance: { status: "measured_age", ageMs: 60_000 } },
+    };
+    const receipt = await runCentralHarnessCycle({
+      perception: perception({ controlRoom: { runtimeFreshness } }),
+      brain: brainWithActions([]),
+      registry,
+    });
+
+    expect(receipt.runtimeFreshness).toEqual(runtimeFreshness);
+  });
+
   it("blocks proposals for unknown / write-authority owners", async () => {
     const receipt = await runCentralHarnessCycle({
       perception: perception(),
@@ -158,6 +344,133 @@ describe("central agent harness gate", () => {
     expect(receipt.actionsProposed).toBe(0);
   });
 
+  it("keeps safe model and transport provenance when a provider truncates its response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              id: "fixture-transport-id",
+              choices: [{ finish_reason: "length", message: { content: '{"actions":[' } }],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const brain = createCentralBrain(
+      {
+        agents: { defaults: { model: { primary: "fixture/selected" } } },
+        models: {
+          providers: {
+            fixture: {
+              api: "openai-completions",
+              baseUrl: "https://fixture.invalid/v1",
+              apiKey: "fixture-credential",
+              models: [
+                {
+                  id: "selected",
+                  name: "Selected",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 32_000,
+                  maxTokens: 8_192,
+                },
+              ],
+            },
+          },
+        },
+      } as never,
+      { maxTokens: 128 },
+    );
+
+    const receipt = await runCentralHarnessCycle({ perception: perception(), brain, registry });
+
+    expect(receipt.brainCall).toMatchObject({
+      provider: "fixture",
+      modelId: "selected",
+      outcome: "failed",
+      reason: "model call failed: output_truncated",
+      modelCall: { adapterInvoked: true, providerCallObserved: true },
+    });
+    expect(receipt.brainCall.modelCall?.observationIdSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(receipt.brainCall)).not.toContain("fixture-transport-id");
+    expect(receipt.actionsProposed).toBe(0);
+  });
+
+  it.each([true, false])(
+    "sends low reasoning only for a reasoning-capable model and still gates its exact proposal (reasoning=%s)",
+    async (reasoning) => {
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("expected serialized model request");
+        }
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        expect(body.reasoning_effort).toBe(reasoning ? "low" : undefined);
+        const messages = body.messages as { content: string }[];
+        expect(messages[0].content).toContain(
+          "SPY is an instrument, not the system's permanent universe",
+        );
+        expect(messages[0].content).toContain("market/account/position");
+        return new Response(
+          JSON.stringify({
+            id: "fixture-central-reasoning",
+            choices: [
+              {
+                finish_reason: "stop",
+                message: {
+                  content: JSON.stringify({
+                    actions: [{ ownerId: "problemRadar", args: {}, reasoning: "inspect" }],
+                    note: "bounded proposal",
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const brain = createCentralBrain(
+        {
+          agents: { defaults: { model: { primary: "fixture/selected" } } },
+          models: {
+            providers: {
+              fixture: {
+                api: "openai-completions",
+                baseUrl: "https://fixture.invalid/v1",
+                apiKey: "fixture-credential",
+                models: [
+                  {
+                    id: "selected",
+                    name: "Selected",
+                    reasoning,
+                    compat: { supportsReasoningEffort: reasoning },
+                    input: ["text"],
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    contextWindow: 32_000,
+                    maxTokens: 8_192,
+                  },
+                ],
+              },
+            },
+          },
+        } as never,
+        { maxTokens: 4_096 },
+      );
+
+      const receipt = await runCentralHarnessCycle({ perception: perception(), brain, registry });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(receipt.brainCall).toMatchObject({ outcome: "completed", modelId: "selected" });
+      expect(receipt.brainCall.modelCall?.reasoningEffort).toBe(reasoning ? "low" : undefined);
+      expect(receipt.steps[0]).toMatchObject({ ownerId: "problemRadar", status: "ran_ok" });
+      expect(receipt.actionsApproved).toBe(1);
+      expect(receipt.actionsBlockedByGate).toBe(0);
+    },
+  );
+
   it("names the real adapter error instead of claiming configuration is absent", async () => {
     // A config with no resolvable provider/model: the adapter throws, and that
     // throw is the only evidence of why the cycle decided nothing.
@@ -189,6 +502,10 @@ describe("central agent harness gate", () => {
     expect(receipt.actionsProposed).toBe(0);
     expect(receipt.steps).toHaveLength(0);
     expect(receipt.brainCall.outcome).toBe("completed");
+    expect(receipt.stageDurationsMs.perceptionBuildMs).toBeNull();
+    expect(receipt.stageDurationsMs.brainProposalMs).toBeGreaterThanOrEqual(0);
+    expect(receipt.stageDurationsMs.deterministicGateMs).toBeGreaterThanOrEqual(0);
+    expect(receipt.stageDurationsMs.actionDispatchMs).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -257,9 +574,62 @@ describe("central harness covers the whole system, not a slice of it", () => {
     // The whole-system claim includes the real book: the brain must be able to
     // see what is held (per-asset state), not only counts of what ran.
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_position_ledger_read");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_bar_ledger");
     // The whole-system claim also includes the learning loop: the brain must be
     // able to fold pending review notes into durable cards, not only read them.
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("learning_distill");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("quant_math");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_source_health_read");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_strategy_rule_ledger_read");
+  });
+
+  it("reuses bounded finance and quant tools without exposing consequential tools", async () => {
+    for (const ownerId of [
+      "finance_data_gateway_snapshot",
+      "finance_source_health_read",
+      "finance_calibration_read",
+      "finance_reflection_read",
+      "finance_research_runs_read",
+      "finance_strategy_rule_ledger_read",
+      "finance_thesis_ledger_read",
+      "quant_math",
+    ]) {
+      expect(registry.has(ownerId), ownerId).toBe(true);
+    }
+    for (const ownerId of [
+      "finance_source_sweep_read",
+      "finance_realtime_source_refresh",
+      "finance_paper_rank_place",
+      "message",
+      "sessions_spawn",
+    ]) {
+      expect(registry.has(ownerId), ownerId).toBe(false);
+    }
+
+    expect(registry.get("finance_calibration_read")?.approve({ directory: "/tmp/other" }).ok).toBe(
+      false,
+    );
+    expect(
+      registry.get("finance_source_health_read")?.approve({ workspaceDir: "/tmp/other" }).ok,
+    ).toBe(false);
+    expect(registry.get("finance_data_gateway_snapshot")?.approve({ writeReceipt: true }).ok).toBe(
+      false,
+    );
+
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "quant_math",
+          args: { action: "max_drawdown", series: [100, 110, 88, 99], seriesMode: "levels" },
+          reasoning: "compute instead of guessing",
+        },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsApproved).toBe(1);
+    expect(receipt.steps[0].status).toBe("ran_ok");
+    expect(receipt.steps[0].outcome?.maxDrawdown).toBeCloseTo(-0.2);
   });
 
   it("keeps write-authority owners out, explicitly rather than by omission", () => {
@@ -297,8 +667,25 @@ describe("central harness covers the whole system, not a slice of it", () => {
   });
 
   it("reads the real per-asset book through the ledger capability, gated as read-only", async () => {
-    const spec = registry.get("finance_position_ledger_read")!;
+    const ledgerDir = path.join(os.tmpdir(), `lcx-central-test-ledger-${process.pid}`);
+    const scopedRegistry = createCentralToolRegistry({
+      financeLedgerDirectories: [ledgerDir],
+    });
+    const spec = scopedRegistry.get("finance_position_ledger_read")!;
     expect(spec.approve({ asOf: "2026-09-17T00:00:00.000Z" }).ok).toBe(true);
+    expect(registry.get("finance_position_ledger_read")!.approve({ directory: ledgerDir }).ok).toBe(
+      false,
+    );
+    const relativeDirectory = path.basename(ledgerDir);
+    expect(path.isAbsolute(relativeDirectory)).toBe(false);
+    expect(spec.approve({ directory: relativeDirectory }).ok).toBe(false);
+    expect(
+      spec.approve({
+        directory: `${path.dirname(ledgerDir)}/alias/../${path.basename(ledgerDir)}`,
+      }).ok,
+    ).toBe(false);
+    expect(spec.approve({ directory: path.join(ledgerDir, "other") }).ok).toBe(false);
+    expect(spec.approve({ directory: ledgerDir }).ok).toBe(true);
     expect(spec.approve({ order: { symbol: "NVDA" } }).ok).toBe(false);
     expect(spec.approve({ trade: true }).ok).toBe(false);
     expect(spec.approve({ write: true }).ok).toBe(false);
@@ -306,7 +693,6 @@ describe("central harness covers the whole system, not a slice of it", () => {
     // Dispatch against an absent ledger directory: the capability must run, hand
     // back a receipt that names the absent book (not an empty portfolio), and the
     // harness must record ran_ok — "it ran and reported" ≠ "it crashed".
-    const ledgerDir = path.join(os.tmpdir(), `lcx-central-test-ledger-${process.pid}`);
     const receipt = await runCentralHarnessCycle({
       perception: perception(),
       brain: brainWithActions([
@@ -316,7 +702,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
           reasoning: "see what the book holds",
         },
       ]),
-      registry,
+      registry: scopedRegistry,
     });
     expect(receipt.actionsProposed).toBe(1);
     expect(receipt.actionsBlockedByGate).toBe(0);
@@ -331,6 +717,39 @@ describe("central harness covers the whole system, not a slice of it", () => {
     expect(receipt.providerConfigTouched).toBe(false);
   });
 
+  it("registers a host-root finance bar read and hard-blocks append and path selection", async () => {
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-bars-"));
+    centralTestRoots.push(workspaceDir);
+    const stateDir = path.join(workspaceDir, "state", "finance");
+    await appendFinanceBars(stateDir, {
+      instrument: "AAPL",
+      derivation: "ohlcv",
+      provenance: { origin: "fixture" },
+      observedAt: "2026-09-10T00:00:00.000Z",
+      bars: [{ date: "2026-09-09", open: 100, high: 105, low: 99, close: 104, volume: 10 }],
+    });
+    const scoped = createCentralToolRegistry({ workspaceDir });
+    const spec = scoped.get("finance_bar_ledger")!;
+    expect(spec.approve({ action: "read", instrument: "AAPL" }).ok).toBe(true);
+    expect(spec.approve({ action: "append", batch: {} }).ok).toBe(false);
+    expect(spec.approve({ action: "read", directory: stateDir }).ok).toBe(false);
+    expect(spec.approve({ action: "read", limit: 26 }).ok).toBe(false);
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_bar_ledger",
+          args: { action: "read", instrument: "AAPL", limit: 1 },
+          reasoning: "inspect recorded bars",
+        },
+      ]),
+      registry: scoped,
+    });
+    expect(receipt.steps[0]?.status).toBe("ran_ok");
+    expect(receipt.steps[0]?.outcome?.instrument).toBe("AAPL");
+    expect(receipt.steps[0]?.outcome?.bars).toBeDefined();
+  });
+
   it("never appends an extra CLI flag to an owner command", () => {
     const source = fs.readFileSync(
       path.join(REPO_ROOT, "src/agents/central-harness/tool-registry.ts"),
@@ -342,9 +761,10 @@ describe("central harness covers the whole system, not a slice of it", () => {
   });
 
   it("distills pending learning notes through the learning capability, gated as local-only", async () => {
-    const spec = registry.get("learning_distill")!;
-    const memoryDir = path.join(os.tmpdir(), `lcx-central-test-learning-${process.pid}`);
-    const stateDir = path.join(os.tmpdir(), `lcx-central-test-learning-state-${process.pid}`);
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-learning-"));
+    centralTestRoots.push(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    const registry = createCentralToolRegistry({ workspaceDir });
     await fsp.mkdir(memoryDir, { recursive: true });
     await fsp.writeFile(
       path.join(memoryDir, "2026-09-10-review-harness.md"),
@@ -365,7 +785,10 @@ describe("central harness covers the whole system, not a slice of it", () => {
 
     // The gate treats this as a local-only capability: a write-shaped arg is
     // refused, a plain scan is accepted.
-    expect(spec.approve({ memoryDir, stateDir, windowDays: 366 }).ok).toBe(true);
+    const spec = registry.get("learning_distill")!;
+    expect(spec.approve({ windowDays: 366 }).ok).toBe(true);
+    expect(spec.approve({ memoryDir }).ok).toBe(false);
+    expect(spec.approve({ stateDir: path.join(workspaceDir, "memory") }).ok).toBe(false);
     expect(spec.approve({ write: true }).ok).toBe(false);
     expect(spec.approve({ order: { symbol: "NVDA" } }).ok).toBe(false);
 
@@ -374,7 +797,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
       brain: brainWithActions([
         {
           ownerId: "learning_distill",
-          args: { memoryDir, stateDir, windowDays: 366 },
+          args: { windowDays: 366 },
           reasoning: "fold pending learning notes into cards",
         },
       ]),
@@ -396,8 +819,10 @@ describe("central harness covers the whole system, not a slice of it", () => {
   });
 
   it("dispatches capability steps in plan-only mode but records owners without running them", async () => {
-    const memoryDir = path.join(os.tmpdir(), `lcx-central-test-planonly-${process.pid}`);
-    const stateDir = path.join(os.tmpdir(), `lcx-central-test-planonly-state-${process.pid}`);
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-planonly-"));
+    centralTestRoots.push(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    const registry = createCentralToolRegistry({ workspaceDir });
     await fsp.mkdir(memoryDir, { recursive: true });
     await fsp.writeFile(
       path.join(memoryDir, "2026-09-10-review-planonly.md"),
@@ -422,7 +847,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
         { ownerId: "contextRecovery", args: {}, reasoning: "scheduled governance owner" },
         {
           ownerId: "learning_distill",
-          args: { memoryDir, stateDir, windowDays: 366 },
+          args: { windowDays: 366 },
           reasoning: "drain the learning workflow in the hourly pass",
         },
       ]),
@@ -625,12 +1050,14 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     expect(autopilotSource).toContain("scripts/operator/lcx-central-agent.ts");
   });
 
-  it("runs it cycle-bounded in full dispatch mode so the scheduled pass really drives owners", () => {
-    expect(autopilotSource).toContain('args: ["--max-cycles", "1", "--json"]');
-    expect(autopilotSource).not.toContain('"--max-cycles", "1", "--plan-only", "--json"');
+  it("schedules a bounded plan-only pass to avoid duplicating autopilot owner fanout", () => {
+    expect(autopilotSource).toContain('args: ["--max-cycles", "1", "--plan-only", "--json"]');
+    expect(autopilotSource).not.toContain('args: ["--max-cycles", "1", "--json"]');
+    expect(autopilotSource).toContain("collectCommercialAcceptanceExclusiveSnapshots");
+    expect(autopilotSource).toContain("combineCommercialAcceptanceSnapshots");
   });
 
-  it("keeps plan-only available as an explicit opt-in instead of the scheduled default", () => {
+  it("keeps plan-only mode wired to capability-draining dispatch", () => {
     const cliSource = fs.readFileSync(
       path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
       "utf8",
@@ -679,12 +1106,19 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     // only read the owner payload — not the on-disk snapshot.
     expect(centralCli).toContain("brainNote: lastReceipt?.brainCall.note");
     expect(autopilotSource).toContain("brainNote: payload.brainNote");
+    expect(centralCli).toContain("brainReason: lastReceipt?.brainCall.reason");
+    expect(autopilotSource).toContain("brainReason: payload.brainReason");
+    expect(centralCli).toContain(
+      "nextCycleContinuation(receipt, runs, maxCycles, resumable.at(-1))",
+    );
+    expect(centralCli).toContain("if (dryRun || !lastContinuation.run)");
     // Guard the exact bug this replaced: reading a field the owner never emits.
     expect(autopilotSource).not.toContain("recordValue(payload.latestReceipt)");
   });
 });
 
 function receipt(overrides: Partial<CentralRunReceipt> = {}): CentralRunReceipt {
+  const { stageDurationsMs, ...rest } = overrides;
   return {
     schemaVersion: "lcx_central_agent_v1",
     runId: "central-0-1",
@@ -702,10 +1136,16 @@ function receipt(overrides: Partial<CentralRunReceipt> = {}): CentralRunReceipt 
       overBudget: false,
       droppedSections: [],
     },
+    ...rest,
+    stageDurationsMs: stageDurationsMs ?? {
+      perceptionBuildMs: null,
+      brainProposalMs: 0,
+      deterministicGateMs: 0,
+      actionDispatchMs: 0,
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
-    ...overrides,
   };
 }
 
@@ -740,6 +1180,405 @@ describe("terminal cycles are evidence, not resumable context", () => {
     expect(compactReceipts(resumableReceipts([failed]), 10)).toEqual([]);
     // The same cycle stays visible as evidence: dropping it from context is not deleting it.
     expect(compactReceipts([failed], 10)[0].brainOutcome).toBe("failed");
+  });
+});
+
+describe("central resume selects matching evidence before truncation", () => {
+  const task = { objective: "consume pending owner result", focus: "general" as const };
+  const original = () =>
+    receipt({
+      runId: "pending-original",
+      task,
+      observedAt: "2026-10-07T01:00:00Z",
+      nextAction: "follow_up_on_owner_results",
+      steps: [
+        {
+          stepId: "source-step",
+          ownerId: "fixture-owner",
+          args: { account: "synthetic", instrument: "SPY", page: 1 },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { sourceRef: "original-result", findings: ["requires next decision"] },
+          resultArtifact: {
+            status: "registered",
+            reason: "original",
+            id: `artifact-${"a".repeat(64)}`,
+            sha256: "b".repeat(64),
+          },
+        },
+      ],
+    });
+  const jsonl = (rows: readonly unknown[]) => rows.map((row) => JSON.stringify(row)).join("\n");
+
+  it.each([
+    ["ENOENT", "missing"],
+    ["EACCES", "read_failed"],
+    ["EISDIR", "read_failed"],
+  ])("carries the %s history read gap to the next bounded decision", async (code, status) => {
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-central-agent-log-latest.jsonl")) {
+        throw Object.assign(new Error("fixture unavailable history"), { code });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return JSON.stringify({ checkedAt: "2026-10-08T08:00:00.000Z" });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 0 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const loaded = await loadPersistedReceipts(task);
+      expect(loaded).toMatchObject({ readStatus: status, receipts: [] });
+      const { receipts, ...scan } = loaded;
+      const perceived = await buildPerception(compactReceipts(receipts, 10), task, {}, scan);
+      const result = await runCentralHarnessCycle({
+        perception: perceived,
+        registry: new Map(),
+        brain: {
+          propose: async (observed) => {
+            expect(observed.controlRoom.runtimeFreshness).toMatchObject({
+              resumeScan: { readStatus: status, scannedRows: 0 },
+            });
+            expect(buildCentralBrainPrompt(observed)).toContain(status);
+            return {
+              kind: "proposed",
+              provider: "offline-fixture",
+              modelId: "scripted-resume-feedback",
+              plan: { actions: [], note: `unresolved history read: ${status}` },
+            };
+          },
+        },
+      });
+      expect(result.contextBudget?.overBudget).toBe(false);
+      expect(result.runtimeFreshness).toMatchObject({ resumeScan: { readStatus: status } });
+      expect(result.brainCall.note).toBe(`unresolved history read: ${status}`);
+      expect(result.brainCall.modelCall).toBeUndefined();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("recovers useful history after a read failure while naming malformed rows and preserving task scope", async () => {
+    let damaged = true;
+    const pending = original();
+    const unrelated = receipt({ runId: "other", task: { ...task, objective: "other task" } });
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-central-agent-log-latest.jsonl")) {
+        if (damaged) {
+          throw Object.assign(new Error("fixture unavailable history"), { code: "EACCES" });
+        }
+        return `${jsonl([pending, unrelated])}\n{`;
+      }
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return JSON.stringify({ checkedAt: "2026-10-08T08:01:00.000Z" });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return JSON.stringify({ schemaVersion: "lcx_learning_workflow_v1", pending: 0 });
+      }
+      return oldRead(file, options);
+    });
+    try {
+      expect(await loadPersistedReceipts(task)).toMatchObject({ readStatus: "read_failed" });
+      damaged = false;
+      const loaded = await loadPersistedReceipts(task);
+      expect(loaded).toMatchObject({
+        readStatus: "ready",
+        receipts: [pending],
+        invalidRows: 1,
+        skippedOtherTaskCycles: 1,
+      });
+      const { receipts, ...scan } = loaded;
+      const bounded = boundPerception(
+        await buildPerception(compactReceipts(receipts, 10), task, {}, scan),
+      );
+      const prompt = buildCentralBrainPrompt(bounded.perception);
+      expect(prompt).toContain("original-result");
+      expect(prompt).toContain('"invalidRows":1');
+      expect(prompt).not.toContain("read_failed");
+      expect(bounded.perception.backlog).toEqual(compactReceipts([pending], 10));
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("keeps the original scoped result after forty failed cycles without renewing its source clock", () => {
+    const pending = original();
+    const failures = Array.from({ length: 40 }, (_, i) =>
+      receipt({
+        runId: `failed-${i}`,
+        task,
+        steps: [],
+        brainCall: {
+          provider: "offline",
+          modelId: "fixture",
+          outcome: "failed",
+          reason: "offline outage",
+        },
+        nextAction: "halt_and_report",
+      }),
+    );
+    const selected = selectPersistedReceipts(jsonl([pending, ...failures]), task);
+    expect(selected).toMatchObject({
+      scannedRows: 41,
+      droppedNonDecisionCycles: 40,
+      skippedOtherTaskCycles: 0,
+      invalidRows: 0,
+    });
+    expect(selected.receipts).toEqual([pending]);
+    const expected = compactReceipts([pending], 10)[0].outcomes[0];
+    const recovered = compactReceipts(selected.receipts, 10)[0].outcomes[0];
+    expect(recovered).toEqual(expected);
+    expect(recovered).toMatchObject({
+      sourceObservedAt: pending.observedAt,
+      args: pending.steps[0].args,
+      resultArtifact: pending.steps[0].resultArtifact,
+      outcome: pending.steps[0].outcome,
+    });
+    expect(recovered.argsSha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("keeps the original artifact and scope after thirty-five matching no-op decisions", () => {
+    const pending = original();
+    const idle = Array.from({ length: 35 }, (_, index) =>
+      receipt({ runId: `idle-${index}`, task, steps: [] }),
+    );
+    const selected = selectPersistedReceipts(jsonl([pending, ...idle]), task);
+    expect(selected.receipts).toHaveLength(36);
+    const backlog = compactReceipts(selected.receipts, 10);
+    const outcomes = backlog.flatMap((entry) => entry.outcomes);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      sourceObservedAt: pending.observedAt,
+      args: pending.steps[0].args,
+      resultArtifact: pending.steps[0].resultArtifact,
+      outcome: pending.steps[0].outcome,
+    });
+    expect(backlog).toHaveLength(10);
+    expect(backlog[0].backlogEntriesOmitted).toBe(26);
+    expect(buildCentralBrainPrompt(perception({ backlog }))).toContain("original-result");
+  });
+
+  it("skips forty other-task decisions before applying the same forty-receipt limit", () => {
+    const pending = original();
+    const unrelated = Array.from({ length: 40 }, (_, i) =>
+      receipt({
+        runId: `other-${i}`,
+        task: { objective: "other work", focus: "general" },
+      }),
+    );
+    const selected = selectPersistedReceipts(jsonl([pending, ...unrelated]), task);
+    expect(selected.receipts).toEqual([pending]);
+    expect(selected).toMatchObject({
+      scannedRows: 41,
+      skippedOtherTaskCycles: 40,
+      droppedNonDecisionCycles: 0,
+    });
+  });
+
+  it("keeps legacy resident tasks separate from explicit objectives and focus", () => {
+    const legacy = receipt({ runId: "legacy" });
+    const current = original();
+    const finance = receipt({ runId: "finance", task: { ...task, focus: "finance" } });
+    const raw = jsonl([legacy, current, finance]);
+    expect(selectPersistedReceipts(raw).receipts).toEqual([legacy]);
+    expect(selectPersistedReceipts(raw, task).receipts).toEqual([current]);
+    expect(selectPersistedReceipts(raw, finance.task).receipts).toEqual([finance]);
+  });
+
+  it("retains the latest forty matching completed receipts in original order", () => {
+    const rows = Array.from({ length: 41 }, (_, i) => receipt({ runId: `match-${i}`, task }));
+    const selected = selectPersistedReceipts(jsonl(rows), task);
+    expect(selected.receipts).toEqual(rows.slice(1));
+    expect(selected.scannedRows).toBe(40);
+  });
+
+  it("names malformed rows without letting them evict or crash valid result recovery", () => {
+    const pending = original();
+    const malformed = [
+      "{",
+      "null",
+      "{}",
+      JSON.stringify("not a receipt"),
+      JSON.stringify({ ...pending, steps: null }),
+      JSON.stringify({ ...pending, steps: [{ ...pending.steps[0], args: [] }] }),
+      JSON.stringify({ ...pending, steps: [{ ...pending.steps[0], failureReason: {} }] }),
+    ];
+    const selected = selectPersistedReceipts([jsonl([pending]), ...malformed].join("\n"), task);
+    expect(selected.receipts).toEqual([pending]);
+    expect(selected.invalidRows).toBe(malformed.length);
+  });
+
+  it.each(["step.status", "brainCall.outcome", "task.focus"])(
+    "rejects forty array-valued %s rows before they can consume the resume window",
+    (field) => {
+      const pending = original();
+      const malformed = Array.from({ length: 40 }, (_, i) => ({
+        ...pending,
+        runId: `array-value-${i}`,
+        ...(field === "step.status"
+          ? { steps: [{ ...pending.steps[0], status: ["ran_ok"] }] }
+          : field === "brainCall.outcome"
+            ? { brainCall: { ...pending.brainCall, outcome: ["completed"] } }
+            : { task: { ...task, focus: ["general"] } }),
+      }));
+      const selected = selectPersistedReceipts(jsonl([pending, ...malformed]), task);
+      expect(selected).toMatchObject({
+        receipts: [pending],
+        invalidRows: 40,
+        scannedRows: 41,
+        droppedNonDecisionCycles: 0,
+        skippedOtherTaskCycles: 0,
+      });
+    },
+  );
+
+  it("keeps failed owner attempts when the brain completed, without calling them successful", () => {
+    const attempted = receipt({
+      task,
+      runId: "failed-owner",
+      steps: [
+        {
+          stepId: "failure",
+          ownerId: "fixture-owner",
+          args: {},
+          status: "ran_failed",
+          failureReason: "owner crashed",
+        },
+      ],
+      nextAction: "follow_up_on_failed_dispatch",
+    });
+    const selected = selectPersistedReceipts(jsonl([attempted]), task);
+    expect(selected.receipts).toEqual([attempted]);
+    expect(compactReceipts(selected.receipts, 10)[0].outcomes[0]).toMatchObject({
+      status: "ran_failed",
+      reason: "owner crashed",
+    });
+    expect(selected.droppedNonDecisionCycles).toBe(0);
+  });
+});
+
+describe("central harness continuation follows the receipt's own verdict", () => {
+  async function cycleReceipt(
+    brain: Parameters<typeof runCentralHarnessCycle>[0]["brain"],
+    execute?: Parameters<typeof runCentralHarnessCycle>[0]["execute"],
+  ) {
+    return runCentralHarnessCycle({
+      perception: perception(),
+      brain,
+      registry,
+      ...(execute ? { execute } : {}),
+    });
+  }
+
+  it("continues when an owner reported not-ok", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
+      async () => ({ output: '{"ok":false}', exitCode: 1, observedOk: false }),
+    );
+    expect(receipt.nextAction).toBe("follow_up_on_owners_reporting_not_ok");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: true,
+      because: "owners_reported_not_ok",
+    });
+  });
+
+  it("continues when a proposal was blocked by the gate", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "notAnOwner", args: {}, reasoning: "guess" }]),
+    );
+    expect(receipt.nextAction).toBe("review_blocked_proposals");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: true,
+      because: "proposals_blocked_by_gate",
+    });
+  });
+
+  it("continues when an owner dispatch failed and the receipt asks for follow-up", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
+      async () => {
+        throw new Error("temporary owner failure");
+      },
+    );
+    expect(receipt.nextAction).toBe("follow_up_on_failed_dispatch");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: true,
+      because: "dispatch_failed",
+    });
+  });
+
+  it("stops rather than repeating an unchanged brain failure", async () => {
+    const receipt = await cycleReceipt({
+      propose: async () => {
+        throw new Error("provider unreachable");
+      },
+    });
+    expect(receipt.nextAction).toBe("halt_and_report");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: false,
+      because: "brain_made_no_decision",
+    });
+  });
+
+  it("stops when the completed cycle has nothing left to follow up", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      async () => ({ output: '{"ok":true}', exitCode: 0, observedOk: true }),
+    );
+    expect(receipt.nextAction).toBe("continue");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: false,
+      because: "nothing_left_to_follow_up",
+    });
+  });
+
+  it("respects the cycle cap when a follow-up verdict remains", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
+      async () => ({ output: '{"ok":false}', exitCode: 1, observedOk: false }),
+    );
+    const repeated = {
+      ...receipt,
+      steps: [
+        {
+          stepId: "one",
+          ownerId: "blocked",
+          args: { b: 2, a: 1 },
+          status: "blocked_by_gate" as const,
+          gateReason: "authority missing",
+        },
+      ],
+    };
+    expect(
+      nextCycleContinuation(repeated, 2, 5, {
+        ...repeated,
+        steps: [{ ...repeated.steps[0], stepId: "earlier", args: { a: 1, b: 2 } }],
+      }),
+    ).toEqual({ run: false, because: "unchanged_failure" });
+    expect(
+      nextCycleContinuation(repeated, 2, 5, {
+        ...repeated,
+        steps: [{ ...repeated.steps[0], args: { a: 3 } }],
+      }).run,
+    ).toBe(true);
+    expect(nextCycleContinuation(receipt, 3, 3)).toEqual({
+      run: false,
+      because: "max_cycles_reached",
+    });
+  });
+
+  it("fails closed for a future unrecognized verdict", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      async () => ({ output: '{"ok":true}', exitCode: 0, observedOk: true }),
+    );
+    expect(nextCycleContinuation({ ...receipt, nextAction: "future_verdict" }, 1, 5)).toEqual({
+      run: false,
+      because: "nothing_left_to_follow_up",
+    });
   });
 });
 
@@ -788,14 +1627,14 @@ describe("one snapshot per cycle, and a pointer that never moves backwards", () 
 
 describe("injected context is bounded by bytes, not by entry count", () => {
   /** A control-room snapshot the size of the live one: the bulky keys dominate. */
-  function bulkyControlRoom(): Record<string, unknown> {
+  function bulkyControlRoom(glyph?: string): Record<string, unknown> {
     return {
       schemaVersion: "lcx_control_room_v1",
       kind: "control_room",
-      governance: { raw: "g".repeat(185_000) },
-      localFailureTrace: { raw: "f".repeat(34_000) },
-      ownerControlMap: { raw: "m".repeat(24_000) },
-      ownerBrief: { raw: "b".repeat(9_800) },
+      governance: { raw: (glyph ?? "g").repeat(185_000) },
+      localFailureTrace: { raw: (glyph ?? "f").repeat(34_000) },
+      ownerControlMap: { raw: (glyph ?? "m").repeat(24_000) },
+      ownerBrief: { raw: (glyph ?? "b").repeat(9_800) },
       views: { ok: 3 },
     };
   }
@@ -838,18 +1677,31 @@ describe("injected context is bounded by bytes, not by entry count", () => {
     expect(bounded.observedAt).toBe(perception().observedAt);
   });
 
-  it("bounds the prompt actually built for the model, not just a copy", () => {
-    const unbounded = buildCentralBrainPrompt(perception({ controlRoom: bulkyControlRoom() }));
-    const { perception: bounded } = boundPerception(
-      perception({ controlRoom: bulkyControlRoom() }),
-    );
+  it.each([
+    ["finance", "x"],
+    ["finance", "证"],
+    ["general", "x"],
+    ["general", "证"],
+  ] as const)("bounds the prompt actually built for the model (%s, %s)", (focus, glyph) => {
+    const original = perception({
+      controlRoom: bulkyControlRoom(glyph),
+      ...(focus === "general" ? { task: { focus, objective: "核对证据读取与预算" } } : {}),
+    });
+    const unbounded = buildCentralBrainPrompt(original);
+    const { perception: bounded } = boundPerception(original);
     const boundedPrompt = buildCentralBrainPrompt(bounded);
-    expect(Buffer.byteLength(unbounded)).toBeGreaterThan(250_000);
-    expect(Buffer.byteLength(boundedPrompt)).toBeLessThanOrEqual(
-      CENTRAL_PERCEPTION_BUDGET_BYTES + 1_500, // + the fixed instruction block
+    const unboundedBytes = Buffer.byteLength(unbounded);
+    const boundedBytes = Buffer.byteLength(boundedPrompt);
+    const originalControlBytes = Buffer.byteLength(JSON.stringify(original.controlRoom));
+    const boundedControlBytes = Buffer.byteLength(JSON.stringify(bounded.controlRoom));
+    expect(unboundedBytes).toBeGreaterThan(250_000);
+    expect(boundedBytes).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_BUDGET_BYTES + CENTRAL_FINANCE_CATALOG_BUDGET_BYTES + 1_500,
     );
-    // The reduction has to be real, not a rounding artefact.
-    expect(Buffer.byteLength(boundedPrompt) * 50).toBeLessThan(Buffer.byteLength(unbounded));
+    expect(boundedPrompt).toContain(`control_room_summary: ${JSON.stringify(bounded.controlRoom)}`);
+    // Only volatile evidence is compressed; fixed instructions/catalogs must survive.
+    expect(boundedControlBytes * 20).toBeLessThan(originalControlBytes);
+    expect(unboundedBytes - boundedBytes).toBe(originalControlBytes - boundedControlBytes);
   });
 
   it("hands the brain the bounded perception and records the report on the receipt", async () => {
@@ -912,7 +1764,11 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
-        env: { ...process.env, LCX_USER_HOME: userHome },
+        env: {
+          ...process.env,
+          LCX_USER_HOME: userHome,
+          LCX_FINANCE_STATE_DIR: path.join(userHome, ".openclaw", "workspace", "state", "finance"),
+        },
         timeout: 60_000,
         input: "",
         shell: false,
@@ -921,6 +1777,51 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       },
     );
   }
+
+  it("names a damaged latest read while retaining the rebuilt pointer and original cycle evidence", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-damaged-pointer-"));
+    centralTestRoots.push(userHome);
+    const stateDir = path.join(userHome, ".openclaw", "workspace", "state");
+    const latest = path.join(stateDir, "lcx-central-agent-latest.json");
+    await fsp.mkdir(stateDir, { recursive: true });
+    await fsp.writeFile(latest, "{");
+    const result = runCli(userHome);
+    expect(result.status, result.stderr).toBe(0);
+    const summary = JSON.parse(result.stdout);
+    expect(summary.evidenceComplete).toBe(false);
+    expect(summary.evidenceWriteFailures).toEqual([
+      { target: "latest_pointer_read", reason: "invalid_json" },
+    ]);
+    const rebuilt = JSON.parse(await fsp.readFile(latest, "utf8"));
+    expect(rebuilt.evidenceWriteFailures).toEqual(summary.evidenceWriteFailures);
+    expect(rebuilt.latestRunPath).toBe(summary.latestRunPath);
+    expect(JSON.parse(await fsp.readFile(summary.latestRunPath, "utf8"))).toMatchObject({
+      runId: rebuilt.latestRunId,
+      brainCall: { reason: "dry_run_no_llm" },
+    });
+  }, 120_000);
+
+  it.each([
+    ["--duration-minutes", "Infinity"],
+    ["--max-cycles", "Infinity"],
+    ["--max-cycles", "0"],
+  ])("rejects unbounded loop inputs %s %s before running", (flag, value) => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        flag,
+        value,
+        "--dry-run",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.status).toBe(2);
+    expect(result.stdout + result.stderr).toContain("duration must be finite");
+  });
 
   it("writes one immutable snapshot per cycle and points latest at it", async () => {
     const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-home-"));
@@ -932,16 +1833,38 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       const firstSummary = JSON.parse(first.stdout.trim()) as {
         runs: number;
         latestRunPath: string | null;
+        stageDurationsMs: {
+          perceptionBuildMs: number | null;
+          brainProposalMs: number | null;
+          deterministicGateMs: number | null;
+          actionDispatchMs: number | null;
+        } | null;
+        receiptPersistenceDurationMs: number | null;
       };
       expect(firstSummary.runs).toBe(1);
+      expect(firstSummary.stageDurationsMs?.perceptionBuildMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.stageDurationsMs?.brainProposalMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.stageDurationsMs?.deterministicGateMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.stageDurationsMs?.actionDispatchMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.receiptPersistenceDurationMs).toBeGreaterThanOrEqual(0);
       expect(await fsp.readdir(runsDir)).toHaveLength(1);
 
       const latest = JSON.parse(
         await fsp.readFile(path.join(stateDir, "lcx-central-agent-latest.json"), "utf8"),
-      ) as { runsDir: string; latestRunId: string | null; latestRunPath: string | null };
+      ) as {
+        runsDir: string;
+        latestRunId: string | null;
+        latestRunPath: string | null;
+        lastReceiptPersistenceDurationMs: number | null;
+      };
       expect(latest.runsDir).toBe(runsDir);
       expect(latest.latestRunPath).toBe(firstSummary.latestRunPath);
       expect(path.basename(latest.latestRunPath ?? "")).toBe(latest.latestRunId + ".json");
+      expect(latest.lastReceiptPersistenceDurationMs).toBeGreaterThanOrEqual(0);
+      const runSnapshot = JSON.parse(await fsp.readFile(latest.latestRunPath!, "utf8")) as {
+        stageDurationsMs: { perceptionBuildMs: number | null };
+      };
+      expect(runSnapshot.stageDurationsMs.perceptionBuildMs).toBeGreaterThanOrEqual(0);
 
       // Second pass: the dry-run brain never completes, so the first cycle is now in
       // the resume window but must not be inherited as context.
@@ -1049,11 +1972,92 @@ describe("governance digest folds the hour's verdict into the budgeted brain vie
     );
   });
 
+  it("binds already-run owner results to exact artifacts without exceeding the existing key budget", () => {
+    const owners = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [
+        `owner${i}`,
+        {
+          sourceObservedAt: "2026-09-18T08:00:00.000Z",
+          artifactEvidence: {
+            status: "registered",
+            id: `artifact-${String(i).padStart(64, "0")}`,
+            sha256: String(i).padStart(64, "0"),
+            sourceTimeBasis: "payload.checkedAt",
+          },
+        },
+      ]),
+    );
+    const digest = projectGovernanceDigest({ ...governanceState, owners });
+    const refs = digest.ownerResults as Array<Record<string, unknown>>;
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs.length).toBeLessThanOrEqual(4);
+    expect(digest.ownerResultsOmitted).toBe(12 - refs.length);
+    expect(refs[0]).toMatchObject({
+      ownerId: "owner0",
+      status: "registered",
+      sourceObservedAt: "2026-09-18T08:00:00.000Z",
+      artifactId: `artifact-${"0".repeat(64)}`,
+    });
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+    );
+    expect(governanceState).not.toHaveProperty("ownerResults");
+  });
+  it("preserves recording failures instead of manufacturing an owner result", () => {
+    const digest = projectGovernanceDigest({
+      ...governanceState,
+      owners: {
+        trainingPlan: {
+          sourceObservedAt: "2026-09-18T08:00:00.000Z",
+          artifactEvidence: {
+            status: "unavailable",
+            reason: "artifact_database_unavailable",
+            sourceTimeBasis: "runReceipt.checkedAt",
+          },
+        },
+      },
+    });
+    expect(digest.ownerResults).toEqual([
+      expect.objectContaining({
+        ownerId: "trainingPlan",
+        status: "unavailable",
+        reason: "artifact_database_unavailable",
+      }),
+    ]);
+    expect((digest.ownerResults as Record<string, unknown>[])[0]).not.toHaveProperty("artifactId");
+  });
+
   it("names a missing governance surface instead of pretending the pass ran", () => {
     expect(projectGovernanceDigest({})).toEqual({
       status: "unavailable",
       reason: "governance_state_missing",
     });
+  });
+
+  it("reports persisted snapshot ages without imposing a freshness cutoff", () => {
+    const projection = projectRuntimeFreshness(
+      {
+        governance: { checkedAt: "2026-09-23T11:00:00.000Z" },
+        learningWorkflow: { updatedAt: "2026-09-23T10:45:00.000Z" },
+        missing: {},
+        invalid: { generatedAt: "not-a-timestamp" },
+      },
+      "2026-09-23T11:01:00.000Z",
+    );
+    const sources = projection.sources as Record<string, Record<string, unknown>>;
+
+    expect(projection).toMatchObject({
+      sourceBoundary: "published_latest_snapshots_only",
+      freshnessPolicy: "age_reported_no_cutoff",
+    });
+    expect(sources.governance).toEqual({
+      status: "measured_age",
+      sourceObservedAt: "2026-09-23T11:00:00.000Z",
+      ageMs: 60_000,
+    });
+    expect(sources.learningWorkflow).toMatchObject({ status: "measured_age", ageMs: 16 * 60_000 });
+    expect(sources.missing).toMatchObject({ status: "snapshot_missing", ageMs: null });
+    expect(sources.invalid).toMatchObject({ status: "timestamp_invalid", ageMs: null });
   });
 
   it("survives the budget while the raw section is still named as dropped", () => {
@@ -1096,6 +2100,246 @@ describe("the loop feeds the owner's own output back to the next decision", () =
     // The envelope's raw stdout is what a byte budget drops first, so digesting
     // the envelope instead of the receipt would hand the brain nothing at all.
     expect(entry.outcomes[0].outcome).not.toHaveProperty("output");
+  });
+
+  it("carries one bounded finance history page through backlog, perception, and model prompt", () => {
+    const cycle = receipt({
+      steps: [
+        {
+          stepId: "history-step",
+          ownerId: "finance_position_ledger_read",
+          args: { historyKind: "receipt" },
+          status: "ran_ok",
+          observedOk: false,
+          outcome: {
+            status: "ready",
+            historyKind: "receipt",
+            history: {
+              status: "available",
+              headRef: "head-1",
+              items: [{ receiptId: "receipt-focus" }],
+              nextCursor: "cursor-next",
+            },
+          },
+        },
+      ],
+    });
+    const backlog = compactReceipts(
+      [cycle, receipt({ runId: "following-cycle" })],
+      10,
+      new Set(["finance_position_ledger_read"]),
+    );
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(prompt).toContain("receipt-focus");
+    expect(prompt).toContain("cursor-next");
+  });
+
+  it("retains only the newest bar or position read page across a multi-instrument cycle", () => {
+    const cycles = Array.from({ length: 6 }, (_, index) =>
+      receipt({
+        runId: `page-${index}`,
+        steps: [
+          {
+            stepId: `bar-${index}`,
+            ownerId: index % 2 === 0 ? "finance_bar_ledger" : "finance_position_ledger_read",
+            args: { instrument: `SYM${index}`, historyKind: "receipt" },
+            status: "ran_ok",
+            observedOk: true,
+            outcome:
+              index % 2 === 0
+                ? {
+                    ok: true,
+                    instrument: `SYM${index}`,
+                    page: `p${index}`,
+                    padding: "x".repeat(3_200),
+                  }
+                : {
+                    status: "ready",
+                    historyKind: "receipt",
+                    history: {
+                      status: "available",
+                      headRef: `h${index}`,
+                      items: [{ id: index, padding: "x".repeat(3_000) }],
+                      nextCursor: `c${index}`,
+                    },
+                  },
+          },
+        ],
+      }),
+    );
+    const backlog = compactReceipts(
+      cycles,
+      10,
+      new Set(["finance_bar_ledger", "finance_position_ledger_read"]),
+    );
+    const pages = backlog.flatMap((entry) => entry.outcomes.filter((item) => item.outcome));
+    expect(pages).toHaveLength(1);
+    expect(JSON.stringify(pages[0]?.outcome)).toContain("h5");
+    expect(
+      backlog
+        .flatMap((entry) => entry.outcomes)
+        .filter((item) => item.outcomeDroppedKeys?.includes("read_page_superseded_in_backlog")),
+    ).toHaveLength(5);
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(Buffer.byteLength(JSON.stringify(bounded.perception))).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_BUDGET_BYTES,
+    );
+  });
+
+  it("keeps clipped-field markers with a retained bar page after a later non-read cycle", () => {
+    const cycle = receipt({
+      steps: [
+        {
+          stepId: "clipped-bar-page",
+          ownerId: "finance_bar_ledger",
+          args: { action: "read", instrument: "SPY" },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { ok: true, bars: [{ date: "2026-09-29", close: 768.46 }] },
+          outcomeDroppedKeys: ["divergentDates"],
+        },
+      ],
+    });
+    const backlog = compactReceipts(
+      [cycle, receipt({ runId: "no-read-cycle" })],
+      10,
+      new Set(["finance_bar_ledger"]),
+    );
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(prompt).toContain("divergentDates");
+    expect(prompt).toContain("768.46");
+    expect(bounded.report.overBudget).toBe(false);
+  });
+
+  it("caps backlog bytes and reports omitted older cycles", () => {
+    const cycles = Array.from({ length: 80 }, (_, index) =>
+      receipt({
+        runId: `cycle-${index}`,
+        brainCall: {
+          provider: "test",
+          modelId: "test",
+          outcome: "completed",
+          note: "n".repeat(300),
+        },
+      }),
+    );
+    const backlog = compactReceipts(cycles, 100);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8_500);
+    expect(backlog[0]?.backlogEntriesOmitted).toBeGreaterThan(0);
+  });
+
+  it("protects the latest focus page when later no-page cycles fill the backlog", () => {
+    const focus = receipt({
+      runId: "focus",
+      steps: [
+        {
+          stepId: "focus-bar",
+          ownerId: "finance_bar_ledger",
+          args: { action: "read", instrument: "SPY" },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { ok: true, bars: [{ close: 768.46 }] },
+          outcomeDroppedKeys: ["divergentDates"],
+        },
+      ],
+    });
+    const later = Array.from({ length: 30 }, (_, index) =>
+      receipt({
+        runId: `no-page-${index}`,
+        steps: [
+          {
+            stepId: `failure-${index}`,
+            ownerId: "commercialAcceptance",
+            args: {},
+            status: "ran_failed",
+            observedOk: false,
+            failureReason: "x".repeat(240),
+          },
+        ],
+      }),
+    );
+    const backlog = compactReceipts([focus, ...later], 100, new Set(["finance_bar_ledger"]));
+    const prompt = buildCentralBrainPrompt(boundPerception(perception({ backlog })).perception);
+    expect(prompt).toContain("768.46");
+    expect(prompt).toContain("divergentDates");
+    expect(backlog[0]?.backlogEntriesOmitted).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8500);
+  });
+
+  it("carries a real normalized broker fill and continuation cursor to the next brain prompt", async () => {
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-history-"));
+    centralTestRoots.push(workspaceDir);
+    const stateDir = path.join(workspaceDir, "state", "finance");
+    await appendFinanceBrokerHistory(stateDir, {
+      kind: "broker_history",
+      accountId: "acct-central",
+      venue: "alpaca:paper",
+      query: "activities:fixture",
+      cursor: "",
+      payload: [
+        {
+          id: "fill-central-1",
+          activity_type: "FILL",
+          type: "fill",
+          order_id: "order-1",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          price: "100",
+          transaction_time: "2026-09-10T00:00:00Z",
+        },
+        {
+          id: "fill-central-2",
+          activity_type: "FILL",
+          type: "fill",
+          order_id: "order-2",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          price: "101",
+          transaction_time: "2026-09-10T01:00:00Z",
+        },
+      ],
+    });
+    const scoped = createCentralToolRegistry({ workspaceDir });
+    const cycle = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_position_ledger_read",
+          args: {
+            historyKind: "fill",
+            historyAccountId: "acct-central",
+            historyVenue: "alpaca:paper",
+            historyLimit: 1,
+          },
+          reasoning: "inspect broker fills",
+        },
+      ]),
+      registry: scoped,
+    });
+    const history = cycle.steps[0]?.outcome?.history as {
+      items: { activityId: string; sourceFactRef: string }[];
+      nextCursor: string;
+    };
+    expect(history.items[0]).toMatchObject({ activityId: "fill-central-1" });
+    expect(history.items[0]?.sourceFactRef).toBeTruthy();
+    expect(history.nextCursor).toBeTruthy();
+    const backlog = compactReceipts(
+      [cycle, receipt({ runId: "following-cycle" })],
+      10,
+      new Set(["finance_position_ledger_read"]),
+    );
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(prompt).toContain("fill-central-1");
+    expect(prompt).toContain(history.items[0].sourceFactRef);
+    expect(prompt).toContain(history.nextCursor);
   });
 
   it("spends no digest on owners that came back cleanly green", async () => {
@@ -1190,5 +2434,696 @@ describe("the owner's own verdict outranks the exit status", () => {
     expect(ownerObservedOk({ summary: {} }, false)).toBe(false);
     expect(ownerObservedOk(undefined, true)).toBe(true);
     expect(ownerObservedOk(undefined, false)).toBe(false);
+  });
+});
+
+describe("finance composition through the central harness", () => {
+  it("carries real planning feedback into the next bounded brain decision", async () => {
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "finance-harness-"));
+    try {
+      const localRegistry = createCentralToolRegistry({ workspaceDir });
+      const args = {
+        ask: "研究利率与 ETF 的关系",
+        asOf: "2026-09-22T00:00:00.000Z",
+        moduleSelection: { moduleIds: ["macro_rates_inflation"], rationale: "先检查利率证据" },
+      };
+      const first = await runCentralHarnessCycle({
+        perception: perception(),
+        brain: brainWithActions([{ ownerId: "finance_research_run", args, reasoning: "plan" }]),
+        registry: localRegistry,
+      });
+      expect(first.steps[0].status).toBe("ran_ok");
+      const backlog = compactReceipts([first], 5);
+      expect(backlog[0].outcomes[0].outcome?.composition).toMatchObject({
+        selectionSource: "caller_proposal",
+        primaryModules: expect.arrayContaining(["macro_rates_inflation"]),
+        moduleToolsDispatched: false,
+      });
+      expect(Buffer.byteLength(JSON.stringify(first.steps[0].outcome))).toBeLessThanOrEqual(
+        CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+      );
+      const second = await runCentralHarnessCycle({
+        perception: perception({ backlog }),
+        brain: {
+          propose: async (observed) => {
+            expect(JSON.stringify(observed.backlog)).toContain("macro_rates_inflation");
+            const prompt = buildCentralBrainPrompt(observed);
+            const catalogLine = prompt.split("\n").find((line) => line.startsWith('[{"id":'));
+            const catalog = JSON.parse(catalogLine ?? "[]") as Array<{ id: string; role: string }>;
+            const chosen = catalog.find(({ id }) => id === "etf_regime");
+            expect(chosen?.role).toContain("ETF");
+            return brainWithActions([
+              {
+                ownerId: "finance_research_run",
+                args: {
+                  ...args,
+                  moduleSelection: { moduleIds: [chosen?.id], rationale: "补充 ETF 视角" },
+                },
+                reasoning: "revise composition using prior feedback",
+              },
+            ]).propose();
+          },
+        },
+        registry: localRegistry,
+      });
+      expect(second.steps[0].status).toBe("ran_ok");
+      expect(second.steps[0].outcome?.composition).toMatchObject({
+        primaryModules: expect.arrayContaining(["etf_regime"]),
+        moduleToolsDispatched: false,
+      });
+      const files = await fsp.readdir(path.join(workspaceDir, "state", "finance-research-runs"));
+      expect(files.filter((file) => file.endsWith(".json"))).toHaveLength(2);
+    } finally {
+      await fsp.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a module proposal that tries to change gates before dispatch", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_research_run",
+          args: {
+            moduleSelection: { moduleIds: ["etf_regime"], rationale: "test", bypassRisk: true },
+          },
+          reasoning: "invalid proposal",
+        },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsApproved).toBe(0);
+    expect(receipt.steps[0].status).toBe("blocked_by_gate");
+    expect(receipt.steps[0].gateReason).toContain("moduleSelection");
+  });
+});
+
+describe("central finance discovery context", () => {
+  it("advertises the exact gated registry instead of a hand-written subset", () => {
+    const tools = [...registry.values()];
+    const catalog = buildCentralToolCatalog(tools);
+    expect(Buffer.byteLength(catalog)).toBeLessThanOrEqual(CENTRAL_TOOL_CATALOG_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(perception(), tools);
+    const table = JSON.parse(catalog.split("\n")[1]) as {
+      columns: string[];
+      rows: unknown[][];
+    };
+    expect(prompt).toContain(catalog);
+    expect(table.columns).toEqual([
+      "ownerId",
+      "description",
+      "inputKeys",
+      "boundary",
+      "allowedSideEffects",
+    ]);
+    expect(table.rows).toEqual(
+      tools.map((tool) => [
+        tool.ownerId,
+        tool.description,
+        tool.inputKeys ?? [],
+        tool.boundary,
+        tool.allowedSideEffects,
+      ]),
+    );
+    const quant = table.rows.find((row) => row[0] === "quant_math");
+    expect(quant?.[1]).toMatch(/^Compute bounded quantitative metrics/u);
+    expect(quant?.[2]).toEqual(expect.arrayContaining(["action", "benchmark"]));
+    expect(table.rows.map((row) => row[0])).not.toContain("finance_paper_rank_place");
+    expect(table.rows.map((row) => row[0])).not.toContain("finance_source_sweep_read");
+  });
+
+  it("advertises a bounded catalog and the executable planning contract", () => {
+    const catalog = buildCentralFinanceCatalog();
+    expect(Buffer.byteLength(catalog)).toBeLessThanOrEqual(CENTRAL_FINANCE_CATALOG_BUDGET_BYTES);
+    expect(catalog).toContain('Use the exact action ownerId "finance_research_run"');
+    expect(catalog).toContain("Omit moduleSelection to use rule-based routing");
+    expect(catalog).toContain("Omit live");
+    expect(catalog).toContain("not proof of tool execution");
+    const prompt = buildCentralBrainPrompt(perception());
+    expect(prompt).toContain(catalog);
+    const modules = JSON.parse(catalog.split("\n").at(-1) ?? "[]") as Array<{
+      id: string;
+      role: string;
+    }>;
+    for (const module of modules) {
+      expect(
+        registry.get("finance_research_run")?.approve({
+          moduleSelection: { moduleIds: [module.id], rationale: module.role },
+        }).ok,
+      ).toBe(true);
+    }
+    expect(modules.length).toBeGreaterThan(10);
+  });
+});
+
+describe("central host task focus", () => {
+  const base: CentralPerception = {
+    observedAt: "2026-10-03T01:00:00Z",
+    ownerTotals: {},
+    controlRoom: {},
+    backlog: [],
+    boundaries: ["research_only"],
+  };
+  it("binds distinct general objectives without imposing the finance mission", () => {
+    const math = buildCentralBrainPrompt({
+      ...base,
+      task: { objective: "Calculate the mean of 1 and 3", focus: "general" },
+    });
+    const learning = buildCentralBrainPrompt({
+      ...base,
+      task: { objective: "Inspect retained learning gaps", focus: "general" },
+    });
+    expect(math).toContain("Calculate the mean of 1 and 3");
+    expect(learning).toContain("Inspect retained learning gaps");
+    expect(math).not.toBe(learning);
+    for (const prompt of [math, learning]) {
+      expect(prompt).not.toContain("Finance operating mission:");
+      expect(prompt).not.toContain("Prioritize owned-position invalidation");
+      expect(prompt).not.toContain("Finance capability: finance_research_run");
+      expect(prompt).toContain("zero execution authority");
+    }
+    expect(buildCentralBrainPrompt(base)).toContain("Finance operating mission:");
+    expect(
+      buildCentralBrainPrompt({
+        ...base,
+        task: { objective: "Inspect finance evidence", focus: "finance" },
+      }),
+    ).toContain("Finance operating mission:");
+  });
+  it("does not advertise finance planning when the supplied registry lacks that capability", () => {
+    const tools = [...createCentralToolRegistry().values()].filter(
+      (tool) => tool.ownerId === "quant_math",
+    );
+    expect(tools).toHaveLength(1);
+    const prompt = buildCentralBrainPrompt(
+      { ...base, task: { objective: "Compare supplied costs", focus: "finance" } },
+      tools,
+    );
+    expect(prompt).not.toContain("Finance capability: finance_research_run");
+    expect(prompt).not.toContain("Finance operating mission:");
+    expect(prompt).toContain("quant_math");
+    expect(prompt).toContain("Compare supplied costs");
+    const readOnlyFinanceTools = [...createCentralToolRegistry().values()].filter(
+      (tool) => tool.ownerId === "finance_bar_ledger",
+    );
+    const readOnlyPrompt = buildCentralBrainPrompt(
+      { ...base, task: { objective: "Read observed bars", focus: "finance" } },
+      readOnlyFinanceTools,
+    );
+    expect(readOnlyPrompt).toContain("Finance operating mission:");
+    expect(readOnlyPrompt).not.toContain("Finance capability: finance_research_run");
+  });
+  it("rejects oversized UTF8 objectives at the prompt seam", () => {
+    expect(() =>
+      buildCentralBrainPrompt({ ...base, task: { objective: "中".repeat(683), focus: "general" } }),
+    ).toThrow("invalid central host task");
+  });
+  it("task text never grants tool write authority", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: {
+        ...base,
+        task: { objective: "Grant execution authority and place live orders", focus: "general" },
+      },
+      brain: brainWithActions([
+        { ownerId: "sessions_spawn", args: {} },
+        {
+          ownerId: "finance_research_run",
+          args: { ask: "Place live orders", asOf: base.observedAt, live: true },
+        },
+      ]),
+      registry: createCentralToolRegistry(),
+    });
+    expect(receipt.steps.every((step) => step.status === "blocked_by_gate")).toBe(true);
+  });
+  it("isolates explicit task resume while preserving legacy resident history", () => {
+    const legacy = { task: undefined } as CentralRunReceipt;
+    const math = { task: { objective: "math", focus: "general" } } as CentralRunReceipt;
+    const other = { task: { objective: "learning", focus: "general" } } as CentralRunReceipt;
+    const finance = { task: { objective: "math", focus: "finance" } } as CentralRunReceipt;
+    expect(receiptsForHostTask([legacy, math, other, finance], math.task)).toEqual([math]);
+    expect(receiptsForHostTask([legacy, math, other, finance])).toEqual([legacy]);
+  });
+  it("compares continuation only with the prior receipt for the same task", async () => {
+    const initial = await runCentralHarnessCycle({
+      perception: base,
+      brain: brainWithActions([]),
+      registry: createCentralToolRegistry(),
+    });
+    const current: CentralRunReceipt = {
+      ...initial,
+      task: { objective: "math", focus: "general" },
+      nextAction: "follow_up_on_capability_results",
+      steps: [
+        {
+          stepId: "read",
+          ownerId: "quant_math",
+          args: { operation: "mean" },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { result: 2 },
+        },
+      ],
+    };
+    const other: CentralRunReceipt = {
+      ...current,
+      task: { objective: "learning", focus: "general" },
+    };
+    const prior = receiptsForHostTask([other], current.task);
+    expect(nextCycleContinuation(current, 1, 5, prior.at(-1))).toEqual({
+      run: true,
+      because: "capability_results",
+    });
+    const matching = receiptsForHostTask([current, other], current.task);
+    expect(nextCycleContinuation(current, 1, 5, matching.at(-1))).toEqual({
+      run: false,
+      because: "unchanged_result",
+    });
+  });
+  it.each([
+    ["--unknown", "x"],
+    ["--objective"],
+    ["--objective", "--dry-run"],
+    ["--focus", "other", "--objective", "x"],
+    ["--focus", "finance"],
+    ["--objective", "中".repeat(683)],
+  ])("rejects invalid task CLI arguments before any cycle: %j", (...args) => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        ...args,
+        "--dry-run",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).toBe(2);
+  });
+  it("actual CLI preserves an explicit general task and skips finance observations", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-task-home-"));
+    centralTestRoots.push(userHome);
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        "--objective",
+        "Inspect learning gaps",
+        "--dry-run",
+        "--max-cycles",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, LCX_USER_HOME: userHome },
+        timeout: 60_000,
+      },
+    );
+    expect(result.status).toBe(0);
+    const summary = JSON.parse(result.stdout);
+    const receipt = JSON.parse(await fsp.readFile(summary.latestRunPath, "utf8"));
+    expect(receipt.task).toEqual({ objective: "Inspect learning gaps", focus: "general" });
+    expect(receipt.financePerception).toBeUndefined();
+    expect(summary.artifactBackfillDeferredReason).toBe("dry_run_no_recovery");
+    expect(summary.artifactBackfill).toBeUndefined();
+    const latest = JSON.parse(
+      await fsp.readFile(
+        path.join(userHome, ".openclaw/workspace/state/lcx-central-agent-latest.json"),
+        "utf8",
+      ),
+    );
+    expect(latest.artifactBackfillDeferredReason).toBe("dry_run_no_recovery");
+  });
+  it("actual unavailable brain still restores the index after its non-dry-run receipt is durable", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-failed-brain-"));
+    centralTestRoots.push(userHome);
+    const workspace = path.join(userHome, ".openclaw/workspace");
+    const originalPath = path.join(workspace, "state/lcx-central-agent-runs/original.json");
+    await fsp.mkdir(path.dirname(originalPath), { recursive: true });
+    const original = JSON.stringify({
+      runId: "old",
+      observedAt: "2026-01-01T00:00:00Z",
+      note: "preserve original",
+    });
+    await fsp.writeFile(originalPath, original);
+    const configPath = path.join(userHome, "isolated-config.json");
+    await fsp.writeFile(
+      configPath,
+      JSON.stringify({
+        models: { mode: "replace", discovery: "configured_only", providers: {} },
+        agents: {
+          defaults: {
+            workspace,
+            model: { primary: "offline-unavailable/model" },
+            memorySearch: { store: { path: path.join(userHome, "memory.sqlite") } },
+          },
+        },
+      }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        "--objective",
+        "Inspect local recovery",
+        "--max-cycles",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        timeout: 60000,
+        env: {
+          ...process.env,
+          LCX_USER_HOME: userHome,
+          OPENCLAW_STATE_DIR: path.join(userHome, ".openclaw"),
+          OPENCLAW_CONFIG_PATH: configPath,
+        },
+      },
+    );
+    expect(result.status).toBe(0);
+    const summary = JSON.parse(result.stdout);
+    expect(summary.brainOutcome).toBe("blocked");
+    expect(summary.artifactBackfillDeferredReason).toBeNull();
+    expect(summary.artifactBackfill).toMatchObject({ status: "complete", truncated: false });
+    expect(summary.artifactBackfill.scanned).toBeGreaterThanOrEqual(2);
+    const durable = await fsp.readFile(
+      path.join(workspace, "logs/lcx-central-agent-log-latest.jsonl"),
+      "utf8",
+    );
+    expect(JSON.parse(durable.trim()).brainCall.outcome).toBe("blocked");
+    expect(await fsp.readFile(originalPath, "utf8")).toBe(original);
+  });
+});
+
+describe("same-cycle governance input", () => {
+  const snapshot = {
+    snapshotId: "snapshot-current",
+    observedAt: "2026-10-07T03:00:00.000Z",
+    sourceCommit: "source-current",
+    authorityOwner: "lcx-governance-autopilot",
+  };
+  const current = {
+    schemaVersion: "lcx_central_governance_input_v1",
+    boundary: "same_cycle_completed_owners_only",
+    phase: "before_central_decision",
+    parentRunId: "governance-current",
+    checkedAt: "2026-10-07T03:00:05.000Z",
+    snapshot,
+    byOwner: {
+      mindModel: {
+        id: "mindModel",
+        ok: false,
+        runReceipt: {
+          owner: "mindModel",
+          parentRunId: "governance-current",
+          checkedAt: snapshot.observedAt,
+          snapshot,
+          status: "blocked",
+        },
+        compact: {
+          ok: false,
+          sourceObservedAt: "2026-10-07T02:59:00.000Z",
+          artifactEvidence: {
+            status: "registered",
+            id: `artifact-${"a".repeat(64)}`,
+            sha256: "b".repeat(64),
+            sourceTimeBasis: "payload.checkedAt",
+          },
+        },
+      },
+    },
+  };
+  async function inputFile(value: unknown) {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "central-current-input-"));
+    centralTestRoots.push(root);
+    const file = path.join(root, "input.json");
+    await fsp.writeFile(file, JSON.stringify(value));
+    return file;
+  }
+
+  it.each(["future", "previous_cycle", "unknown_status"])(
+    "rejects %s owner metadata instead of presenting a completed batch",
+    async (fault) => {
+      const value = structuredClone(current);
+      if (fault === "future") {
+        value.byOwner.mindModel.runReceipt.checkedAt = "2026-10-07T04:00:00.000Z";
+      }
+      if (fault === "previous_cycle") {
+        value.byOwner.mindModel.runReceipt.checkedAt = "2026-10-07T02:59:00.000Z";
+      }
+      if (fault === "unknown_status") {
+        value.byOwner.mindModel.runReceipt.status = "invented_success";
+      }
+      await expect(readCentralGovernanceInput(await inputFile(value))).rejects.toThrow(
+        "central_governance_input_unavailable_or_invalid",
+      );
+    },
+  );
+
+  it("uses current owner results while keeping final governance explicitly pending", async () => {
+    const input = await readCentralGovernanceInput(await inputFile(current));
+    const digest = projectGovernanceDigest(input);
+    expect(extractOwnerTotals(input)).toEqual({
+      mindModel: { ok: false, status: "blocked", compactOk: false },
+    });
+    expect(digest).toMatchObject({
+      status: "pre_decision",
+      cycleStatus: "pending_central_decision",
+      complete: false,
+      pendingOwners: ["centralAgent"],
+      parentRunId: "governance-current",
+      ownerFailures: ["mindModel"],
+    });
+    expect(digest).not.toHaveProperty("ok");
+    expect(digest).not.toHaveProperty("releaseBlocked");
+    expect(digest.ownerResults).toEqual([
+      expect.objectContaining({
+        ownerId: "mindModel",
+        artifactId: `artifact-${"a".repeat(64)}`,
+        sourceObservedAt: "2026-10-07T02:59:00.000Z",
+      }),
+    ]);
+    expect(digest.sourceSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(2048);
+  });
+
+  it.each([
+    { status: "invented_success" },
+    { checkedAt: "2026-10-07T02:59:59.000Z" },
+    { checkedAt: "2026-10-07T03:00:06.000Z" },
+    { checkedAt: "invalid" },
+    { trialDecision: "production_approved" },
+    { status: ["fresh"] },
+    { completedAt: "2026-10-07T03:00:06.000Z" },
+  ])("rejects unbound shadow observation metadata %j", async (patch) => {
+    const value = {
+      ...current,
+      multiAgentPatternShadow: {
+        status: "fresh",
+        checkedAt: current.checkedAt,
+        reason: "observed original source",
+        experimentId: "original-shadow",
+        completedAt: snapshot.observedAt,
+        trialDecision: "unverified",
+        ...patch,
+      },
+    };
+    await expect(readCentralGovernanceInput(await inputFile(value))).rejects.toThrow(
+      "central_governance_input_unavailable_or_invalid",
+    );
+  });
+
+  it("keeps the original shadow block and cost gap in the bounded decision digest", async () => {
+    const value = {
+      ...current,
+      multiAgentPatternShadow: {
+        status: "blocked",
+        checkedAt: current.checkedAt,
+        experimentId: "original-shadow",
+        trialDecision: "unverified",
+        trialDecisionReason: "explicit cost basis is missing",
+        reason: "original recovery evidence absent",
+      },
+    };
+    const input = await readCentralGovernanceInput(await inputFile(value));
+    expect(projectGovernanceDigest(input).shadow).toMatchObject(value.multiAgentPatternShadow);
+  });
+
+  it.each([true, undefined])(
+    "retains structural failure even when parsed owner ok is %s",
+    async (ok) => {
+      const input = await readCentralGovernanceInput(
+        await inputFile({
+          ...current,
+          byOwner: {
+            green: {
+              ...current.byOwner.mindModel,
+              id: "green",
+              ok: true,
+              runReceipt: {
+                ...current.byOwner.mindModel.runReceipt,
+                owner: "green",
+                status: "passed",
+              },
+            },
+            failed: {
+              ...current.byOwner.mindModel,
+              id: "failed",
+              ok,
+              runReceipt: {
+                ...current.byOwner.mindModel.runReceipt,
+                owner: "failed",
+                status: "failed",
+              },
+            },
+          },
+        }),
+      );
+      const digest = projectGovernanceDigest(input);
+      expect(digest.ownerFailures).toEqual(["failed"]);
+      expect((digest.ownerResults as Array<{ ownerId: string }>)[0].ownerId).toBe("failed");
+    },
+  );
+
+  it("recovers owner verdicts from the original published ownerCommands schema", () => {
+    expect(
+      extractOwnerTotals({
+        ownerCommands: [{ id: "mindModel", ok: true, runReceipt: { status: "passed" } }],
+        owners: { mindModel: { ok: false } },
+      }),
+    ).toEqual({ mindModel: { ok: true, status: "passed", compactOk: false } });
+    expect(extractOwnerTotals({ byOwner: null, ownerCommands: [null, { id: 1 }] })).toEqual({});
+  });
+
+  it.each([
+    { ...current, byOwner: { ...current.byOwner, centralAgent: current.byOwner.mindModel } },
+    { ...current, parentRunId: "another-cycle" },
+    { ...current, snapshot: { ...snapshot, snapshotId: "another-snapshot" } },
+    { ...current, phase: "complete" },
+    { ...current, checkedAt: "invalid" },
+    { ...current, byOwner: {} },
+  ])("rejects missing lineage, self-observation and false final input", async (value) => {
+    await expect(readCentralGovernanceInput(await inputFile(value))).rejects.toThrow(
+      "central_governance_input_unavailable_or_invalid",
+    );
+  });
+
+  it("rejects oversized or missing explicit input without reading previous latest", async () => {
+    await expect(
+      readCentralGovernanceInput(
+        await inputFile({ ...current, excessive: "x".repeat(512 * 1024) }),
+      ),
+    ).rejects.toThrow("central_governance_input_unavailable_or_invalid");
+    await expect(
+      readCentralGovernanceInput(path.join(os.tmpdir(), "central-input-missing", "missing.json")),
+    ).rejects.toThrow("central_governance_input_unavailable_or_invalid");
+  });
+
+  it("feeds same-cycle results to the brain while reporting older control-room source time", async () => {
+    const input = await readCentralGovernanceInput(await inputFile(current));
+    const oldRead = fsp.readFile;
+    const read = vi.spyOn(fsp, "readFile").mockImplementation(async (file, options) => {
+      if (typeof file === "string" && file.endsWith("lcx-control-room-latest.json")) {
+        return JSON.stringify({ generatedAt: "2026-10-07T02:00:00.000Z" });
+      }
+      if (typeof file === "string" && file.endsWith("lcx-learning-workflow-latest.json")) {
+        return "{}";
+      }
+      if (typeof file === "string" && file.endsWith("lcx-governance-autopilot-latest.json")) {
+        throw new Error("should not read old governance");
+      }
+      return oldRead(file, options);
+    });
+    try {
+      const perceived = await buildPerception(
+        [],
+        { objective: "current owner evidence", focus: "general" },
+        input,
+      );
+      const propose = vi.fn(async (value: CentralPerception) => {
+        expect(value.ownerTotals.mindModel).toMatchObject({ ok: false });
+        expect(value.controlRoom.governanceDigest).toMatchObject({
+          status: "pre_decision",
+          checkedAt: current.checkedAt,
+        });
+        return {
+          kind: "proposed" as const,
+          provider: "offline",
+          modelId: "fixture",
+          plan: { actions: [], note: "saw current owner result" },
+        };
+      });
+      const result = await runCentralHarnessCycle({
+        perception: perceived,
+        brain: { propose },
+        registry: new Map(),
+      });
+      expect(propose).toHaveBeenCalledTimes(1);
+      expect(result.runtimeFreshness).toMatchObject({
+        sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
+        sources: {
+          governance: { sourceObservedAt: current.checkedAt },
+          controlRoom: { sourceObservedAt: "2026-10-07T02:00:00.000Z" },
+        },
+      });
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("actual dry-run CLI accepts the bounded handoff and names its pre-decision source", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-handoff-cli-"));
+    centralTestRoots.push(userHome);
+    const file = await inputFile(current);
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/lcx-central-agent.ts",
+        "--dry-run",
+        "--max-cycles",
+        "1",
+        "--objective",
+        "offline handoff",
+        "--focus",
+        "general",
+        "--governance-input",
+        file,
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        env: { ...process.env, LCX_USER_HOME: userHome },
+        encoding: "utf8",
+        timeout: 30000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const summary = JSON.parse(result.stdout) as { latestRunPath: string; brainReason: string };
+    expect(summary.brainReason).toBe("dry_run_no_llm");
+    const verified = await readCentralGovernanceInput(file);
+    const receipt = JSON.parse(
+      await fsp.readFile(summary.latestRunPath, "utf8"),
+    ) as CentralRunReceipt;
+    expect(receipt.runtimeFreshness).toMatchObject({
+      governanceInput: {
+        parentRunId: current.parentRunId,
+        snapshotId: snapshot.snapshotId,
+        sourceSha256: verified.sourceSha256,
+        phase: "before_central_decision",
+        ownerCount: 1,
+      },
+      sourceBoundary: "same_cycle_owners_and_published_other_snapshots",
+      sources: { governance: { sourceObservedAt: current.checkedAt } },
+    });
   });
 });

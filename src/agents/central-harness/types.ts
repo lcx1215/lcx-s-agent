@@ -1,3 +1,6 @@
+import type { ArtifactRecordingReceipt } from "../artifact-result-recording.js";
+import type { ConfiguredFinanceCallState } from "../configured-finance-model-adapter.js";
+
 /** LCX Central Agent Harness types.
  *
  * The central harness is a single agentic main loop that perceives system
@@ -53,9 +56,9 @@ export type CentralStep = {
   /** Why the harness could not run the owner at all (crash, unparseable output). */
   failureReason?: string;
   /**
-   * What the tool actually returned — the owner's parsed receipt when there was
-   * one — bounded, with everything that did not fit named in
-   * `outcomeDroppedKeys`.
+   * Bounded decision digest from the owner's parsed receipt. It is not a
+   * verbatim tool result; omitted fields are named in `outcomeDroppedKeys` so a
+   * later cycle can request a focused read instead of treating them as absent.
    *
    * A Codex-style loop feeds the tool result back to the model so the next
    * decision is made on evidence rather than on the fact that something ran.
@@ -64,13 +67,20 @@ export type CentralStep = {
    * said* — the reason fields were recorded here and then dropped again by
    * `compactReceipts` before the next cycle could see them. The digest is
    * bounded the same way the injected perception is: what is left out is named,
-   * not silently missing, and the full receipt stays on disk either way.
+   * not silently missing.
    */
   outcome?: Readonly<Record<string, unknown>>;
+  /** Host-bound original result reference, separate from owner-provided receipt fields. */
+  resultArtifact?: ArtifactRecordingReceipt;
   outcomeDroppedKeys?: readonly string[];
+  /** Host-computed original business result identity before archive annotations. */
+  semanticOutcomeSha256?: string;
   startedAtMs?: number;
   finishedAtMs?: number;
 };
+
+/** Trusted host dispatch identity; never model-selected tool arguments. */
+export type CentralToolInvocation = Readonly<{ runId: string }>;
 
 /** Tool registry entry: wraps an existing owner or capability as a bounded tool. */
 export type CentralToolSpec = Readonly<{
@@ -78,6 +88,8 @@ export type CentralToolSpec = Readonly<{
   name: string;
   label: string;
   description: string;
+  /** Source-derived top-level argument names exposed for bounded discovery. */
+  inputKeys?: readonly string[];
   /** Allowed side effects; anything else (esp. forbidden) stays blocked by the gate. */
   allowedSideEffects: readonly CentralAllowedSideEffect[];
   /** Static boundary labels surfaced in receipts (e.g. research_only, no_execution_authority). */
@@ -90,11 +102,19 @@ export type CentralToolSpec = Readonly<{
   execute: (
     args: Readonly<Record<string, unknown>>,
     signal: AbortSignal,
+    invocation?: CentralToolInvocation,
   ) => Promise<Readonly<Record<string, unknown>>>;
+}>;
+
+/** Host-selected decision objective. Task text never grants execution authority. */
+export type CentralHostTask = Readonly<{
+  objective: string;
+  focus: "general" | "finance";
 }>;
 
 /** Perceived snapshot fed to the LLM brain so it can decide what to run next. */
 export type CentralPerception = Readonly<{
+  task?: CentralHostTask;
   observedAt: string;
   ownerTotals: Readonly<Record<string, unknown>>;
   controlRoom: Readonly<Record<string, unknown>>;
@@ -126,13 +146,60 @@ export type CentralContextBudgetReport = Readonly<{
   droppedSections: readonly CentralContextDroppedSection[];
 }>;
 
+/** Bounded Finance lifecycle snapshot present in the perception for this cycle. */
+export type CentralFinancePerceptionEvidence = Readonly<{
+  status: "present" | "omitted_by_budget" | "unavailable";
+  summary?: Readonly<Record<string, unknown>>;
+  omittedBytes?: number;
+}>;
+
+export type CentralEvidenceUse = Readonly<{
+  artifactId: string;
+  sourceSha256: string;
+  field: string;
+  effect: "retain" | "change" | "unresolved";
+  reason: string;
+  scope?: Readonly<Partial<Record<"accountId" | "venue" | "instrument" | "ruleId", string>>>;
+}>;
+export type CentralVerifiedEvidenceUse = Omit<CentralEvidenceUse, "scope"> &
+  Readonly<{
+    scope?: CentralEvidenceUse["scope"] & Readonly<{ instruments?: readonly string[] }>;
+    verification: "reference_verified" | "unresolved" | "invalid_reference";
+    gap?: string;
+    sourceValueSha256?: string;
+  }>;
+
 /** The bounded action batch the brain returns (validated by an output contract). */
 export type CentralActionPlan = Readonly<{
   actions: readonly CentralProposedAction[];
+  evidenceUse?: readonly CentralEvidenceUse[];
   note: string;
 }>;
 
+/** Local wall-clock durations for the stages a Central Agent cycle can attribute. */
+export type CentralRunStageDurationsMs = Readonly<{
+  /** Context construction performed by the CLI before the cycle starts. */
+  perceptionBuildMs: number | null;
+  /** Brain adapter call, including response parsing. */
+  brainProposalMs: number | null;
+  /** Deterministic proposal validation and safety-gate work. */
+  deterministicGateMs: number | null;
+  /** Time spent dispatching approved steps. */
+  actionDispatchMs: number | null;
+}>;
+
+/** Safe provenance for one central-brain adapter call; never stores raw response IDs. */
+export type CentralBrainCallEvidence = Readonly<{
+  transport?: ConfiguredFinanceCallState;
+  adapterInvoked: true;
+  providerCallObserved: boolean;
+  observationIdSha256?: string;
+  credentialSource?: "configuration" | "environment" | "auth_profile";
+  reasoningEffort?: "low" | "high" | "max";
+}>;
+
 export type CentralRunReceipt = Readonly<{
+  task?: CentralHostTask;
   schemaVersion: "lcx_central_agent_v1";
   runId: string;
   observedAt: string;
@@ -140,6 +207,9 @@ export type CentralRunReceipt = Readonly<{
   actionsApproved: number;
   actionsBlockedByGate: number;
   steps: readonly CentralStep[];
+  evidenceUse?: readonly CentralVerifiedEvidenceUse[];
+  ruleHandoff?: import("./rule-handoff.js").CentralRuleHandoff;
+  ontologyEdges?: readonly import("../../shared/lcx-ontology.js").LcxOntologyEdge[];
   boundaries: readonly string[];
   /** Model-call evidence (ModelCallReceipt condensed) — provenance for the brain call. */
   brainCall: Readonly<{
@@ -147,6 +217,8 @@ export type CentralRunReceipt = Readonly<{
     modelId: string;
     outcome: "completed" | "failed" | "blocked" | "skipped";
     reason?: string;
+    /** Present when this brain is backed by a model adapter, including failed calls. */
+    modelCall?: CentralBrainCallEvidence;
     /** Brain's one-line plan note, retained across turns (codex retained-reasoning pattern). */
     note?: string;
   }>;
@@ -157,6 +229,12 @@ export type CentralRunReceipt = Readonly<{
    * re-derive it, and so the dropped keys are named rather than silently missing.
    */
   contextBudget: CentralContextBudgetReport;
+  /** Finance snapshot that was available in the bounded perception, retained for audit. */
+  financePerception?: CentralFinancePerceptionEvidence;
+  /** Ages of published runtime snapshots that were included in the perception. */
+  runtimeFreshness?: Readonly<Record<string, unknown>>;
+  /** Stage-level runtime evidence; persistence timing is reported by the latest pointer. */
+  stageDurationsMs: CentralRunStageDurationsMs;
   liveTouched: false;
   providerConfigTouched: false;
   protectedMemoryTouched: false;

@@ -12,6 +12,10 @@ import {
   FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
   type FinanceAsOfMode,
 } from "./finance-data-gateway.js";
+import {
+  appendFinanceFundamentalSnapshot,
+  readFinanceFundamentalSnapshot,
+} from "./finance-fundamental-store.js";
 import { assessFinanceHistoryCoverage } from "./finance-history-coverage.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -86,6 +90,8 @@ export type FinanceResearchBatchOptions = Readonly<{
   totalTimeoutMs?: number;
   retry?: ApiTransportOptions["retry"];
   sourceGovernance?: ApiSourceGovernanceRegistry;
+  /** Explicit existing state directory for bounded macro-series snapshot reuse. */
+  macroSnapshotDirectory?: string;
   realtimeAdapters?: readonly FinanceRealtimeSourceAdapter[];
   collectionAdapters?: readonly FinanceMarketCollectionAdapter[];
   realtimeRegistryOptions?: FinanceRealtimeSourceRegistryOptions;
@@ -115,6 +121,13 @@ export type FinanceResearchBatchJob = PlannedJob &
     historyCoverage?: ReturnType<typeof assessFinanceHistoryCoverage>;
     apiCalls: readonly ApiCallReceipt[];
     freshnessWarnings: readonly string[];
+    sourceReuse?: Readonly<{
+      kind: "durable_collection_snapshot";
+      sourceId: string;
+      snapshotId: string;
+      capturedAt: string;
+      reusedAt: string;
+    }>;
     /** Collection conflicts only compare duplicate identities within one source. */
     conflictAssessment: "gateway" | "duplicate_source_items_only" | "not_assessed";
     conflicts: readonly string[];
@@ -266,6 +279,139 @@ function assessReceipt(receipt: SourceReceipt, job: PlannedJob) {
   };
 }
 
+const MACRO_SNAPSHOT_MAX_AGE_MS = 60 * 60_000;
+
+function readReusableMacroSnapshot(input: {
+  directory: string;
+  job: PlannedJob;
+  adapters: readonly FinanceMarketCollectionAdapter[];
+}): ReturnType<typeof readFinanceFundamentalSnapshot> {
+  if (input.job.kind !== "collection") {
+    return undefined;
+  }
+  const job = input.job;
+  if (
+    job.request.collection !== "macro_series" ||
+    (job.request.asOfMode !== undefined && job.request.asOfMode !== "live_now")
+  ) {
+    return undefined;
+  }
+  const candidates = input.adapters.filter((adapter) => adapter.supports(job.request));
+  // Reuse only when the configured job has exactly one eligible source. A cache
+  // hit must not bypass a multi-source comparison or quorum policy.
+  if (candidates.length !== 1) {
+    return undefined;
+  }
+  // The caller's asOf is the knowledge-time boundary. A receipt captured after it
+  // must never enter a historical scheduler run, even when its source timestamp is old.
+  const knownBy = job.request.asOf;
+  const maxAgeMs = Math.min(MACRO_SNAPSHOT_MAX_AGE_MS, job.freshnessMaxMinutes * 60_000);
+  for (const adapter of candidates) {
+    const snapshot = readFinanceFundamentalSnapshot({
+      directory: input.directory,
+      instrument: job.request.instrument,
+      assetClass: job.request.assetClass,
+      collection: "macro_series",
+      sourceId: adapter.id,
+      asOf: job.request.asOf,
+      knownBy,
+      maxAgeMs,
+    });
+    const receipt = snapshot?.receipt;
+    if (
+      !snapshot ||
+      !receipt ||
+      receipt.status !== "ready" ||
+      receipt.request.collection !== "macro_series" ||
+      receipt.request.seriesId !== job.request.seriesId ||
+      receipt.request.limit !== job.request.limit ||
+      (receipt.request.asOfMode !== undefined && receipt.request.asOfMode !== "live_now") ||
+      receipt.selectedSourceIds.length !== 1 ||
+      receipt.selectedSourceIds[0] !== adapter.id ||
+      receipt.records.length === 0 ||
+      receipt.sourceAttempts.length === 0 ||
+      receipt.sourceAttempts.some(
+        (attempt) =>
+          attempt.adapterId !== adapter.id ||
+          attempt.providerName !== adapter.providerName ||
+          attempt.providerRole !== adapter.providerRole ||
+          attempt.status !== "succeeded",
+      ) ||
+      receipt.records.some(
+        (record) =>
+          record.collection !== "macro_series" ||
+          record.providerName !== adapter.providerName ||
+          record.providerRole !== adapter.providerRole ||
+          record.data.seriesId !== job.request.seriesId ||
+          !Number.isFinite(Date.parse(record.observedAt)) ||
+          Date.parse(record.observedAt) > Date.parse(snapshot.capturedAt) ||
+          !Number.isFinite(Date.parse(record.sourceTimestamp)) ||
+          Date.parse(record.sourceTimestamp) > Date.parse(record.observedAt) ||
+          !record.sourceUrlOrArtifact.trim(),
+      )
+    ) {
+      continue;
+    }
+    return snapshot;
+  }
+  return undefined;
+}
+
+function persistValidatedMacroSnapshot(input: {
+  directory: string;
+  job: PlannedJob;
+  receipt: FinanceMarketCollectionReceipt;
+  conflicts: readonly string[];
+}): void {
+  if (input.job.kind !== "collection") {
+    return;
+  }
+  const job = input.job;
+  if (
+    job.request.collection !== "macro_series" ||
+    input.receipt.status !== "ready" ||
+    input.receipt.records.length === 0 ||
+    input.receipt.selectedSourceIds.length !== 1 ||
+    input.receipt.sourceAttempts.length === 0 ||
+    input.conflicts.length > 0 ||
+    input.receipt.sourceAttempts.some(
+      (attempt) =>
+        attempt.adapterId !== input.receipt.selectedSourceIds[0] ||
+        attempt.providerName !== input.receipt.sourceAttempts[0]?.providerName ||
+        attempt.providerRole !== input.receipt.sourceAttempts[0]?.providerRole ||
+        attempt.status !== "succeeded",
+    )
+  ) {
+    return;
+  }
+  const sourceId = input.receipt.selectedSourceIds[0];
+  const observedTimes = input.receipt.records.map((record) => Date.parse(record.observedAt));
+  if (
+    !sourceId ||
+    input.receipt.records.some(
+      (record) =>
+        record.collection !== "macro_series" ||
+        record.data.seriesId !== job.request.seriesId ||
+        record.providerName !== input.receipt.sourceAttempts[0]?.providerName ||
+        record.providerRole !== input.receipt.sourceAttempts[0]?.providerRole ||
+        !Number.isFinite(Date.parse(record.sourceTimestamp)) ||
+        !Number.isFinite(Date.parse(record.observedAt)) ||
+        Date.parse(record.sourceTimestamp) > Date.parse(record.observedAt) ||
+        !record.sourceUrlOrArtifact.trim(),
+    ) ||
+    observedTimes.some((time) => !Number.isFinite(time))
+  ) {
+    return;
+  }
+  const capturedAt = new Date(Math.max(...observedTimes)).toISOString();
+  appendFinanceFundamentalSnapshot({
+    directory: input.directory,
+    sourceId,
+    capturedAt,
+    receipt: input.receipt,
+  });
+}
+
 /** Source orchestration only. This function never invokes a model or selects an answer. */
 export async function runFinanceResearchBatch(
   options: FinanceResearchBatchOptions,
@@ -391,6 +537,21 @@ export async function runFinanceResearchBatch(
     }
   }
 
+  // Give every target its first collection opportunity before spending on
+  // additional jobs for one target. Reservations and hard call limits are unchanged.
+  const targetJobCounts = new Map<string, number>();
+  const jobRounds = new Map<string, number>();
+  for (const job of planned) {
+    const round = targetJobCounts.get(job.targetId) ?? 0;
+    jobRounds.set(job.jobId, round);
+    targetJobCounts.set(job.targetId, round + 1);
+  }
+  const dispatchOrder = planned
+    .map((_, index) => index)
+    .toSorted(
+      (left, right) => jobRounds.get(planned[left].jobId)! - jobRounds.get(planned[right].jobId)!,
+    );
+
   const checkpoint = options.checkpoint
     ? openFinanceRunCheckpoints(
         options.checkpoint,
@@ -398,6 +559,7 @@ export async function runFinanceResearchBatch(
           schema: "finance_checkpoint_v1",
           execution: options.checkpoint.executionFingerprint,
           planned: planned.map(({ correlationId: _correlationId, ...job }) => job),
+          dispatchOrder,
           maxApiCalls,
           maxConcurrency,
           totalTimeoutMs,
@@ -411,6 +573,13 @@ export async function runFinanceResearchBatch(
             provider: adapter.providerName,
             priority: adapter.priority,
           })),
+          macroSnapshotPolicy: options.macroSnapshotDirectory
+            ? {
+                directory: options.macroSnapshotDirectory,
+                maxCaptureAgeMs: MACRO_SNAPSHOT_MAX_AGE_MS,
+                validation: "exact_macro_source_and_batch_freshness_v1",
+              }
+            : undefined,
         }),
         maxApiCalls,
       )
@@ -436,7 +605,7 @@ export async function runFinanceResearchBatch(
       : ("cancelled" as const);
   const worker = async () => {
     while (next < planned.length) {
-      const index = next++;
+      const index = dispatchOrder[next++];
       const job = planned[index];
       const base = {
         ...job,
@@ -491,6 +660,40 @@ export async function runFinanceResearchBatch(
         };
         continue;
       }
+      const macroSnapshot = options.macroSnapshotDirectory
+        ? readReusableMacroSnapshot({
+            directory: options.macroSnapshotDirectory,
+            job,
+            adapters: selectedCollectionAdapters,
+          })
+        : undefined;
+      if (macroSnapshot) {
+        const receipt = macroSnapshot.receipt;
+        const assessment = assessReceipt(receipt, job);
+        const now = new Date().toISOString();
+        const adapterId = receipt.selectedSourceIds[0];
+        jobs[index] = {
+          ...base,
+          receipt,
+          sourceReuse: {
+            kind: "durable_collection_snapshot",
+            sourceId: adapterId,
+            snapshotId: macroSnapshot.snapshotId,
+            capturedAt: macroSnapshot.capturedAt,
+            reusedAt: now,
+          },
+          ...assessment,
+          status:
+            assessment.freshnessWarnings.length > 0 || assessment.conflicts.length > 0
+              ? "needs_review"
+              : "ready",
+          missingEvidence: receipt.missingEvidence,
+        };
+        if (reservation?.status === "reserved") {
+          checkpoint!.complete(job.jobId, reservation.token, jobs[index]);
+        }
+        continue;
+      }
       reservedCallBudget = checkpoint?.reserved() ?? reservedCallBudget;
       active++;
       peakConcurrency = Math.max(peakConcurrency, active);
@@ -532,6 +735,14 @@ export async function runFinanceResearchBatch(
               });
         const apiCalls = receipt.sourceAttempts.flatMap((attempt) => attempt.apiCalls ?? []);
         const assessment = assessReceipt(receipt, job);
+        if (options.macroSnapshotDirectory && job.kind === "collection") {
+          persistValidatedMacroSnapshot({
+            directory: options.macroSnapshotDirectory,
+            job,
+            receipt: receipt as FinanceMarketCollectionReceipt,
+            conflicts: assessment.conflicts,
+          });
+        }
         const historyCoverage =
           job.kind === "collection" && job.request.collection === "eod_history"
             ? assessFinanceHistoryCoverage(
@@ -540,11 +751,18 @@ export async function runFinanceResearchBatch(
               )
             : undefined;
         const coverageGaps = historyCoverage?.gaps ?? [];
+        // Collection receipts own the selected-source quality decision. Their contract permits a
+        // ready partial result when a provider fails but another selected source returns usable
+        // data, while retaining the failure in sourceAttempts/requiredNextSteps. Re-applying a
+        // zero-failed-provider gate here silently demotes usable EOD levels and prevents
+        // deterministic modules from consuming them. Realtime gateway failures remain
+        // review-worthy because they affect quote agreement.
         const requiresReview =
           coverageGaps.length > 0 ||
           assessment.freshnessWarnings.length > 0 ||
           assessment.conflicts.length > 0 ||
-          receipt.sourceAttempts.some((attempt) => attempt.status === "failed");
+          (job.kind === "realtime" &&
+            receipt.sourceAttempts.some((attempt) => attempt.status === "failed"));
         jobs[index] = {
           ...base,
           receipt,

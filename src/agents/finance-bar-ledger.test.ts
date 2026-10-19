@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
 import {
   appendFinanceBars,
   collapseRepeatedBars,
@@ -11,7 +12,10 @@ import {
   readFinanceBarLedger,
   type FinanceBar,
   type FinanceBarAppendInput,
+  type FinanceBarRecord,
 } from "./finance-bar-ledger.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
+import { financeBarLedgerPath } from "./finance-state-dir.js";
 
 const OBSERVED = "2026-09-10T00:00:00Z";
 const directories: string[] = [];
@@ -54,6 +58,59 @@ function pointInput(overrides: Partial<PointInput> = {}): PointInput {
     points: [point("2026-09-01", 100)],
     ...overrides,
   };
+}
+
+/** Older writers filed repeats; build that valid, immutable history without the new write dedupe. */
+function appendLegacyRecord(
+  directory: string,
+  previous: FinanceBarRecord,
+  body: FinanceBarRecord["body"],
+): FinanceBarRecord {
+  const raw: Omit<FinanceBarRecord, "ref"> = {
+    schemaVersion: FINANCE_BAR_RECORD_SCHEMA,
+    recordKey: caseflowFingerprint(body),
+    sequence: previous.sequence + 1,
+    previousRef: previous.ref,
+    recordedAt: OBSERVED,
+    body,
+  };
+  const ref = caseflowFingerprint(raw);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeBarLedgerPath(directory));
+  try {
+    db.prepare(
+      "INSERT INTO finance_bar_records (ref, sequence, previous_ref, recorded_at, body) VALUES (?, ?, ?, ?, ?)",
+    ).run(ref, raw.sequence, raw.previousRef, raw.recordedAt, JSON.stringify(raw));
+  } finally {
+    db.close();
+  }
+  return { ...raw, ref };
+}
+
+type Corruption = "hash" | "sequence" | "previousRef";
+const corruptions: readonly Corruption[] = ["hash", "sequence", "previousRef"];
+
+function corruptStoredRecord(directory: string, record: FinanceBarRecord, corruption: Corruption) {
+  const { ref, ...raw } = record;
+  const changed = {
+    ...raw,
+    ...(corruption === "hash" ? { recordedAt: "2026-09-11T00:00:00Z" } : {}),
+    ...(corruption === "sequence" ? { sequence: raw.sequence + 1 } : {}),
+    ...(corruption === "previousRef" ? { previousRef: "0".repeat(64) } : {}),
+  };
+  // Chain cases have a valid content hash and schema, isolating back-link/sequence verification.
+  const changedRef = corruption === "hash" ? ref : caseflowFingerprint(changed);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeBarLedgerPath(directory));
+  try {
+    db.prepare("UPDATE finance_bar_records SET ref=?, body=? WHERE ref=?").run(
+      changedRef,
+      JSON.stringify(changed),
+      ref,
+    );
+  } finally {
+    db.close();
+  }
 }
 
 afterAll(async () => {
@@ -339,6 +396,181 @@ describe("finance-bar-ledger", () => {
     expect(other.bars).toHaveLength(0);
   });
 
+  it.each(
+    [
+      { scope: "as-of", options: { asOf: "2026-09-01T00:00:00Z" } },
+      { scope: "instrument", options: { instrument: "AAA" } },
+    ].flatMap(({ scope, options }) =>
+      corruptions.map((corruption) => ({ scope, options, corruption })),
+    ),
+  )("rejects $corruption damage in a tail excluded by $scope", async ({ options, corruption }) => {
+    const directory = await storeDirectory();
+    await appendFinanceBars(directory, ohlcvInput({ observedAt: "2026-09-01T00:00:00Z" }));
+    const tail = await appendFinanceBars(
+      directory,
+      ohlcvInput({ instrument: "BBB", observedAt: "2026-09-02T00:00:00Z" }),
+    );
+    // Establish that the narrow projection is valid before changing an excluded record.
+    expect((await readFinanceBarLedger(directory, options)).bars).toHaveLength(1);
+    corruptStoredRecord(directory, tail.record, corruption);
+    await expect(readFinanceBarLedger(directory, options)).rejects.toThrow(
+      corruption === "hash" ? /integrity mismatch/ : /chain mismatch/,
+    );
+  });
+
+  it("rejects damage in an older record belonging to an excluded instrument", async () => {
+    const directory = await storeDirectory();
+    const old = await appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" }));
+    await appendFinanceBars(directory, ohlcvInput());
+    expect((await readFinanceBarLedger(directory, { instrument: "AAA" })).bars).toHaveLength(1);
+    corruptStoredRecord(directory, old.record, "hash");
+    await expect(readFinanceBarLedger(directory, { instrument: "AAA" })).rejects.toThrow(
+      /integrity mismatch/,
+    );
+  });
+
+  it.each(corruptions)(
+    "rejects a duplicate append when its existing holder precedes %s tail damage",
+    async (corruption) => {
+      const directory = await storeDirectory();
+      await appendFinanceBars(directory, ohlcvInput());
+      const tail = await appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" }));
+      corruptStoredRecord(directory, tail.record, corruption);
+      const { DatabaseSync } = requireNodeSqlite();
+      const db = new DatabaseSync(financeBarLedgerPath(directory), { readOnly: true });
+      try {
+        const before = db
+          .prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence")
+          .all();
+        await expect(appendFinanceBars(directory, ohlcvInput())).rejects.toThrow(
+          corruption === "hash" ? /integrity mismatch/ : /chain mismatch/,
+        );
+        expect(
+          db.prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence").all(),
+        ).toEqual(before);
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+  it("collapses a valid historical replay across sources and preserves its first observation", async () => {
+    const directory = await storeDirectory();
+    const first = await appendFinanceBars(
+      directory,
+      ohlcvInput({ bars: [{ ...ohlcv("2026-09-01", 100, 104, 98, 102), volume: 1000 }] }),
+    );
+    const replay = appendLegacyRecord(directory, first.record, {
+      ...first.record.body,
+      provenance: { origin: "another-source" },
+      observedAt: "2026-09-11T00:00:00Z",
+    });
+    const ledger = await readFinanceBarLedger(directory);
+    expect(ledger.bars).toEqual(first.record.body.bars);
+    expect(ledger.collapsedRepeats).toBe(1);
+    expect(ledger.divergentDates).toEqual([]);
+    expect(ledger.recordCount).toBe(2);
+    expect(ledger.headRef).toBe(replay.ref);
+  });
+
+  it.each([
+    { field: "OHLC", changes: { open: 101, high: 105, low: 97 } },
+    { field: "volume", changes: { volume: 2000 } },
+  ])(
+    "retains different $field at the same close without claiming a close disagreement",
+    async ({ changes }) => {
+      const directory = await storeDirectory();
+      const first = await appendFinanceBars(
+        directory,
+        ohlcvInput({ bars: [{ ...ohlcv("2026-09-01", 100, 104, 98, 102), volume: 1000 }] }),
+      );
+      const second = appendLegacyRecord(directory, first.record, {
+        ...first.record.body,
+        provenance: { origin: "another-source" },
+        bars: first.record.body.bars.map((bar) => ({ ...bar, ...changes })),
+      });
+      const ledger = await readFinanceBarLedger(directory);
+      expect(ledger.bars).toEqual([...first.record.body.bars, ...second.body.bars]);
+      expect(ledger.collapsedRepeats).toBe(0);
+      expect(ledger.divergentDates).toEqual([]);
+    },
+  );
+
+  it("projects mixed historical replays and disagreements while retaining whole-chain count and head", async () => {
+    const directory = await storeDirectory();
+    const first = await appendFinanceBars(
+      directory,
+      ohlcvInput({ observedAt: "2026-09-01T00:00:00Z" }),
+    );
+    const body = first.record.body;
+    const replay = appendLegacyRecord(directory, first.record, {
+      ...body,
+      observedAt: "2026-09-02T00:00:00Z",
+      provenance: { origin: "source-b" },
+    });
+    const other = appendLegacyRecord(directory, replay, {
+      ...body,
+      instrument: "ETHUSD",
+      observedAt: "2026-09-02T00:00:00Z",
+      bars: body.bars.map((bar) => ({ ...bar, instrument: "ETHUSD" })),
+    });
+    const revised = appendLegacyRecord(directory, other, {
+      ...body,
+      observedAt: "2026-09-03T00:00:00Z",
+      provenance: { origin: "source-c" },
+      bars: body.bars.map((bar) => ({ ...bar, close: 99 })),
+    });
+    const nextDay = appendLegacyRecord(directory, revised, {
+      ...body,
+      observedAt: "2026-09-04T00:00:00Z",
+      bars: body.bars.map((bar) => ({ ...bar, date: "2026-09-02" })),
+    });
+    // A,B,B and A,B,A remain two values in first-observed order, even with another key between.
+    const repeatedRevision = appendLegacyRecord(directory, nextDay, {
+      ...revised.body,
+      observedAt: "2026-09-05T00:00:00Z",
+    });
+    const repeatedFirst = appendLegacyRecord(directory, repeatedRevision, {
+      ...body,
+      observedAt: "2026-09-06T00:00:00Z",
+      provenance: { origin: "source-d" },
+    });
+    const tail = appendLegacyRecord(directory, repeatedFirst, {
+      ...other.body,
+      observedAt: "2026-09-07T00:00:00Z",
+      bars: other.body.bars.map((bar) => ({ ...bar, close: 99 })),
+    });
+
+    const all = await readFinanceBarLedger(directory);
+    expect(all.bars).toEqual([
+      ...body.bars,
+      ...revised.body.bars,
+      ...nextDay.body.bars,
+      ...other.body.bars,
+      ...tail.body.bars,
+    ]);
+    expect(all.divergentDates).toEqual(["AAA@2026-09-01", "ETHUSD@2026-09-01"]);
+    expect(all.collapsedRepeats).toBe(3);
+
+    const instrument = await readFinanceBarLedger(directory, { instrument: "AAA" });
+    expect(instrument.bars).toEqual([...body.bars, ...revised.body.bars, ...nextDay.body.bars]);
+    expect(instrument.divergentDates).toEqual(["AAA@2026-09-01"]);
+    expect(instrument.collapsedRepeats).toBe(3);
+
+    const earlier = await readFinanceBarLedger(directory, {
+      instrument: "AAA",
+      asOf: "2026-09-02T00:00:00Z",
+    });
+    expect(earlier.bars).toEqual(body.bars);
+    expect(earlier.divergentDates).toEqual([]);
+    expect(earlier.collapsedRepeats).toBe(1);
+
+    for (const projection of [all, instrument, earlier]) {
+      expect(projection.recordCount).toBe(8);
+      expect(projection.headRef).toBe(tail.ref);
+    }
+  });
+
   it("orders bars by instrument then date", async () => {
     const directory = await storeDirectory();
     await appendFinanceBars(
@@ -382,6 +614,168 @@ describe("finance-bar-ledger", () => {
     const second = await readFinanceBarLedger(directory);
     expect(JSON.stringify(first)).toEqual(JSON.stringify(second));
     expect(first.recordCount).toBe(1);
+  });
+
+  it("lists retained selectable sources at the cutoff without choosing a winner", async () => {
+    const directory = await storeDirectory();
+    const source = { origin: "vendor", sourceUrlOrArtifact: "fixture://daily" };
+    await appendFinanceBars(directory, ohlcvInput({ provenance: source }));
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        provenance: { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+        bars: [ohlcv("2026-09-01", 100, 105, 98, 103)],
+      }),
+    );
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        instrument: "BBB",
+        provenance: { origin: "foreign", sourceUrlOrArtifact: "fixture://foreign" },
+      }),
+    );
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        observedAt: "2026-09-11T00:00:00Z",
+        provenance: { origin: "future", sourceUrlOrArtifact: "fixture://future" },
+        bars: [ohlcv("2026-09-02", 100, 105, 98, 103)],
+      }),
+    );
+    const plain = await readFinanceBarLedger(directory, { instrument: "AAA", asOf: OBSERVED });
+    const listed = await readFinanceBarLedger(directory, {
+      instrument: "AAA",
+      asOf: OBSERVED,
+      includeSources: true,
+    });
+    expect(listed.sourceCatalog?.sources.map((item) => item.source)).toEqual([
+      source,
+      { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+    ]);
+    expect(listed.sourceCatalog?.omittedRecordCount).toBe(0);
+    expect(listed.bars).toEqual(plain.bars);
+    expect(listed.divergentDates).toEqual(["AAA@2026-09-01"]);
+    expect(plain.sourceCatalog).toBeUndefined();
+  });
+
+  it("bounds provenance choices and counts omitted records without inventing deduped labels", async () => {
+    const directory = await storeDirectory();
+    for (let i = 0; i < 7; i += 1) {
+      await appendFinanceBars(
+        directory,
+        ohlcvInput({
+          provenance: {
+            origin: `source-${i}`,
+            sourceUrlOrArtifact: i === 6 ? "长".repeat(400) : `fixture://${i}`,
+          },
+          bars: [ohlcv(`2026-09-${String(i + 1).padStart(2, "0")}`, 100, 104, 98, 102)],
+        }),
+      );
+    }
+    const listed = await readFinanceBarLedger(directory, { includeSources: true });
+    expect(listed.sourceCatalog?.sources).toHaveLength(4);
+    expect(listed.sourceCatalog?.omittedRecordCount).toBe(3);
+    const selected = await readFinanceBarLedger(directory, {
+      source: listed.sourceCatalog!.sources[0].source,
+      includeSources: true,
+    });
+    expect(selected.sourceCatalog).toEqual(listed.sourceCatalog);
+    expect(selected.bars).toHaveLength(1);
+    expect(selected.sourceSelection?.matchedRecordCount).toBe(1);
+  });
+
+  it("selects exact origin and URL while keeping all-source disagreement visible", async () => {
+    const directory = await storeDirectory();
+    const source = { origin: "vendor", sourceUrlOrArtifact: "fixture://daily?feed=a" };
+    await appendFinanceBars(directory, ohlcvInput({ provenance: source }));
+    const tail = await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        provenance: { ...source, sourceUrlOrArtifact: "fixture://daily?feed=b" },
+        bars: [ohlcv("2026-09-01", 100, 105, 98, 103)],
+      }),
+    );
+    const all = await readFinanceBarLedger(directory);
+    const selected = await readFinanceBarLedger(directory, { instrument: "AAA", source });
+    expect(all.bars).toHaveLength(2);
+    expect(all.divergentDates).toEqual(["AAA@2026-09-01"]);
+    expect(all.sourceSelection).toBeUndefined();
+    expect(selected.bars.map((bar) => bar.close)).toEqual([102]);
+    expect(selected.divergentDates).toEqual([]);
+    expect(selected.headRef).toBe(tail.headRef);
+    expect(selected.recordCount).toBe(2);
+    expect(selected.sourceSelection).toEqual({
+      requested: source,
+      matchedRecordCount: 1,
+      excludedRecordCount: 1,
+      allSourcesDivergentDates: ["AAA@2026-09-01"],
+      boundary: "exact_retained_provenance_not_verified_coverage_or_adjustment",
+    });
+    expect(await readFinanceBarLedger(directory)).toEqual(all);
+  });
+
+  it("preserves selected-source revisions and the original cutoff", async () => {
+    const directory = await storeDirectory();
+    const source = { origin: "vendor", sourceUrlOrArtifact: "fixture://daily" };
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({ provenance: source, observedAt: "2026-09-01T00:00:00Z" }),
+    );
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        provenance: source,
+        observedAt: "2026-09-02T00:00:00Z",
+        bars: [ohlcv("2026-09-01", 100, 105, 98, 103)],
+      }),
+    );
+    const before = await readFinanceBarLedger(directory, { source, asOf: "2026-09-01T00:00:00Z" });
+    expect(before.bars).toHaveLength(1);
+    expect(before.sourceSelection?.allSourcesDivergentDates).toEqual([]);
+    const revised = await readFinanceBarLedger(directory, { source });
+    expect(revised.bars).toHaveLength(2);
+    expect(revised.divergentDates).toEqual(["AAA@2026-09-01"]);
+  });
+
+  it("does not invent deduplicated source labels or fall back to another source", async () => {
+    const directory = await storeDirectory();
+    await appendFinanceBars(directory, ohlcvInput());
+    const source = { origin: "other", sourceUrlOrArtifact: "fixture://other" };
+    expect((await appendFinanceBars(directory, ohlcvInput({ provenance: source }))).appended).toBe(
+      false,
+    );
+    const selected = await readFinanceBarLedger(directory, { source });
+    expect(selected.bars).toEqual([]);
+    expect(selected.sourceSelection).toMatchObject({
+      matchedRecordCount: 0,
+      excludedRecordCount: 1,
+    });
+  });
+
+  it.each(corruptions)("rejects %s damage outside the selected source", async (corruption) => {
+    const directory = await storeDirectory();
+    const source = { origin: "selected", sourceUrlOrArtifact: "fixture://selected" };
+    await appendFinanceBars(directory, ohlcvInput({ provenance: source }));
+    const tail = await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        provenance: { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+        bars: [ohlcv("2026-09-02", 100, 104, 98, 102)],
+      }),
+    );
+    corruptStoredRecord(directory, tail.record, corruption);
+    await expect(readFinanceBarLedger(directory, { source })).rejects.toThrow(
+      corruption === "hash" ? /integrity mismatch/ : /chain mismatch/,
+    );
+  });
+
+  it("source-filtered absent reads do not create a book", async () => {
+    const directory = await storeDirectory();
+    const source = { origin: "missing", sourceUrlOrArtifact: "fixture://missing" };
+    const empty = await readFinanceBarLedger(directory, { source });
+    expect(empty.bars).toEqual([]);
+    expect(empty.sourceSelection).toMatchObject({ requested: source, matchedRecordCount: 0 });
+    expect(await fs.readdir(directory)).toEqual([]);
   });
 
   it("stamps the record schema on every stored record", async () => {

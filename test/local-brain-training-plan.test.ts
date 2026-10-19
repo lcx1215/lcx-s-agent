@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildCommercialAcceptanceHarness } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
 import {
+  compactCommercialAcceptanceFailures,
+  readCommercialAcceptanceFeedback,
   activeGuardAdapterTruthSnapshot,
   activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
@@ -10,6 +14,11 @@ import {
   inspectMiniMaxTeacherRuntimeConfig,
   nativeContractRepairCases,
 } from "../scripts/operator/local-brain-training-plan.js";
+import {
+  boundaryFromFlags,
+  buildLcxRunReceipt,
+  createLcxRunSnapshot,
+} from "../src/shared/lcx-run-receipt.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -1714,7 +1723,7 @@ describe("local-brain-training-plan", () => {
       expect(plan.moduleLearningReview).toMatchObject({
         counts: expect.objectContaining({
           weakModuleLearning: 1,
-          evalAbsorbed: 1,
+          evalAbsorbed: 0,
           boundaryViolations: 1,
         }),
       });
@@ -1840,6 +1849,98 @@ describe("local-brain-training-plan", () => {
     } finally {
       await fs.rm(worktree, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("commercial acceptance diagnostic feedback", () => {
+  it("holds missing pins, old/same-round identities and preserves bounded native failures", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-acceptance-feedback-reader-"));
+    try {
+      const now = new Date().toISOString();
+      const at = new Date(Date.parse(now) - 60_000).toISOString();
+      const snapshot = createLcxRunSnapshot({
+        observedAt: at,
+        sourceCommit: "a".repeat(40),
+        sourceBranch: "private-component",
+        authorityOwner: "lcx-governance-autopilot",
+      });
+      const receipt = buildLcxRunReceipt({
+        runId: "prior-native-component",
+        owner: "lcx-governance-autopilot",
+        phase: "observe",
+        status: "blocked",
+        checkedAt: at,
+        snapshot,
+        boundary: boundaryFromFlags({ scope: "local_governance_autopilot_only" }),
+        nextAction: "review native missing owners",
+      });
+      const native = buildCommercialAcceptanceHarness({});
+      const compact = compactCommercialAcceptanceFailures(native);
+      expect(compact.failures).toHaveLength(3);
+      expect(compact.omittedFailures).toBe(native.summary.failed + native.summary.blocked - 3);
+      const prior = {
+        boundary: "local_governance_autopilot_only",
+        checkedAt: at,
+        runId: receipt.runId,
+        runReceipt: receipt,
+        snapshot,
+        owners: {
+          commercialAcceptance: {
+            sourceObservedAt: at,
+            failedGates: native.failedGates,
+            blockedGates: native.blockedGates,
+            failureDiagnostics: compact,
+          },
+        },
+      };
+      const target = path.join(root, "prior.json");
+      const raw = `${JSON.stringify(prior)}\n`;
+      await fs.writeFile(target, raw);
+      const host = {
+        receiptPath: target,
+        expectedSha256: createHash("sha256").update(raw).digest("hex"),
+        currentRunId: "new-native-component",
+        observedAt: now,
+      };
+      await expect(readCommercialAcceptanceFeedback(host)).resolves.toMatchObject({
+        status: "observed",
+        failures: compact.failures,
+      });
+      await expect(
+        readCommercialAcceptanceFeedback({ ...host, expectedSha256: undefined }),
+      ).resolves.toMatchObject({
+        status: "held",
+        gaps: ["commercial_acceptance_feedback_pin_missing"],
+      });
+      await expect(
+        readCommercialAcceptanceFeedback({ ...host, currentRunId: receipt.runId }),
+      ).resolves.toMatchObject({
+        status: "held",
+        gaps: ["commercial_acceptance_feedback_same_run"],
+      });
+      await expect(
+        readCommercialAcceptanceFeedback({
+          ...host,
+          observedAt: new Date(Date.parse(at) + 25 * 60 * 60 * 1000).toISOString(),
+        }),
+      ).resolves.toMatchObject({
+        status: "held",
+        gaps: ["commercial_acceptance_feedback_stale_or_future"],
+      });
+      await expect(
+        readCommercialAcceptanceFeedback({ ...host, receiptPath: path.join(root, "missing.json") }),
+      ).resolves.toMatchObject({
+        status: "held",
+        gaps: ["commercial_acceptance_feedback_receipt_unreadable"],
+      });
+      await expect(readCommercialAcceptanceFeedback({})).resolves.toEqual({
+        boundary: "prior_commercial_acceptance_diagnostic_only_no_execution_authority",
+        status: "not_requested",
+        gaps: [],
+      });
+    } finally {
+      await fs.rm(root, { force: true, recursive: true });
     }
   });
 });

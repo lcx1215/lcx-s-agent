@@ -1,0 +1,17 @@
+{
+  "version": 13,
+  "kind": "descriptive_process_port_source_alignment",
+  "scenarios": ["external_visible_language_waterflow"],
+  "changes": [
+    "The existing original reply owner consumes the complete terminal diagnostic summary through its audit event in both accepted and refused branches. This is the summary-to-reply-audit port.",
+    "The guarded body separately passes into dispatch and the original receiver. A successful reply never sends diagnostic summary text as its answer.",
+    "The original later presentation callback reads the reviewed accepted body again; this establishes a local subsequent read, not correction learning or cross-turn model adoption."
+  ],
+  "retained": "All 11 nodes, 14 forward edges, 5 filters and the subsequent readability-to-normalizer feedback edge. Original reply, dispatch and sender ownership is preserved; no runtime route added.",
+  "compatibility": "Descriptive owner and port correction only, canonical ontology version/relation/state vocabulary unchanged. A producer field alias remains invalid as consumer evidence. Each indexed port requires its own original field and same-attempt identity.",
+  "authority": "No scheduling, provider or model run, external send, execution authority or risk threshold change.",
+  "limits": [
+    "Local event custody does not establish independent content review, source trust, semantic quality, natural model adoption or external visible delivery.",
+    "This descriptive migration is not a relation or state migration of the canonical ontology registry."
+  ]
+}

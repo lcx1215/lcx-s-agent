@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "scenarioIds": ["provider_council_evidence_waterflow", "commercial_acceptance_harness_waterflow"],
+  "fromVersion": 3,
+  "toVersion": 4,
+  "reason": "Propagate same-run original role artifact readback into acceleration and commercial acceptance; a written receipt does not establish completed roles.",
+  "changes": {
+    "preservedNodesAndEdges": true,
+    "readbackOwner": "scripts/operator/lcx-provider-council-acceleration.ts",
+    "acceptanceOwner": "scripts/operator/lcx-commercial-acceptance-harness.ts",
+    "receiptCompatibility": "Add optional councilRunEvidence to the existing acceleration receipt. Completion claims without source-bound readback remain unconfirmed. Historical coverage and local work-deferral reasons retain separate meanings.",
+    "requiredRoles": "Use the original owner's configured required roles; do not re-enable disabled roles. No ontology relation/state changes."
+  },
+  "nonEffects": [
+    "no provider/model configuration changes",
+    "no forced paid rerun",
+    "no external delivery or trading permission changes",
+    "no new automation or source-truth claim"
+  ],
+  "verification": [
+    "src/agents/provider-council-handoff.test.ts",
+    "test/lcx-commercial-acceptance-harness.test.ts",
+    "test/lcx-provider-council-acceleration.test.ts"
+  ],
+  "remainingGap": "Same-run role completion attribution does not establish source-conflict arbitration, natural semantic adoption, external delivery or a complete whole-scene waterflow."
+}

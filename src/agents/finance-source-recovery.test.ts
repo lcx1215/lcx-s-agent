@@ -32,6 +32,73 @@ function batch(jobs: unknown[]) {
 }
 
 describe("finance source recovery", () => {
+  it("accepts the original raw batch and its receipt wrapper with the same recovery plan", () => {
+    const original = batch([job("raw-batch")]);
+    expect(buildFinanceSourceRecoveryPlan(original, AS_OF)).toEqual(
+      buildFinanceSourceRecoveryPlan({ batch: original }, AS_OF),
+    );
+    expect(() => buildFinanceSourceRecoveryPlan({ batch: undefined }, AS_OF)).toThrow();
+  });
+  it.each([
+    { transportError: "network_error", networkCode: "ECONNRESET", action: "retry" },
+    { transportError: "timeout", action: "retry" },
+    { transportError: "http_error", httpStatus: 503, action: "retry" },
+    { transportError: "forbidden", httpStatus: 403, action: "resolve_access" },
+    { transportError: "network_error", networkCode: "CERT_HAS_EXPIRED", action: "review_evidence" },
+  ])(
+    "keeps the underlying HTTP classification through a collect wrapper: $transportError $networkCode $httpStatus",
+    ({ action, ...failure }) => {
+      const source = batch([
+        {
+          ...job("macro"),
+          apiCalls: [
+            {
+              status: "failed",
+              finishedAt: AS_OF,
+              operation: "http_get",
+              source: "treasury",
+              ...failure,
+            },
+            {
+              status: "failed",
+              finishedAt: AS_OF,
+              operation: "collect",
+              source: "treasury",
+              transportError: "source_error",
+            },
+          ],
+        },
+      ]);
+      expect(buildFinanceSourceRecoveryPlan(source, AS_OF).entries[0].action).toBe(action);
+    },
+  );
+
+  it("keeps an independent adapter parse failure reviewable despite another source's reset", () => {
+    const source = batch([
+      {
+        ...job("mixed"),
+        apiCalls: [
+          {
+            status: "failed",
+            finishedAt: AS_OF,
+            operation: "http_get",
+            source: "first",
+            transportError: "network_error",
+            networkCode: "ECONNRESET",
+          },
+          {
+            status: "failed",
+            finishedAt: AS_OF,
+            operation: "collect",
+            source: "second",
+            transportError: "source_error",
+          },
+        ],
+      },
+    ]);
+    expect(buildFinanceSourceRecoveryPlan(source, AS_OF).entries[0].action).toBe("review_evidence");
+  });
+
   it("separates transient, permission, quality and unknown-dispatch failures", () => {
     const plan = buildFinanceSourceRecoveryPlan(
       batch([

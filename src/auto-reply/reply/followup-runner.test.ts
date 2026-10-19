@@ -1,8 +1,10 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadSessionStore, saveSessionStore, type SessionEntry } from "../../config/sessions.js";
+import type { ReplyPayload } from "../types.js";
 import type { FollowupRun } from "./queue.js";
 import { createMockTypingController } from "./test-helpers.js";
 
@@ -46,6 +48,79 @@ beforeEach(() => {
   isRoutableChannelMock.mockReset();
   isRoutableChannelMock.mockImplementation((ch: string | undefined) =>
     Boolean(ch?.trim() && ROUTABLE_TEST_CHANNELS.has(ch.trim().toLowerCase())),
+  );
+});
+
+describe("commercial planning advisory queued callback", () => {
+  it.each(["bound", "wrong_hash", "legacy", "aborted"] as const)(
+    "projects only the %s original queued ask before generation",
+    async (boundary) => {
+      runEmbeddedPiAgentMock.mockClear();
+      runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [], meta: {} });
+      const ask = "当前 QQQ 的报价和来源需要核对。";
+      const controller = new AbortController();
+      if (boundary === "aborted") {
+        controller.abort();
+      }
+      const queued = createQueuedRun({
+        prompt: ask,
+        commercialAuditAsk: ask,
+        messageId: "planning-queued-message",
+        run: { extraSystemPrompt: "existing queued host prompt" },
+      });
+      const runner = createFollowupRunner({
+        opts: {
+          abortSignal: controller.signal,
+          ...(boundary === "legacy"
+            ? {}
+            : {
+                commercialAnswerAudit: {
+                  messageId: queued.messageId!,
+                  askSha256:
+                    boundary === "wrong_hash"
+                      ? "0".repeat(64)
+                      : crypto.createHash("sha256").update(ask).digest("hex"),
+                  input: { calculations: [] },
+                },
+              }),
+        },
+        typing: createMockTypingController(),
+        typingMode: "instant",
+        defaultModel: "anthropic/claude",
+      });
+      await runner(queued);
+      expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(1);
+      const input = runEmbeddedPiAgentMock.mock.calls[0][0] as {
+        prompt: string;
+        extraSystemPrompt: string;
+        runId: string;
+      };
+      expect(input.prompt).toBe(ask);
+      expect(input.runId).toMatch(/^[0-9a-f-]{36}$/u);
+      if (boundary === "bound") {
+        expect(input.extraSystemPrompt).toContain(
+          "existing queued host prompt\n\nLCX predecision advisory",
+        );
+        expect(input.extraSystemPrompt).toContain("finance_data_gateway");
+      } else {
+        expect(input.extraSystemPrompt).toBe("existing queued host prompt");
+      }
+      if (process.env.LCX_COMMERCIAL_PLANNING_PROOF_DIR) {
+        await fs.mkdir(process.env.LCX_COMMERCIAL_PLANNING_PROOF_DIR, { recursive: true });
+        await fs.writeFile(
+          path.join(process.env.LCX_COMMERCIAL_PLANNING_PROOF_DIR, `queued-${boundary}.json`),
+          JSON.stringify(
+            {
+              boundary:
+                "actual_original_queued_model_callback_with_model_transport_mock_no_semantic_adoption",
+              input,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
+    },
   );
 });
 
@@ -576,5 +651,127 @@ describe("createFollowupRunner agentDir forwarding", () => {
     expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(1);
     const call = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0] as { agentDir?: string };
     expect(call?.agentDir).toBe(agentDir);
+  });
+});
+
+describe("queued original completion-claim handoff", () => {
+  const ask = "模型会审是否已完成？";
+  const candidate = "模型会审已完成独立审阅。";
+  it.each(["dispatcher", "origin_route"] as const)(
+    "blocks unbacked completion before the %s delivery seam",
+    async (surface) => {
+      runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [{ text: candidate }], meta: {} });
+      const onBlockReply = vi.fn<(payload: ReplyPayload) => Promise<void>>(async () => {});
+      const runner = createFollowupRunner({
+        opts: { onBlockReply },
+        typing: createMockTypingController(),
+        typingMode: "instant",
+        defaultModel: "anthropic/claude",
+      });
+      await runner(
+        createQueuedRun({
+          prompt: ask,
+          messageId: "queued-council",
+          originatingChannel: surface === "origin_route" ? "slack" : undefined,
+        }),
+      );
+      const sent =
+        surface === "origin_route"
+          ? routeReplyMock.mock.calls[0]?.[0]?.payload
+          : onBlockReply.mock.calls[0]?.[0];
+      expect(sent?.text).toContain("无法核实");
+      expect(sent?.text).not.toContain("已完成独立审阅");
+    },
+  );
+  it("cannot reuse the prior caller receipt for another queued message", async () => {
+    const source = JSON.stringify({
+      version: 2,
+      generatedAt: "2026-10-11T00:00:00Z",
+      messageId: "old-message",
+      userMessage: ask,
+      status: "full",
+      roles: [
+        {
+          role: "deepseek",
+          model: "local/deepseek-fixture",
+          actualProvider: "local",
+          actualModel: "deepseek-fixture",
+          success: true,
+          requestedModelHealth: "healthy",
+          text: "local role output",
+        },
+      ],
+    });
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [{ text: candidate }], meta: {} });
+    const onBlockReply = vi.fn<(payload: ReplyPayload) => Promise<void>>(async () => {});
+    const runner = createFollowupRunner({
+      opts: {
+        onBlockReply,
+        providerCouncilEvidence: {
+          messageId: "old-message",
+          content: source,
+          sha256: crypto.createHash("sha256").update(source).digest("hex"),
+        },
+      },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude",
+    });
+    await runner(
+      createQueuedRun({ prompt: ask, messageId: "new-message", originatingChannel: undefined }),
+    );
+    const sent = onBlockReply.mock.calls[0]?.[0];
+    expect(sent?.text).toContain("无法核实");
+  });
+});
+
+describe("queued matched original council artifact", () => {
+  it("consumes the same original writer artifact before the queued delivery seam", async () => {
+    const sourcePath = process.env.LCX_WATERFLOW_REPLY_COUNCIL_ARTIFACT;
+    const content = sourcePath
+      ? await fs.readFile(sourcePath, "utf8")
+      : JSON.stringify({
+          version: 2,
+          generatedAt: "2026-10-11T00:00:00Z",
+          messageId: "queued-match",
+          userMessage: "模型会审是否已完成？",
+          status: "full",
+          roles: [
+            {
+              role: "deepseek",
+              model: "local/deepseek-fixture",
+              actualProvider: "local",
+              actualModel: "deepseek-fixture",
+              success: true,
+              requestedModelHealth: "healthy",
+              text: "local role output",
+            },
+          ],
+        });
+    const artifact = JSON.parse(content) as { userMessage: string; messageId: string };
+    const text = "模型会审已完成独立审阅。";
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [{ text }], meta: {} });
+    const onBlockReply = vi.fn<(payload: ReplyPayload) => Promise<void>>(async () => {});
+    const runner = createFollowupRunner({
+      opts: {
+        onBlockReply,
+        providerCouncilEvidence: {
+          messageId: artifact.messageId,
+          content,
+          sha256: crypto.createHash("sha256").update(content).digest("hex"),
+        },
+      },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude",
+    });
+    await runner(
+      createQueuedRun({
+        prompt: artifact.userMessage,
+        messageId: artifact.messageId,
+        originatingChannel: undefined,
+      }),
+    );
+    expect(onBlockReply.mock.calls[0]?.[0]?.text).toBe(text);
   });
 });

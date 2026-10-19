@@ -1,27 +1,56 @@
+import { createHash } from "node:crypto";
+import { readFile as readPortfolioFile } from "node:fs/promises";
+import type { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
+import {
+  createAlpacaExecutionQuoteProvider,
+  type AlpacaExecutionQuoteFeed,
+} from "../../src/agents/finance-alpaca-execution-quote.js";
+import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-history-reconciliation.js";
 /**
  * Operator entry for the unattended finance day.
  *
  * Two modes, and the split is the point:
- *   day   - data, signal, drift, rebalance. Zero model calls.
+ *   day   - data, signal and drift; an eligible Alpaca Paper placement gets one bounded model veto review.
  *   night - settle matured calls and build the reflection. Zero model calls.
  *
- * The one place a model is wanted is the self-calibration step, and that is deliberately NOT in
- * this file. Keeping it out means the daily cost is zero no matter how often cron fires, and the
- * expensive step stays a separate, separately-budgeted invocation.
+ * Strategy generation and execution gates remain TypeScript-owned. The configured model may only
+ * approve or veto exact candidates after readiness passes; it cannot choose instruments or sizing.
  *
- * Instruments come from the ACTIVE rule in the strategy ledger, never from a hard-coded list, so
- * the schedule follows the declared rule instead of drifting from it.
+ * The active monthly rule supplies the strategy method and risk parameters; a fresh, validated
+ * universe-selection snapshot supplies this run's symbols. The rule's historical instrument list
+ * is not silently treated as the owner's fixed universe, and a missing/stale snapshot never falls
+ * back to it.
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] \
  *     [--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place]
  */
-
+import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
-import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
+import { financeReadFailureDiagnostic } from "../../src/agents/finance-alpaca-safety-transport.js";
+import {
+  refreshFinanceEodBarsAndMarks,
+  runFinanceDailyCycle,
+} from "../../src/agents/finance-daily-cycle.js";
+import { bindFinanceDailyStrategy } from "../../src/agents/finance-daily-strategy.js";
+import { FinanceHttpBodyAbortError } from "../../src/agents/finance-http-body.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
+import {
+  financePortfolioPlanSchema,
+  validateFinancePortfolioPlan,
+} from "../../src/agents/finance-portfolio-composition.js";
+import { readFinancePositionLedger } from "../../src/agents/finance-position-ledger.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
+import {
+  readFinanceResearchEquityUniverseSnapshot,
+  type FinanceResearchEquityUniverseSnapshot,
+} from "../../src/agents/finance-research-runner.js";
+import {
+  financeRuleReadinessSection,
+  readFinanceRuleReadinessState,
+  type FinanceRuleReadinessState,
+} from "../../src/agents/finance-rule-readiness-state.js";
 import { resolveScopedOverride } from "../../src/agents/finance-scoped-override.js";
 import {
   FINANCE_RESEARCH_SAMPLES_FILENAME,
@@ -29,11 +58,34 @@ import {
   resolveFinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
+import {
+  createFinanceTradeDecisionReviewer,
+  type FinanceTradeDecisionReviewer,
+} from "../../src/agents/finance-trade-decision-review.js";
+import {
+  createFinanceTradeReviewFinancialCapabilities,
+  type FinanceTradeReviewEvidenceScope,
+} from "../../src/agents/finance-trade-review-evidence.js";
+import { createFinanceWriteTransport } from "../../src/agents/finance-write-transport.js";
+import { loadConfig } from "../../src/config/config.js";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 
 // Named in `finance-state-dir.ts` alongside the rest of the plane: the cycle writes these and the
 // calibration reader reads them back, so the names are declared once.
 const SAMPLES_FILE = FINANCE_RESEARCH_SAMPLES_FILENAME;
 const SCORED_FILE = FINANCE_RESEARCH_SCORED_FILENAME;
+
+async function readOpenEquityPositionSymbols(directory: string, asOf: string): Promise<string[]> {
+  const { ledger } = await readFinancePositionLedger(directory, { asOf });
+  return [
+    ...new Set(
+      ledger.positions
+        .filter((position) => position.quantity !== 0)
+        .map((position) => position.instrument.toUpperCase())
+        .filter((instrument) => /^[A-Z][A-Z0-9.]{0,14}$/u.test(instrument)),
+    ),
+  ].toSorted();
+}
 
 /**
  * Read one field of a settled row as text.
@@ -67,13 +119,20 @@ function scoredOutcomeKey(row: Record<string, unknown>): string {
 async function appendScoredOutcomes(
   path: string,
   rows: readonly Record<string, unknown>[],
-): Promise<{ path: string; appended: number; skipped: number }> {
+): Promise<{ path: string; appended: number; skipped: number; sha256?: string; bytes?: number }> {
   let existing: string[] = [];
+  let existingBytes: Buffer | undefined;
   try {
     const { readFile } = await import("node:fs/promises");
-    existing = (await readFile(path, "utf8")).split("\n").filter((line) => line.trim().length > 0);
-  } catch {
-    existing = [];
+    existingBytes = await readFile(path);
+    existing = existingBytes
+      .toString("utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+  } catch (error) {
+    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
+      throw error;
+    }
   }
   const known = new Set<string>();
   for (const line of existing) {
@@ -86,16 +145,33 @@ async function appendScoredOutcomes(
   }
   const fresh = rows.filter((row) => !known.has(scoredOutcomeKey(row)));
   if (fresh.length === 0) {
-    return { path, appended: 0, skipped: rows.length };
+    return {
+      path,
+      appended: 0,
+      skipped: rows.length,
+      ...(existingBytes === undefined
+        ? {}
+        : {
+            sha256: createHash("sha256").update(existingBytes).digest("hex"),
+            bytes: existingBytes.length,
+          }),
+    };
   }
   const { writeFile, rename, mkdir } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
   await mkdir(dirname(path), { recursive: true });
   const lines = [...existing, ...fresh.map((row) => JSON.stringify(row))];
   const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, `${lines.join("\n")}\n`, "utf8");
+  const writtenBytes = Buffer.from(`${lines.join("\n")}\n`, "utf8");
+  await writeFile(tmp, writtenBytes);
   await rename(tmp, path);
-  return { path, appended: fresh.length, skipped: rows.length - fresh.length };
+  return {
+    path,
+    appended: fresh.length,
+    skipped: rows.length - fresh.length,
+    sha256: createHash("sha256").update(writtenBytes).digest("hex"),
+    bytes: writtenBytes.length,
+  };
 }
 
 /**
@@ -126,9 +202,18 @@ type Options = Readonly<{
   asOf: string;
   equity: number;
   band: number;
+  coreWeightFraction: number;
   place: boolean;
+  checkExecution: boolean;
   venue: "paper" | "alpaca";
   equityFromVenue: boolean;
+  syncAlpacaHistory: boolean;
+  portfolioPlanPath?: string;
+  portfolioPlanSha256?: string;
+  portfolioPlanParentRun?: string;
+  portfolioPlanAsOf?: string;
+  portfolioPlanAccount?: string;
+  executionPolicyPath?: string;
   /**
    * Declared risk caps. They are flags rather than constants because a boundary nobody chose
    * is not a boundary: the unattended budget refuses an undeclared cap, and a cap the script
@@ -137,12 +222,14 @@ type Options = Readonly<{
   maxOrderNotional: number;
   maxInstrumentNotional: number;
   maxOrdersPerRun: number;
+  executionQuoteFeed?: AlpacaExecutionQuoteFeed;
+  executionMaxAgeMs?: number;
 }>;
 
 const USAGE =
   "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
-  "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place] " +
-  "[--venue paper|alpaca] [--equity-from-venue] " +
+  "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place | --check-execution] " +
+  "[--portfolio-plan PATH] [--execution-policy PATH] [--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--core-weight N] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
   "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
 
 function positiveNumber(raw: string | undefined, flag: string): number {
@@ -160,19 +247,70 @@ function parseArgs(argv: readonly string[]): Options {
     asOf: new Date().toISOString(),
     equity: 100_000,
     band: 0.05,
+    coreWeightFraction: 0,
     place: false,
+    checkExecution: false,
     venue: "paper" as "paper" | "alpaca",
     equityFromVenue: false,
+    syncAlpacaHistory: false,
     directory: undefined as string | undefined,
+    portfolioPlanPath: undefined as string | undefined,
+    portfolioPlanSha256: undefined as string | undefined,
+    portfolioPlanParentRun: undefined as string | undefined,
+    portfolioPlanAsOf: undefined as string | undefined,
+    portfolioPlanAccount: undefined as string | undefined,
+    executionPolicyPath: undefined as string | undefined,
     // Defaults, not constants: they reproduce the previous behaviour when nothing is passed.
     maxOrderNotional: 10_000,
     maxInstrumentNotional: 20_000,
     maxOrdersPerRun: 8,
+    executionQuoteFeed: undefined as AlpacaExecutionQuoteFeed | undefined,
+    executionMaxAgeMs: undefined as number | undefined,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = argv[index + 1];
-    if (arg === "--json") {
+    if (arg === "--check-execution") {
+      options.checkExecution = true;
+    } else if (arg === "--execution-policy") {
+      if (!next || next.startsWith("--")) {
+        throw new Error("--execution-policy requires a path");
+      }
+      options.executionPolicyPath = next;
+      index += 1;
+    } else if (arg === "--portfolio-plan") {
+      if (!next) {
+        throw new Error("--portfolio-plan requires a path");
+      }
+      options.portfolioPlanPath = next;
+      index += 1;
+    } else if (
+      [
+        "--portfolio-plan-sha256",
+        "--portfolio-plan-parent-run",
+        "--portfolio-plan-as-of",
+        "--portfolio-plan-account",
+      ].includes(arg)
+    ) {
+      if (!next || next.startsWith("--")) {
+        throw new Error(`${arg} requires a value`);
+      }
+      if (arg === "--portfolio-plan-sha256") {
+        options.portfolioPlanSha256 = next;
+      }
+      if (arg === "--portfolio-plan-parent-run") {
+        options.portfolioPlanParentRun = next;
+      }
+      if (arg === "--portfolio-plan-as-of") {
+        options.portfolioPlanAsOf = next;
+      }
+      if (arg === "--portfolio-plan-account") {
+        options.portfolioPlanAccount = next;
+      }
+      index += 1;
+    } else if (arg === "--sync-alpaca-history") {
+      options.syncAlpacaHistory = true;
+    } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--mode") {
       if (next !== "day" && next !== "night") {
@@ -200,6 +338,13 @@ function parseArgs(argv: readonly string[]): Options {
       }
       options.band = parsed;
       index += 1;
+    } else if (arg === "--core-weight") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+        throw new Error(`--core-weight must be between 0 and 1\n${USAGE}`);
+      }
+      options.coreWeightFraction = parsed;
+      index += 1;
     } else if (arg === "--place") {
       options.place = true;
     } else if (arg === "--venue") {
@@ -210,6 +355,15 @@ function parseArgs(argv: readonly string[]): Options {
       index += 1;
     } else if (arg === "--equity-from-venue") {
       options.equityFromVenue = true;
+    } else if (arg === "--execution-quote-feed") {
+      if (next !== "iex" && next !== "sip") {
+        throw new Error("--execution-quote-feed must be iex or sip; no delayed/fallback feed");
+      }
+      options.executionQuoteFeed = next;
+      index += 1;
+    } else if (arg === "--execution-max-age-ms") {
+      options.executionMaxAgeMs = positiveNumber(next, "--execution-max-age-ms");
+      index += 1;
     } else if (arg === "--max-order-notional") {
       options.maxOrderNotional = positiveNumber(next, "--max-order-notional");
       index += 1;
@@ -228,26 +382,235 @@ function parseArgs(argv: readonly string[]): Options {
   return options;
 }
 
-async function activeInstruments(directory: string): Promise<{
-  instruments: readonly string[];
-  ruleIds: readonly string[];
-}> {
-  const read = await readFinanceStrategyRuleLedger(directory, {});
-  const active = read.ledger.rules.filter((rule) => rule.state === "active");
-  const instruments = [...new Set(active.flatMap((rule) => [...rule.instruments]))];
-  return { instruments, ruleIds: active.map((rule) => rule.ruleId) };
-}
-
 export async function runFinanceDailyCycleOperator(
   argv: readonly string[] = process.argv.slice(2),
+  deps: {
+    createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider;
+    createTradeDecisionReviewer?: (
+      scope?: FinanceTradeReviewEvidenceScope,
+    ) => FinanceTradeDecisionReviewer;
+    syncHistory?: typeof syncConfiguredAlpacaPaperHistory;
+    createController?: typeof createFinanceAlpacaCycleController;
+  } = {},
 ): Promise<Record<string, unknown>> {
   const options = parseArgs(argv);
   const directory = options.directory ?? resolveFinanceStateDir().directory;
+  if (
+    options.checkExecution &&
+    (options.place ||
+      options.mode !== "day" ||
+      options.venue !== "alpaca" ||
+      !options.executionPolicyPath)
+  ) {
+    throw new Error(
+      "--check-execution requires day, Alpaca and an execution policy, without --place",
+    );
+  }
+  if (
+    options.mode === "day" &&
+    (options.place || options.checkExecution) &&
+    options.venue === "alpaca" &&
+    (!options.executionQuoteFeed || options.executionMaxAgeMs === undefined)
+  ) {
+    return {
+      directory,
+      mode: options.mode,
+      asOf: options.asOf,
+      ok: false,
+      error: "Alpaca placement requires --execution-quote-feed and --execution-max-age-ms",
+    };
+  }
+
+  let loadedPortfolioPlan: ReturnType<typeof financePortfolioPlanSchema.parse> | undefined;
+  let portfolioPlanReadback: Record<string, unknown> | undefined;
+  let portfolioPlanInput: Record<string, unknown> | undefined;
+  const pinRequested = [
+    options.portfolioPlanSha256,
+    options.portfolioPlanParentRun,
+    options.portfolioPlanAsOf,
+    options.portfolioPlanAccount,
+  ].some((value) => value !== undefined);
+  if ((options.mode === "day" && options.portfolioPlanPath) || pinRequested) {
+    try {
+      if (
+        pinRequested &&
+        (options.mode !== "day" ||
+          !options.portfolioPlanPath ||
+          !options.portfolioPlanSha256 ||
+          !/^[a-f0-9]{64}$/u.test(options.portfolioPlanSha256) ||
+          !options.portfolioPlanParentRun ||
+          !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(options.portfolioPlanParentRun) ||
+          !options.portfolioPlanAsOf ||
+          !options.portfolioPlanAccount)
+      ) {
+        throw new Error("portfolio plan caller binding is incomplete or invalid");
+      }
+      const bytes = await readPortfolioFile(options.portfolioPlanPath!);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      if (pinRequested) {
+        portfolioPlanInput = {
+          read: { path: options.portfolioPlanPath, sha256, bytes: bytes.length },
+          expected: {
+            sha256: options.portfolioPlanSha256,
+            parentRunId: options.portfolioPlanParentRun,
+            asOf: options.portfolioPlanAsOf,
+            accountId: options.portfolioPlanAccount,
+            venue: options.venue,
+          },
+          boundary: "actual_read_not_plan_acceptance_or_execution_authority",
+        };
+      }
+      if (pinRequested && sha256 !== options.portfolioPlanSha256) {
+        throw new Error("portfolio plan bytes do not match producer SHA256");
+      }
+      loadedPortfolioPlan = financePortfolioPlanSchema.parse(JSON.parse(bytes.toString("utf8")));
+      if (portfolioPlanInput) {
+        portfolioPlanInput.parsedScope = {
+          asOf: loadedPortfolioPlan.asOf,
+          accountId: loadedPortfolioPlan.accountId,
+          venue: loadedPortfolioPlan.venue,
+        };
+      }
+      if (
+        pinRequested &&
+        (loadedPortfolioPlan.asOf !== options.portfolioPlanAsOf ||
+          loadedPortfolioPlan.accountId !== options.portfolioPlanAccount ||
+          loadedPortfolioPlan.venue !== options.venue)
+      ) {
+        throw new Error("portfolio plan producer scope does not match caller");
+      }
+      validateFinancePortfolioPlan(loadedPortfolioPlan, options.asOf, options.venue);
+      if (pinRequested) {
+        portfolioPlanReadback = {
+          path: options.portfolioPlanPath,
+          sha256,
+          parentRunId: options.portfolioPlanParentRun,
+          asOf: loadedPortfolioPlan.asOf,
+          accountId: loadedPortfolioPlan.accountId,
+          venue: loadedPortfolioPlan.venue,
+          status: "verified",
+        };
+      }
+    } catch (error) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        failureKind: "portfolio_plan_binding_gate",
+        error: error instanceof Error ? error.message : String(error),
+        ...(options.portfolioPlanParentRun ? { parentRunId: options.portfolioPlanParentRun } : {}),
+        ...(portfolioPlanInput ? { portfolioPlanInput } : {}),
+      };
+    }
+  }
+
+  let universeSnapshot: FinanceResearchEquityUniverseSnapshot | undefined;
+  if (options.mode === "day") {
+    try {
+      universeSnapshot = readFinanceResearchEquityUniverseSnapshot(directory, options.asOf);
+    } catch (error) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        failureKind: "universe_selection_gate",
+        error:
+          error instanceof Error
+            ? `validated equity universe unavailable: ${error.message}`
+            : "validated equity universe unavailable",
+      };
+    }
+    if (universeSnapshot.selected.length === 0) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        failureKind: "universe_selection_gate",
+        error: "validated equity universe is empty; no strategy fallback is permitted",
+      };
+    }
+  }
+
+  const strategyUniverse = universeSnapshot
+    ? {
+        source: "finance-universe-selection-latest.json",
+        schemaVersion: universeSnapshot.schemaVersion,
+        asOf: universeSnapshot.asOf,
+        generatedAt: universeSnapshot.generatedAt,
+        liquiditySessionDate: universeSnapshot.liquidityPreScreen.sessionDate,
+        selectionMethod: universeSnapshot.selectionEvidence.method,
+        screenLimit: universeSnapshot.screenLimit,
+        candidateCount: universeSnapshot.candidateCount,
+        screenedCount: universeSnapshot.screenedCount,
+        eligibleCount: universeSnapshot.eligibleCount,
+        selectedCount: universeSnapshot.selected.length,
+        selected: [...universeSnapshot.selected],
+      }
+    : undefined;
+
+  let historySync: Awaited<ReturnType<typeof syncConfiguredAlpacaPaperHistory>> | undefined;
+  let historyReconciliation: Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>> | undefined;
+  if (options.syncAlpacaHistory) {
+    const historyStartedAt = performance.now();
+    let historyStage: "history_sync" | "history_reconciliation" = "history_sync";
+    try {
+      historySync = await (deps.syncHistory ?? syncConfiguredAlpacaPaperHistory)({ directory });
+      historyStage = "history_reconciliation";
+      historyReconciliation = await reconcileFinanceBrokerHistory(directory, historySync.accountId);
+      if (
+        historySync.status !== "raw_history_synced" ||
+        (options.mode === "day" &&
+          options.place &&
+          options.venue === "alpaca" &&
+          !options.executionPolicyPath &&
+          historySync.accountReconciliation?.status !== "reconciled")
+      ) {
+        return {
+          directory,
+          mode: options.mode,
+          asOf: options.asOf,
+          ok: false,
+          error: "Alpaca history sync/reconciliation incomplete; cycle not started",
+          historySync,
+          historyReconciliation,
+        };
+      }
+    } catch (error) {
+      const diagnostic = financeReadFailureDiagnostic(error);
+      const cancelled =
+        error instanceof FinanceHttpBodyAbortError ||
+        (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"));
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        error: "Alpaca history sync failed; cycle not started",
+        historyFailure: {
+          stage: historyStage,
+          category: cancelled
+            ? "cancelled"
+            : diagnostic.code === "transport_cause_unavailable"
+              ? "unclassified"
+              : "transport",
+          ...diagnostic,
+          elapsedMs: Math.max(0, Math.round(performance.now() - historyStartedAt)),
+        },
+      };
+    }
+  }
+
   let equity = options.equity;
   let equitySource: "flag" | "default" | "venue" | "venue-failed" = argv.includes("--equity")
     ? "flag"
     : "default";
-  if (options.equityFromVenue) {
+  if (
+    options.equityFromVenue ||
+    (options.mode === "day" && options.place && options.venue === "alpaca")
+  ) {
     if (options.venue !== "alpaca") {
       return {
         directory,
@@ -257,41 +620,233 @@ export async function runFinanceDailyCycleOperator(
         error: "--equity-from-venue requires --venue alpaca",
       };
     }
-    const snapshot = await fetchAlpacaAccountSnapshot();
-    if (snapshot.ok) {
+    const snapshot = await fetchAlpacaAccountSnapshot({ directory });
+    if (!snapshot.ok) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        equitySource: "venue-failed",
+        error: `account verification failed: ${snapshot.reason}`,
+      };
+    }
+    if (
+      !Number.isFinite(snapshot.account.equity) ||
+      snapshot.account.equity <= 0 ||
+      snapshot.account.status !== "ACTIVE" ||
+      snapshot.account.tradingBlocked
+    ) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        equitySource: "venue",
+        error: "account is not active, trading is blocked, or equity is invalid",
+      };
+    }
+    if (
+      options.equityFromVenue ||
+      (options.mode === "day" && options.place && !argv.includes("--equity"))
+    ) {
       equity = snapshot.account.equity;
       equitySource = "venue";
-    } else {
-      equitySource = "venue-failed";
+    } else if (options.mode === "day" && options.place && equity > snapshot.account.equity) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        equitySource,
+        error: "declared strategy equity exceeds verified account equity",
+      };
     }
   }
 
-  const base = { directory, mode: options.mode, asOf: options.asOf, equity, equitySource };
+  const base = {
+    ...(portfolioPlanReadback ? { portfolioPlanReadback } : {}),
+    directory,
+    mode: options.mode,
+    asOf: options.asOf,
+    equity,
+    equitySource,
+    ...(strategyUniverse ? { strategyUniverse } : {}),
+    ...(historySync ? { historySync } : {}),
+    ...(historyReconciliation ? { historyReconciliation } : {}),
+  };
 
   try {
     let instruments: readonly string[] = [];
     let ruleIds: readonly string[] = [];
-    let ruleIssue = "";
-    try {
-      const active = await activeInstruments(directory);
-      instruments = active.instruments;
-      ruleIds = active.ruleIds;
-    } catch (error) {
-      // A day run with no rule book has nothing to collect and nothing to trade, so it stops.
-      // A night run settles calls that were already recorded: it reads the samples, never the
-      // rules. Failing it here would end the reflection loop on a fault in a book it never reads.
-      if (options.mode === "day") {
-        throw error;
+    let strategy: ReturnType<typeof bindFinanceDailyStrategy> | undefined;
+    let strategies: ReturnType<typeof bindFinanceDailyStrategy>[] = [];
+    let strategyReadiness: FinanceRuleReadinessState | undefined;
+    let deferredStrategyIds: string[] = [];
+    let dayEodRefresh: Awaited<ReturnType<typeof refreshFinanceEodBarsAndMarks>> | undefined;
+    const dayEodRefreshWarnings: string[] = [];
+    let portfolioPlan = loadedPortfolioPlan;
+    if (portfolioPlan) {
+      validateFinancePortfolioPlan(portfolioPlan, options.asOf, options.venue);
+    }
+    // Night settlement consumes recorded samples, not today's active strategy.
+    if (options.mode === "day") {
+      const read = await readFinanceStrategyRuleLedger(directory, {});
+      const activeRules = read.ledger.rules.filter((rule) => rule.state === "active");
+      // Route by the executor contract. Intraday signal rules are active too, but they are owned
+      // by the Scheduler's intraday monitor and must not make the monthly trend binder think that
+      // multiple daily strategies are competing for one budget.
+      const activeDailyTrendRules = activeRules.filter(
+        (rule) => rule.schedule.kind === "monthly" && rule.emits === "target_weights",
+      );
+      if (portfolioPlan) {
+        const intradayIds = new Set(
+          activeRules
+            .filter((rule) => rule.schedule.kind === "intraday")
+            .map((rule) => rule.ruleId),
+        );
+        const allocations = portfolioPlan.allocations.filter(
+          (allocation) => !intradayIds.has(allocation.strategyId),
+        );
+        deferredStrategyIds = portfolioPlan.allocations
+          .filter((allocation) => intradayIds.has(allocation.strategyId))
+          .map((allocation) => allocation.strategyId);
+        // The resident intraday controller owns those signals. Do not require
+        // this monthly engine to invent its candidates or consume its reserve.
+        if (allocations.every((allocation) => allocation.budgetFraction === 0)) {
+          return {
+            ...base,
+            ok: true,
+            boundary: "portfolio_no_daily_capital_allocated",
+            deferredStrategyIds: portfolioPlan.allocations.map(
+              (allocation) => allocation.strategyId,
+            ),
+            ordersSubmitted: 0,
+          };
+        }
+        portfolioPlan = financePortfolioPlanSchema.parse({
+          ...portfolioPlan,
+          allocations,
+          candidates: portfolioPlan.candidates.filter(
+            (candidate) => !intradayIds.has(candidate.strategyId),
+          ),
+        });
+        const selected = new Set(universeSnapshot?.selected ?? []);
+        const outsideUniverse = [
+          ...new Set(
+            portfolioPlan.candidates
+              .flatMap((candidate) => candidate.targets.map((target) => target.instrument))
+              .map((instrument) => instrument.toUpperCase())
+              .filter((instrument) => !selected.has(instrument)),
+          ),
+        ];
+        if (outsideUniverse.length > 0) {
+          throw new Error(
+            `portfolio plan contains symbols outside the validated selected universe: ${outsideUniverse.join(", ")}`,
+          );
+        }
       }
-      ruleIssue =
-        "rule book unreadable, settled the recorded calls anyway: " +
-        (error instanceof Error ? error.message : String(error));
+      if (!universeSnapshot) {
+        throw new Error("day strategy requires a validated equity universe snapshot");
+      }
+      const universeBoundDailyTrendRules = activeDailyTrendRules
+        .filter(
+          (rule) =>
+            !portfolioPlan ||
+            portfolioPlan.allocations.some(
+              (allocation) =>
+                allocation.strategyId === rule.ruleId && allocation.budgetFraction > 0,
+            ),
+        )
+        .map((rule) => ({
+          ...rule,
+          instruments: [...universeSnapshot.selected],
+        }));
+      strategies = portfolioPlan
+        ? universeBoundDailyTrendRules.map((rule) => bindFinanceDailyStrategy([rule]))
+        : [bindFinanceDailyStrategy(universeBoundDailyTrendRules)];
+      strategy = strategies[0];
+      instruments = [
+        ...new Set([
+          ...strategies.flatMap((r) => r.instruments),
+          ...(portfolioPlan?.candidates.flatMap((c) => c.targets.map((t) => t.instrument)) ?? []),
+        ]),
+      ];
+      ruleIds = strategies.map((r) => r.ruleId);
+      // Placement readiness must see the newest completed session already filed in the canonical
+      // bar ledger. At the intraday day slot this is normally yesterday's completed bar; the night
+      // refresh below catches today's close. This pass is bounded to one bar per active universe
+      // instrument and reuses the existing provider adapter and SQLite writer.
+      if (options.place && instruments.length > 0) {
+        let refreshInstruments = [...instruments];
+        try {
+          refreshInstruments = [
+            ...new Set([
+              ...refreshInstruments,
+              ...(await readOpenEquityPositionSymbols(directory, options.asOf)),
+            ]),
+          ].toSorted();
+        } catch {
+          dayEodRefreshWarnings.push(
+            "open-position ledger unavailable; EOD refresh is limited to the selected strategy universe",
+          );
+        }
+        try {
+          dayEodRefresh = await refreshFinanceEodBarsAndMarks({
+            directory,
+            asOf: options.asOf,
+            instruments: refreshInstruments,
+          });
+        } catch {
+          dayEodRefreshWarnings.push(
+            "latest completed-bar refresh failed before results were reported; cycle continues",
+          );
+        }
+      }
+      strategyReadiness = await readFinanceRuleReadinessState({
+        directory,
+        asOf: options.asOf,
+        rules: universeBoundDailyTrendRules,
+      });
     }
     // Only the day run needs a universe. Pausing every rule is a decision about trading, not
     // about remembering: a night that refuses to settle because nothing is active is a night the
     // system stops learning from itself, and it does it silently.
     if (options.mode === "day" && instruments.length === 0) {
       return { ...base, ok: false, error: "no active rule declares any instrument" };
+    }
+
+    const readiness = strategyReadiness?.readiness;
+    // Adversity is tracked in readiness reporting and evaluation, not as an entry prerequisite.
+    // Keep execution blocked when evidence cannot be judged, the declared duration is unmet, or
+    // an active rule has conflicting bars; those are data-integrity and explicit-policy gates.
+    const paperReadinessBlocked = strategyReadiness
+      ? !strategyReadiness.thresholdsDeclared ||
+        strategyReadiness.thresholdsError !== null ||
+        (readiness?.rules.length ?? 0) === 0 ||
+        (readiness?.rules.some(
+          (rule) =>
+            rule.ready === null ||
+            typeof rule.readyUnavailableReason === "string" ||
+            rule.durationMet !== true ||
+            rule.barConflicts.length > 0,
+        ) ??
+          true)
+      : false;
+    if (options.mode === "day" && options.place && paperReadinessBlocked) {
+      const hasBarConflict =
+        readiness?.rules.some((rule) => (rule.barConflicts?.length ?? 0) > 0) ?? false;
+      return {
+        ...base,
+        ok: false,
+        failureKind: "execution_readiness_gate",
+        error: hasBarConflict
+          ? "active strategy rule has conflicting daily bars; execution refused"
+          : "active strategy rule lacks determinable evidence or fails the declared duration; execution refused",
+        ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
+        ...(dayEodRefresh ? { eodRefresh: dayEodRefresh } : {}),
+        ...(dayEodRefreshWarnings.length > 0 ? { eodRefreshWarnings: dayEodRefreshWarnings } : {}),
+      };
     }
 
     if (options.mode === "day") {
@@ -302,10 +857,113 @@ export async function runFinanceDailyCycleOperator(
         knob: "maxOrdersPerRun",
         fallback: options.maxOrdersPerRun,
       });
+      const controller =
+        (options.place || options.checkExecution) &&
+        options.venue === "alpaca" &&
+        options.executionPolicyPath
+          ? (
+              deps.createController ??
+              (await import("../../src/agents/finance-alpaca-cycle-controller.js"))
+                .createFinanceAlpacaCycleController
+            )({
+              directory,
+              ...(options.place && !options.checkExecution
+                ? {
+                    protectedReductionRecoveryTransport: createFinanceWriteTransport({ directory }),
+                  }
+                : {}),
+              instruments,
+              feed: options.executionQuoteFeed!,
+              maxAgeMs: options.executionMaxAgeMs!,
+              policy: JSON.parse(await readPortfolioFile(options.executionPolicyPath, "utf8")),
+            })
+          : undefined;
+      if (options.checkExecution) {
+        if (!controller) {
+          throw new Error("execution controller unavailable");
+        }
+        const inspection = await controller.inspectReconciliation(AbortSignal.timeout(120000));
+        const payload = {
+          ...base,
+          ok: inspection.readiness.status !== "blocked",
+          boundary: "broker_reconciliation_readiness_only",
+          strategyRuleReadiness: strategyReadiness?.readiness,
+          ...inspection,
+          quotesVerified: false,
+          executionVerified: false,
+          ordersSubmitted: 0,
+        };
+        if (!options.json) {
+          process.stdout.write(JSON.stringify(payload, null, 2));
+        }
+        return payload;
+      }
+      let reviewer: FinanceTradeDecisionReviewer | undefined;
+      let reviewerUnavailable = false;
+      const tradeDecisionReviewer: FinanceTradeDecisionReviewer | undefined =
+        options.place && options.venue === "alpaca"
+          ? async (request, signal) => {
+              if (!reviewer && !reviewerUnavailable) {
+                try {
+                  reviewer = (
+                    deps.createTradeDecisionReviewer ??
+                    ((scope) => {
+                      const config = loadConfig();
+                      return createFinanceTradeDecisionReviewer(config, {
+                        evidenceScope: scope
+                          ? {
+                              ...scope,
+                              artifactRecallOptions: {
+                                config,
+                                agentId: "main",
+                                ...(process.env.OPENCLAW_WORKSPACE_DIR?.trim()
+                                  ? { workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR.trim() }
+                                  : {}),
+                              },
+                              financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
+                                workspaceDir:
+                                  process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
+                                  DEFAULT_WORKSPACE_DIR,
+                                config,
+                                agentId: "main",
+                              }),
+                            }
+                          : undefined,
+                      });
+                    })
+                  )(
+                    controller
+                      ? { directory, accountId: controller.accountId, instruments }
+                      : undefined,
+                  );
+                } catch {
+                  reviewerUnavailable = true;
+                }
+              }
+              if (!reviewer) {
+                return {
+                  status: "failed",
+                  attempted: false,
+                  provider: "unavailable",
+                  modelId: "unavailable",
+                  latencyMs: 0,
+                  providerCallObserved: false,
+                  adapterAttested: false,
+                  failureCode: "reviewer_unavailable",
+                };
+              }
+              return reviewer(request, signal);
+            }
+          : undefined;
       const report = await runFinanceDailyCycle({
         instruments,
+        lookbackMonths: strategy?.lookbackMonths,
+        ...(portfolioPlan ? { portfolioPlan, trendStrategies: strategies } : {}),
         equity,
         asOf: options.asOf,
+        // Paper evaluates the declared trend target weights directly. Shared execution controls
+        // continue to bound account exposure, order size, drawdown, funding, and reconciliation.
+        coreWeightFraction: options.coreWeightFraction,
         caps: {
           maxOrderNotional: options.maxOrderNotional,
           maxInstrumentNotional: options.maxInstrumentNotional,
@@ -315,14 +973,33 @@ export async function runFinanceDailyCycleOperator(
         rebalanceBand: options.band,
         place: options.place,
         venue: options.venue,
+        ...(options.place &&
+        options.venue === "alpaca" &&
+        options.executionQuoteFeed &&
+        options.executionMaxAgeMs !== undefined
+          ? {
+              executionQuoteProvider: (
+                deps.createExecutionQuoteProvider ?? createAlpacaExecutionQuoteProvider
+              )({ feed: options.executionQuoteFeed, maxAgeMs: options.executionMaxAgeMs }),
+            }
+          : {}),
+        ...(tradeDecisionReviewer ? { tradeDecisionReviewer } : {}),
+        ...controller,
         directory,
       });
       const payload = {
         ...base,
         ok: report.ok,
         ruleIds,
+        strategyExecution: portfolioPlan ? strategies : strategy,
+        ...(deferredStrategyIds.length > 0 ? { deferredStrategyIds } : {}),
+        ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
+        ...(report.portfolio ? { portfolio: report.portfolio } : {}),
         modelCalls: report.modelCalls,
+        ...(report.tradeDecisionReview ? { tradeDecisionReview: report.tradeDecisionReview } : {}),
+        positionBook: report.positionBook,
         signalAnchor: report.signalAnchor,
+        coreWeightFraction: report.coreWeightFraction,
         // Reported so a run can be read back against the boundary it actually used.
         caps: {
           maxOrderNotional: options.maxOrderNotional,
@@ -342,13 +1019,15 @@ export async function runFinanceDailyCycleOperator(
         // the payload once and it read as "nothing was re-priced" while seven positions had been.
         marksFiled: report.marksFiled,
         unpricedHoldings: report.unpricedHoldings,
+        ...(dayEodRefresh ? { eodRefresh: dayEodRefresh } : {}),
+        ...(dayEodRefreshWarnings.length > 0 ? { eodRefreshWarnings: dayEodRefreshWarnings } : {}),
         // Whether the plane is still wired together, asked by the run that nobody watches. A
         // position held outside every rule, or priced with a day the book has passed, does not
         // show up in this cycle's own numbers — it shows up here or nowhere.
         linkHealth: await safeLinkHealth(directory),
       };
       if (!options.json) {
-        process.stdout.write(`${renderDay(payload)}\n`);
+        process.stdout.write(`${renderDay(payload, options.venue, options.place)}\n`);
       }
       return payload;
     }
@@ -356,19 +1035,92 @@ export async function runFinanceDailyCycleOperator(
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     let samples: unknown[] = [];
+    const samplePath = join(directory, SAMPLES_FILE);
+    let sampleStatus: "available" | "missing" | "unreadable" | "invalid_json" = "available";
+    let sampleRead: { sha256: string; bytes: number; parsedCount?: number } | undefined;
     try {
-      samples = (await readFile(join(directory, SAMPLES_FILE), "utf8"))
+      const sampleBytes = await readFile(samplePath);
+      sampleRead = {
+        sha256: createHash("sha256").update(sampleBytes).digest("hex"),
+        bytes: sampleBytes.length,
+      };
+      samples = sampleBytes
+        .toString("utf8")
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line) as unknown);
-    } catch {
-      samples = [];
+      sampleRead.parsedCount = samples.length;
+    } catch (error) {
+      sampleStatus =
+        error instanceof SyntaxError
+          ? "invalid_json"
+          : error !== null &&
+              typeof error === "object" &&
+              "code" in error &&
+              error.code === "ENOENT"
+            ? "missing"
+            : "unreadable";
     }
-    const settled = await backfillOutcomes({
-      samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
-      asOf: options.asOf,
-    });
+    // Night runs after the cash close. The day slot (15:30 ET) collects EOD bars inside the
+    // session, so its book reaches only the previous completed day; a fill stamped later that same
+    // day then prices a session the book has no data for (link-health `ahead_of_data`). Refresh the
+    // book and re-price open marks with the just-closed session before settlement, so mark
+    // freshness returns to `current`. Fail-open: a quiet source must not stop settlement.
+    let eodRefresh: Awaited<ReturnType<typeof refreshFinanceEodBarsAndMarks>> | undefined;
+    const eodRefreshWarnings: string[] = [];
+    if (options.mode === "night") {
+      let activeInstruments: string[] | undefined;
+      try {
+        const ledgerRead = await readFinanceStrategyRuleLedger(directory, { asOf: options.asOf });
+        const instruments = new Set<string>();
+        for (const rule of ledgerRead.ledger.rules) {
+          if (rule.state !== "active") {
+            continue;
+          }
+          for (const instrument of rule.instruments) {
+            instruments.add(instrument.toUpperCase());
+          }
+        }
+        try {
+          for (const instrument of await readOpenEquityPositionSymbols(directory, options.asOf)) {
+            instruments.add(instrument);
+          }
+        } catch {
+          eodRefreshWarnings.push(
+            "open-position ledger unavailable; nightly EOD refresh is limited to declared rules",
+          );
+        }
+        activeInstruments = [...instruments].toSorted();
+      } catch {
+        eodRefreshWarnings.push("strategy rule ledger unavailable; EOD refresh skipped");
+      }
+      if (activeInstruments?.length) {
+        try {
+          eodRefresh = await refreshFinanceEodBarsAndMarks({
+            directory,
+            asOf: options.asOf,
+            instruments: activeInstruments,
+          });
+        } catch {
+          eodRefreshWarnings.push(
+            "EOD refresh failed before results were reported; settlement continues",
+          );
+        }
+      }
+    }
+    const settled =
+      sampleStatus === "available"
+        ? await backfillOutcomes({
+            samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
+            asOf: options.asOf,
+          })
+        : {
+            scored: [],
+            pending: [],
+            declined: [],
+            issues: [`night_sample_source_${sampleStatus}`],
+          };
     // Filed, not just computed. A settlement that is worked out every night and then dropped
     // leaves calibration with nothing to read: the scored file stays empty, and the tool that
     // tells the model how its last judgement went reports "no history" forever. The samples the
@@ -380,22 +1132,35 @@ export async function runFinanceDailyCycleOperator(
     );
     const reflection =
       settled.scored.length > 0 ? buildReflection(settled.scored, { instanceLimit: 5 }) : null;
-    const issues = [...settled.issues, ruleIssue].filter((item) => item.length > 0);
+    const issues = [...settled.issues, ...(eodRefresh?.dataIssues ?? [])];
     const payload = {
       ...base,
       ok: issues.length === 0,
+      ...(sampleStatus === "available" ? {} : { failureKind: "night_sample_source_gate" }),
+      sampleSource: { path: samplePath, status: sampleStatus, ...sampleRead },
       ruleIds,
       // Stated because an empty `ruleIds` is otherwise indistinguishable from a rule book that
       // could not be read: settlement went ahead either way, and this says which it was.
       rulesActive: ruleIds.length > 0,
       modelCalls: 0,
-      sampleCount: samples.length,
+      sampleCount: sampleStatus === "available" ? samples.length : null,
       scored: settled.scored,
       scoredFiled,
       pending: settled.pending,
       declined: settled.declined,
       reflection,
       issues,
+      ...(eodRefreshWarnings.length > 0 ? { eodRefreshWarnings } : {}),
+      ...(eodRefresh
+        ? {
+            eodRefresh: {
+              barsFiled: eodRefresh.barsFiled,
+              marksFiled: eodRefresh.marksFiled,
+              unpricedHoldings: eodRefresh.unpricedHoldings,
+              dataIssues: eodRefresh.dataIssues,
+            },
+          }
+        : {}),
     };
     if (!options.json) {
       process.stdout.write(`${renderNight(payload)}\n`);
@@ -414,14 +1179,53 @@ export async function runFinanceDailyCycleOperator(
   }
 }
 
-function renderDay(payload: Record<string, unknown>): string {
+function renderDay(
+  payload: Record<string, unknown>,
+  venue: "paper" | "alpaca",
+  placementRequested: boolean,
+): string {
   const lines: string[] = [];
   lines.push("Finance daily cycle — day");
   lines.push(`  目录: ${String(payload.directory)}`);
   lines.push(`  规则: ${(payload.ruleIds as string[]).join(", ")}`);
+  lines.push(`  执行场所: ${venue === "alpaca" ? "Alpaca Paper" : "LCX Paper 模拟器"}`);
+  lines.push(`  --place: ${placementRequested ? "已提供" : "未提供"}`);
+  const universe = payload.strategyUniverse as
+    | {
+        selectedCount?: unknown;
+        eligibleCount?: unknown;
+        candidateCount?: unknown;
+        asOf?: unknown;
+      }
+    | undefined;
+  if (universe) {
+    lines.push(
+      `  动态标的范围: selected=${String(universe.selectedCount)} / eligible=${String(universe.eligibleCount)} / candidates=${String(universe.candidateCount)} (snapshot=${String(universe.asOf)}; 数据筛选不代表策略表现验证)`,
+    );
+  }
   lines.push(
     `  信号锚点: ${String(payload.signalAnchor)}  模型调用: ${String(payload.modelCalls)}`,
   );
+  const review = payload.tradeDecisionReview as
+    | {
+        status?: unknown;
+        candidateCount?: unknown;
+        failureCode?: unknown;
+        decisions?: readonly { decision?: unknown }[];
+      }
+    | undefined;
+  if (review) {
+    const decisions = Array.isArray(review.decisions) ? review.decisions : [];
+    const approved = decisions.filter((decision) => decision.decision === "approve").length;
+    const vetoed = decisions.filter((decision) => decision.decision === "veto").length;
+    const failureCode =
+      typeof review.failureCode === "string" && /^[a-z\d_]{1,64}$/u.test(review.failureCode)
+        ? `  失败码: ${review.failureCode}`
+        : "";
+    lines.push(
+      `  模型审阅: ${String(review.status)}  候选: ${String(review.candidateCount)}  批准/否决: ${approved}/${vetoed}${failureCode}`,
+    );
+  }
   const drift = payload.drift as { instrument: string; action: string; notional: number }[];
   const acting = drift.filter((row) => row.action !== "none");
   lines.push(`  需要动作: ${acting.length} / ${drift.length}`);
@@ -430,15 +1234,27 @@ function renderDay(payload: Record<string, unknown>): string {
   }
   const placed = payload.placed as { instrument: string; quantity: number }[];
   if (placed.length > 0) {
-    lines.push(`  已成交: ${placed.map((row) => `${row.instrument}x${row.quantity}`).join(", ")}`);
+    lines.push(
+      `  已记录成交: ${placed.map((row) => `${row.instrument}x${row.quantity}`).join(", ")}`,
+    );
   } else {
-    lines.push("  已成交: 无（未给 --place 或无需动作）");
+    lines.push("  已记录成交: 无");
+  }
+  const refusals = Array.isArray(payload.refusals)
+    ? payload.refusals.filter((value): value is string => typeof value === "string")
+    : [];
+  lines.push(`  执行拒绝: ${refusals.length}`);
+  for (const refusal of refusals) {
+    const oneLine = refusal.replace(/\s+/gu, " ").trim();
+    lines.push(
+      `    - ${oneLine.length > 240 ? `${oneLine.slice(0, 237)}... [单条摘要已截断]` : oneLine}`,
+    );
   }
   const issues = payload.dataIssues as string[];
   if (issues.length > 0) {
     lines.push(`  数据问题: ${issues.join("; ")}`);
   }
-  lines.push("边界：不下真实单；未给 --place 只输出计划。");
+  lines.push("边界：LLM 不能创建或改写订单，TypeScript 共享执行门仍为最终控制。");
   return lines.join("\n");
 }
 

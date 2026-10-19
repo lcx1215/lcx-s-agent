@@ -1,11 +1,19 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Command } from "commander";
+import { isFailoverError } from "../agents/failover-error.js";
+import {
+  readLocalTextWorkerSnapshot,
+  type LocalTextWorkerSnapshot,
+} from "../agents/local-text-worker.js";
+import { startLocalSpecialistService } from "../agents/tools/local-specialist-tool.js";
 import { shouldRejectBrowserMutation } from "../browser/csrf.js";
 import { agentCommand } from "../commands/agent.js";
 import type { AgentCommandOpts } from "../commands/agent/types.js";
 import { isLoopbackHost } from "../gateway/net.js";
+import { resolveCommitHash } from "../infra/git-commit.js";
 import { defaultRuntime } from "../runtime.js";
+import { VERSION } from "../version.js";
 import { createDefaultDeps } from "./deps.js";
 import { installServeLocalCron, type ServeCronHandle } from "./serve-cron.js";
 import {
@@ -205,7 +213,12 @@ export function readServePayloadTexts(result: unknown): string[] {
   }
   const texts: string[] = [];
   for (const entry of payloads) {
-    if (typeof entry !== "object" || entry === null || !("text" in entry)) {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      !("text" in entry) ||
+      ("isError" in entry && entry.isError === true)
+    ) {
       continue;
     }
     const text = entry.text;
@@ -214,6 +227,150 @@ export function readServePayloadTexts(result: unknown): string[] {
     }
   }
   return texts;
+}
+
+/** Detects agent-run failures that are returned as payload metadata instead of thrown. */
+export function readServeResultError(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null) {
+    return undefined;
+  }
+
+  const meta = "meta" in result ? result.meta : undefined;
+  if (typeof meta === "object" && meta !== null && "error" in meta && meta.error) {
+    const error = meta.error;
+    if (
+      typeof error === "object" &&
+      "message" in error &&
+      typeof error.message === "string" &&
+      error.message.trim() !== ""
+    ) {
+      return error.message;
+    }
+    return typeof error === "string" && error.trim() !== "" ? error : "agent run failed";
+  }
+  const payloads = "payloads" in result ? result.payloads : undefined;
+  if (Array.isArray(payloads)) {
+    const records = payloads.map((entry) =>
+      typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {},
+    );
+    const lastError = records.findLastIndex((entry) => entry.isError === true);
+    if (
+      lastError >= 0 &&
+      !records
+        .slice(lastError + 1)
+        .some(
+          (entry) =>
+            entry.isError !== true && typeof entry.text === "string" && entry.text.trim() !== "",
+        )
+    ) {
+      const error = records[lastError];
+      return typeof error.text === "string" && error.text.trim() !== ""
+        ? error.text
+        : "agent returned an error payload";
+    }
+  }
+  return undefined;
+}
+
+export type ServeResultFailure = {
+  status: 409 | 502 | 504;
+  error: string;
+};
+
+function readStructuredStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return undefined;
+  }
+  const status = error.status;
+  return typeof status === "number" && Number.isInteger(status) ? status : undefined;
+}
+
+function readErrorCause(error: unknown): unknown {
+  if (typeof error !== "object" || error === null || !("cause" in error)) {
+    return undefined;
+  }
+  return error.cause;
+}
+
+/** Maps structured thrown agent failures without inferring status from message text. */
+export function readServeThrownFailure(error: unknown): ServeResultFailure | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current !== undefined && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (isFailoverError(current)) {
+      const status =
+        current.reason === "timeout" || current.status === 408 || current.status === 504
+          ? 504
+          : current.status === 409
+            ? 409
+            : 502;
+      return {
+        status,
+        error:
+          status === 504
+            ? "agent request timed out"
+            : status === 409
+              ? "agent request was cancelled"
+              : "agent upstream failure",
+      };
+    }
+
+    const status = readStructuredStatus(current);
+    const name = current instanceof Error ? current.name : undefined;
+    if (status === 408 || status === 504 || name === "TimeoutError") {
+      return {
+        status: 504,
+        error: "agent request timed out",
+      };
+    }
+    if (status === 409 || name === "AbortError") {
+      return {
+        status: 409,
+        error: "agent request was cancelled",
+      };
+    }
+    if (status === 502 || status === 503) {
+      return { status: 502, error: "agent upstream failure" };
+    }
+
+    current = readErrorCause(current);
+  }
+  return undefined;
+}
+
+/** Maps an accepted agent result onto an HTTP failure without guessing from text. */
+export function readServeResultFailure(result: unknown): ServeResultFailure | undefined {
+  if (typeof result !== "object" || result === null) {
+    return undefined;
+  }
+  const meta = "meta" in result ? result.meta : undefined;
+  const metaRecord =
+    typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>) : undefined;
+  const resultError = readServeResultError(result);
+  const readMetaFlag = (key: string) =>
+    metaRecord !== undefined && key in metaRecord && metaRecord[key] === true;
+  const timedOut = readMetaFlag("timedOut");
+  const timedOutDuringCompaction = readMetaFlag("timedOutDuringCompaction");
+  const promptCompleted = readMetaFlag("promptCompleted");
+  const completedAfterCompactionTimeout = timedOutDuringCompaction && promptCompleted;
+
+  if (timedOut && !completedAfterCompactionTimeout) {
+    return {
+      status: 504,
+      error: resultError ?? "agent request timed out",
+    };
+  }
+  if (readMetaFlag("aborted") && !completedAfterCompactionTimeout) {
+    return {
+      status: 409,
+      error: resultError ?? "agent request was cancelled",
+    };
+  }
+  if (resultError) {
+    return { status: 502, error: resultError };
+  }
+  return undefined;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -285,6 +442,8 @@ export type ServeHandlerOptions = {
   runtime?: typeof defaultRuntime;
   /** Injectable for tests; defaults to the real in-process agent loop. */
   runAgent?: ServeAgentRunner;
+  /** Host observation only; health probes must never start or invoke a worker. */
+  readLocalTextWorker?: () => LocalTextWorkerSnapshot | undefined;
 };
 
 export function createServeRequestHandler(options: ServeHandlerOptions) {
@@ -304,13 +463,17 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         sendJson(res, 405, { ok: false, error: "method not allowed" });
         return;
       }
+      const localTextWorker = (options.readLocalTextWorker ?? readLocalTextWorkerSnapshot)();
       sendJson(res, 200, {
         ok: true,
         service: SERVE_SERVICE_NAME,
         status: "ok",
+        version: VERSION,
+        commit: resolveCommitHash(),
         bind: config.bind,
         port: config.port,
         tokenRequired: config.token !== undefined,
+        ...(localTextWorker ? { localTextWorker } : {}),
       });
       return;
     }
@@ -376,20 +539,39 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         runtime,
         deps,
       );
+      const resultFailure = readServeResultFailure(result);
+      if (resultFailure) {
+        sendJson(res, resultFailure.status, {
+          ok: false,
+          runId,
+          status: "error",
+          error: resultFailure.error,
+        });
+        return;
+      }
       const texts = readServePayloadTexts(result);
       sendJson(res, 200, {
         ok: true,
         runId,
         status: "ok",
         summary: "completed",
+        // Transport completion cannot attest to the semantics of free-form agent text.
+        answerVerification: {
+          status: "not_assessed",
+          scope: "final_free_form_answer",
+          reason: "agent_completion_is_not_answer_verification",
+          capabilityClaims: "not_assessed",
+          semanticTruth: "not_assessed",
+        },
         payloads: texts.map((text) => ({ text })),
       });
     } catch (error) {
-      sendJson(res, 500, {
+      const thrownFailure = readServeThrownFailure(error);
+      sendJson(res, thrownFailure?.status ?? 502, {
         ok: false,
         runId,
         status: "error",
-        error: String(error instanceof Error ? error.message : error),
+        error: thrownFailure?.error ?? "agent request failed",
       });
     }
   };
@@ -687,6 +869,18 @@ export function registerServeCli(program: Command): void {
           });
         });
 
+        let localWorker: Awaited<ReturnType<typeof startLocalSpecialistService>> | undefined;
+        try {
+          localWorker = await startLocalSpecialistService();
+        } catch {
+          defaultRuntime.error(
+            "serve: optional local data worker unavailable; agent fallback remains available",
+          );
+        }
+        server.once("close", () => {
+          void localWorker?.stop();
+        });
+
         defaultRuntime.log(
           `${SERVE_SERVICE_NAME} listening on http://${host}:${config.port} ` +
             `(bind=${config.bind}, tokenRequired=${config.token !== undefined})`,
@@ -706,7 +900,7 @@ export function registerServeCli(program: Command): void {
           void cron?.dispose().catch(() => {});
           void clearServePidFile(detachPaths).catch(() => {});
           server.close(() => {
-            defaultRuntime.exit(0);
+            void (localWorker?.stop() ?? Promise.resolve()).finally(() => defaultRuntime.exit(0));
           });
         };
         process.once("SIGINT", shutdown);

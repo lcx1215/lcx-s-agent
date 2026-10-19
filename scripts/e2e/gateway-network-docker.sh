@@ -8,10 +8,12 @@ PORT="18789"
 TOKEN="e2e-$(date +%s)-$$"
 NET_NAME="lcx-net-e2e-$$"
 GW_NAME="lcx-gateway-e2e-$$"
+CERT_FILE="$(mktemp)"
 
 cleanup() {
   docker rm -f "$GW_NAME" >/dev/null 2>&1 || true
   docker network rm "$NET_NAME" >/dev/null 2>&1 || true
+  rm -f "$CERT_FILE"
 }
 trap cleanup EXIT
 
@@ -24,14 +26,16 @@ docker network create "$NET_NAME" >/dev/null
 echo "Starting gateway container..."
 docker run -d \
   --name "$GW_NAME" \
+  --hostname lcx-gateway \
   --network "$NET_NAME" \
   -e "OPENCLAW_GATEWAY_TOKEN=$TOKEN" \
+  -e "OPENCLAW_STATE_DIR=/tmp/lcx-gateway-state" \
   -e "OPENCLAW_SKIP_CHANNELS=1" \
   -e "OPENCLAW_SKIP_GMAIL_WATCHER=1" \
   -e "OPENCLAW_SKIP_CRON=1" \
   -e "OPENCLAW_SKIP_CANVAS_HOST=1" \
   "$IMAGE_NAME" \
-  bash -lc "set -euo pipefail; entry=dist/index.mjs; [ -f \"\$entry\" ] || entry=dist/index.js; node \"\$entry\" config set gateway.controlUi.enabled false >/dev/null; node \"\$entry\" gateway --port $PORT --bind lan --allow-unconfigured > /tmp/gateway-net-e2e.log 2>&1"
+  bash -lc "set -euo pipefail; entry=dist/index.mjs; [ -f \"\$entry\" ] || entry=dist/index.js; node \"\$entry\" config set gateway.controlUi.enabled false >/dev/null; node \"\$entry\" config set gateway.tls.enabled true >/dev/null; node \"\$entry\" gateway --port $PORT --bind lan --allow-unconfigured > /tmp/gateway-net-e2e.log 2>&1"
 
 echo "Waiting for gateway to come up..."
 ready=0
@@ -77,14 +81,17 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 docker exec "$GW_NAME" bash -lc "tail -n 50 /tmp/gateway-net-e2e.log"
+docker cp "$GW_NAME:/tmp/lcx-gateway-state/gateway/tls/gateway-cert.pem" "$CERT_FILE" >/dev/null
 
 echo "Running client container (connect + health)..."
 docker run --rm \
   --network "$NET_NAME" \
-  -e "GW_URL=ws://$GW_NAME:$PORT" \
+  -e "GW_URL=wss://$GW_NAME:$PORT" \
   -e "GW_TOKEN=$TOKEN" \
+  -v "$CERT_FILE:/tmp/gateway-cert.pem:ro" \
   "$IMAGE_NAME" \
   bash -lc "node --import tsx - <<'NODE'
+import fs from \"node:fs\";
 import { WebSocket } from \"ws\";
 import { PROTOCOL_VERSION } from \"./src/gateway/protocol/index.ts\";
 
@@ -92,7 +99,11 @@ const url = process.env.GW_URL;
 const token = process.env.GW_TOKEN;
 if (!url || !token) throw new Error(\"missing GW_URL/GW_TOKEN\");
 
-const ws = new WebSocket(url);
+// Trust the test Gateway's certificate and verify its configured identity.
+const ws = new WebSocket(url, {
+  ca: fs.readFileSync("/tmp/gateway-cert.pem", "utf8"),
+  servername: "lcx-gateway",
+});
 await new Promise((resolve, reject) => {
   const t = setTimeout(() => reject(new Error(\"ws open timeout\")), 5000);
   ws.once(\"open\", () => {

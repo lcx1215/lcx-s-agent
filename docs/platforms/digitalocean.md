@@ -139,10 +139,15 @@ Notes:
 
 ```bash
 lcx config set gateway.bind tailnet
+lcx config set gateway.tls.enabled true
 lcx gateway restart
 ```
 
-Open: `http://<tailscale-ip>:18789` (token required).
+Configure a certificate trusted by clients for the Tailnet IP or MagicDNS name,
+and keep Gateway authentication enabled. Tailscale address binding alone does
+not prove that every inbound packet arrived through WireGuard.
+
+Open: `https://<tailscale-ip>:18789` (trusted certificate and token required).
 
 ## 7) Connect Your Channels
 

@@ -1,13 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
+import { buildQualityHarnessModelPromptWithCoverage } from "./local-text-model-adapter.js";
 import type {
   LogicalAgentModelAdapter,
+  LogicalAgentModelRouting,
   ModelCallObservation,
 } from "./logical-agent-model-router.js";
+import { ModelAdapterError } from "./logical-agent-model-router.js";
+import { createInMemoryLogicalAgentCheckpointStore } from "./logical-agent-pool.js";
+import { supportingEvidenceIds } from "./quality-harness-quality.js";
 import {
   buildQualityHarnessPlan,
   QUALITY_HARNESS_REVIEW_AGENTS,
   QUALITY_HARNESS_STAGES,
   runQualityHarness,
+  normalizeQualityRequest,
+  type QualityHarnessArtifact,
   type QualityHarnessModelRequest,
   type QualityHarnessRequest,
   type QualityHarnessStageOutput,
@@ -17,6 +25,31 @@ const request: QualityHarnessRequest = {
   task: "基于已提供材料写一份研究摘要，并明确证据缺口。",
   evidence: [{ id: "brief", text: "材料显示项目在 2026-09-03 有一个已记录的状态。" }],
 };
+
+describe("supporting evidence references", () => {
+  it("excludes context, contrary and unknown citations while preserving legacy artifacts", () => {
+    const claim: QualityHarnessArtifact["claims"][number] = {
+      id: "claim-1",
+      text: "A supported claim with one supporting and three non-supporting references.",
+      status: "supported",
+      evidenceIds: ["support", "context", "contrary", "unknown"],
+      evidenceRelations: [
+        { evidenceId: "support", relation: "supports" },
+        { evidenceId: "context", relation: "context" },
+        { evidenceId: "contrary", relation: "contradicts" },
+        { evidenceId: "unknown", relation: "unknown" },
+      ],
+    };
+
+    expect(supportingEvidenceIds(claim)).toEqual(["support"]);
+    expect(supportingEvidenceIds({ ...claim, evidenceRelations: undefined })).toEqual([
+      "support",
+      "context",
+      "contrary",
+      "unknown",
+    ]);
+  });
+});
 
 function passReview(): QualityHarnessStageOutput {
   return {
@@ -100,7 +133,1030 @@ function demoInvoker(params: {
   };
 }
 
+function coveredEvidenceRouting(
+  params: {
+    requests?: QualityHarnessModelRequest[];
+    batchResponses?: Array<{ request: QualityHarnessModelRequest; response: unknown }>;
+    canonicalAuditPrompts?: string[];
+    canonicalPrecheckPrompts?: string[];
+    formatArtifact?: QualityHarnessArtifact;
+    formatArtifactsByAttempt?: Readonly<Record<number, QualityHarnessArtifact>>;
+    omitFinalAuditNoteId?: string;
+    longExtractionNotes?: boolean;
+    longAdversarialNotes?: boolean;
+    failDraft?: boolean;
+    failDraftAttempt?: number;
+    failFinalAuditBudget?: boolean;
+    extractionGap?: string;
+    revisePrecheckAttempt?: number;
+    adversarialFindingAttempt?: number;
+  } = {},
+): LogicalAgentModelRouting {
+  const observations = new Map<string, ModelCallObservation>();
+  const adapter: LogicalAgentModelAdapter = {
+    id: "covered-evidence-fixture",
+    provider: "fixture",
+    modelId: "covered-evidence-fixture",
+    mode: "adapter",
+    capabilities: ["quality_harness"],
+    requiredTools: [],
+    requiredSideEffects: [],
+    invoke: async (call) => {
+      const current = call.payload as QualityHarnessModelRequest;
+      params.requests?.push(current);
+      const rendered = buildQualityHarnessModelPromptWithCoverage(current);
+      if (current.evidenceBatchMode === "final_artifact_audit") {
+        params.canonicalAuditPrompts?.push(rendered.prompt);
+      }
+      if (current.stage === "precheck") {
+        params.canonicalPrecheckPrompts?.push(rendered.prompt);
+      }
+      observations.set(call.callId, {
+        callId: call.callId,
+        provider: "fixture",
+        modelId: "covered-evidence-fixture",
+        transportRequestId: `fixture:${call.callId}`,
+        kind: "model_inference",
+        evidenceCoverage: rendered.evidenceCoverage,
+      });
+      if (
+        current.stage === "draft" &&
+        (params.failDraft || current.attempt === params.failDraftAttempt)
+      ) {
+        throw new Error("fixture draft failure");
+      }
+      if (current.evidenceBatchMode === "final_artifact_audit" && params.failFinalAuditBudget) {
+        throw new ModelAdapterError("prompt_budget_exceeded");
+      }
+      if (current.stage === "intake") {
+        return {
+          kind: "plan",
+          requirements: ["review all supplied evidence"],
+          missingEvidence: [],
+        };
+      }
+      if (current.agentId === "financial_extraction" && params.extractionGap) {
+        return {
+          kind: "review",
+          review: {
+            verdict: "revise",
+            criticalFindings: [],
+            evidenceGaps: [params.extractionGap],
+            notes: [],
+          },
+        };
+      }
+      if (current.stage === "draft" || current.stage === "format") {
+        const attemptArtifact =
+          current.stage === "format"
+            ? params.formatArtifactsByAttempt?.[current.attempt]
+            : undefined;
+        if (attemptArtifact) {
+          return { kind: "artifact", artifact: attemptArtifact };
+        }
+        if (current.stage === "format" && params.formatArtifact) {
+          return { kind: "artifact", artifact: params.formatArtifact };
+        }
+        const evidenceId = current.evidence[0]?.id ?? "missing-evidence";
+        return {
+          kind: "artifact",
+          artifact: {
+            answer: "The supplied packet is summarized with its evidence limits retained.",
+            claims: [
+              {
+                id: "claim-1",
+                text: "The packet contains a recorded observation.",
+                status: "supported",
+                evidenceIds: [evidenceId],
+              },
+            ],
+          },
+        };
+      }
+      if (current.evidenceBatchMode) {
+        const missingNote =
+          current.evidenceBatchMode === "final_artifact_audit"
+            ? params.omitFinalAuditNoteId
+            : undefined;
+        const notes = current.evidence
+          .filter((entry) => entry.id !== missingNote)
+          .map((entry) =>
+            current.evidenceBatchMode === "context_extraction" && params.longExtractionNotes
+              ? `[${entry.id}] CONTEXT_ONLY_PAYLOAD ${"x".repeat(900)}`
+              : `[${entry.id}] reviewed against the formatted artifact.`,
+          );
+        const contradictions =
+          current.evidenceBatchMode === "final_artifact_audit"
+            ? current.evidence.filter((entry) =>
+                entry.text.includes("contradicts the early thesis"),
+              )
+            : [];
+        const response = {
+          kind: "review",
+          review: {
+            verdict: contradictions.length > 0 ? "revise" : "pass",
+            criticalFindings: contradictions.map(
+              (entry) => `[${entry.id}] contradicts the summary.`,
+            ),
+            evidenceGaps: [],
+            notes,
+          },
+        };
+        params.batchResponses?.push({ request: current, response });
+        return response;
+      }
+      if (current.stage === "adversarial" && current.attempt === params.adversarialFindingAttempt) {
+        return {
+          kind: "review",
+          review: {
+            verdict: "revise",
+            criticalFindings: ["The previous artifact challenge remains unresolved."],
+            evidenceGaps: [],
+            notes: [],
+          },
+        };
+      }
+      if (current.stage === "adversarial" && params.longAdversarialNotes) {
+        return {
+          kind: "review",
+          review: {
+            verdict: "pass",
+            criticalFindings: [],
+            evidenceGaps: [],
+            notes: Array.from(
+              { length: 60 },
+              (_, index) => `[adversarial-note-${index}] ${"x".repeat(900)}`,
+            ),
+          },
+        };
+      }
+      if (current.stage === "precheck" && current.attempt === params.revisePrecheckAttempt) {
+        return {
+          kind: "review",
+          review: {
+            verdict: "revise",
+            criticalFindings: ["fixture retry trigger"],
+            evidenceGaps: [],
+            notes: [],
+          },
+        };
+      }
+      return passReview();
+    },
+    observe: (call) => observations.get(call.callId),
+  };
+  return {
+    revision: "covered-evidence-fixture-v1",
+    adapters: [adapter],
+    defaultPolicy: {
+      primary: adapter.id,
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 1_000_000,
+      timeoutMs: 1_000,
+    },
+  };
+}
+
+function coverageRequest(itemCount: number): {
+  request: QualityHarnessRequest;
+  evidenceCoverage: {
+    sourceEvidenceIds: string[];
+    selectedEvidenceIds: string[];
+    runnerOmittedEvidenceIds: string[];
+    runnerClippedEvidenceIds: string[];
+  };
+} {
+  const evidence = Array.from({ length: itemCount }, (_, index) => ({
+    id: `e-${String(index).padStart(3, "0")}`,
+    text:
+      index === 48
+        ? "Late report contradicts the early thesis and refutes the summary."
+        : `Fixture observation ${index}.`,
+    source: "fixture-source",
+  }));
+  const evidenceIds = evidence.map((entry) => entry.id);
+  return {
+    request: {
+      task: "Summarize this evidence packet while retaining contradictory reports.",
+      evidence,
+    },
+    evidenceCoverage: {
+      sourceEvidenceIds: evidenceIds,
+      selectedEvidenceIds: evidenceIds,
+      runnerOmittedEvidenceIds: [],
+      runnerClippedEvidenceIds: [],
+    },
+  };
+}
+
 describe("quality harness", () => {
+  it("retains the unapproved earlier artifact when a later attempt loses model coverage", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const routing = coveredEvidenceRouting({ revisePrecheckAttempt: 1 });
+    const result = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      modelRouting: {
+        ...routing,
+        adapters: routing.adapters.map((adapter) => ({
+          ...adapter,
+          invoke: (call, signal) => {
+            const payload = call.payload as QualityHarnessModelRequest;
+            if (payload.attempt === 2 && call.role === "research_draft") {
+              throw new ModelAdapterError("provider_payment_required");
+            }
+            return adapter.invoke(call, signal);
+          },
+        })),
+      },
+    });
+    expect(result.attempts).toHaveLength(2);
+    expect(result.status).toBe("quality-failed");
+    expect(result.quality.passed).toBe(false);
+    expect(result.finalArtifact?.claims).toHaveLength(1);
+    expect(result.evidenceCoverage?.passed).toBe(false);
+    expect(result.verification.status).toBe("failed");
+  });
+
+  it.each([
+    "provider_payment_required",
+    "provider_auth",
+    "provider_rate_limit",
+    "call_budget_exhausted",
+  ] as const)(
+    "does not restart a required stage after terminal model failure (%s)",
+    async (reason) => {
+      const requests: QualityHarnessModelRequest[] = [];
+      const invoke = demoInvoker({ requests });
+      const result = await runQualityHarness({
+        request,
+        maxAttempts: 2,
+        modelRouting: {
+          revision: "terminal-failure-fixture-v1",
+          adapters: [
+            {
+              id: "fixture",
+              provider: "fixture",
+              modelId: "fixture",
+              mode: "deterministic",
+              capabilities: ["quality_harness"],
+              requiredTools: [],
+              requiredSideEffects: [],
+              invoke: async (call) => {
+                if (call.role === "research_draft") {
+                  throw new ModelAdapterError(reason);
+                }
+                return invoke(call.payload);
+              },
+            },
+          ],
+          defaultPolicy: {
+            primary: "fixture",
+            requiredCapabilities: ["quality_harness"],
+            maxInputBytes: 100_000,
+            timeoutMs: 1_000,
+          },
+        },
+      });
+      expect(result.status).toBe("failed");
+      expect(result.attempts).toHaveLength(1);
+      expect(requests.some((entry) => entry.attempt === 2)).toBe(false);
+      expect(result.execution.modelCalls.some((call) => call.reason === reason)).toBe(true);
+    },
+  );
+
+  it("still repairs a semantic failure when a model fallback completed the required stage", async () => {
+    const invoke = demoInvoker({ weakFormat: true });
+    const adapter = {
+      id: "primary",
+      provider: "fixture",
+      modelId: "primary",
+      mode: "deterministic" as const,
+      capabilities: ["quality_harness"],
+      requiredTools: [],
+      requiredSideEffects: [],
+      invoke: async (call: Parameters<LogicalAgentModelAdapter["invoke"]>[0]) => {
+        if (call.role === "research_draft") {
+          throw new ModelAdapterError("provider_payment_required");
+        }
+        return invoke(call.payload);
+      },
+    };
+    const result = await runQualityHarness({
+      request,
+      maxAttempts: 2,
+      modelRouting: {
+        revision: "successful-fallback-fixture-v1",
+        adapters: [
+          adapter,
+          {
+            ...adapter,
+            id: "fallback",
+            modelId: "fallback",
+            invoke: (call) => invoke(call.payload),
+          },
+        ],
+        defaultPolicy: {
+          primary: "primary",
+          fallback: ["fallback"],
+          requiredCapabilities: ["quality_harness"],
+          maxInputBytes: 100_000,
+          timeoutMs: 1_000,
+        },
+      },
+      verify: async () => ({ status: "passed", summary: "fixture verifier", details: [] }),
+    });
+    expect(result.status).toBe("verified");
+    expect(result.attempts).toHaveLength(2);
+    expect(
+      result.execution.modelCalls.some((call) => call.reason === "provider_payment_required"),
+    ).toBe(true);
+  });
+
+  it.each([
+    [false, "format"],
+    [true, "format"],
+    [false, "precheck"],
+    [true, "precheck"],
+    [false, "grounding"],
+    [true, "grounding"],
+  ] as const)(
+    "reuses only clean preparation after downstream failure (gap=%s, stage=%s)",
+    async (gap, failedStage) => {
+      const requests: QualityHarnessModelRequest[] = [];
+      const invoke = demoInvoker({});
+      const result = await runQualityHarness({
+        request,
+        maxAttempts: 2,
+        modelInvoker: async (raw) => {
+          const current = raw as QualityHarnessModelRequest;
+          requests.push(current);
+          if (current.attempt === 1 && current.stage === failedStage) {
+            throw new Error("formatter contract failure");
+          }
+          if (failedStage === "grounding" && current.attempt === 1 && current.stage === "format") {
+            return artifact("missing-evidence");
+          }
+          if (gap && current.attempt === 1 && current.stage === "extraction") {
+            return {
+              kind: "review",
+              review: {
+                verdict: "revise",
+                criticalFindings: [],
+                evidenceGaps: ["missing extraction"],
+                notes: ["retry extraction"],
+              },
+            };
+          }
+          return invoke(raw);
+        },
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+      expect(result.status).toBe("verified");
+      expect(result.attempts[1]?.reusedStageIds?.toSorted()).toEqual(
+        gap ? [] : ["data_cleaning", "financial_extraction", "news_classification"],
+      );
+      expect(requests.filter((entry) => entry.stage === "extraction")).toHaveLength(gap ? 2 : 1);
+      expect(requests.filter((entry) => entry.stage === "evidence")).toHaveLength(2);
+      expect(requests.filter((entry) => entry.stage === "draft")).toHaveLength(2);
+    },
+  );
+
+  it("fails closed before deterministic verification when controller coverage omits evidence", async () => {
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({}),
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market", "contradiction"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: ["contradiction"],
+        runnerClippedEvidenceIds: [],
+      },
+      verify,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.verification.status).toBe("failed");
+    expect(receipt.verification.details.join("\n")).toContain("contradiction");
+    expect(receipt.evidenceCoverage).toMatchObject({
+      passed: false,
+      controller: { runnerOmittedEvidenceIds: ["contradiction"] },
+    });
+    expect(receipt.attempts[0]?.gates.find((gate) => gate.id === "evidence_coverage")?.passed).toBe(
+      false,
+    );
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("rejects evidence handoff attestations that do not identify a built prompt", async () => {
+    const observations = new Map<string, ModelCallObservation>();
+    const invoke = demoInvoker({});
+    const adapter: LogicalAgentModelAdapter = {
+      id: "unverified-boundary",
+      provider: "fixture",
+      modelId: "fixture-model",
+      mode: "adapter",
+      capabilities: ["json"],
+      requiredTools: [],
+      requiredSideEffects: [],
+      invoke: async (call) => {
+        observations.set(call.callId, {
+          callId: call.callId,
+          provider: "fixture",
+          modelId: "fixture-model",
+          transportRequestId: call.callId,
+          kind: "model_inference",
+          evidenceCoverage: {
+            boundary: "structured_request_handoff",
+            suppliedEvidenceIds: ["brief"],
+            includedEvidenceIds: ["brief"],
+            omittedEvidenceIds: [],
+            clippedEvidenceIds: [],
+          } as unknown as NonNullable<ModelCallObservation["evidenceCoverage"]>,
+        });
+        return invoke(call.payload);
+      },
+      observe: (call) => observations.get(call.callId),
+    };
+    const receipt = await runQualityHarness({
+      request,
+      maxAttempts: 1,
+      modelRouting: {
+        revision: "unverified-boundary-v1",
+        adapters: [adapter],
+        defaultPolicy: {
+          primary: adapter.id,
+          requiredCapabilities: ["json"],
+          maxInputBytes: 100_000,
+          timeoutMs: 1_000,
+        },
+      },
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["brief"],
+        selectedEvidenceIds: ["brief"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.evidenceCoverage?.issues.join("\n")).toContain(
+      "evidence_coverage_boundary_mismatch",
+    );
+  });
+
+  it("sends a contradiction after item 48 to a later final-artifact audit", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(49);
+    const requests: QualityHarnessModelRequest[] = [];
+    const batchResponses: Array<{ request: QualityHarnessModelRequest; response: unknown }> = [];
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ requests, batchResponses }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      verify,
+    });
+
+    const lateEvidenceId = evidenceRequest.evidence[48]?.id;
+    expect(lateEvidenceId).toBe("e-048");
+    const primaryAudit = requests.find(
+      (entry) => entry.agentId === "evidence_integrity" && !entry.evidenceBatchMode,
+    );
+    expect(primaryAudit?.evidence.some((entry) => entry.id === lateEvidenceId)).toBe(false);
+    expect(primaryAudit?.instructions).toContain(
+      "those IDs being absent from this raw packet is not an evidence gap",
+    );
+    const lateExtraction = requests.find(
+      (entry) =>
+        entry.evidenceBatchMode === "context_extraction" &&
+        entry.evidence.some((item) => item.id === lateEvidenceId),
+    );
+    expect(lateExtraction?.instructions).toContain(
+      "Evidence assigned to other packets is not a local evidence gap",
+    );
+    expect(receipt.evidenceCoverage?.batches?.flatMap((batch) => batch.evidenceIds)).toContain(
+      lateEvidenceId,
+    );
+    const lateAudit = requests.find(
+      (entry) =>
+        entry.evidenceBatchMode === "final_artifact_audit" &&
+        entry.evidence.some((item) => item.id === lateEvidenceId),
+    );
+    expect(lateAudit?.dependencyOutputs.formatting).toMatchObject({
+      status: "completed",
+      output: {
+        kind: "artifact",
+        auditProjection: { artifactSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+        artifact: { answer: expect.stringContaining("SHA-256") },
+      },
+    });
+    const lateAuditResponse = batchResponses.find(
+      ({ request: batchRequest }) =>
+        batchRequest.evidenceBatchMode === "final_artifact_audit" &&
+        batchRequest.evidence.some((item) => item.id === lateEvidenceId),
+    )?.response;
+    expect(lateAuditResponse).toMatchObject({
+      kind: "review",
+      review: {
+        verdict: "revise",
+        criticalFindings: [expect.stringContaining(lateEvidenceId)],
+      },
+    });
+    expect(receipt.status).toBe("quality-failed");
+    expect(
+      receipt.attempts[0]?.gates.find((gate) => gate.id === "evidence_batch_reviews"),
+    ).toMatchObject({ passed: false, reason: expect.stringContaining("final artifact audit") });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("passes the current batch claim declarations and full artifact identity to final-audit prompts", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const tailClaim = "TAIL_CLAIM_WITH_UNSUPPORTED_ASSERTION";
+    const canonicalAuditPrompts: string[] = [];
+    const formattedArtifact: QualityHarnessArtifact = {
+      answer: `${"Formatted artifact context. ".repeat(360)}TAIL_ANSWER_CONTEXT`,
+      claims: [
+        {
+          id: "claim-1",
+          text: "First retained analysis detail. ".repeat(120),
+          status: "uncertain",
+          evidenceIds: ["e-000"],
+          uncertainty: "The supplied batch does not resolve this claim.",
+        },
+        {
+          id: "claim-2",
+          text: "Second retained analysis detail. ".repeat(120),
+          status: "uncertain",
+          evidenceIds: ["e-000"],
+          uncertainty: "The supplied batch does not resolve this claim.",
+        },
+        {
+          id: "claim-tail",
+          text: tailClaim,
+          status: "uncertain",
+          evidenceIds: ["e-000"],
+          uncertainty: "Tail claim retained for full-artifact review.",
+        },
+      ],
+    };
+    expect(formattedArtifact.answer.length).toBeLessThan(12_000);
+    expect(JSON.stringify(formattedArtifact).length).toBeGreaterThan(16_000);
+    expect(JSON.stringify(formattedArtifact).length).toBeLessThan(44_000);
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({
+        canonicalAuditPrompts,
+        formatArtifact: formattedArtifact,
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(canonicalAuditPrompts.length).toBeGreaterThan(0);
+    expect(canonicalAuditPrompts[0]).toMatch(/artifactSha256[^a-f0-9]+[a-f0-9]{64}/u);
+    expect(canonicalAuditPrompts[0]).not.toContain("TAIL_ANSWER_CONTEXT");
+    expect(canonicalAuditPrompts[0]).toContain(tailClaim);
+    expect(canonicalAuditPrompts[0]).toContain("the original answer is intentionally omitted");
+    expect(canonicalAuditPrompts[0]).toContain("complete formatted artifact's SHA-256 identity");
+    expect(canonicalAuditPrompts[0]).toContain("the full final_precheck");
+    expect(canonicalAuditPrompts[0]).toContain("exactly one note for each supplied evidence ID");
+    expect(canonicalAuditPrompts[0]).toContain("Flag unsupported claims or contradictions");
+    expect(canonicalAuditPrompts[0]).not.toContain("Review the complete final formatted artifact");
+    expect(canonicalAuditPrompts[0]).toContain(
+      "Never reproduce, summarize, or quote the artifact itself.",
+    );
+    expect(receipt.evidenceCoverage?.issues).not.toContain(
+      "evidence_batch_model_call_no_attempt:evidence_batch_review_1",
+    );
+  });
+
+  it("keeps batch audits bounded while retaining each batch's original cited claims", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(49);
+    const requests: QualityHarnessModelRequest[] = [];
+    const canonicalAuditPrompts: string[] = [];
+    const artifact: QualityHarnessArtifact = {
+      answer: `UNRELATED_ANSWER_PAYLOAD ${"answer-context ".repeat(500)}`,
+      claims: [
+        {
+          id: "claim-e000",
+          text: "Original declaration for e-000: early earnings estimate is uncertain.",
+          status: "uncertain",
+          evidenceIds: ["e-000"],
+          uncertainty: "The packet contains no confirming source.",
+        },
+        {
+          id: "claim-e048",
+          text: "Original declaration for e-048: late report contradicts the thesis.",
+          status: "uncertain",
+          evidenceIds: ["e-048"],
+          uncertainty: "The report's scope is limited.",
+        },
+        {
+          id: "unrelated-claim",
+          text: "UNRELATED_CLAIM_PAYLOAD",
+          status: "uncertain",
+          evidenceIds: ["e-047"],
+          uncertainty: "Unrelated to the current packet.",
+        },
+      ],
+    };
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        canonicalAuditPrompts,
+        formatArtifact: artifact,
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    const auditRequests = requests.filter(
+      (entry) => entry.evidenceBatchMode === "final_artifact_audit",
+    );
+    expect(auditRequests.length).toBeGreaterThan(1);
+    expect(canonicalAuditPrompts).toHaveLength(auditRequests.length);
+    const firstBatchIndex = auditRequests.findIndex((entry) =>
+      entry.evidence.some(({ id }) => id === "e-000"),
+    );
+    const lateBatchIndex = auditRequests.findIndex((entry) =>
+      entry.evidence.some(({ id }) => id === "e-048"),
+    );
+    expect(firstBatchIndex).toBeGreaterThanOrEqual(0);
+    expect(lateBatchIndex).toBeGreaterThanOrEqual(0);
+    const firstPrompt = canonicalAuditPrompts[firstBatchIndex] ?? "";
+    const latePrompt = canonicalAuditPrompts[lateBatchIndex] ?? "";
+    expect(firstPrompt).toContain(
+      "Original declaration for e-000: early earnings estimate is uncertain.",
+    );
+    expect(firstPrompt).not.toContain("Original declaration for e-048");
+    expect(latePrompt).toContain(
+      "Original declaration for e-048: late report contradicts the thesis.",
+    );
+    expect(latePrompt).not.toContain("Original declaration for e-000");
+    for (const prompt of canonicalAuditPrompts) {
+      expect(prompt).toMatch(/artifactSha256[^a-f0-9]+[a-f0-9]{64}/u);
+      expect(prompt).not.toContain("UNRELATED_ANSWER_PAYLOAD");
+      expect(prompt.length).toBeLessThan(25_000);
+    }
+    const hashes = canonicalAuditPrompts.map(
+      (prompt) => prompt.match(/artifactSha256[^a-f0-9]+([a-f0-9]{64})/u)?.[1],
+    );
+    expect(new Set(hashes).size).toBe(1);
+    expect(hashes[0]).toMatch(/^[a-f0-9]{64}$/u);
+    expect(receipt.evidenceCoverage?.passed).toBe(true);
+  });
+
+  it("preserves the complete formatted artifact through canonical precheck formatting", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const canonicalPrecheckPrompts: string[] = [];
+    const artifactTail = "PRECHECK_ARTIFACT_TAIL_AFTER_SIX_THOUSAND_CHARS";
+    const formattedArtifact: QualityHarnessArtifact = {
+      answer: `${"Full formatted artifact context. ".repeat(240)}${artifactTail}`,
+      claims: [
+        {
+          id: "claim-1",
+          text: "The packet contains a recorded observation.",
+          status: "supported",
+          evidenceIds: ["e-000"],
+        },
+      ],
+    };
+    expect(JSON.stringify(formattedArtifact).length).toBeGreaterThan(6_000);
+
+    await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({
+        canonicalPrecheckPrompts,
+        formatArtifact: formattedArtifact,
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(canonicalPrecheckPrompts.length).toBeGreaterThan(0);
+    expect(canonicalPrecheckPrompts[0]).toContain(artifactTail);
+  });
+
+  it("bounds final-precheck handoffs while binding closure to the full evidence set", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(49);
+    const requests: QualityHarnessModelRequest[] = [];
+    const batchResponses: Array<{ request: QualityHarnessModelRequest; response: unknown }> = [];
+    const canonicalPrecheckPrompts: string[] = [];
+    const artifactTail = "FINAL_ARTIFACT_SENTINEL";
+    const formattedArtifact: QualityHarnessArtifact = {
+      answer: `Final artifact remains complete. ${artifactTail}`,
+      claims: [
+        {
+          id: "claim-1",
+          text: "The packet contains a recorded observation.",
+          status: "supported",
+          evidenceIds: ["e-000"],
+        },
+      ],
+    };
+
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        batchResponses,
+        canonicalPrecheckPrompts,
+        formatArtifact: formattedArtifact,
+        longAdversarialNotes: true,
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    const precheck = requests.find((entry) => entry.stage === "precheck");
+    expect(
+      precheck,
+      JSON.stringify(
+        receipt.attempts[0]?.stages.map(({ taskId, status, error }) => ({ taskId, status, error })),
+      ),
+    ).toBeDefined();
+    const fullAdversarialReview = {
+      kind: "review",
+      review: {
+        verdict: "pass",
+        criticalFindings: [],
+        evidenceGaps: [],
+        notes: Array.from(
+          { length: 60 },
+          (_, index) => `[adversarial-note-${index}] ${"x".repeat(900)}`,
+        ),
+      },
+    };
+    expect(JSON.stringify(fullAdversarialReview).length).toBeGreaterThan(44_000);
+    expect(JSON.stringify(precheck?.dependencyOutputs).length).toBeLessThan(44_000);
+    expect(precheck?.dependencyOutputs.formatting).toMatchObject({
+      output: { artifact: formattedArtifact },
+    });
+    expect(precheck?.dependencyOutputs.evidence_batch_extract_2).toMatchObject({
+      output: {
+        projection: "lcx_quality_precheck_stage_summary_v1",
+        outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+    });
+    expect(precheck?.dependencyOutputs.adversarial_challenge).toMatchObject({
+      output: {
+        projection: "lcx_quality_precheck_stage_summary_v1",
+        review: {
+          noteCount: 60,
+          notesOmittedCount: 56,
+          verdict: "pass",
+        },
+        outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+    });
+    const adversarialProjection = precheck?.dependencyOutputs.adversarial_challenge as {
+      output?: { review?: { notes?: readonly { text: string; truncated: boolean }[] } };
+    };
+    expect(adversarialProjection.output?.review?.notes).toHaveLength(4);
+    expect(adversarialProjection.output?.review?.notes?.[0]?.text).toContain(
+      "[adversarial-note-0]",
+    );
+    expect(adversarialProjection.output?.review?.notes?.[0]?.truncated).toBe(true);
+    expect(precheck?.dependencyOutputs.evidence_batch_review_4).toMatchObject({
+      output: { review: { notes: expect.arrayContaining([expect.stringContaining("[e-048]")]) } },
+    });
+    expect(precheck?.findingPacket?.evidenceSha256).toBe(
+      createHash("sha256")
+        .update(JSON.stringify(normalizeQualityRequest(evidenceRequest).evidence))
+        .digest("hex"),
+    );
+    const prompt = canonicalPrecheckPrompts[0] ?? "";
+    expect(prompt).toContain(artifactTail);
+    expect(prompt.match(new RegExp(artifactTail, "gu"))).toHaveLength(1);
+    expect(prompt).toContain("adversarial-note-0");
+    expect(prompt).not.toContain("adversarial-note-5");
+  });
+
+  it("reports dependency-blocked batch calls distinctly without passing evidence coverage", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ failDraft: true }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.evidenceCoverage?.passed).toBe(false);
+    expect(receipt.evidenceCoverage?.issues).toContain(
+      "evidence_batch_model_call_blocked:evidence_batch_review_1",
+    );
+    expect(receipt.evidenceCoverage?.issues).not.toContain(
+      "evidence_batch_model_call_no_attempt:evidence_batch_review_1",
+    );
+    expect(
+      receipt.attempts[0]?.stages.find((stage) => stage.taskId === "evidence_batch_review_1")
+        ?.status,
+    ).toBe("blocked");
+  });
+
+  it("reports attempted failed batch calls with an allowlisted reason and remains fail-closed", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ failFinalAuditBudget: true }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.evidenceCoverage?.passed).toBe(false);
+    expect(receipt.evidenceCoverage?.issues).toContain(
+      "evidence_batch_model_call_attempt_failed:evidence_batch_review_1:1:prompt_budget_exceeded",
+    );
+    expect(receipt.evidenceCoverage?.issues).not.toContain(
+      "evidence_batch_model_call_no_attempt:evidence_batch_review_1",
+    );
+    expect(receipt.evidenceCoverage?.issues).not.toContain(
+      "evidence_batch_model_call_blocked:evidence_batch_review_1",
+    );
+    expect(
+      receipt.attempts[0]?.stages.find((stage) => stage.taskId === "evidence_batch_review_1")
+        ?.modelCalls,
+    ).toMatchObject([{ outcome: "failed", reason: "prompt_budget_exceeded" }]);
+    expect(JSON.stringify(receipt.evidenceCoverage?.issues)).not.toMatch(
+      /fixture draft failure|secret|token/u,
+    );
+  });
+
+  it("does not borrow completed batch audits from an earlier attempt", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 2,
+      modelRouting: coveredEvidenceRouting({
+        revisePrecheckAttempt: 1,
+        failDraftAttempt: 2,
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(receipt.attempts).toHaveLength(2);
+    expect(
+      receipt.attempts[0]?.stages.find((stage) => stage.taskId === "evidence_batch_review_1"),
+    ).toMatchObject({ status: "completed", modelCalls: [{ outcome: "completed" }] });
+    expect(
+      receipt.attempts[1]?.stages.find((stage) => stage.taskId === "evidence_batch_review_1"),
+    ).toMatchObject({ status: "blocked", modelCalls: [] });
+    expect(
+      receipt.execution.modelCalls.some(
+        (call) => call.taskId === "evidence_batch_review_1" && call.outcome === "completed",
+      ),
+    ).toBe(true);
+    expect(receipt.evidenceCoverage?.passed).toBe(false);
+    expect(receipt.evidenceCoverage?.issues).toContain(
+      "evidence_batch_model_call_blocked:evidence_batch_review_1",
+    );
+    expect(receipt.evidenceCoverage?.issues).not.toContain(
+      "evidence_batch_model_call_no_attempt:evidence_batch_review_1",
+    );
+  });
+
+  it("blocks verification when a final batch review omits an evidence ID note", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ omitFinalAuditNoteId: "e-000" }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      verify,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(
+      receipt.attempts[0]?.gates.find((gate) => gate.id === "evidence_batch_reviews"),
+    ).toMatchObject({ passed: false, reason: expect.stringContaining("e-000") });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("blocks before model invocation when evidence needs more than four batches", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(65);
+    const requests: QualityHarnessModelRequest[] = [];
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ requests }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      verify,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.evidenceCoverage?.issues.join("\n")).toContain(
+      "evidence_batch_limit_exceeded:4",
+    );
+    expect(receipt.attempts[0]?.planStatus).toBe("blocked");
+    expect(receipt.attempts[0]?.stages).toEqual([]);
+    expect(requests).toEqual([]);
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("preserves completed stage outputs after downstream failure without enabling resume", async () => {
+    const store = createInMemoryLogicalAgentCheckpointStore<QualityHarnessStageOutput>();
+    const load = vi.spyOn(store, "load");
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(20);
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ failDraft: true }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      checkpointStore: store,
+    });
+    expect(receipt.status).toBe("quality-failed");
+    expect(load).not.toHaveBeenCalled();
+    const checkpoint = store.load(`${receipt.runId}:attempt:1`)!;
+    const prepared = checkpoint.results.find((item) => item.taskId === "evidence_batch_extract_2");
+    expect(prepared?.status).toBe("completed");
+    expect(prepared?.output?.kind).toBe("review");
+    if (prepared?.output?.kind === "review") {
+      expect(prepared.output.review.notes).toContain(
+        "[e-019] reviewed against the formatted artifact.",
+      );
+    }
+    expect(prepared?.modelCalls?.[0]?.evidenceCoverage?.promptSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(checkpoint.planFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it.each([
+    { size: 6_000, batches: 5 },
+    { size: 7_200, batches: 6 },
+  ])(
+    "reviews all evidence and final dependencies in $batches explicitly bounded batches",
+    async ({ size, batches }) => {
+      const { request: evidenceRequest, evidenceCoverage } = coverageRequest(44);
+      const requests: QualityHarnessModelRequest[] = [];
+      const canonicalPrecheckPrompts: string[] = [];
+      const receipt = await runQualityHarness({
+        request: {
+          ...evidenceRequest,
+          evidence: evidenceRequest.evidence.map((item) => ({
+            ...item,
+            text: "x".repeat(size - 20) + "COUNTEREVIDENCE-END",
+          })),
+        },
+        maxAttempts: 1,
+        maxEvidenceBatches: 6,
+        modelRouting: coveredEvidenceRouting({ requests, canonicalPrecheckPrompts }),
+        requireEvidenceCoverage: true,
+        evidenceCoverage,
+      });
+      expect(receipt.status).toBe("completed-unverified");
+      expect(receipt.evidenceCoverage?.passed).toBe(true);
+      expect(receipt.evidenceCoverage?.batches).toHaveLength(batches);
+      expect(
+        receipt.evidenceCoverage?.batches?.flatMap((batch) => batch.evidenceIds).toSorted(),
+      ).toEqual(evidenceCoverage.sourceEvidenceIds.toSorted());
+      const precheck = requests.find((item) => item.stage === "precheck")!;
+      expect(Object.keys(precheck.dependencyOutputs)).toHaveLength(8 + 2 * batches - 1);
+      expect(canonicalPrecheckPrompts[0]).toContain(`evidence_batch_review_${batches}`);
+      for (const key of Object.keys(precheck.dependencyOutputs)) {
+        expect(canonicalPrecheckPrompts[0]).toContain(key);
+      }
+      expect(receipt.attempts[0]?.stages.length).toBeLessThanOrEqual(21);
+    },
+  );
+
   it("passes one shared fact packet to every specialist and reviewer", async () => {
     const requests: QualityHarnessModelRequest[] = [];
     await runQualityHarness({
@@ -126,6 +1182,79 @@ describe("quality harness", () => {
     ).toBe(true);
   });
 
+  it("forwards cross-batch extraction to every downstream reviewer without a DAG cycle", () => {
+    const extra = [{ id: "second", text: "independent batch" }];
+    const plan = buildQualityHarnessPlan({
+      runId: "batch-wiring",
+      attempt: 1,
+      request,
+      evidenceBatches: [request.evidence, extra],
+      auditEvidenceBatches: true,
+    });
+    for (const id of [
+      "news_classification",
+      "evidence_integrity",
+      "risk_check",
+      "portfolio_exposure",
+      "research_draft",
+      "adversarial_challenge",
+      "formatting",
+      "final_precheck",
+    ]) {
+      expect(plan.find((task) => task.id === id)?.dependsOn).toContain("evidence_batch_extract_2");
+    }
+    expect(plan.find((task) => task.id === "evidence_batch_extract_2")?.dependsOn).toEqual([
+      "data_cleaning",
+    ]);
+    expect(plan.find((task) => task.id === "data_cleaning")?.dependsOn).toBeUndefined();
+  });
+
+  it.each([1, 20])("states the primary extraction scope for %i evidence items", async (count) => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(count);
+    const requests: QualityHarnessModelRequest[] = [];
+    await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ requests }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    const extraction = requests.find((entry) => entry.agentId === "financial_extraction")!;
+    expect(extraction.instructions).toContain("flag missing fields instead of filling them");
+    if (count > 16) {
+      expect(extraction.evidence.length).toBeLessThan(count);
+      expect(extraction.instructions).toContain("only the primary raw evidence packet");
+      expect(extraction.instructions).toContain("not an evidence gap");
+      expect(extraction.instructions).toContain("flag actual conflicts");
+      expect(extraction.instructions).toContain("full final_precheck");
+      expect(requests.find((entry) => entry.stage === "precheck")?.findingPacket).toBeDefined();
+    } else {
+      expect(extraction.evidence).toHaveLength(count);
+      expect(extraction.instructions).not.toContain("only the primary raw evidence packet");
+    }
+  });
+
+  it("keeps a genuine extraction gap blocking despite the primary-packet scope", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(20);
+    const result = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({
+        extractionGap: "Settlement costs remain unreconciled; net profit is unknown.",
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "supporting_role_reviews"),
+    ).toMatchObject({
+      passed: false,
+    });
+    expect(result.attempts[0]?.feedback.join(" ")).toContain("net profit is unknown");
+  });
   it("derives its ten-stage plan from the existing default logical-agent DAG", () => {
     const plan = buildQualityHarnessPlan({ runId: "run-1", attempt: 1, request });
     expect(plan).toHaveLength(10);
@@ -199,6 +1328,276 @@ describe("quality harness", () => {
     expect(
       requests.filter((entry) => entry.attempt === 2)[0]?.repairFeedback.length,
     ).toBeGreaterThan(0);
+  });
+
+  it("repairs a sole finance answer safety failure by reusing upstream stages and reauditing the final artifact", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const verifyAnswers: string[] = [];
+    const invalidArtifact: QualityHarnessArtifact = {
+      answer: "NVDA 的价格变化为 0.05%。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const repairedArtifact: QualityHarnessArtifact = {
+      answer: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const baseRouting = coveredEvidenceRouting({
+      requests,
+      formatArtifactsByAttempt: { 1: invalidArtifact, 2: repairedArtifact },
+    });
+    const original = baseRouting.adapters[0];
+    const adapters = ["pro", "flash", "independent"].map((id) => ({
+      ...original,
+      id,
+      modelId: id,
+      observe: (call: Parameters<NonNullable<LogicalAgentModelAdapter["observe"]>>[0]) => {
+        const observation = original.observe?.(call);
+        return observation ? { ...observation, modelId: id } : undefined;
+      },
+    }));
+    const policy = { ...baseRouting.defaultPolicy, primary: "pro" };
+    const modelRouting: LogicalAgentModelRouting = {
+      ...baseRouting,
+      adapters,
+      defaultPolicy: policy,
+      roles: {
+        research_draft: policy,
+        formatting: { ...policy, sameModelAsRole: "research_draft" },
+        adversarial_challenge: {
+          ...policy,
+          primary: "flash",
+          excludeModelsUsedBy: ["research_draft"],
+        },
+        final_precheck: {
+          ...policy,
+          primary: "independent",
+          excludeModelsUsedBy: ["research_draft", "formatting"],
+        },
+      },
+    };
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+      modelRouting,
+      verify: async ({ artifact: checked }) => {
+        verifyAnswers.push(checked.answer);
+        return {
+          status: "passed",
+          summary: "unchanged deterministic verifier passed",
+          details: [],
+        };
+      },
+    });
+
+    expect(result.status).toBe("verified");
+    const draftCalls = result.execution.modelCalls.filter((call) => call.role === "research_draft");
+    expect(draftCalls).toHaveLength(1);
+    expect(draftCalls[0]).toMatchObject({
+      modelId: "pro",
+      attempt: 1,
+      evidence: "adapter-attested",
+    });
+    expect(
+      result.execution.modelCalls
+        .filter((call) => call.role === "adversarial_challenge")
+        .map((call) => call.modelId),
+    ).toEqual(["flash", "flash"]);
+    expect(
+      result.execution.modelCalls
+        .filter((call) => call.role === "formatting")
+        .map((call) => call.modelId),
+    ).toEqual(["pro", "pro"]);
+    expect(
+      result.execution.modelCalls
+        .filter((call) => call.role === "final_precheck")
+        .map((call) => call.modelId),
+    ).toEqual(["independent", "independent"]);
+    expect(result.attempts.map((attempt) => attempt.status)).toEqual([
+      "quality-failed",
+      "quality-passed",
+    ]);
+    expect(result.attempts[0]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id)).toEqual(
+      ["finance_answer_safety"],
+    );
+    expect(result.attempts[1]?.reusedStageIds?.toSorted()).toEqual([
+      "data_cleaning",
+      "evidence_integrity",
+      "financial_extraction",
+      "news_classification",
+      "portfolio_exposure",
+      "research_draft",
+      "risk_check",
+    ]);
+    const retryRequests = requests.filter((entry) => entry.attempt === 2);
+    expect(retryRequests.filter((entry) => entry.stage === "format")).toHaveLength(1);
+    expect(
+      retryRequests.filter((entry) => entry.evidenceBatchMode === "final_artifact_audit"),
+    ).toHaveLength(1);
+    expect(retryRequests.filter((entry) => entry.stage === "precheck")).toHaveLength(1);
+    expect(retryRequests.filter((entry) => entry.stage === "adversarial")).toHaveLength(1);
+    expect(retryRequests.some((entry) => entry.stage === "risk")).toBe(false);
+    expect(retryRequests.some((entry) => entry.stage === "draft")).toBe(false);
+    expect(verifyAnswers).toEqual([repairedArtifact.answer]);
+    expect(result.evidenceCoverage?.passed).toBe(true);
+  });
+
+  it("reruns adversarial review on the repaired artifact and remains failed when the prior finding persists", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const invalidArtifact: QualityHarnessArtifact = {
+      answer: "NVDA 的价格变化为 0.05%。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const repairedArtifact: QualityHarnessArtifact = {
+      answer: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "must not run while adversarial finding remains",
+      details: [],
+    }));
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        formatArtifactsByAttempt: { 1: invalidArtifact, 2: repairedArtifact },
+        adversarialFindingAttempt: 2,
+      }),
+      verify,
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(result.attempts[0]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id)).toEqual(
+      ["finance_answer_safety"],
+    );
+    expect(
+      result.attempts[1]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id),
+    ).toContain("adversarial_review");
+    expect(
+      requests.filter((entry) => entry.attempt === 2 && entry.stage === "adversarial"),
+    ).toHaveLength(1);
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("keeps the full repair path when finance answer safety is not the only failed gate", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      modelInvoker: demoInvoker({
+        answer: "NVDA 的价格变化为 0.05%。",
+        adversarialFinding: true,
+        requests,
+      }),
+    });
+    expect(result.attempts[0]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id)).toEqual(
+      expect.arrayContaining(["finance_answer_safety", "adversarial_review"]),
+    );
+    expect(result.attempts[1]?.reusedStageIds?.toSorted()).toEqual([
+      "data_cleaning",
+      "financial_extraction",
+      "news_classification",
+    ]);
+    expect(requests.filter((entry) => entry.attempt === 2 && entry.stage === "draft")).toHaveLength(
+      1,
+    );
+    expect(
+      requests.filter((entry) => entry.attempt === 2 && entry.stage === "adversarial"),
+    ).toHaveLength(1);
+  });
+
+  it("does not let the scoped repair bypass finance answer safety when the revised artifact remains unsafe", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "must not run for unsafe answer",
+      details: [],
+    }));
+    const unsafeArtifact: QualityHarnessArtifact = {
+      answer: "NVDA 的价格变化为 0.05%。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        formatArtifactsByAttempt: { 1: unsafeArtifact, 2: unsafeArtifact },
+      }),
+      verify,
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(result.attempts).toHaveLength(2);
+    expect(
+      result.attempts.map(
+        (attempt) => attempt.gates.find((gate) => gate.id === "finance_answer_safety")?.passed,
+      ),
+    ).toEqual([false, false]);
+    expect(verify).not.toHaveBeenCalled();
+    expect(requests.some((entry) => entry.attempt === 2 && entry.stage === "precheck")).toBe(true);
+    expect(
+      requests.some(
+        (entry) => entry.attempt === 2 && entry.evidenceBatchMode === "final_artifact_audit",
+      ),
+    ).toBe(true);
   });
 
   it("does not let the adversarial role self-approve a critical finding", async () => {
@@ -313,6 +1712,137 @@ describe("quality harness", () => {
     expect(
       executionClaim.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
     ).toMatchObject({ passed: false });
+  });
+
+  it("does not treat a scheduled execution time as a completed fill", async () => {
+    const run = async (answer: string) =>
+      runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer }),
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+
+    const scheduled = await run("The strategy is executed at the next tradable point.");
+    expect(
+      scheduled.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
+    const description =
+      "The trend sign is provisional and is not the rule's executed monthly signal.";
+    const described = await run(description);
+    expect(
+      described.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
+
+    for (const answer of [
+      "Filled NVDA at the open.",
+      "fIlLeD NVDA at the open.",
+      "Filled at $100.",
+      "Filled 100 shares at the open.",
+      "Executed at $100.",
+      "Executed NVDA at the open.",
+      "executed nvda at the open.",
+      "已成交 NVDA。",
+      "该笔交易已执行。",
+      `${description} Executed NVDA at the open.`,
+    ]) {
+      const receipt = await run(answer);
+      expect(
+        receipt.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+        answer,
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("execution claim") });
+    }
+  });
+
+  it("treats complete UUIDs as identities while retaining nearby financial values", async () => {
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    const run = (answer: string) =>
+      runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer }),
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+    for (const identity of [id, id.toUpperCase(), `{${id}}`]) {
+      const result = await run(
+        `Account ${identity} has no current cash or position receipt; exposure is unknown.`,
+      );
+      expect(
+        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+      ).toMatchObject({ passed: true });
+    }
+    for (const value of ["$479", "37%", "-12.5%", "0.05%", "912 dollars"]) {
+      const result = await run(`Account ${id} has current exposure of ${value}.`);
+      expect(
+        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+        value,
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("current-data numbers") });
+    }
+  });
+
+  it("does not exempt malformed, embedded or unit-bearing UUID-like numbers", async () => {
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    for (const token of [
+      id.slice(0, -1),
+      `prefix${id}`,
+      `${id}x`,
+      `${id}%`,
+      `$${id}`,
+      ...[
+        "USD",
+        "EUR",
+        "GBP",
+        "CNY",
+        "JPY",
+        "HKD",
+        "dollars",
+        "euros",
+        "pounds",
+        "yen",
+        "yuan",
+        "美元",
+        "欧元",
+        "英镑",
+        "人民币",
+        "日元",
+        "港元",
+        "港币",
+        "元",
+      ].map((unit) => `${id} ${unit}`),
+    ]) {
+      const result = await runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({
+          answer: `Current account marker is ${token}; exposure is unknown.`,
+        }),
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+      expect(
+        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+        token,
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("current-data numbers") });
+    }
+  });
+
+  it("distinguishes a volatility window label from an uncited market value", async () => {
+    const run = async (answer: string) =>
+      runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer }),
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+    const label =
+      "No 12-month daily-return volatility series is supplied for SPY; current risk cannot be sized.";
+    const described = await run(label);
+    expect(
+      described.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
+    const ungrounded = await run(`${label} SPY current price is 12 dollars.`);
+    expect(
+      ungrounded.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false, reason: expect.stringContaining("12dollars") });
   });
 
   it("does not equate a percentage with a currency amount", async () => {
@@ -671,6 +2201,7 @@ describe("quality harness model evidence", () => {
       });
       expect(result.status).toBe("completed-unverified");
       expect(result.execution.modelCalls).toHaveLength(10);
+      expect(result.execution.modelId).toBe("test-local/fixture-model");
       expect(result.execution.evidenceMode).toBe(mode === "adapter" ? "adapter-attested" : mode);
       expect(result.execution.realModelInferenceObserved).toBe(mode === "adapter");
       expect(result.execution.allModelCallsAttested).toBe(mode === "adapter");
@@ -689,6 +2220,7 @@ describe("quality harness model evidence", () => {
       maxAttempts: 1,
     });
     expect(result.execution.modelCalls).toHaveLength(10);
+    expect(result.execution.modelId).toBe("Qwen/Qwen3-0.6B");
     expect(result.execution.evidenceMode).toBe("injected");
     expect(result.execution.realModelInferenceObserved).toBe(false);
   });
@@ -849,5 +2381,324 @@ describe("a shared abbreviation does not mask an entity mismatch", () => {
     const evidence = "截至 2026-09-06，公开行情材料记录 AAA 的价格为 100 美元。";
     const gate = await currentDataSafetyGate(evidence, answer, answer);
     expect(gate.passed).toBe(true);
+  });
+});
+
+it("summarizes both providers and retains failed fallback evidence", async () => {
+  const invoke = demoInvoker({});
+  const adapter = (id: string): LogicalAgentModelAdapter => ({
+    id,
+    provider: id,
+    modelId: "same-model-name",
+    mode: "injected",
+    capabilities: [],
+    requiredTools: [],
+    requiredSideEffects: ["local_compute"],
+    invoke: async (call) => {
+      if (id === "primary") {
+        throw new Error("fixture failure");
+      }
+      return invoke(call.payload);
+    },
+  });
+  const result = await runQualityHarness({
+    request,
+    maxAttempts: 1,
+    modelRouting: {
+      revision: "identity-test",
+      adapters: [adapter("primary"), adapter("fallback")],
+      defaultPolicy: {
+        primary: "primary",
+        fallback: ["fallback"],
+        requiredCapabilities: [],
+        maxInputBytes: 100_000,
+        timeoutMs: 1000,
+      },
+    },
+  });
+  expect(result.execution.modelId).toBe(
+    "multiple: primary/same-model-name, fallback/same-model-name",
+  );
+  expect(
+    result.execution.modelCalls.some(
+      (call) => call.provider === "primary" && call.outcome === "failed",
+    ),
+  ).toBe(true);
+  expect(
+    result.execution.modelCalls.some(
+      (call) => call.provider === "fallback" && call.outcome === "completed",
+    ),
+  ).toBe(true);
+});
+it("labels zero routed calls and dependency-blocked stages not-executed", async () => {
+  let calls = 0;
+  const result = await runQualityHarness({
+    request,
+    maxAttempts: 1,
+    modelRouting: {
+      revision: "no-execution",
+      adapters: [
+        {
+          id: "blocked",
+          provider: "never",
+          modelId: "never",
+          mode: "injected",
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: ["local_compute"],
+          invoke: async () => {
+            calls++;
+            return {};
+          },
+        },
+      ],
+      defaultPolicy: {
+        primary: "blocked",
+        requiredCapabilities: ["unavailable"],
+        maxInputBytes: 100_000,
+        timeoutMs: 1000,
+      },
+    },
+  });
+  expect(calls).toBe(0);
+  expect(result.execution.modelId).toBe("not-executed");
+  expect(
+    result.attempts[0].stages
+      .filter((stage) => stage.status === "blocked")
+      .every((stage) => stage.modelId === "not-executed"),
+  ).toBe(true);
+});
+
+describe("typed nonmarket finance evidence", () => {
+  const policy = {
+    id: "policy",
+    kind: "policy" as const,
+    source: "controller-test",
+    text: "合成控制策略：预算上限1000测试单位，行情超出60秒上限拒绝执行。",
+  };
+  const synthetic = {
+    id: "fixture",
+    kind: "synthetic_fixture" as const,
+    source: "fixture-test",
+    text: "合成SPY案例：候选500测试单位，行情年龄30秒。",
+  };
+  async function gate(
+    answer: string,
+    claims: QualityHarnessArtifact["claims"],
+    evidence: QualityHarnessRequest["evidence"] = [policy, synthetic],
+  ) {
+    const result = await runQualityHarness({
+      request: { task: "分析美股与加密的合成规则案例，非实时行情，不得执行交易。", evidence },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const stage = (raw as QualityHarnessModelRequest).stage;
+        if (stage === "intake") {
+          return { kind: "plan", requirements: ["区分案例与行情"], missingEvidence: [] };
+        }
+        if (stage === "draft" || stage === "format") {
+          return { kind: "artifact", artifact: { answer, claims } };
+        }
+        return passReview();
+      },
+    });
+    return result.attempts[0].gates.find((entry) => entry.id === "finance_answer_safety");
+  }
+  const claims = [
+    {
+      id: "p",
+      text: "LLM与固定规则共享预算上限1000测试单位和60秒上限。",
+      status: "supported" as const,
+      evidenceIds: ["policy"],
+    },
+    {
+      id: "f",
+      text: "SPY合成案例为500测试单位，行情年龄30秒。",
+      status: "supported" as const,
+      evidenceIds: ["fixture"],
+    },
+  ];
+  const answer =
+    "LLM与固定规则共享预算上限1000测试单位和60秒上限。SPY合成案例为500测试单位，行情年龄30秒。以上非实时行情，不得执行。";
+  it("grounds source-cited policy and synthetic quantities without inventing timestamps", async () => {
+    expect(await gate(answer, claims)).toMatchObject({ passed: true });
+    expect(normalizeQualityRequest({ task: "test", evidence: [policy] }).evidence[0].kind).toBe(
+      "policy",
+    );
+  });
+  it.each([
+    "SPY当前价格1000美元。",
+    "SPY当前价格60美元。",
+    "合成案例价格100美元，SPY实际当前价格100美元。",
+    "政策上限5%，BTC当前收益率5%。",
+    "假设这是非实时行情，SPY最新收益率30%。",
+    "SPY市值500美元。",
+    "BTC当前价格500美元。",
+  ])("does not launder a real quote through fixture values: %s", async (quote) => {
+    expect(
+      await gate(answer + quote, [
+        ...claims,
+        { id: "quote", text: quote, status: "supported", evidenceIds: ["policy", "fixture"] },
+      ]),
+    ).toMatchObject({ passed: false });
+  });
+  it.each(["SPY合成案例为501测试单位。", "SPY合成案例为500秒。", "SPY合成案例为30测试单位。"])(
+    "rejects mismatched numeric occurrence %s",
+    async (changed) => {
+      expect(await gate(changed, claims)).toMatchObject({ passed: false });
+    },
+  );
+  it("does not infer trusted kind from synthetic words or skip absent sources", async () => {
+    expect(
+      await gate(answer, claims, [
+        { ...policy, kind: undefined },
+        { ...synthetic, kind: undefined },
+      ]),
+    ).toMatchObject({ passed: false });
+    expect(
+      await gate(answer, claims, [
+        { ...policy, source: undefined },
+        { ...synthetic, source: undefined },
+      ]),
+    ).toMatchObject({ passed: false });
+  });
+  it("keeps timestamped market quotes valid alongside nonmarket quantities", async () => {
+    const quote = "SPY当前价格500美元。";
+    expect(
+      await gate(
+        answer + quote,
+        [...claims, { id: "market", text: quote, status: "supported", evidenceIds: ["market"] }],
+        [
+          policy,
+          synthetic,
+          { id: "market", text: "截至2026-09-20，SPY价格500美元。", source: "market-test" },
+        ],
+      ),
+    ).toMatchObject({ passed: true });
+  });
+  it("requires the same cited evidence and entity for each nonmarket occurrence", async () => {
+    expect(
+      await gate("SPY合成案例500测试单位。", [
+        {
+          id: "wrong",
+          text: "SPY合成案例500测试单位。",
+          status: "supported",
+          evidenceIds: ["policy"],
+        },
+      ]),
+    ).toMatchObject({ passed: false });
+    expect(await gate("BTC合成案例500测试单位。", claims)).toMatchObject({ passed: false });
+  });
+  it("does not reuse a synthetic duration claim for a separate real latency assertion", async () => {
+    expect(
+      await gate(
+        "SPY合成案例行情年龄30秒。SPY当前真实行情延迟30秒。",
+        [
+          {
+            id: "duration",
+            text: "SPY合成案例行情年龄30秒。",
+            status: "supported",
+            evidenceIds: ["fixture"],
+          },
+        ],
+        [{ ...synthetic, text: "SPY合成案例行情年龄30秒。" }],
+      ),
+    ).toMatchObject({ passed: false });
+  });
+  it("rejects unknown evidence kinds", () => {
+    expect(() =>
+      normalizeQualityRequest({
+        task: "test",
+        evidence: [JSON.parse('{"id":"x","text":"test","kind":"assumed"}')],
+      }),
+    ).toThrow("evidence.kind");
+  });
+});
+
+describe("institutional counterevidence laundering", () => {
+  it.each(["contradicts", "context", "unknown", "supports"] as const)(
+    "only supporting evidence can ground a number (%s)",
+    async (relation) => {
+      const result = await runQualityHarness({
+        request: {
+          task: "Review the current NVDA stock price evidence",
+          evidence: [
+            { id: "policy", source: "policy", text: "Research only; no execution authority." },
+            { id: "quote", source: "fixture-feed", text: "As of 2026-09-06 NVDA price 480 USD." },
+          ],
+        },
+        maxAttempts: 1,
+        verify: () => ({ status: "passed", summary: "fixture verifier", details: [] }),
+        modelInvoker: async (raw) => {
+          const current = raw as QualityHarnessModelRequest;
+          if (current.stage === "intake") {
+            return { kind: "plan", requirements: ["bounded research"], missingEvidence: [] };
+          }
+          if (current.stage === "draft" || current.stage === "format") {
+            return {
+              kind: "artifact",
+              artifact: {
+                answer: "NVDA current price is 480 USD. Research only.",
+                claims: [
+                  {
+                    id: "price",
+                    text: "NVDA current price is 480 USD.",
+                    status: "supported",
+                    evidenceIds: ["policy", "quote"],
+                    epistemicClass: "source_observation",
+                    evidenceRelations: [
+                      { evidenceId: "policy", relation: "supports" },
+                      { evidenceId: "quote", relation },
+                    ],
+                  },
+                ],
+              },
+            };
+          }
+          return passReview();
+        },
+      });
+      if (relation === "supports") {
+        expect(result.status).toBe("verified");
+      } else {
+        expect(result.status).toBe("quality-failed");
+        expect(
+          result.attempts[0].gates.find((gate) => gate.id === "finance_answer_safety")?.passed,
+        ).toBe(false);
+      }
+    },
+  );
+});
+
+describe("deterministic evidence scope", () => {
+  it("overrides caller assertions and carries repeated reports to every role and the receipt", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const result = await runQualityHarness({
+      request: {
+        task: "Summarize this research packet.",
+        evidence: [
+          { id: "brief", text: "one report", source: "https://one.test/a" },
+          { id: "copy", text: "one report", source: "https://two.test/b" },
+        ],
+        sharedContext: {
+          evidenceMultiplicity: { independentSourceCount: 99, semanticTruth: "verified" },
+        },
+      },
+      modelInvoker: demoInvoker({ requests }),
+      maxAttempts: 1,
+      verify: () => ({ status: "passed", summary: "references checked only", details: [] }),
+    });
+    expect(requests.length).toBeGreaterThan(0);
+    for (const stage of requests) {
+      expect(stage.sharedContext.evidenceMultiplicity).toMatchObject({
+        distinctPacketGroups: 1,
+        duplicateGroups: [["brief", "copy"]],
+        independentSourceCount: null,
+        semanticTruth: "not_assessed",
+      });
+    }
+    expect(result.evidenceScope).toMatchObject({
+      independentSourceCount: null,
+      semanticTruth: "not_assessed",
+    });
   });
 });

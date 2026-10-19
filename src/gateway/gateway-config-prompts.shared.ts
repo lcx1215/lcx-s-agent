@@ -1,4 +1,6 @@
-import type { OpenClawConfig } from "../config/config.js";
+import { resolveGatewayPort, type OpenClawConfig } from "../config/config.js";
+import { pickPrimaryLanIPv4 } from "../gateway/net.js";
+import { pickPrimaryTailnetIPv4 } from "../infra/tailnet.js";
 import { getTailnetHostname } from "../infra/tailscale.js";
 import { isIpv6Address, parseCanonicalIpAddress } from "../shared/net/ip.js";
 
@@ -42,13 +44,13 @@ function normalizeTailnetHostForUrl(rawHost: string): string | null {
   return trimmed;
 }
 
-export function buildTailnetHttpsOrigin(rawHost: string): string | null {
+export function buildTailnetHttpsOrigin(rawHost: string, port?: number): string | null {
   const normalizedHost = normalizeTailnetHostForUrl(rawHost);
   if (!normalizedHost) {
     return null;
   }
   try {
-    return new URL(`https://${normalizedHost}`).origin;
+    return new URL(`https://${normalizedHost}${port ? `:${port}` : ""}`).origin;
   } catch {
     return null;
   }
@@ -68,18 +70,39 @@ export async function maybeAddTailnetOriginToControlUiAllowedOrigins(params: {
   tailscaleMode: string;
   tailscaleBin?: string | null;
 }): Promise<OpenClawConfig> {
-  if (params.tailscaleMode !== "serve" && params.tailscaleMode !== "funnel") {
+  const bind = params.config.gateway?.bind;
+  const serveMode = params.tailscaleMode === "serve" || params.tailscaleMode === "funnel";
+  const directTlsBind =
+    params.config.gateway?.tls?.enabled === true &&
+    (bind === "lan" || bind === "tailnet" || bind === "custom");
+  if (!serveMode && !directTlsBind) {
     return params.config;
   }
-  const tsOrigin = await getTailnetHostname(undefined, params.tailscaleBin ?? undefined)
-    .then((host) => buildTailnetHttpsOrigin(host))
-    .catch(() => null);
-  if (!tsOrigin) {
+  let origin: string | null = null;
+  if (serveMode) {
+    origin = await getTailnetHostname(undefined, params.tailscaleBin ?? undefined)
+      .then((host) => buildTailnetHttpsOrigin(host))
+      .catch(() => null);
+  } else {
+    const customHost = params.config.gateway?.customBindHost?.trim();
+    const host =
+      bind === "tailnet"
+        ? pickPrimaryTailnetIPv4()
+        : bind === "lan"
+          ? pickPrimaryLanIPv4()
+          : customHost === "0.0.0.0"
+            ? pickPrimaryLanIPv4()
+            : customHost;
+    if (host) {
+      origin = buildTailnetHttpsOrigin(host, resolveGatewayPort(params.config));
+    }
+  }
+  if (!origin) {
     return params.config;
   }
 
   const existing = params.config.gateway?.controlUi?.allowedOrigins ?? [];
-  const updatedOrigins = appendAllowedOrigin(existing, tsOrigin);
+  const updatedOrigins = appendAllowedOrigin(existing, origin);
   return {
     ...params.config,
     gateway: {

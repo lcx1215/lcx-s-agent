@@ -1,22 +1,40 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import {
   annualisedVol,
   attemptCycleOrder,
   currentWeightsFromPositions,
   lastCompletedMonthEnd,
+  markBarConsistencyIssue,
   markInstantForBarDate,
   receiptsForVenue,
   recordCycleFill,
+  refreshFinanceEodBarsAndMarks,
   solveInvalidationPrice,
   venueReconciliationIssue,
 } from "./finance-daily-cycle.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { FinanceExecutionSafetyTerminalFailureError } from "./finance-execution-safety.js";
 import type { FinancePosition } from "./finance-position-ledger.js";
-import { readFinancePositionLedger } from "./finance-position-ledger.js";
+import {
+  appendFinanceExecutionReceipt,
+  appendFinancePositionMark,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
+
+const refreshAlpacaCollect = vi.hoisted(() => vi.fn());
+const refreshChinaCollect = vi.hoisted(() => vi.fn());
+vi.mock("./finance-market-collection-registry.js", () => ({
+  createFinanceMarketCollectionRegistry: () => [
+    { id: "alpaca_daily_history", collect: refreshAlpacaCollect },
+    { id: "china_reachable_us_eod_history", collect: refreshChinaCollect },
+  ],
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv: () => ({}),
+}));
 
 const bar = (date: string, close: number) => ({ date, close });
 
@@ -62,12 +80,15 @@ describe("markInstantForBarDate", () => {
     );
   });
 
-  it("falls back to the run's instant rather than writing a mark in the future", () => {
-    // A cycle that runs before the close still files today's bar. A mark dated in the future is
-    // rejected by the store, and a rejected mark is a position still priced with yesterday.
-    expect(markInstantForBarDate("2026-09-20", "2026-09-20T12:00:00.000Z")).toBe(
-      "2026-09-20T12:00:00.000Z",
+  it("uses the New York close offset for winter bars and rejects an invalid asOf", () => {
+    expect(markInstantForBarDate("2026-01-21", "2026-01-21T22:00:00.000Z")).toBe(
+      "2026-01-21T21:00:00.000Z",
     );
+    expect(markInstantForBarDate("2026-01-21", "not-a-date")).toBeUndefined();
+  });
+
+  it("does not relabel an unclosed bar with the run instant", () => {
+    expect(markInstantForBarDate("2026-09-20", "2026-09-20T12:00:00.000Z")).toBeUndefined();
   });
 
   it("gives the same instant to the same date, which is what makes a re-run add nothing", () => {
@@ -79,11 +100,49 @@ describe("markInstantForBarDate", () => {
   });
 });
 
+describe("markBarConsistencyIssue", () => {
+  const latestBar = { date: "2026-09-18", close: 100 };
+
+  it("accepts a mark from the exact same completed bar", () => {
+    expect(
+      markBarConsistencyIssue(
+        { price: 100, at: "2026-09-18T20:00:00.000Z" },
+        latestBar,
+        "2026-09-21T12:00:00.000Z",
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a mark whose clock is ahead of the latest bar", () => {
+    expect(
+      markBarConsistencyIssue(
+        { price: 101, at: "2026-09-21T12:00:00.000Z" },
+        latestBar,
+        "2026-09-21T12:00:00.000Z",
+      ),
+    ).toContain("does not match latest EOD bar close");
+  });
+
+  it("rejects a price mismatch at the same close instant", () => {
+    expect(
+      markBarConsistencyIssue(
+        { price: 101, at: "2026-09-18T20:00:00.000Z" },
+        latestBar,
+        "2026-09-21T12:00:00.000Z",
+      ),
+    ).toContain("price 101");
+  });
+});
+
 describe("solveInvalidationPrice", () => {
   it("solves a stop that makes risk sizing land on the intended notional", () => {
     // 100k equity, 1% risk fraction -> size = 1000 / stop.
     // Wanting 10k means a 10% stop, so the level is 10% below 200.
     expect(solveInvalidationPrice(200, 10_000, 100_000)).toBeCloseTo(180, 2);
+  });
+
+  it("places sell-side invalidation above the reference price", () => {
+    expect(solveInvalidationPrice(200, 10_000, 100_000, "sell")).toBeCloseTo(220, 2);
   });
 
   it("gives different stops to different notionals instead of one flat stop", () => {
@@ -145,6 +204,21 @@ describe("attemptCycleOrder", () => {
     // The order id must reach the operator: the order exists even though the receipt does not.
     expect(result.refusals.join(" ")).toContain("ord-77");
   });
+
+  it("keeps a durable typed rejection as a contained refusal, not an uncertain book stop", async () => {
+    const result = await attemptCycleOrder(async () => {
+      throw new FinanceExecutionSafetyTerminalFailureError(
+        "claim",
+        "rejected",
+        { phase: "execute", disposition: "definite_rejection", venueResponse: { httpStatus: 422 } },
+        new Error("private response"),
+      );
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect("uncertain" in result).toBe(false);
+    }
+  });
 });
 
 const PAST = "2026-09-10T00:00:00Z";
@@ -177,6 +251,7 @@ function cycleReceipt(overrides: Partial<FinanceExecutionReceipt> = {}): Finance
 const tempDirs: string[] = [];
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  vi.clearAllMocks();
 });
 async function storeDirectory(): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-cycle-"));
@@ -376,5 +451,142 @@ describe("annualisedVol", () => {
     const calm = Array.from({ length: 120 }, (_, index) => 100 + (index % 2) * 0.1);
     const wild = Array.from({ length: 120 }, (_, index) => 100 + (index % 2) * 10);
     expect(annualisedVol(wild)).toBeGreaterThan(annualisedVol(calm));
+  });
+});
+
+describe("refreshFinanceEodBarsAndMarks", () => {
+  const collectionRow = (
+    date: string,
+    close: number,
+    providerName = "Alpaca",
+    sourceUrlOrArtifact = "https://data.alpaca.markets/v2/stocks/SPY/bars?feed=iex",
+  ) => ({
+    providerName,
+    sourceTimestamp: `${date}T20:00:00.000Z`,
+    observedAt: `${date}T20:01:00.000Z`,
+    sourceUrlOrArtifact,
+    data: { date, open: close, high: close + 1, low: close - 1, close, volume: 1000 },
+  });
+
+  async function openPosition(directory: string, instrument = "SPY"): Promise<void> {
+    await appendFinanceExecutionReceipt(directory, cycleReceipt({ instrument }));
+    await appendFinancePositionMark(directory, {
+      instrument,
+      price: 680,
+      at: "2026-09-16T20:00:00.000Z",
+    });
+  }
+
+  it("files the newest completed session and re-prices an open position with its close", async () => {
+    refreshAlpacaCollect.mockResolvedValueOnce([
+      collectionRow("2026-09-17", 700),
+      collectionRow("2026-09-18", 710),
+      {
+        ...collectionRow("2026-09-19", 900),
+        data: { date: "2026-09-19", close: 900 },
+      },
+    ]);
+    const directory = await storeDirectory();
+    await openPosition(directory);
+    const result = await refreshFinanceEodBarsAndMarks({
+      directory,
+      asOf: "2026-09-20T00:00:00.000Z",
+      instruments: ["SPY"],
+    });
+
+    expect(result.barsFiled).toEqual([
+      {
+        instrument: "SPY",
+        marketDate: "2026-09-18",
+        providerName: "Alpaca",
+        sourceObservedAt: "2026-09-18T20:01:00.000Z",
+        barCount: 1,
+        newBarCount: 1,
+        appended: true,
+      },
+    ]);
+    expect(result.marksFiled).toHaveLength(1);
+    expect(result.marksFiled[0]).toEqual(
+      expect.objectContaining({
+        instrument: "SPY",
+        price: 710,
+        at: "2026-09-18T20:00:00.000Z",
+        appended: true,
+      }),
+    );
+    expect(result.dataIssues).toEqual([]);
+    expect(result.unpricedHoldings).toEqual([]);
+    expect(
+      (
+        await readFinanceBarLedger(directory, {
+          instrument: "SPY",
+          asOf: "2026-09-18T19:59:59.000Z",
+        })
+      ).bars,
+    ).toEqual([]);
+    expect(
+      (
+        await readFinanceBarLedger(directory, {
+          instrument: "SPY",
+          asOf: "2026-09-18T20:00:59.999Z",
+        })
+      ).bars,
+    ).toEqual([]);
+    expect(
+      (
+        await readFinanceBarLedger(directory, {
+          instrument: "SPY",
+          asOf: "2026-09-18T20:01:00.000Z",
+        })
+      ).bars,
+    ).toEqual([expect.objectContaining({ date: "2026-09-18", close: 710 })]);
+  });
+
+  it("fails open when the source returns nothing, without touching marks", async () => {
+    refreshAlpacaCollect.mockResolvedValueOnce([]);
+    refreshChinaCollect.mockResolvedValueOnce([]);
+    const directory = await storeDirectory();
+    await openPosition(directory);
+    const result = await refreshFinanceEodBarsAndMarks({
+      directory,
+      asOf: "2026-09-20T00:00:00.000Z",
+      instruments: ["SPY"],
+    });
+
+    expect(result.barsFiled).toEqual([]);
+    expect(result.marksFiled).toEqual([]);
+    expect(result.unpricedHoldings).toEqual(["SPY"]);
+    expect(refreshAlpacaCollect).toHaveBeenCalledWith(
+      expect.objectContaining({ instrument: "SPY", collection: "eod_history", limit: 1 }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("falls back to the existing regional EOD source when Alpaca history is unavailable", async () => {
+    refreshAlpacaCollect.mockRejectedValueOnce(new Error("provider unavailable"));
+    refreshChinaCollect.mockResolvedValueOnce([
+      collectionRow(
+        "2026-09-18",
+        710,
+        "sina-us-eod-history",
+        "https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20_lcx/US_MinKService.getDailyK?symbol=SPY&___qn=3",
+      ),
+    ]);
+    const directory = await storeDirectory();
+    const result = await refreshFinanceEodBarsAndMarks({
+      directory,
+      asOf: "2026-09-20T00:00:00.000Z",
+      instruments: ["SPY"],
+    });
+
+    expect(result.barsFiled).toEqual([
+      expect.objectContaining({
+        instrument: "SPY",
+        marketDate: "2026-09-18",
+        providerName: "sina-us-eod-history",
+      }),
+    ]);
+    expect(refreshAlpacaCollect).toHaveBeenCalledTimes(1);
+    expect(refreshChinaCollect).toHaveBeenCalledTimes(1);
   });
 });

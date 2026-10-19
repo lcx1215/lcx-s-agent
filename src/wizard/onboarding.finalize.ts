@@ -24,8 +24,10 @@ import type { OnboardOptions } from "../commands/onboard-types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
+import { isConfiguredLocalGatewayTlsUrl } from "../gateway/local-tls-url.js";
 import { CANONICAL_PROJECT_URL } from "../infra/canonical-identity.js";
 import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
+import { readGatewayTlsFingerprint } from "../infra/tls/gateway.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
 import { runTui } from "../tui/tui.js";
@@ -203,6 +205,7 @@ export async function finalizeOnboardingWizard(
       port: settings.port,
       customBindHost: nextConfig.gateway?.customBindHost,
       basePath: undefined,
+      tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
     });
     // Daemon install/restart can briefly flap the WS; wait a bit so health check doesn't false-fail.
     await waitForGatewayReachable({
@@ -241,6 +244,7 @@ export async function finalizeOnboardingWizard(
     port: settings.port,
     customBindHost: settings.customBindHost,
     basePath: controlUiBasePath,
+    tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
   });
   const authedUrl =
     settings.authMode === "token" && settings.gatewayToken
@@ -342,9 +346,15 @@ export async function finalizeOnboardingWizard(
     });
 
     if (hatchChoice === "tui") {
+      const tlsFingerprint =
+        nextConfig.gateway?.tls?.enabled === true &&
+        isConfiguredLocalGatewayTlsUrl(nextConfig, links.wsUrl)
+          ? await readGatewayTlsFingerprint(nextConfig.gateway.tls)
+          : undefined;
       restoreTerminalState("pre-onboarding tui", { resumeStdinIfPaused: true });
       await runTui({
         url: links.wsUrl,
+        tlsFingerprint,
         token: settings.authMode === "token" ? settings.gatewayToken : undefined,
         password: settings.authMode === "password" ? resolvedGatewayPassword : "",
         // Safety: onboarding TUI should not auto-deliver to lastProvider/lastTo.
@@ -361,6 +371,7 @@ export async function finalizeOnboardingWizard(
             port: settings.port,
             basePath: controlUiBasePath,
             token: settings.authMode === "token" ? settings.gatewayToken : undefined,
+            tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
           });
         }
       } else {
@@ -368,6 +379,7 @@ export async function finalizeOnboardingWizard(
           port: settings.port,
           basePath: controlUiBasePath,
           token: settings.authMode === "token" ? settings.gatewayToken : undefined,
+          tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
         });
       }
       await prompter.note(
@@ -421,6 +433,7 @@ export async function finalizeOnboardingWizard(
           port: settings.port,
           basePath: controlUiBasePath,
           token: settings.gatewayToken,
+          tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
         });
       }
     } else {
@@ -428,6 +441,7 @@ export async function finalizeOnboardingWizard(
         port: settings.port,
         basePath: controlUiBasePath,
         token: settings.gatewayToken,
+        tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
       });
     }
 

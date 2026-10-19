@@ -34,6 +34,7 @@ describe("LCX farm web projection view", () => {
 
     expect(source).toContain('const centralAgentOwner = objectAt(owners, "centralAgent")');
     expect(source).toContain("brainOutcome");
+    expect(source).toContain("brainReason");
     expect(source).toContain("approvedOwners");
     expect(source).toContain("registryTools");
     // The dashboard stays read-only: the projection must not grant the agent authority.

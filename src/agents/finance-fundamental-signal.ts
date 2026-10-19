@@ -1,11 +1,10 @@
 /**
  * Fundamental signal from analyst price targets.
  *
- * Chosen over growth rates because a target versus the current price is already
- * relative: the market's own analysts have done the valuing, and the only thing
- * left is how far their number is from today's. A growth rate would need a
- * threshold invented here ("is 8% revenue growth good?"), which is a guess
- * dressed up as analysis.
+ * A target-price gap is a public analyst opinion input. It does not identify the
+ * expectation embedded in today's price or establish a proprietary trading edge.
+ * Fundamental research must supply the driver disagreement, catalyst and failure
+ * conditions before calling it a mispricing; this signal alone does not do that.
  *
  * Two honest limits are built in:
  *
@@ -63,7 +62,8 @@ export function analystTargetSignal(
     " n=" +
     summary.analystCount +
     " window=" +
-    summary.window;
+    summary.window +
+    " edge_status=unverified_analyst_opinion";
 
   // The three tunables are caller-supplied and were unvalidated, so a degenerate one manufactured a
   // vote instead of withholding one. Measured: `fullCredibilityCount: -10` with 100 analysts produced

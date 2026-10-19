@@ -17,6 +17,10 @@ import {
   normalizeLocalBrainModuleList,
   packLocalBrainModuleFields,
 } from "./local-brain-taxonomy.js";
+import {
+  readTrainingPromptHandoff,
+  type TrainingCallerRef,
+} from "./minimax-brain-failure-curriculum.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -37,6 +41,9 @@ type CliOptions = {
   includePayloadUnstablePrompts: boolean;
   promptFile?: string;
   concurrency: number;
+  trainingCaller?: TrainingCallerRef;
+  promptHandoff?: { path: string; sha256: string };
+  promptReadback?: Awaited<ReturnType<typeof readTrainingPromptHandoff>>;
 };
 
 type TeacherPrompt = {
@@ -457,6 +464,15 @@ function parseArgs(args: string[]): CliOptions {
       arg === "--include-payload-unstable-prompts"
     ) {
       options.includePayloadUnstablePrompts = true;
+    } else if (arg === "--caller-receipt") {
+      options.trainingCaller = JSON.parse(readValue(args, index)) as TrainingCallerRef;
+      index += 1;
+    } else if (arg === "--prompt-handoff") {
+      options.promptHandoff = JSON.parse(readValue(args, index)) as {
+        path: string;
+        sha256: string;
+      };
+      index += 1;
     } else if (arg === "--prompt-file") {
       options.promptFile = path.resolve(readValue(args, index));
       index += 1;
@@ -544,9 +560,24 @@ function isTeacherPrompt(value: unknown): value is TeacherPrompt {
 
 async function loadTeacherPrompts(options: CliOptions): Promise<TeacherPrompt[]> {
   if (!options.promptFile) {
+    if (options.promptHandoff || options.trainingCaller) {
+      throw new Error("training_prompt_file_missing");
+    }
     return TEACHER_PROMPTS;
   }
   const raw = await fs.readFile(options.promptFile, "utf8");
+  if (options.promptHandoff || options.trainingCaller) {
+    if (!options.promptHandoff || !options.trainingCaller) {
+      throw new Error("training_prompt_handoff_or_caller_missing");
+    }
+    options.promptReadback = await readTrainingPromptHandoff({
+      handoff: options.promptHandoff,
+      caller: options.trainingCaller,
+      promptFile: options.promptFile,
+      promptText: raw,
+      workspaceDir: options.workspaceDir,
+    });
+  }
   const parsed = JSON.parse(raw) as unknown;
   if (!Array.isArray(parsed)) {
     throw new Error(`prompt file must contain a JSON array: ${options.promptFile}`);
@@ -2830,7 +2861,16 @@ export function isProviderPayloadMissingFailure(failure: { error: string }): boo
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const configuredTeacherPrompts = await loadTeacherPrompts(options);
+  let configuredTeacherPrompts: TeacherPrompt[];
+  try {
+    configuredTeacherPrompts = await loadTeacherPrompts(options);
+  } catch (error) {
+    process.stdout.write(
+      `${JSON.stringify({ ok: false, boundary: "brain_distillation_review", status: "blocked", reason: String(error), failures: [{ id: "prompt_readback", error: String(error) }], acceptedCandidates: 0, promptReadback: { status: "blocked", reason: String(error), semanticAdoption: "not_proven" }, liveTouched: false, providerConfigTouched: false, protectedMemoryTouched: false })}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   const teacherPromptPool = options.promptFile
     ? configuredTeacherPrompts
     : options.includePayloadUnstablePrompts
@@ -2960,6 +3000,7 @@ async function main(): Promise<void> {
     acceptedCandidates: acceptedCandidates.length,
     failures: hardFailures,
     providerUsageReceipts,
+    ...(options.promptReadback ? { promptReadback: options.promptReadback } : {}),
     liveTouched: false,
     providerConfigTouched: false,
     originalPipelineReplaced: false,

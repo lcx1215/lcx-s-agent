@@ -164,6 +164,12 @@ export async function resolveGatewayRuntimeConfig(params: {
     }
   }
 
+  if (!isLoopbackHost(bindHost) && params.cfg.gateway?.tls?.enabled !== true) {
+    throw new Error(
+      "non-loopback Gateway binds require gateway.tls.enabled=true; keep bind=loopback behind SSH/Tailscale Serve when Gateway TLS is not configured",
+    );
+  }
+
   return {
     bindHost,
     controlUiEnabled,

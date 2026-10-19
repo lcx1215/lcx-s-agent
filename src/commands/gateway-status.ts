@@ -160,6 +160,7 @@ export async function gatewayStatusCommand(
             const probe = await probeGateway({
               url: target.url,
               auth,
+              config: cfg,
               timeoutMs,
             });
             const configSummary = probe.configSnapshot
@@ -241,8 +242,9 @@ export async function gatewayStatusCommand(
               wsUrl: (() => {
                 const host = b.tailnetDns || b.lanHost || b.host;
                 const port = b.gatewayPort ?? 18789;
-                return host ? `ws://${host}:${port}` : null;
+                return host ? `${b.gatewayTls ? "wss" : "ws"}://${host}:${port}` : null;
               })(),
+              tlsFingerprint: b.gatewayTlsFingerprintSha256 ?? null,
             })),
           },
           targets: probed.map((p) => ({

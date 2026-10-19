@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  modelRequestTrajectoryPath,
+  readModelRequestTrajectory,
+  type ModelRequestRecord,
+} from "../../src/agents/model-request-trajectory.js";
+import {
   DEFAULT_WORKSPACE_DIR,
   DEFAULT_WORKSPACE_LOG_DIR,
   REAL_COST_LEDGER_LATEST_JSON_PATH,
@@ -17,6 +22,8 @@ type CostLedgerInput = {
   reviewRoot: string;
   councilRoot?: string;
   monthlySubscriptionCostCny?: number;
+  modelRequestMetadataPath?: string;
+  modelUsageWindow?: { startAt: string; endAt: string };
   outputPaths: {
     latestJsonPath: string;
     latestMarkdownPath: string;
@@ -101,11 +108,13 @@ function estimateTokenCount(text: string): number {
   return Math.ceil(cjk / 1.6 + nonCjk / 4);
 }
 
-function collectUsageTokens(value: unknown): number | undefined {
+export function collectUsageTokens(value: unknown): number | undefined {
   let total = 0;
   let found = false;
   const stack = [value];
-  while (stack.length > 0) {
+  const count = (...values: unknown[]) =>
+    values.find((v): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0);
+  while (stack.length) {
     const current = stack.pop();
     if (!current || typeof current !== "object") {
       continue;
@@ -114,22 +123,133 @@ function collectUsageTokens(value: unknown): number | undefined {
       stack.push(...current);
       continue;
     }
-    for (const [key, nested] of Object.entries(current as JsonRecord)) {
-      if (
-        /^(input_tokens|output_tokens|prompt_tokens|completion_tokens|total_tokens)$/iu.test(key)
-      ) {
-        const amount = numberValue(nested);
-        if (amount !== undefined) {
-          total += amount;
-          found = true;
-        }
-      }
-      if (nested && typeof nested === "object") {
-        stack.push(nested);
-      }
+    const item = current as JsonRecord;
+    const reported = count(item.total_tokens, item.totalTokens);
+    const input = count(item.prompt_tokens, item.input_tokens, item.promptTokens, item.inputTokens);
+    const output = count(
+      item.completion_tokens,
+      item.output_tokens,
+      item.completionTokens,
+      item.outputTokens,
+    );
+    if (reported !== undefined || input !== undefined || output !== undefined) {
+      // total already includes input/output; cache/reasoning are subsets, not extras.
+      total += reported ?? (input ?? 0) + (output ?? 0);
+      found = true;
+    } else {
+      stack.push(...Object.values(item).filter((nested) => nested && typeof nested === "object"));
     }
   }
   return found ? total : undefined;
+}
+
+/** Transport usage is evidence of consumption, never model usefulness or a currency bill. */
+export function summarizeRealModelRequestUsage(
+  records: readonly ModelRequestRecord[],
+  window: { startAt: string; endAt: string },
+) {
+  const start = Date.parse(window.startAt),
+    end = Date.parse(window.endAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    throw new Error("invalid model usage window");
+  }
+  const groups = new Map<string, ModelRequestRecord[]>();
+  for (const record of records) {
+    const key = `${record.provider}:${record.requestId}`;
+    const values = groups.get(key) ?? [];
+    values.push(record);
+    groups.set(key, values);
+  }
+  const byTask = new Map<
+    string,
+    {
+      source: string;
+      role: string;
+      provider: string;
+      modelId: string;
+      attempts: number;
+      responseErrors: number;
+      aborted: number;
+      transportErrors: number;
+      usageRequests: number;
+      unknownUsageRequests: number;
+      observedTokens: number;
+    }
+  >();
+  let orphanObservations = 0,
+    conflictingUsageRequests = 0;
+  for (const events of groups.values()) {
+    const attempt = events
+      .filter((r) => r.stage === "attempt_started")
+      .toSorted((a, b) => Date.parse(a.ts) - Date.parse(b.ts))[0];
+    if (!attempt) {
+      orphanObservations += events.filter(
+        (r) => Date.parse(r.ts) >= start && Date.parse(r.ts) < end,
+      ).length;
+      continue;
+    }
+    const at = Date.parse(attempt.ts);
+    if (at < start || at >= end) {
+      continue;
+    }
+    const key = JSON.stringify([
+      attempt.source,
+      attempt.role ?? attempt.taskId ?? "unknown",
+      attempt.provider,
+      attempt.modelId,
+    ]);
+    const row = byTask.get(key) ?? {
+      source: attempt.source,
+      role: attempt.role ?? attempt.taskId ?? "unknown",
+      provider: attempt.provider,
+      modelId: attempt.modelId,
+      attempts: 0,
+      responseErrors: 0,
+      aborted: 0,
+      transportErrors: 0,
+      usageRequests: 0,
+      unknownUsageRequests: 0,
+      observedTokens: 0,
+    };
+    row.attempts++;
+    row.responseErrors += Number(
+      events.some((r) => r.stage === "response_received" && (r.httpStatus ?? 0) >= 400),
+    );
+    row.aborted += Number(events.some((r) => r.stage === "request_aborted"));
+    row.transportErrors += Number(events.some((r) => r.stage === "request_error"));
+    const usage = events
+      .filter((r) => r.stage === "usage_received")
+      .map(collectUsageTokens)
+      .filter((v): v is number => v !== undefined);
+    const amounts = new Set(usage);
+    if (amounts.size === 1) {
+      row.usageRequests++;
+      row.observedTokens += usage[0];
+    } else {
+      row.unknownUsageRequests++;
+      if (amounts.size > 1) {
+        conflictingUsageRequests++;
+      }
+    }
+    byTask.set(key, row);
+  }
+  const tasks = [...byTask.values()].toSorted((a, b) => b.observedTokens - a.observedTokens);
+  return {
+    window: { ...window, interval: "[startAt,endAt)", attribution: "request_attempt_start" },
+    boundary: "recorded_transport_attempts_only_not_all_provider_account_usage_or_business_success",
+    attempts: tasks.reduce((n, r) => n + r.attempts, 0),
+    usageRequests: tasks.reduce((n, r) => n + r.usageRequests, 0),
+    unknownUsageRequests: tasks.reduce((n, r) => n + r.unknownUsageRequests, 0),
+    observedTokens: tasks.reduce((n, r) => n + r.observedTokens, 0),
+    orphanObservations,
+    conflictingUsageRequests,
+    byTask: tasks,
+    billedCost: null,
+    currency: null,
+    billingStatus: "provider_bill_not_observed",
+    warning:
+      "Failed/aborted requests may be charged; unknown usage is not free. Token totals exclude cache/reasoning subset double counting.",
+  };
 }
 
 function currency(value: number | null): string {
@@ -314,6 +434,33 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
   const modelRows = [...byModel.entries()]
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([model, stats]) => ({ model, ...stats }));
+  const modelWindow = input.modelUsageWindow ?? {
+    startAt: new Date(Date.parse(input.checkedAt) - 24 * 60 * 60_000).toISOString(),
+    endAt: input.checkedAt,
+  };
+  const metadataPath =
+    input.modelRequestMetadataPath ?? path.join(input.logDir, "lcx-model-request-metadata.jsonl");
+  let metadataPresent = true;
+  try {
+    await fs.access(metadataPath);
+  } catch {
+    metadataPresent = false;
+  }
+  const modelRequestUsage = metadataPresent
+    ? {
+        status: "observed",
+        sourcePath: metadataPath,
+        ...summarizeRealModelRequestUsage(
+          await readModelRequestTrajectory({ filePath: metadataPath }),
+          modelWindow,
+        ),
+      }
+    : {
+        status: "unavailable",
+        sourcePath: metadataPath,
+        reason: "model_request_metadata_not_observed",
+        billedCost: null,
+      };
   const markdown = [
     "# LCX 真实成本账本",
     "",
@@ -327,7 +474,9 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
     `- 失败或空结果：${confirmedProviderFailuresOrSkips}`,
     `- 有 usage token 证据的批次：${confirmedUsageTokenEvidenceCount}`,
     `- 确认 usage token：${confirmedUsageTokens === null ? "旧日志未保存" : confirmedUsageTokens}`,
-    `- 确认金额：${currency(subscriptionCost)}`,
+    "- 确认账单金额：无账单证据",
+    `- 调用方声明的月订阅成本（非账单）：${currency(subscriptionCost)}`,
+    `- 当前模型请求用量：${JSON.stringify(modelRequestUsage)}`,
     `- 三方评审文件：${councilRunCount}`,
     `- 三方角色调用：${councilRoleCalls}（成功 ${councilSuccessfulRoleCalls}，失败 ${councilFailedRoleCalls}）`,
     "",
@@ -367,7 +516,8 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
       confirmedProviderFailuresOrSkips,
       confirmedUsageTokens,
       confirmedUsageTokenEvidenceCount,
-      confirmedBilledCostCny: subscriptionCost,
+      confirmedBilledCostCny: null,
+      declaredMonthlySubscriptionCostCny: subscriptionCost,
       estimatedCapturedTextTokens,
       estimatedTeacherReviewTextTokens,
       estimatedCouncilTextTokens,
@@ -382,6 +532,7 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
       councilFailedRoleCalls,
     },
     byModel: modelRows,
+    modelRequestUsage,
     sourcePaths: [input.logDir, input.reviewRoot, input.councilRoot].filter(Boolean),
     markdown,
     liveTouched: false,
@@ -393,9 +544,10 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
 export type RealCostLedger = Awaited<ReturnType<typeof buildRealCostLedger>>;
 
 export async function writeRealCostLedger(ledger: RealCostLedger) {
-  await fs.mkdir(path.dirname(REAL_COST_LEDGER_LATEST_JSON_PATH), { recursive: true });
-  await fs.writeFile(REAL_COST_LEDGER_LATEST_JSON_PATH, `${JSON.stringify(ledger, null, 2)}\n`);
-  await fs.writeFile(REAL_COST_LEDGER_LATEST_MARKDOWN_PATH, `${ledger.markdown}\n`);
+  await fs.mkdir(path.dirname(ledger.latestJsonPath), { recursive: true });
+  await fs.mkdir(path.dirname(ledger.latestMarkdownPath), { recursive: true });
+  await fs.writeFile(ledger.latestJsonPath, `${JSON.stringify(ledger, null, 2)}\n`);
+  await fs.writeFile(ledger.latestMarkdownPath, `${ledger.markdown}\n`);
 }
 
 function parseArgs(args: string[]) {
@@ -425,6 +577,7 @@ async function main() {
     reviewRoot: path.join(DEFAULT_WORKSPACE_DIR, "memory/external-brain-distillation-reviews"),
     councilRoot: path.join(DEFAULT_WORKSPACE_DIR, "bank/knowledge/learning-councils"),
     monthlySubscriptionCostCny: monthlyCost,
+    modelRequestMetadataPath: modelRequestTrajectoryPath(),
     outputPaths: {
       latestJsonPath: REAL_COST_LEDGER_LATEST_JSON_PATH,
       latestMarkdownPath: REAL_COST_LEDGER_LATEST_MARKDOWN_PATH,

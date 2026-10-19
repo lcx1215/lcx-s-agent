@@ -88,6 +88,9 @@ const OPEN_DM_POLICY_ALLOW_FROM_RE =
 
 const CONFIG_AUDIT_LOG_FILENAME = "config-audit.jsonl";
 const loggedInvalidConfigs = new Set<string>();
+// loadConfig callers create new IO instances, so warning state belongs to the process.
+const loggedConfigWarnings = new Map<string, string>();
+const MAX_LOGGED_CONFIG_WARNING_PATHS = 128;
 
 type ConfigWriteAuditResult = "rename" | "copy-fallback" | "failed";
 
@@ -812,6 +815,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     try {
       maybeLoadDotEnvForConfig(deps.env);
       if (!deps.fs.existsSync(configPath)) {
+        loggedConfigWarnings.delete(configPath);
         if (shouldEnableShellEnvFallback(deps.env) && !shouldDeferShellEnvFallback(deps.env)) {
           loadShellEnvFallback({
             enabled: true,
@@ -842,6 +846,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       }
       const validated = validateConfigObjectWithPlugins(resolvedConfig);
       if (!validated.ok) {
+        loggedConfigWarnings.delete(configPath);
         const details = validated.issues
           .map((iss) => `- ${iss.path || "<root>"}: ${iss.message}`)
           .join("\n");
@@ -854,11 +859,22 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         (error as { code?: string; details?: string }).details = details;
         throw error;
       }
-      if (validated.warnings.length > 0) {
-        const details = validated.warnings
-          .map((iss) => `- ${iss.path || "<root>"}: ${iss.message}`)
-          .join("\n");
-        deps.logger.warn(`Config warnings:\\n${details}`);
+      const warningDetails = validated.warnings
+        .map((iss) => `- ${iss.path || "<root>"}: ${iss.message}`)
+        .join("\n");
+      if (!warningDetails) {
+        loggedConfigWarnings.delete(configPath);
+      } else if (loggedConfigWarnings.get(configPath) !== warningDetails) {
+        // Logging can itself read config; mark before emitting to prevent recursion.
+        loggedConfigWarnings.delete(configPath);
+        loggedConfigWarnings.set(configPath, warningDetails);
+        if (loggedConfigWarnings.size > MAX_LOGGED_CONFIG_WARNING_PATHS) {
+          const oldestPath = loggedConfigWarnings.keys().next().value;
+          if (oldestPath !== undefined) {
+            loggedConfigWarnings.delete(oldestPath);
+          }
+        }
+        deps.logger.warn(`Config warnings:\n${warningDetails}`);
       }
       warnIfConfigFromFuture(validated.config, deps.logger);
       const cfg = applyTalkConfigNormalization(

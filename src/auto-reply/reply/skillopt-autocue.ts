@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,11 +7,165 @@ export type SkillOptAutoCue = {
   matchedSkillIds: string[];
   bestSkillPaths: string[];
   promptInjection: string;
+  readback: SkillOptReadback[];
   boundary: "local_skillopt_preflight_only";
   liveTouched: false;
   providerConfigTouched: false;
   protectedMemoryTouched: false;
 };
+
+export type SkillOptReadback = {
+  skillId: string;
+  bestSkillPath: string;
+  bestSkillSha256: string | null;
+  excerptSha256: string | null;
+  receiptPath: string;
+  receiptSha256: string | null;
+  candidatePath: string | null;
+  candidateSha256: string | null;
+  sourceKind: "legacy_sop_context" | "bootstrap_context" | "candidate_unverified" | "unknown";
+  evaluationStatus: string | null;
+  behaviorAccepted: false;
+  bodyIncluded: boolean;
+  gaps: string[];
+};
+
+function skillOptRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function inspectSkillOptReadback(
+  workspaceDir: string,
+  skillId: string,
+  absolutePath: string,
+  body: string,
+): Promise<SkillOptReadback> {
+  const readback: SkillOptReadback = {
+    skillId,
+    bestSkillPath: absolutePath,
+    bestSkillSha256: createHash("sha256").update(body).digest("hex"),
+    receiptPath: path.join(path.dirname(absolutePath), "skillopt-lite-latest.json"),
+    excerptSha256: null,
+    receiptSha256: null,
+    candidatePath: null,
+    candidateSha256: null,
+    sourceKind: "unknown",
+    evaluationStatus: null,
+    behaviorAccepted: false,
+    bodyIncluded: false,
+    gaps: [],
+  };
+  const hasCandidateBlock =
+    /^## Candidate Edit:/mu.test(body) || /pending_eval_acceptance/u.test(body);
+  let receipt: Record<string, unknown>;
+  try {
+    const bytes = await fs.readFile(readback.receiptPath);
+    readback.receiptSha256 = createHash("sha256").update(bytes).digest("hex");
+    receipt = skillOptRecord(JSON.parse(bytes.toString("utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" && !hasCandidateBlock) {
+      readback.sourceKind = "legacy_sop_context";
+      readback.bodyIncluded = true;
+    } else {
+      readback.gaps.push(
+        hasCandidateBlock ? "candidate_receipt_unavailable" : "skill_receipt_unreadable",
+      );
+    }
+    return readback;
+  }
+  if (
+    receipt.boundary !== "local_skillopt_lite_only" ||
+    receipt.skillId !== skillId ||
+    typeof receipt.bestSkillPath !== "string" ||
+    path.resolve(workspaceDir, receipt.bestSkillPath) !== absolutePath
+  ) {
+    readback.gaps.push("skill_receipt_scope_conflict");
+  }
+  const targetedEval = skillOptRecord(skillOptRecord(receipt.proofChain).targetedEval);
+  readback.evaluationStatus = typeof targetedEval.status === "string" ? targetedEval.status : null;
+  const identities = Array.isArray(targetedEval.candidateIdentities)
+    ? targetedEval.candidateIdentities
+        .map(skillOptRecord)
+        .filter((entry) => entry.skillId === skillId)
+    : [];
+  if (identities.length !== 1 || identities[0]?.sha256 !== readback.bestSkillSha256) {
+    readback.gaps.push("best_skill_identity_hash_conflict");
+  }
+  const candidate =
+    receipt.phase === "candidate-edit" ||
+    hasCandidateBlock ||
+    (typeof receipt.status === "string" && receipt.status.startsWith("candidate_edit_"));
+  if (candidate) {
+    readback.sourceKind = "candidate_unverified";
+    if (typeof receipt.candidatePath === "string") {
+      const candidatePath = path.resolve(workspaceDir, receipt.candidatePath);
+      const relative = path.relative(workspaceDir, candidatePath);
+      if (
+        relative.startsWith("..") ||
+        path.isAbsolute(relative) ||
+        identities[0]?.path !== candidatePath
+      ) {
+        readback.gaps.push("candidate_identity_scope_conflict");
+      } else {
+        readback.candidatePath = candidatePath;
+        try {
+          const bytes = await fs.readFile(candidatePath);
+          readback.candidateSha256 = createHash("sha256").update(bytes).digest("hex");
+          if (readback.candidateSha256 !== identities[0]?.sha256) {
+            readback.gaps.push("candidate_file_hash_conflict");
+          }
+        } catch {
+          readback.gaps.push("candidate_file_unavailable");
+        }
+      }
+    } else {
+      readback.gaps.push("candidate_identity_missing");
+    }
+    // The original evaluator currently cannot pair candidate Skill text with baseline
+    // behavior. Static acceptance must never become behavioral acceptance at this read seam.
+    readback.gaps.push("candidate_behavior_eval_not_supported");
+  } else if (
+    receipt.phase === "bootstrap" &&
+    receipt.status === "bootstrap_best_skill_seed_ready" &&
+    receipt.accepted === true &&
+    receipt.staticGateOk === true
+  ) {
+    readback.sourceKind = "bootstrap_context";
+  } else {
+    readback.gaps.push("unclassified_skillopt_receipt_status");
+  }
+  if (typeof receipt.sourceAutopilotPath === "string") {
+    const sourcePath = path.resolve(workspaceDir, receipt.sourceAutopilotPath);
+    const relative = path.relative(workspaceDir, sourcePath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      readback.gaps.push("skill_source_scope_conflict");
+    } else {
+      try {
+        const source = skillOptRecord(JSON.parse(await fs.readFile(sourcePath, "utf8")));
+        const sourceTime = Date.parse(typeof source.checkedAt === "string" ? source.checkedAt : "");
+        const receiptTime = Date.parse(
+          typeof receipt.checkedAt === "string" ? receipt.checkedAt : "",
+        );
+        if (
+          !Number.isFinite(sourceTime) ||
+          !Number.isFinite(receiptTime) ||
+          source.checkedAt !== receipt.sourceAutopilotCheckedAt ||
+          sourceTime > receiptTime
+        ) {
+          readback.gaps.push("skill_source_snapshot_stale_or_time_conflict");
+        }
+      } catch {
+        readback.gaps.push("skill_source_snapshot_unavailable");
+      }
+    }
+  } else {
+    readback.gaps.push("skill_source_snapshot_missing");
+  }
+  readback.bodyIncluded = readback.gaps.length === 0 && readback.sourceKind === "bootstrap_context";
+  return readback;
+}
 
 type SkillOptAutoCueRule = {
   skillId: string;
@@ -129,7 +284,7 @@ function resolveSkillOptWorkspaceDirs(params: {
 async function readBestSkill(params: {
   workspaceDirs: string[];
   skillId: string;
-}): Promise<{ absolutePath: string; body: string } | null> {
+}): Promise<{ absolutePath: string; body: string; readback: SkillOptReadback } | null> {
   for (const workspaceDir of params.workspaceDirs) {
     const absolutePath = path.join(
       workspaceDir,
@@ -141,13 +296,39 @@ async function readBestSkill(params: {
     try {
       const body = await fs.readFile(absolutePath, "utf8");
       if (body.trim()) {
-        return { absolutePath, body };
+        const readback = await inspectSkillOptReadback(
+          workspaceDir,
+          params.skillId,
+          absolutePath,
+          body,
+        );
+        if (readback.bodyIncluded) {
+          readback.excerptSha256 = createHash("sha256")
+            .update(formatBestSkillExcerpt(body))
+            .digest("hex");
+        }
+        return { absolutePath, body, readback };
       }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && code !== "ENOTDIR") {
         throw error;
       }
+      try {
+        await fs.access(path.join(path.dirname(absolutePath), "skillopt-lite-latest.json"));
+      } catch {
+        continue;
+      }
+      const readback = await inspectSkillOptReadback(
+        workspaceDir,
+        params.skillId,
+        absolutePath,
+        "",
+      );
+      readback.bestSkillSha256 = null;
+      readback.bodyIncluded = false;
+      readback.gaps.unshift("best_skill_body_missing");
+      return { absolutePath, body: "", readback };
     }
   }
   return null;
@@ -199,6 +380,7 @@ export async function resolveSkillOptAutoCue(params: {
     return null;
   }
   const workspaceDirs = resolveSkillOptWorkspaceDirs(params);
+  const readback: SkillOptReadback[] = [];
   const matched: Array<{
     rule: SkillOptAutoCueRule;
     bestSkillPath: string;
@@ -212,6 +394,10 @@ export async function resolveSkillOptAutoCue(params: {
     if (!bestSkill) {
       continue;
     }
+    readback.push(bestSkill.readback);
+    if (!bestSkill.readback.bodyIncluded) {
+      continue;
+    }
     matched.push({
       rule,
       bestSkillPath: bestSkill.absolutePath,
@@ -221,13 +407,32 @@ export async function resolveSkillOptAutoCue(params: {
       break;
     }
   }
-  if (matched.length === 0) {
+  if (matched.length === 0 && readback.length === 0) {
     return null;
   }
   return {
     matchedSkillIds: matched.map((entry) => entry.rule.skillId),
     bestSkillPaths: matched.map((entry) => entry.bestSkillPath),
-    promptInjection: renderPromptInjection({ matched }),
+    readback,
+    promptInjection: [
+      matched.length ? renderPromptInjection({ matched }) : "",
+      ...readback
+        .filter((entry) => !entry.bodyIncluded)
+        .map((entry) =>
+          [
+            "[SkillOpt-lite preflight gap]",
+            `skillId: ${entry.skillId}`,
+            `reason: ${entry.gaps.join(", ")}`,
+            "Keep this provenance gap internal; explain only the missing evidence in visible replies unless protocol proof was requested.",
+            "The optimization candidate is not accepted and its body was excluded. Keep the original question and existing checks; do not claim this Skill improved behavior or was adopted.",
+          ].join("\n"),
+        ),
+      readback.some((entry) => entry.bodyIncluded)
+        ? "Loaded SOP excerpts are context only; behavioral evaluation and model-weight adoption are not proven."
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     boundary: "local_skillopt_preflight_only",
     liveTouched: false,
     providerConfigTouched: false,

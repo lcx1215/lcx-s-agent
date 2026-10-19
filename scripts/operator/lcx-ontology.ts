@@ -197,7 +197,7 @@ const INTEGRATION_SURFACES: readonly IntegrationSurface[] = [
     ],
   },
   {
-    path: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    path: "src/agents/commercial-answer-pipeline.ts",
     terms: ["LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS"],
   },
   {

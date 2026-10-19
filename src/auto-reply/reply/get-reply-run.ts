@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
+import { buildCommercialAnswerLanguageInstruction } from "../../agents/commercial-answer-reply-gate.js";
 import {
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
@@ -485,8 +486,17 @@ export async function runPreparedReply(
     isNewSession,
   });
   const authProfileIdSource = sessionEntry?.authProfileOverrideSource;
+  const languageInstruction = buildCommercialAnswerLanguageInstruction({
+    request: opts?.commercialAnswerAudit,
+    messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
+    ask: sessionCtx.CommandBody ?? sessionCtx.RawBody ?? prefixedCommandBody,
+  });
+  if (languageInstruction) {
+    extraSystemPromptParts.push(languageInstruction);
+  }
   const followupRun = {
     prompt: queuedBody,
+    commercialAuditAsk: ctx.CommandBody ?? ctx.RawBody ?? "",
     messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
     summaryLine: baseBodyTrimmedRaw,
     enqueuedAt: Date.now(),

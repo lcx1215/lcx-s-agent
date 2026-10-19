@@ -55,6 +55,22 @@ describe("local vision VLM runtime", () => {
     ).toMatchObject({ enabled: true, timeoutMs: 180_000, maxTokens: 512 });
   });
 
+  it.each([
+    ["10% revenue growth.", "20% revenue growth."],
+    ["US sales.", "us sales."],
+    ["2025 revenue was unchanged.", "2026 revenue was unchanged."],
+    [
+      "The chart shows domestic revenue growth reaching 10% during this reporting period.",
+      "The chart shows international revenue growth reaching 10% during this reporting period.",
+    ],
+    [
+      "The chart shows revenue growth increased to 10% during this reporting period.",
+      "The chart shows revenue growth decreased to 10% during this reporting period.",
+    ],
+  ])("preserves distinct chart observations: %s / %s", (first, second) => {
+    expect(collapseRepeatedVisionText(`${first}\n${second}`)).toBe(`${first} ${second}`);
+  });
+
   it("collapses consecutive VLM repetition without changing distinct observations", () => {
     expect(collapseRepeatedVisionText("trend up. trend up. support 100.")).toBe(
       "trend up. support 100.",
@@ -65,7 +81,7 @@ describe("local vision VLM runtime", () => {
         "The chart shows a thermostat. The system is used to adjust room temperature and the data is presented graphically. The system is used to control room temperature and the data is presented graphically.",
       ),
     ).toBe(
-      "The chart shows a thermostat. The system is used to adjust room temperature and the data is presented graphically.",
+      "The chart shows a thermostat. The system is used to adjust room temperature and the data is presented graphically. The system is used to control room temperature and the data is presented graphically.",
     );
     expect(
       collapseRepeatedVisionText("The current return is 10%. The current return is 20%."),

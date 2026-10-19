@@ -308,3 +308,25 @@ describe("createQuantMathTool", () => {
     });
   });
 });
+
+it("dispatches scenario sizing with explicit inputs and refuses malformed cost assumptions", async () => {
+  const tool = createQuantMathTool();
+  const params = {
+    action: "position_size",
+    side: "buy",
+    entryPrice: 101,
+    stopPrice: 99,
+    riskBudget: 200,
+    maxNotional: 100000,
+  };
+  const result = await tool.execute("size-breakout", params);
+  expect(result.details).toMatchObject({
+    entryPrice: 101,
+    quantity: 100,
+    plannedLoss: 200,
+    guaranteedMaximumLoss: false,
+  });
+  await expect(tool.execute("bad-cost", { ...params, fixedCosts: "unknown" })).rejects.toThrow(
+    "finite number",
+  );
+});

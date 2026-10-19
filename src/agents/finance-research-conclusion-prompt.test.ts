@@ -3,6 +3,10 @@ import {
   buildFinanceConclusionPrompt,
   extractFinanceConclusionJson,
 } from "./finance-research-conclusion-prompt.js";
+import {
+  FINANCE_STRATEGY_METHODS,
+  FINANCE_STRATEGY_DIRECTIONS,
+} from "./finance-strategy-method-catalog.js";
 
 const sources = [
   { sourceId: "sec-edgar", description: "SEC filings" },
@@ -10,6 +14,82 @@ const sources = [
 ];
 
 describe("buildFinanceConclusionPrompt", () => {
+  it("delivers corrected Gamma Scalping rules through the existing conclusion consumer", () => {
+    const prompt = buildFinanceConclusionPrompt({
+      instrument: "SPY",
+      assetClass: "us_equity_options",
+      question: "Gamma Scalping",
+      availableSources: sources,
+    });
+    const foreground = prompt.split("Foreground method contracts for this task:")[1];
+    expect(foreground).toContain("M11 波动率相对价值");
+    expect(foreground).toContain("realized variance - implied variance");
+    expect(foreground).toContain("Theta * dt");
+    expect(foreground).toContain("hedge cash flows and hedge mark-to-market");
+    expect(foreground).toContain("IV-crush");
+    expect(foreground).not.toContain("M02 中低频跨资产趋势:");
+    expect(prompt).toContain("at least two DISTINCT sourceId");
+    expect(prompt).toContain("executionAuthority=none");
+  });
+  it("exposes the complete existing method catalog while retaining authority and exposing the opportunity hypothesis", () => {
+    const prompt = buildFinanceConclusionPrompt({
+      instrument: "SPY",
+      assetClass: "us_equity",
+      question: "研究趋势机会",
+      availableSources: sources,
+    });
+    expect(FINANCE_STRATEGY_METHODS).toHaveLength(13);
+    expect(FINANCE_STRATEGY_DIRECTIONS).toHaveLength(29);
+    for (const item of [...FINANCE_STRATEGY_METHODS, ...FINANCE_STRATEGY_DIRECTIONS]) {
+      expect(prompt).toContain(`${item.id} ${item.name}`);
+    }
+    expect(prompt).toContain("MinimumEvidence=");
+    expect(prompt).toContain("Foreground methods come from deterministic task matching");
+    expect(prompt).toContain("address its contract or state why it is inapplicable");
+    expect(prompt).toContain("You may combine relevant methods");
+    expect(prompt).toContain("existing thesis and invalidation fields");
+    expect(prompt).toContain("executionAuthority=none");
+    expect(prompt).toContain("at least two DISTINCT sourceId");
+    expect(prompt).toContain('answer "hold"');
+    expect(prompt.indexOf("Reply with a single JSON object")).toBeGreaterThan(
+      prompt.indexOf("Full trader-strategy-lab method catalog"),
+    );
+    expect(
+      prompt.endsWith(
+        "Do not wrap the JSON in prose. Preserve uncertainty without inventing facts or forcing a direction.",
+      ),
+    ).toBe(true);
+  });
+  it("adapts foreground contracts to the question while retaining other methods", () => {
+    const make = (question: string) =>
+      buildFinanceConclusionPrompt({
+        instrument: "BTC/USD",
+        assetClass: "crypto",
+        question,
+        availableSources: sources,
+      }).split("Foreground method contracts for this task:")[1];
+    const trend = make("趋势与均线");
+    const macro = make("宏观通胀利率");
+    expect(trend).toContain("M02 ");
+    expect(trend).not.toContain("M03 ");
+    expect(macro).toContain("M03 ");
+    expect(macro).not.toContain("M02 ");
+  });
+
+  it("puts the commodity-pair contract in the actual conclusion prompt", () => {
+    const prompt = buildFinanceConclusionPrompt({
+      instrument: "豆油 / 棕榈油",
+      assetClass: "commodity futures spread",
+      question: "研究这组商品配对价差是否可检验为套利",
+      availableSources: sources,
+    });
+
+    expect(prompt).toContain("M13 商品期货配对价差");
+    expect(prompt).toContain("MinimumEvidence=");
+    expect(prompt).toContain("两腿使用下一可交易时点");
+    expect(prompt).toContain("相关性只描述共同变化");
+  });
+
   it("lists only the sources that exist, so the model cannot invent one", () => {
     const prompt = buildFinanceConclusionPrompt({
       instrument: "AAPL",
@@ -21,14 +101,17 @@ describe("buildFinanceConclusionPrompt", () => {
     expect(prompt).toContain("do not invent others");
   });
 
-  it("tells the model that a hold is free and a guess is not", () => {
+  it("retains unknowns without describing waiting as costless", () => {
     const prompt = buildFinanceConclusionPrompt({
       instrument: "AAPL",
       assetClass: "us_equity",
       availableSources: sources,
     });
     expect(prompt).toContain("hold");
-    expect(prompt.toLowerCase()).toContain("a guess becomes a trade");
+    expect(prompt).toContain("opportunity cost of waiting");
+    expect(prompt).toContain("testable expectation gap");
+    expect(prompt).toContain("expectationGap");
+    expect(prompt).not.toContain("costs nothing");
   });
 
   it("requires two distinct sources explicitly", () => {

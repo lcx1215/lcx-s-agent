@@ -114,6 +114,15 @@ describe("promptGatewayConfig", () => {
     expect(call?.password).toBe("");
   });
 
+  it("enables Gateway TLS when a direct network bind is selected", async () => {
+    const { result } = await runGatewayPrompt({
+      selectQueue: ["tailnet", "token", "off"],
+      textQueue: ["18789", "token"],
+    });
+
+    expect(result.config.gateway?.tls?.enabled).toBe(true);
+  });
+
   it("prompts for trusted-proxy configuration when trusted-proxy mode selected", async () => {
     const { result, call } = await runTrustedProxyPrompt({
       textQueue: [

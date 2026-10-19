@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { CentralRunReceipt } from "./types.js";
@@ -38,7 +39,25 @@ export async function writeRunSnapshot(
   receipt: CentralRunReceipt,
 ): Promise<string> {
   const filePath = runSnapshotPath(runsDir, receipt.runId);
-  await writeJsonAtomic(filePath, receipt);
+  const bytes = `${JSON.stringify(receipt, null, 2)}\n`;
+  await fs.mkdir(runsDir, { recursive: true });
+  const temporary = `${filePath}.tmp-${randomUUID()}`;
+  try {
+    await fs.writeFile(temporary, bytes, { mode: 0o600, flag: "wx" });
+    try {
+      // Publish a complete file without replacing an already committed identity.
+      await fs.link(temporary, filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      if ((await fs.readFile(filePath, "utf8")) !== bytes) {
+        throw new Error("central_run_snapshot_conflict", { cause: error });
+      }
+    }
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
   return filePath;
 }
 

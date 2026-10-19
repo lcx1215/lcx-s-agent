@@ -5,7 +5,11 @@ import {
   resolveFinanceStateDir,
   type FinanceStateDirSource,
 } from "../finance-state-dir.js";
-import { readFinanceThesisLedger, type FinanceThesis } from "../finance-thesis-ledger.js";
+import {
+  FINANCE_THESIS_EVIDENCE_RELATIONS,
+  readFinanceThesisLedger,
+  type FinanceThesis,
+} from "../finance-thesis-ledger.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 
@@ -51,6 +55,8 @@ function summarize(thesis: FinanceThesis, includeTransitions: boolean) {
     thesisId: thesis.thesisId,
     instrument: thesis.instrument,
     claim: thesis.claim,
+    claimEpistemicClass: thesis.claimEpistemicClass,
+    claimBasis: thesis.claimBasis,
     rationale: thesis.rationale,
     state: thesis.state,
     openedAt: thesis.openedAt,
@@ -59,6 +65,12 @@ function summarize(thesis: FinanceThesis, includeTransitions: boolean) {
     // worth storing at all, so they are reported with the thesis rather than behind a flag.
     invalidationConditions: thesis.invalidationConditions,
     evidenceCount: thesis.evidence.length,
+    evidenceRelationCounts: Object.fromEntries(
+      FINANCE_THESIS_EVIDENCE_RELATIONS.map((relation) => [
+        relation,
+        thesis.evidence.filter((item) => item.relation === relation).length,
+      ]),
+    ),
     transitionCount: thesis.transitions.length,
     ...(includeTransitions ? { evidence: thesis.evidence, transitions: thesis.transitions } : {}),
   };
@@ -187,6 +199,7 @@ export function createFinanceThesisLedgerReadTool(options?: {
         recordCount: ledger.recordCount,
         openedRecordCount: ledger.openedRecordCount,
         transitionRecordCount: ledger.transitionRecordCount,
+        evidenceAppendRecordCount: ledger.evidenceAppendRecordCount,
         headRef: ledger.headRef,
         thesisCount: ledger.theses.length,
         // Reported apart on purpose: `invalidated` and `realised` are different outcomes, and a

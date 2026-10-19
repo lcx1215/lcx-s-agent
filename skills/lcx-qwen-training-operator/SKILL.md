@@ -1,25 +1,16 @@
 ---
 name: lcx-qwen-training-operator
-description: Inspect Qwen training, guard, MLX, teacher, adapter, and overlap state without starting a second training or eval process.
-metadata: { "openclaw": { "emoji": "🧭" } }
+description: "Inspect LCX local-model training and adapter evidence only when the active profile uses that lane; the Qwen name is compatibility, not a mandatory system brain."
+metadata: { "openclaw": { "emoji": "🧩" } }
 ---
 
-# Qwen Training Operator
+# LCX Qwen Training Operator
 
-Use this for training status, guard PID, quota/teacher supervision, adapter
-selection, or a request to continue local-brain evolution.
+Read the [runtime contract](../_shared/lcx-runtime-contract.md). The retained name supports existing routing; it does not prescribe Qwen, MLX or a particular model size.
 
-## Workflow
+1. Resolve the current model/adapter and training owner from the active profile and runbook. If no local training lane is selected, report not-applicable.
+2. For a supported local-brain lane, run `node --import tsx scripts/operator/local-brain-training-plan.ts --json` with its documented current paths/options. Inspect its declared model and prerequisites before applying its decision to this profile.
+3. Treat its activeProcesses, heavy-eval counts, decision and owner action as evidence for that lane. If it describes an older profile only, report unsupported instead of reusing old model arguments.
+4. Keep selected-clean/latest-passing, latest-promoted, parseRecovered and active guard adapter distinct. If training_already_active or a relevant process is present, do not start another run.
 
-1. Check heavy processes with `ps -axo pid=,ppid=,etime=,pcpu=,pmem=,state=,command=` and filter the known guard, teacher, eval, and MLX names.
-2. Run `node --import tsx scripts/operator/local-brain-training-plan.ts --json`.
-3. Treat `training_already_active` as a hard stop; use the plan's owner action
-   rather than launching a parallel guard.
-4. Keep latest-passing adapter, latest-promoted adapter, parseRecovered cases,
-   and active guard adapter distinct in the report.
-
-## Boundaries
-
-- This skill is read-only unless a separately authorized training action is
-  requested after the plan says it is safe.
-- Never change provider config, protected memory, or external-channel sender.
+Do not train, manually promote, change providers/protected memory or restart a sender merely to obtain a green report. Central Harness and remote/finance model workflows have their own owners and are not validated by a local Qwen plan.

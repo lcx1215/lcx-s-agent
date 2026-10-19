@@ -23,7 +23,7 @@
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-research-batch.ts \
- *     --instruments AAPL,MSFT,NVDA --record PATH
+ *     --dir FINANCE_STATE_DIR --instruments AAPL,MSFT,NVDA --record PATH
  */
 
 import { runResearchBatch } from "../../src/agents/finance-research-batch.js";
@@ -51,14 +51,16 @@ async function main(): Promise<void> {
         .map((value) => value.trim().toUpperCase())
         .filter((value) => value.length > 0)
     : undefined;
-  const recordPath = readArg(args, "--record") ?? "state/finance/research-samples.jsonl";
+  const directory = readArg(args, "--dir");
+  const recordPath = readArg(args, "--record");
 
   // The sampler lives in src on purpose: the tool and this script must not hold
   // two copies, or they will drift and disagree about what the system believed
   // on a given day.
   const result = await runResearchBatch({
     ...(instruments ? { instruments } : {}),
-    recordPath,
+    ...(directory ? { directory } : {}),
+    ...(recordPath ? { recordPath } : {}),
   });
 
   for (const r of result.recorded) {

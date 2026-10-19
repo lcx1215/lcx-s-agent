@@ -358,7 +358,7 @@ The wizard opens your browser with a clean (non-tokenized) dashboard URL right a
 **Not on localhost:**
 
 - **Tailscale Serve** (recommended): keep bind loopback, run `lcx gateway --tailscale serve`, open `https://<magicdns>/`. If `gateway.auth.allowTailscale` is `true`, identity headers satisfy Control UI/WebSocket auth (no token, assumes trusted gateway host); HTTP APIs still require token/password.
-- **Tailnet bind**: run `lcx gateway --bind tailnet --token "<token>"`, open `http://<tailscale-ip>:18789/`, paste token in dashboard settings.
+- **Tailnet bind**: configure `gateway.bind: "tailnet"`, `gateway.tls.enabled: true`, and auth; open `https://<tailscale-ip>:18789/` using a certificate trusted for that host, then paste the token in dashboard settings.
 - **SSH tunnel**: `ssh -N -L 18789:127.0.0.1:18789 user@host` then open `http://127.0.0.1:18789/` and paste the token in Control UI settings.
 
 See [Dashboard](/web/dashboard) and [Web surfaces](/web) for bind modes and auth details.
@@ -1430,12 +1430,13 @@ If the file is missing, it uses safe-ish defaults (including a default workspace
 
 ### I set gatewaybind lan or tailnet and now nothing listens the UI says unauthorized
 
-Non-loopback binds **require auth**. Configure `gateway.auth.mode` + `gateway.auth.token` (or use `OPENCLAW_GATEWAY_TOKEN`).
+Direct LAN/custom/tailnet binds and `auto` when it resolves beyond loopback **require auth and Gateway TLS**. Configure `gateway.auth.mode` + `gateway.auth.token` (or use `OPENCLAW_GATEWAY_TOKEN`) and enable `gateway.tls.enabled`. For Tailscale-only access without a directly bound TLS listener, keep Gateway on loopback and use Tailscale Serve.
 
 ```json5
 {
   gateway: {
     bind: "lan",
+    tls: { enabled: true },
     auth: {
       mode: "token",
       token: "replace-me",

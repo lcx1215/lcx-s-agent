@@ -83,6 +83,55 @@ describe("finance agent committee", () => {
       }
     },
   );
+  it.each([1, 2] as const)(
+    "runs independent roles with %i slots while preserving dependencies",
+    async (maxConcurrency) => {
+      vi.useFakeTimers();
+      let active = 0;
+      let peak = 0;
+      const completed = new Set<string>();
+      try {
+        const pending = runFinanceCommittee({
+          input,
+          maxConcurrency,
+          executor: async ({ task }) => {
+            for (const dependency of task.dependsOn ?? []) {
+              expect(completed.has(dependency)).toBe(true);
+            }
+            active++;
+            peak = Math.max(peak, active);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            active--;
+            completed.add(task.id);
+            return { output: { role: task.agentId }, sideEffects: [] };
+          },
+        });
+        await vi.runAllTimersAsync();
+        expect((await pending).execution.status).toBe("completed");
+        expect(peak).toBe(maxConcurrency);
+        expect(completed.size).toBe(10);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("prepares producer inputs without claiming a complete committee review", async () => {
+    const result = await runFinanceCommittee({
+      input,
+      purpose: "producer_preparation",
+      executor: ({ task }) => ({ output: task.agentId, sideEffects: [] }),
+    });
+    expect(result.execution.status).toBe("completed");
+    expect(result.purpose).toBe("producer_preparation");
+    expect(result.execution.tasks.map((task) => task.agentId)).toEqual([
+      "data_cleaning",
+      "research_draft",
+    ]);
+    expect(result.coverage.equivalenceStatus).toBe("not_ready");
+    expect(result.coverage.missingRequiredLanes).toContain("final_precheck");
+  });
+
   it("builds one immutable fact packet shared by every role", () => {
     const context = buildFinanceCommitteeContext(input);
     expect(context.schemaVersion).toBe("lcx_finance_committee_context_v1");

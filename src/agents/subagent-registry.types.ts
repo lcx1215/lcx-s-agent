@@ -5,6 +5,8 @@ import type { SpawnSubagentMode } from "./subagent-spawn.js";
 
 export type SubagentRunRecord = {
   runId: string;
+  /** Local runs are completed by their owning runner, never gateway polling/announce. */
+  completionSource?: "local";
   childSessionKey: string;
   requesterSessionKey: string;
   requesterOrigin?: DeliveryContext;
@@ -15,6 +17,9 @@ export type SubagentRunRecord = {
   model?: string;
   runTimeoutSeconds?: number;
   spawnMode?: SpawnSubagentMode;
+  /** Preparing is durable before dispatch; uncertain requires reconciliation, never replay. */
+  dispatchState?: "preparing" | "dispatched" | "uncertain";
+  dispatchError?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;

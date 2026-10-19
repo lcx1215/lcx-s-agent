@@ -12,6 +12,7 @@ import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringOrNumberParam, readStringParam } from "./common.js";
+import { createModuleLearningPipelineReviewTool } from "./module-learning-pipeline-review-tool.js";
 
 const FinanceLearningCapabilityInspectSchema = Type.Object({
   domain: Type.Optional(stringEnum(FINANCE_FRAMEWORK_CORE_DOMAINS)),
@@ -280,6 +281,79 @@ export function createFinanceLearningCapabilityInspectTool(options?: {
         });
       }
 
+      // Read active original receipts, rather than trusting an older saved review or mutating cards.
+      const moduleReview = (
+        await createModuleLearningPipelineReviewTool({ workspaceDir }).execute(
+          "finance-capability-current-review",
+          { writeReview: false },
+        )
+      ).details as Record<string, unknown>;
+      const receiptSource = moduleReview.receiptSource as
+        | { status?: string; code?: string }
+        | undefined;
+      const reviewUnavailable =
+        receiptSource?.status === "unreadable" ||
+        (receiptSource?.status === "absent" && receiptSource.code !== "ENOENT") ||
+        (Array.isArray(moduleReview.invalidReceipts) && moduleReview.invalidReceipts.length > 0);
+      const activeRows = Array.isArray(moduleReview.rows)
+        ? (moduleReview.rows as Array<Record<string, unknown>>)
+        : [];
+      const reviewFor = (candidate: FinanceLearningCapabilityCandidate) => {
+        const rows = activeRows.filter(
+          (row) =>
+            row.sourceUrlOrPath === candidate.sourceArticlePath &&
+            typeof row.targetModule === "string" &&
+            candidate.relatedFinanceDomains.includes(row.targetModule as never),
+        );
+        const decisions = new Set(
+          rows
+            .map((row) => row.keepDownrankDiscardDecision)
+            .filter(
+              (decision) =>
+                decision === "keep" || decision === "downrank" || decision === "discard",
+            ),
+        );
+        const integrityGap = rows.some(
+          (row) =>
+            (Array.isArray(row.supersessionIssues) && row.supersessionIssues.length > 0) ||
+            (Array.isArray(row.missingEvidence) &&
+              row.missingEvidence.some(
+                (gap) =>
+                  typeof gap === "string" &&
+                  (gap.startsWith("unreadable_evidence_file:") ||
+                    gap === "unverified_source_bound_application_eval"),
+              )),
+        );
+        const status = reviewUnavailable
+          ? "review_unavailable"
+          : decisions.size > 1
+            ? "conflicting_review_decisions"
+            : integrityGap
+              ? "review_evidence_unverified"
+              : decisions.has("discard")
+                ? "discard"
+                : decisions.has("downrank")
+                  ? "downrank"
+                  : rows.length
+                    ? "reviewed"
+                    : "not_reviewed";
+        return {
+          status,
+          sourceArticlePath: candidate.sourceArticlePath,
+          applicationAllowed: ["reviewed", "not_reviewed"].includes(status),
+          receiptSource: receiptSource ?? null,
+          receipts: rows.map((row) => ({
+            receiptPath: row.receiptPath,
+            receiptSha256: row.receiptSha256,
+            targetModule: row.targetModule,
+            keepDownrankDiscardDecision: row.keepDownrankDiscardDecision,
+            status: row.status,
+            missingEvidence: row.missingEvidence,
+            supersessionIssues: row.supersessionIssues,
+          })),
+        };
+      };
+
       const filteredCandidates = parsedArtifact.candidates.filter((candidate) => {
         if (domain && !candidate.relatedFinanceDomains.includes(domain as never)) {
           return false;
@@ -333,12 +407,14 @@ export function createFinanceLearningCapabilityInspectTool(options?: {
           entry.retrieval
             ? {
                 ...entry.candidate,
+                moduleLearningReview: reviewFor(entry.candidate),
                 retrievalScore: entry.retrieval.score,
                 matchedSignals: entry.retrieval.matchedSignals,
                 reuseGuidance: buildCandidateReuseGuidance(entry.candidate),
               }
             : {
                 ...entry.candidate,
+                moduleLearningReview: reviewFor(entry.candidate),
                 reuseGuidance: buildCandidateReuseGuidance(entry.candidate),
               },
         ),

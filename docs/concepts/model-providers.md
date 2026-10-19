@@ -17,6 +17,20 @@ For model selection rules, see [/concepts/models](/concepts/models).
 - If you set `agents.defaults.models`, it becomes the allowlist.
 - CLI helpers: `lcx onboard`, `lcx models list`, `lcx models set <provider/model>`.
 
+## Explicit provider discovery
+
+`models.discovery` defaults to `"implicit"`, preserving automatic provider discovery
+from environment keys, auth profiles, and supported provider endpoints. Set it to
+`"configured_only"` to seed `models.json` solely from `models.providers`, skipping
+implicit provider, Bedrock, and GitHub Copilot discovery. Explicit providers still
+use the normal authentication and metadata normalization.
+
+Pair `discovery: "configured_only"` with `mode: "replace"` to remove older provider
+entries from the generated catalog. With `mode: "merge"`, existing catalog entries
+are preserved. An empty explicit provider map in replace mode clears the generated
+catalog. This setting does not delete credentials, auth profiles, or built-in models;
+`agents.defaults.models` remains the model selection allowlist.
+
 ## API key rotation
 
 - Supports generic provider rotation for selected providers.

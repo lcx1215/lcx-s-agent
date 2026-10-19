@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -199,6 +200,87 @@ describe("finance learning pipeline orchestrator tool", () => {
       secondReceiptFileName.split("__").at(-1),
     );
   });
+
+  it.each(["missing", "wrong_source", "wrong_task", "failed", "tampered", "valid"])(
+    "verifies %s evaluation evidence in both returned and persisted intake claims",
+    async (kind) => {
+      workspaceDir = await makeTempWorkspace("lcx-intake-eval-");
+      const tool = createFinanceLearningPipelineOrchestratorTool({ workspaceDir });
+      const args = {
+        sourceName: "Manual Finance Note",
+        sourceType: "manual_article_source",
+        pastedText: buildStructuredArticle(),
+        title: "ETF event triage workflow",
+        publishDate: "2026-04-17",
+        retrievalNotes: SAFE_RETRIEVAL_NOTES,
+        allowedActionAuthority: "research_only",
+        learningIntent: "Learn ETF event triage workflow catalyst mapping and regime risk",
+        applicationValidationQuery:
+          "Apply ETF event triage workflow catalyst mapping and regime risk",
+        targetModule: "event_driven",
+        actualReadingScope: "Read the complete manually supplied method and failure modes.",
+        freshAdjacentApplicationTask: "Apply to a new ETF catalyst mapping research prompt",
+        keepDownrankDiscardDecision: "keep",
+      };
+      const initial = asPipelineDetails((await tool.execute("seed", args)).details);
+      const evidencePath = "memory/evaluation.json";
+      if (kind !== "missing") {
+        const proof = "checked adjacent application";
+        await seedFile(workspaceDir, "memory/proof.txt", kind === "tampered" ? "changed" : proof);
+        await seedFile(
+          workspaceDir,
+          evidencePath,
+          JSON.stringify({
+            schemaVersion: "lcx_module_learning_eval_v1",
+            verdict: kind === "failed" ? "failed" : "passed",
+            targetModule: args.targetModule,
+            sourceUrlOrPath:
+              kind === "wrong_source"
+                ? "unrelated-source"
+                : initial.moduleLearningPlanCandidate.sourceUrlOrPath,
+            freshAdjacentApplicationTask:
+              kind === "wrong_task" ? "unrelated task" : args.freshAdjacentApplicationTask,
+            checks: [
+              {
+                id: "adjacent",
+                passed: true,
+                evidencePath: "memory/proof.txt",
+                sha256: createHash("sha256").update(proof).digest("hex"),
+              },
+            ],
+          }),
+        );
+      }
+      const details = asPipelineDetails(
+        (
+          await tool.execute("verify", {
+            ...args,
+            trainingOrEvalAbsorptionEvidencePath: evidencePath,
+          })
+        ).details,
+      );
+      const expected = {
+        status: kind === "valid" ? "eval_absorbed" : "application_ready",
+        evalAbsorbed: kind === "valid",
+        evaluationVerified: kind === "valid",
+      };
+      expect(details.sourceIntakeEvidenceChain).toMatchObject(expected);
+      const saved = JSON.parse(
+        await readWorkspaceFile(workspaceDir, details.retrievalFirstLearning.retrievalReceiptPath),
+      );
+      expect(saved.moduleLearningEvidence.sourceIntakeEvidenceChain).toEqual(
+        details.sourceIntakeEvidenceChain,
+      );
+      if (kind !== "valid") {
+        expect(details.sourceIntakeEvidenceChain.missingEvidence).toContain(
+          "unverified_source_bound_application_eval",
+        );
+        expect(saved.moduleLearningEvidence.sourceIntakeEvidenceChain.missingEvidence).toContain(
+          "unverified_source_bound_application_eval",
+        );
+      }
+    },
+  );
 
   it("completes the full pipeline for a valid external markdown export and preserves adapter provenance", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-learning-pipeline-");

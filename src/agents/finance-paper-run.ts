@@ -1,9 +1,12 @@
 import {
   createPaperExecutionAdapter,
   placeFinanceOrder,
+  type FinanceExecutionResearchLineage,
+  type FinanceExecutionTargetWeightAuthorization,
   type FinanceExecutionReceipt,
   type FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
+import type { FinanceExecutionSafetyContextFactory } from "./finance-execution-safety.js";
 import {
   compileExecutionIntent,
   type FinanceResearchConclusion,
@@ -42,7 +45,12 @@ import { resolveFinanceStateDir } from "./finance-state-dir.js";
 export const FINANCE_PAPER_ADAPTER_ID = "paper";
 
 export type FinancePaperRunRequest = Readonly<{
+  createSafetyContext?: FinanceExecutionSafetyContextFactory;
   conclusion: FinanceResearchConclusion;
+  /** Controller-only audit ancestry; it does not change the compiled order or authorize it. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Controller-only capital boundary; never accepted from model output. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
   market: { referencePrice: number; referencePriceAt: string };
   /** Account equity in the same currency as the reference price. */
@@ -81,10 +89,21 @@ export async function runFinancePaperOrder(
     };
   }
 
+  if (!request.createSafetyContext) {
+    return {
+      ok: false,
+      stage: "place",
+      refusals: ["execution_safety_context_required: trusted controller facts unavailable"],
+    };
+  }
+
   const compiled = compileExecutionIntent({
     conclusion: request.conclusion,
     market: request.market,
     equity: request.equity,
+    ...(request.targetWeightAuthorization === undefined
+      ? {}
+      : { maxAuthorizedNotional: request.targetWeightAuthorization.maxOrderNotional }),
     runAuthorizationId: request.runAuthorizationId,
     ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
     ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),
@@ -92,6 +111,14 @@ export async function runFinancePaperOrder(
   if (!compiled.ok) {
     return Object.freeze({ ok: false, stage: "compile", refusals: compiled.refusals });
   }
+
+  const intent = Object.freeze({
+    ...compiled.intent,
+    ...(request.researchLineage === undefined ? {} : { researchLineage: request.researchLineage }),
+    ...(request.targetWeightAuthorization === undefined
+      ? {}
+      : { targetWeightAuthorization: Object.freeze({ ...request.targetWeightAuthorization }) }),
+  });
 
   const adapter = createPaperExecutionAdapter({
     id: FINANCE_PAPER_ADAPTER_ID,
@@ -122,7 +149,13 @@ export async function runFinancePaperOrder(
 
   const placed = await placeFinanceOrder({
     mode: "live_execution",
-    intent: compiled.intent,
+    safetyContext: request.createSafetyContext?.({
+      intent,
+      budget: request.budget,
+      adapterId: adapter.id,
+      venue: adapter.venue,
+    }),
+    intent,
     budget: request.budget,
     adapters: [adapter],
     executionAdapterId: adapter.id,

@@ -83,7 +83,19 @@ describe("finance research operator", () => {
     expect(receipt.plan.asOf).toBe("2026-09-08T00:00:00Z");
   });
   it("rejects unconfigured live execution before collection", async () => {
-    await expect(runFinanceResearchCli([...input, "--live"])).rejects.toThrow("explicit --model");
+    await expect(runFinanceResearchCli([...input, "--live"])).rejects.toThrow("--workflow-models");
+  });
+  it("rejects retired local research authority even with explicit local artifacts", async () => {
+    await expect(
+      runFinanceResearchCli([
+        ...input,
+        "--live",
+        "--model",
+        "local/test",
+        "--adapter",
+        "/missing-adapter",
+      ]),
+    ).rejects.toThrow("local research/review roles retired");
   });
   it("rejects an invalid API budget", async () => {
     await expect(runFinanceResearchCli([...input, "--max-api-calls", "0"])).rejects.toThrow(
@@ -143,10 +155,18 @@ describe("finance research operator", () => {
       "positive integer",
     );
   });
-  it("rejects an unbounded model output limit before execution", async () => {
-    await expect(runFinanceResearchCli([...input, "--max-model-tokens", "16385"])).rejects.toThrow(
-      "integer from 1 to 16384",
-    );
+  it.each(["0", "Infinity", "NaN", "1.5", "9007199254740992"])(
+    "rejects an invalid model output limit %s before execution",
+    async (value) => {
+      await expect(runFinanceResearchCli([...input, "--max-model-tokens", value])).rejects.toThrow(
+        "positive safe integer",
+      );
+    },
+  );
+  it("keeps a finite model output allowance in planning mode without dispatching research", async () => {
+    // A finite dry-plan allowance does not resolve or call a configured model.
+    const result = await runFinanceResearchCli([...input, "--max-model-tokens", "16385"]);
+    expect("status" in result && result.status).toBe("planned");
   });
   it("records and lists an outcome without invoking research", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "outcome-cli-"));
@@ -220,18 +240,21 @@ it("exposes complete source planning and prevents collection flags on read opera
     throw new Error("expected all-source inventory");
   }
   const inventory = result.plan.sourceInventory;
-  // These routes require an explicit date/quarter; discovery must not invent one.
+  // These routes require an explicit date/quarter or derivative instrument; discovery must not invent one.
   const requiresPeriod = inventory.registeredAdapterIds.filter((id) =>
     [
+      "deribit_public_option_summary",
+      "deribit_public_future_summary",
       "fmp_eod_bulk",
       "fmp_earning_call_transcript",
       "fmp_institutional_ownership_symbol_positions_summary",
     ].includes(id),
   );
   expect(inventory.unplannedAdapterIds).toEqual(requiresPeriod);
-  expect(result.plan.expectedJobCount).toBe(
-    inventory.registeredAdapterIds.length - requiresPeriod.length,
-  );
+  expect(
+    new Set(result.plan.sourceInspections.flatMap((job) => job.candidateAdapterIds)).size,
+  ).toBe(inventory.registeredAdapterIds.length - requiresPeriod.length);
+  expect(result.plan.expectedJobCount).toBe(result.plan.sourceInspections.length);
   expect(result.batch).toBeUndefined();
   await expect(runFinanceResearchCli([...input, "--sources-only"])).rejects.toThrow(
     "requires --live",

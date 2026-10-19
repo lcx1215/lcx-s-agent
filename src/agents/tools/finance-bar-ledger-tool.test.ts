@@ -29,6 +29,76 @@ afterEach(() => {
 });
 
 describe("finance_bar_ledger", () => {
+  it("rejects malformed source selectors before creating an absent book", async () => {
+    const tool = createFinanceBarLedgerTool();
+    for (const source of [
+      { origin: "test" },
+      { origin: "", sourceUrlOrArtifact: "fixture://missing" },
+      { origin: "test", sourceUrlOrArtifact: "fixture://missing", directory: "other" },
+    ]) {
+      await expect(
+        tool.execute("bad-source", { action: "read", directory, source }),
+      ).rejects.toThrow();
+    }
+    expect(fs.readdirSync(directory)).toEqual([]);
+  });
+
+  it("forwards an explicit source read with visible disagreement and no fallback", async () => {
+    const tool = createFinanceBarLedgerTool();
+    await tool.execute("first", { action: "append", directory, batch: batch() });
+    await tool.execute("second", {
+      action: "append",
+      directory,
+      batch: batch({
+        provenance: { origin: "other", sourceUrlOrArtifact: "fixture://other" },
+        bars: [{ date: "2026-07-01", open: 100, high: 104, low: 99, close: 103 }],
+      }),
+    });
+    const source = { origin: "test-source", sourceUrlOrArtifact: "https://example.test/bars" };
+    const result = await tool.execute("selected", { action: "read", directory, source });
+    expect(result.details).toMatchObject({
+      ok: true,
+      status: "ready",
+      returnedBarCount: 2,
+      divergentDates: [],
+      sourceSelection: {
+        requested: source,
+        matchedRecordCount: 1,
+        excludedRecordCount: 1,
+        allSourcesDivergentDates: ["600519.SH@2026-07-01"],
+      },
+    });
+    const missing = await tool.execute("missing", {
+      action: "read",
+      directory,
+      source: { ...source, sourceUrlOrArtifact: "fixture://missing" },
+    });
+    expect(missing.details).toMatchObject({
+      status: "empty_for_filter",
+      statusMeaning: "bars exist but none match the supplied instrument/asOf/source filter",
+      returnedBarCount: 0,
+      sourceSelection: { matchedRecordCount: 0, excludedRecordCount: 2 },
+    });
+  });
+  it("exposes bounded source choices only when requested through the original reader", async () => {
+    const tool = createFinanceBarLedgerTool();
+    await tool.execute("append", { action: "append", directory, batch: batch() });
+    const listed = await tool.execute("choices", {
+      action: "read",
+      directory,
+      includeSources: true,
+      instrument: "600519.SH",
+    });
+    expect(listed.details).toMatchObject({
+      sourceCatalog: {
+        sources: [{ source: batch().provenance, recordCount: 1 }],
+        omittedRecordCount: 0,
+      },
+    });
+    const plain = await tool.execute("plain", { action: "read", directory });
+    expect(plain.details).not.toHaveProperty("sourceCatalog");
+  });
+
   it("appends a batch and reads it back — the agent can see its own book", async () => {
     const tool = createFinanceBarLedgerTool();
     const appended = (await tool.execute("c1", { action: "append", directory, batch: batch() }))

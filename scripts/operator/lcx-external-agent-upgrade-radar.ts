@@ -1,9 +1,678 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { z } from "zod";
+import {
+  runQualityHarness,
+  type QualityHarnessOptions,
+  type QualityHarnessReceipt,
+} from "../../src/agents/quality-harness.ts";
+import { readFileWithinRoot } from "../../src/infra/fs-safe.ts";
 import { LCX_USER_HOME } from "./lcx-local-paths.ts";
 
 const CODEX_SKILLS_ROOT = path.join(LCX_USER_HOME, ".codex", "skills");
 const skillEntrypoint = (name: string): string => path.join(CODEX_SKILLS_ROOT, name, "SKILL.md");
+
+const localReference = z.object({
+  path: z.string().min(1),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+const localScope = z.object({ accountId: z.string().min(1), runId: z.string().min(1) });
+const localIntakeManifest = z.object({
+  schemaVersion: z.literal("lcx_external_local_intake_v1"),
+  candidateId: z.string().min(1),
+  source: localReference.extend({ version: z.string().min(1) }),
+  license: localReference,
+  scope: localScope.optional(),
+});
+type LocalIntakeStage = {
+  nodeId: "external_agent_source" | "source_registry" | "license_scope_review";
+  scope: z.infer<typeof localScope>;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  status: "read" | "registered" | "blocked" | "failed" | "timed_out";
+  reason?: string;
+  filter?: "license_scope_required" | "untrusted_source_isolation";
+};
+export type ExternalAgentLocalIntakeReceipt = {
+  schemaVersion: "lcx_external_local_intake_v1";
+  checkedAt: string;
+  scope: z.infer<typeof localScope>;
+  upstreamScope: "not_observed";
+  manifest: z.infer<typeof localReference>;
+  status: "blocked" | "failed";
+  stages: LocalIntakeStage[];
+  downstreamStarted: false;
+  runtimeAuthority: "not_granted";
+  gaps: string[];
+  cleanup: "not_started" | "local_listener_released_read_cleanup_unconfirmed";
+};
+
+/** Explicit read-only intake at the original owner. No installation, model, or source-trust authority. */
+export async function readExternalAgentLocalIntake(options: {
+  workspaceDir: string;
+  manifest: z.infer<typeof localReference>;
+  scope: z.infer<typeof localScope>;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  readFile?: typeof readFileWithinRoot;
+}): Promise<ExternalAgentLocalIntakeReceipt> {
+  const result: ExternalAgentLocalIntakeReceipt = {
+    schemaVersion: "lcx_external_local_intake_v1",
+    checkedAt: new Date().toISOString(),
+    scope: options.scope,
+    upstreamScope: "not_observed",
+    manifest: options.manifest,
+    status: "failed",
+    stages: [],
+    downstreamStarted: false,
+    runtimeAuthority: "not_granted",
+    gaps: [],
+    cleanup: "not_started",
+  };
+  const controller = new AbortController();
+  const cancel = () => controller.abort(new Error("external_local_intake_cancelled"));
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  if (options.signal?.aborted) {
+    cancel();
+  }
+  const timeoutMs = Math.min(120_000, Math.max(1, options.timeoutMs ?? 120_000));
+  const deadlineAt = performance.now() + timeoutMs;
+  const timer = setTimeout(
+    () => controller.abort(new Error("external_local_intake_deadline")),
+    timeoutMs,
+  );
+  const active = () => {
+    if (performance.now() >= deadlineAt && !controller.signal.aborted) {
+      controller.abort(new Error("external_local_intake_deadline"));
+    }
+    if (controller.signal.aborted) {
+      throw controller.signal.reason;
+    }
+  };
+  const hash = (buffer: Buffer) => createHash("sha256").update(buffer).digest("hex");
+  const read = async (ref: z.infer<typeof localReference>, role: string, maxBytes = 512 * 1024) => {
+    active();
+    let listener: (() => void) | undefined;
+    try {
+      const aborted = new Promise<never>((_, reject) => {
+        listener = () => reject(controller.signal.reason);
+        controller.signal.addEventListener("abort", listener, { once: true });
+      });
+      result.cleanup = "local_listener_released_read_cleanup_unconfirmed";
+      const { buffer } = await Promise.race([
+        (options.readFile ?? readFileWithinRoot)({
+          rootDir: options.workspaceDir,
+          relativePath: ref.path,
+          maxBytes,
+          rejectHardlinks: true,
+        }),
+        aborted,
+      ]);
+      active();
+      if (hash(buffer) !== ref.sha256) {
+        throw new Error(`hash_mismatch:${role}:${ref.path}`);
+      }
+      if (!buffer.toString("utf8").trim()) {
+        throw new Error(`empty_body:${role}:${ref.path}`);
+      }
+      return buffer.toString("utf8");
+    } catch (error) {
+      throw new Error(
+        `external_local_intake_read_failed:${role}:${ref.path}:${error instanceof Error ? error.message : "unknown"}`,
+        { cause: error },
+      );
+    } finally {
+      if (listener) {
+        controller.signal.removeEventListener("abort", listener);
+      }
+    }
+  };
+  let current: LocalIntakeStage = {
+    nodeId: "external_agent_source",
+    scope: options.scope,
+    status: "failed",
+  };
+  result.stages.push(current);
+  try {
+    active();
+    const scope = localScope.parse(options.scope);
+    const manifestRef = localReference.parse(options.manifest);
+    const manifest = localIntakeManifest.parse(
+      JSON.parse(await read(manifestRef, "manifest", 64 * 1024)),
+    );
+    if (
+      manifest.scope &&
+      (manifest.scope.accountId !== scope.accountId || manifest.scope.runId !== scope.runId)
+    ) {
+      throw new Error("external_local_intake_host_scope_mismatch");
+    }
+    const candidate = CANDIDATES.find((item) => item.id === manifest.candidateId);
+    if (!candidate) {
+      throw new Error("external_local_intake_candidate_not_registered");
+    }
+    const sourceText = await read(manifest.source, "source");
+    active();
+    const sourceOutput = {
+      candidateId: candidate.id,
+      source: manifest.source,
+      license: manifest.license,
+      text: sourceText,
+      sourceVersion: manifest.source.version,
+      sourceVersionVerification: "caller_declared_only",
+      sourceTrust: "not_proven",
+      manifestSha256: manifestRef.sha256,
+    };
+    current.status = "read";
+    current.output = sourceOutput;
+
+    // Consumer re-reads actual bytes, rather than accepting a source registration assertion.
+    current = {
+      nodeId: "source_registry",
+      scope,
+      status: "failed",
+      input: structuredClone(sourceOutput),
+    };
+    result.stages.push(current);
+    const registeredText = await read(manifest.source, "registry_source");
+    if (registeredText !== sourceText) {
+      throw new Error("external_local_intake_source_changed_at_registry");
+    }
+    active();
+    const registryOutput = {
+      candidateId: candidate.id,
+      source: manifest.source,
+      license: manifest.license,
+      text: registeredText,
+      readingScope: "full_selected_local_body",
+      sourceTrust: "not_proven",
+      upstreamScope: "not_observed",
+      runtimeAuthority: "not_granted",
+    };
+    current.status = "registered";
+    current.output = registryOutput;
+
+    current = {
+      nodeId: "license_scope_review",
+      scope,
+      status: "failed",
+      input: structuredClone(registryOutput),
+    };
+    result.stages.push(current);
+    const licenseText = await read(manifest.license, "license", 128 * 1024);
+    await read(manifest.source, "license_source_readback");
+    await read(manifestRef, "manifest_readback", 64 * 1024);
+    active();
+    current.output = {
+      license: manifest.license,
+      licenseText,
+      permission: "not_verified",
+      reason:
+        "License body is read, but no original permission/security/signoff evidence authorizes installation or distillation.",
+    };
+    current.status = "blocked";
+    current.reason = "license_permission_not_verified";
+    current.filter = "license_scope_required";
+    result.status = "blocked";
+    result.gaps = [
+      "license_permission_not_verified",
+      "source_trust_not_proven",
+      "upstream_scope_not_observed",
+    ];
+    // Original permission checkpoint stops this attempt here; no downstream candidate, train or model call.
+  } catch (error) {
+    current.status =
+      controller.signal.aborted && String(controller.signal.reason).includes("deadline")
+        ? "timed_out"
+        : "failed";
+    current.reason = error instanceof Error ? error.message : "external_local_intake_failed";
+    current.filter =
+      current.nodeId === "license_scope_review"
+        ? "license_scope_required"
+        : "untrusted_source_isolation";
+    result.status = "failed";
+    result.gaps = [current.reason];
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", cancel);
+  }
+  return result;
+}
+
+// Consume one explicit binary-contract quote; unknown costs are never filled with zero.
+function reviewPredictionMarketCosts(packet: Record<string, unknown>) {
+  const schema = z
+    .object({
+      unit: z.literal("USD_per_contract_payoff_1"),
+      observedAt: z.string().datetime({ offset: true }),
+      maxAgeMs: z.number().finite().positive(),
+      bid: z.number().finite().min(0).max(1),
+      ask: z.number().finite().min(0).max(1),
+      availableQuantity: z.number().finite().nonnegative(),
+      requestedQuantity: z.number().finite().positive(),
+      feePerContract: z.number().finite().nonnegative(),
+      slippagePerContract: z.number().finite().nonnegative(),
+    })
+    .strict();
+  const parsed = schema.safeParse(packet.marketMicrostructure);
+  if (!parsed.success) {
+    return {
+      status: "blocked" as const,
+      gaps: parsed.error.issues.map(
+        (issue) => `prediction_cost_input_invalid:/marketMicrostructure/${issue.path.join("/")}`,
+      ),
+      measurements: null,
+      nextAction: "supply_exact_quote_units_costs_and_capacity",
+    };
+  }
+  const quote = parsed.data;
+  const ageMs = Date.now() - Date.parse(quote.observedAt);
+  const gaps: string[] = [];
+  if (ageMs < 0 || ageMs > quote.maxAgeMs) {
+    gaps.push("prediction_quote_outside_declared_age");
+  }
+  if (quote.bid > quote.ask) {
+    gaps.push("prediction_crossed_quote");
+  }
+  if (quote.availableQuantity < quote.requestedQuantity) {
+    gaps.push("prediction_insufficient_declared_capacity");
+  }
+  const cashPerContract = quote.ask + quote.feePerContract + quote.slippagePerContract;
+  const declaredOrderCash = cashPerContract * quote.requestedQuantity;
+  if (!Number.isFinite(cashPerContract) || !Number.isFinite(declaredOrderCash)) {
+    return {
+      status: "blocked" as const,
+      gaps: [...gaps, "prediction_cost_arithmetic_overflow"],
+      measurements: null,
+      nextAction: "supply_finite_cost_and_quantity_values",
+    };
+  }
+  if (cashPerContract >= 1) {
+    gaps.push("prediction_costs_erase_maximum_binary_payoff");
+  }
+  return {
+    status: gaps.length ? ("blocked" as const) : ("needs_review" as const),
+    gaps,
+    measurements: {
+      unit: quote.unit,
+      observedAt: quote.observedAt,
+      ageMs,
+      spread: quote.ask - quote.bid,
+      cashPerContract,
+      declaredOrderCash,
+      breakEvenWinProbability: cashPerContract,
+      maximumPayoffMargin: 1 - cashPerContract,
+      availableQuantity: quote.availableQuantity,
+      requestedQuantity: quote.requestedQuantity,
+    },
+    nextAction: gaps.length
+      ? "revise_cost_or_capacity_assumptions_before_experiment"
+      : "obtain_independent_resolution_and_sample_out_evidence",
+  };
+}
+
+type PredictionStage = {
+  nodeId:
+    | "prediction_market_source"
+    | "source_registry"
+    | "actual_reading_scope"
+    | "resolution_criteria_review"
+    | "market_microstructure_review"
+    | "control_room_summary";
+  scope: z.infer<typeof localScope>;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  status: "read" | "registered" | "blocked" | "needs_review" | "failed" | "timed_out";
+  reason?: string;
+  filter?: "source_evidence_gate" | "ambiguous_resolution_blocks_conclusion";
+};
+export type PredictionMarketIntakeReceipt = {
+  schemaVersion: "lcx_prediction_market_intake_v1";
+  scope: z.infer<typeof localScope>;
+  source: z.infer<typeof localReference> & { version: string };
+  status: "blocked" | "needs_review" | "failed";
+  stages: PredictionStage[];
+  sourceSummaryAllowed: boolean;
+  marketCostReview?: ReturnType<typeof reviewPredictionMarketCosts>;
+  directionalConclusionAllowed: false;
+  runtimeAuthority: "not_granted";
+  downstreamStarted: false;
+  gaps: string[];
+  cleanup:
+    | "not_started"
+    | "local_listener_released_read_cleanup_unconfirmed"
+    | "local_listener_released_model_cleanup_unconfirmed";
+};
+
+/** Explicit original-owner source intake. Reading and field presence never approve resolution semantics. */
+export async function readPredictionMarketResearchIntake(options: {
+  workspaceDir: string;
+  source: z.infer<typeof localReference> & { version: string };
+  scope: z.infer<typeof localScope>;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  readFile?: typeof readFileWithinRoot;
+  qualityOptions?: Omit<QualityHarnessOptions, "request" | "allowProviderCalls" | "signal">;
+}): Promise<PredictionMarketIntakeReceipt> {
+  const hostScope = { ...options.scope };
+  const sourceReference = { ...options.source };
+  const result: PredictionMarketIntakeReceipt = {
+    schemaVersion: "lcx_prediction_market_intake_v1",
+    scope: hostScope,
+    source: sourceReference,
+    status: "failed",
+    stages: [],
+    sourceSummaryAllowed: false,
+    directionalConclusionAllowed: false,
+    runtimeAuthority: "not_granted",
+    downstreamStarted: false,
+    gaps: [],
+    cleanup: "not_started",
+  };
+  const controller = new AbortController();
+  const cancel = () => controller.abort(new Error("prediction_intake_cancelled"));
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  if (options.signal?.aborted) {
+    cancel();
+  }
+  const budget = Math.min(120_000, options.timeoutMs ?? 120_000);
+  const deadline = performance.now() + (Number.isFinite(budget) && budget > 0 ? budget : 1);
+  const timer = setTimeout(
+    () => controller.abort(new Error("prediction_intake_deadline")),
+    Math.max(1, deadline - performance.now()),
+  );
+  const active = () => {
+    if (performance.now() >= deadline && !controller.signal.aborted) {
+      controller.abort(new Error("prediction_intake_deadline"));
+    }
+    controller.signal.throwIfAborted();
+  };
+  const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
+    active();
+    let listener: (() => void) | undefined;
+    try {
+      const cancelled = new Promise<never>((_, reject) => {
+        listener = () => reject(controller.signal.reason);
+        controller.signal.addEventListener("abort", listener, { once: true });
+      });
+      const value = await Promise.race([operation(), cancelled]);
+      active();
+      return value;
+    } finally {
+      if (listener) {
+        controller.signal.removeEventListener("abort", listener);
+      }
+    }
+  };
+  const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+  const read = async () => {
+    if (result.cleanup !== "local_listener_released_model_cleanup_unconfirmed") {
+      result.cleanup = "local_listener_released_read_cleanup_unconfirmed";
+    }
+    const { buffer } = await bounded(() =>
+      (options.readFile ?? readFileWithinRoot)({
+        rootDir: options.workspaceDir,
+        relativePath: sourceReference.path,
+        maxBytes: 512 * 1024,
+        rejectHardlinks: true,
+      }),
+    );
+    if (hash(buffer) !== sourceReference.sha256) {
+      throw new Error("prediction_source_hash_conflict");
+    }
+    const text = buffer.toString("utf8");
+    if (!text.trim()) {
+      throw new Error("prediction_source_body_missing");
+    }
+    return text;
+  };
+  let current: PredictionStage = {
+    nodeId: "prediction_market_source",
+    scope: hostScope,
+    status: "failed",
+  };
+  result.stages.push(current);
+  try {
+    active();
+    if (!Number.isFinite(budget) || budget <= 0) {
+      throw new Error("prediction_intake_invalid_timeout");
+    }
+    const scope = localScope.parse(hostScope);
+    const source = localReference.extend({ version: z.string().min(1) }).parse(sourceReference);
+    const text = await read();
+    const parsed = z.record(z.string(), z.unknown()).parse(JSON.parse(text));
+    // A source may carry an attempted identity, but cannot override independent host scope.
+    if (parsed.scope !== undefined) {
+      const claimed = localScope.parse(parsed.scope);
+      if (claimed.accountId !== scope.accountId || claimed.runId !== scope.runId) {
+        throw new Error("prediction_source_host_scope_conflict");
+      }
+    }
+    if (
+      (parsed.accountId !== undefined && parsed.accountId !== scope.accountId) ||
+      (parsed.runId !== undefined && parsed.runId !== scope.runId)
+    ) {
+      throw new Error("prediction_source_host_scope_conflict");
+    }
+    current.status = "read";
+    current.output = {
+      source,
+      text,
+      sourceTrust: "not_proven",
+      sourceVersionVerification: "caller_declared_only",
+      upstreamScope: "not_observed",
+    };
+    current = {
+      nodeId: "source_registry",
+      scope,
+      status: "failed",
+      input: structuredClone(current.output),
+    };
+    result.stages.push(current);
+    const registered = await read();
+    if (registered !== text) {
+      throw new Error("prediction_source_changed_at_registry");
+    }
+    current.status = "registered";
+    current.output = {
+      source,
+      text: registered,
+      sourceTrust: "not_proven",
+      upstreamScope: "not_observed",
+    };
+    current = {
+      nodeId: "actual_reading_scope",
+      scope,
+      status: "read",
+      input: structuredClone(current.output),
+    };
+    result.stages.push(current);
+    current.output = {
+      source,
+      text: registered,
+      readingScope: "full_selected_local_body",
+      bytesRead: Buffer.byteLength(registered),
+      packet: parsed,
+      sourceTrust: "not_proven",
+    };
+    current = {
+      nodeId: "resolution_criteria_review",
+      scope,
+      status: "blocked",
+      input: structuredClone(current.output),
+      filter: "ambiguous_resolution_blocks_conclusion",
+    };
+    result.stages.push(current);
+    const required = [
+      "marketId",
+      "question",
+      "sourceUrl",
+      "observedAt",
+      "resolutionCriteria",
+      "resolutionSource",
+      "closeDate",
+      "timezone",
+    ];
+    const gaps = required
+      .filter((field) => typeof parsed[field] !== "string" || !parsed[field].trim())
+      .map((field) => `prediction_resolution_missing:/${field}`);
+    for (const field of ["observedAt", "closeDate"]) {
+      if (
+        typeof parsed[field] === "string" &&
+        parsed[field].trim() &&
+        !Number.isFinite(Date.parse(parsed[field]))
+      ) {
+        gaps.push(`prediction_resolution_invalid_date:/${field}`);
+      }
+    }
+    const inputFingerprint = hash(JSON.stringify({ scope, source, text: registered }));
+    if (parsed.marketMicrostructure !== undefined) {
+      active();
+      result.marketCostReview = reviewPredictionMarketCosts(parsed);
+      result.stages.push({
+        nodeId: "market_microstructure_review",
+        scope,
+        status: result.marketCostReview.status,
+        input: { source, field: "/marketMicrostructure", inputFingerprint },
+        output: {
+          ...result.marketCostReview,
+          sourceTrust: "not_proven",
+          executionAuthority: "none",
+        },
+      });
+    }
+
+    const output: Record<string, unknown> = {
+      inputFingerprint,
+      missingFields: gaps,
+      semantics: "not_verified",
+      sourceTrust: "not_proven",
+      sourceSummaryMeaning:
+        "May deliver a source description with these gaps; not quality approval or a directional conclusion.",
+      nextEvidence: gaps.length
+        ? gaps.map((gap) => gap.split(":").at(-1))
+        : ["independent_resolution_interpretation_and_counterevidence"],
+      suggestedNextTool: "read",
+      sourcePath: source.path,
+    };
+    current.output = output;
+    result.sourceSummaryAllowed = true;
+    if (gaps.length) {
+      current.reason = "prediction_resolution_required_evidence_missing";
+      result.status = "blocked";
+      result.gaps = [...gaps, "prediction_source_trust_not_proven"];
+    } else {
+      current.status = "needs_review";
+      current.reason = "prediction_resolution_semantics_not_verified";
+      result.status = "needs_review";
+      result.gaps = [
+        "prediction_resolution_semantics_not_verified",
+        "prediction_source_trust_not_proven",
+      ];
+      if (options.qualityOptions?.modelInvoker || options.qualityOptions?.modelRouting) {
+        const request = {
+          task: `${result.marketCostReview ? "Review only the supplied prediction-market resolution criteria, ambiguity, contradicting evidence and supplied deterministic cost review. If costs or capacity block the experiment, retain that block and explain the needed correction." : "Review only the supplied prediction-market resolution criteria, ambiguity and contradicting evidence."} Never assert an outcome, forecast, profitability or execution authority. Input fingerprint=${inputFingerprint}; source SHA256=${source.sha256}; host attempt=${JSON.stringify(scope)}.`,
+          evidence: [
+            { id: `prediction-source:${source.sha256}`, text: registered, source: source.path },
+          ],
+          sharedContext: {
+            scope,
+            source,
+            inputFingerprint,
+            readingScope: "full_selected_local_body",
+            sourceTrust: "not_proven",
+            ...(result.marketCostReview ? { marketCostReview: result.marketCostReview } : {}),
+          },
+        };
+        if (Buffer.byteLength(JSON.stringify(request)) > 12 * 1024) {
+          result.gaps.push("prediction_resolution_quality_input_budget_exceeded");
+          output.qualityGap = "prediction_resolution_quality_input_budget_exceeded";
+        } else {
+          result.cleanup = "local_listener_released_model_cleanup_unconfirmed";
+          const quality: QualityHarnessReceipt = await bounded(() =>
+            runQualityHarness({
+              ...options.qualityOptions,
+              request,
+              allowProviderCalls: false,
+              signal: controller.signal,
+              maxAttempts: 1,
+              taskTimeoutMs: Math.min(
+                options.qualityOptions?.taskTimeoutMs ?? 30_000,
+                Math.max(1, deadline - performance.now()),
+              ),
+            }),
+          );
+          await read();
+          active();
+          if (quality.task.sha256 !== hash(request.task)) {
+            throw new Error("prediction_resolution_quality_input_conflict");
+          }
+          output.quality = quality;
+          output.findings = quality.attempts.flatMap((attempt) => [
+            ...(attempt.findings ?? []),
+            ...attempt.feedback,
+          ]);
+          output.qualityTaskSha256 = hash(request.task);
+          if (quality.status !== "verified") {
+            current.status = "blocked";
+            current.reason = `prediction_resolution_quality:${quality.status}`;
+            result.status = "blocked";
+            result.gaps.push(current.reason);
+          }
+          // Even a locally injected review is an observed attempt, never automatic domain approval.
+        }
+      } else {
+        output.qualityGap = "prediction_resolution_review_not_requested";
+      }
+    }
+    if (result.marketCostReview) {
+      const costGaps = result.marketCostReview.gaps;
+      result.gaps.push(...costGaps);
+      if (costGaps.length) {
+        result.status = "blocked";
+      }
+      result.stages.push({
+        nodeId: "control_room_summary",
+        scope,
+        status: result.status,
+        input: {
+          source,
+          inputFingerprint,
+          costReview: result.marketCostReview,
+          resolutionReview: output,
+        },
+        output: {
+          marketId: parsed.marketId,
+          source,
+          marketCostReview: result.marketCostReview,
+          unresolved: [...result.gaps],
+          nextAction: result.marketCostReview.nextAction,
+          sourceSummaryAllowed: result.sourceSummaryAllowed,
+          directionalConclusionAllowed: false,
+          runtimeAuthority: "not_granted",
+        },
+      });
+    }
+    active();
+  } catch (error) {
+    current.status =
+      controller.signal.aborted && String(controller.signal.reason).includes("deadline")
+        ? "timed_out"
+        : "failed";
+    current.reason = error instanceof Error ? error.message : "prediction_intake_failed";
+    current.filter =
+      current.nodeId === "resolution_criteria_review"
+        ? "ambiguous_resolution_blocks_conclusion"
+        : "source_evidence_gate";
+    result.status = "failed";
+    result.sourceSummaryAllowed = false;
+    result.gaps = [current.reason];
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", cancel);
+  }
+  return result;
+}
 
 type CandidateId =
   | "skillopt_v2_autoskill_coach"
@@ -82,7 +751,7 @@ type SourceEvidenceContract = {
 };
 
 type CandidateVerdict = ExternalUpgradeCandidate & {
-  status: "local_architecture_integrated";
+  status: "static_owner_mapping_registered";
   runtimeAuthority: "not_granted";
   missing: string[];
   blockedDirectAdoption: boolean;
@@ -1714,7 +2383,7 @@ function staticSourceEvidence(): SourceEvidenceContract {
 function candidateVerdicts(): CandidateVerdict[] {
   return CANDIDATES.map((candidate) => ({
     ...candidate,
-    status: "local_architecture_integrated",
+    status: "static_owner_mapping_registered",
     runtimeAuthority: "not_granted",
     missing: missingFor(candidate),
     blockedDirectAdoption: true,
@@ -1988,13 +2657,21 @@ export function buildExternalAgentUpgradeRadar() {
   return {
     ok: failed.length === 0,
     boundary: "local_external_agent_upgrade_radar_only",
+    proofLevel: "static_registration_only",
+    executionStatus: "planning_contract_only",
+    sourceContentRead: false,
+    distillationExecuted: false,
+    acceptanceEvalExecuted: false,
+    predictionMarketPacketProduced: false,
     repoRoot,
     summary: {
       total: checks.length,
       failed: failed.length,
       registeredCandidateCount: candidates.length,
+      // Compatibility count: this is registered owner mapping, not observed workflow execution.
+      architectureIntegratedCountBasis: "static_owner_mapping_only",
       architectureIntegratedCount: candidates.filter(
-        (candidate) => candidate.status === "local_architecture_integrated",
+        (candidate) => candidate.status === "static_owner_mapping_registered",
       ).length,
       sourceRegistrationOnlyCount: candidates.filter(
         (candidate) => candidate.sourceEvidence.status === "static_registration_only",
@@ -2017,6 +2694,7 @@ export function buildExternalAgentUpgradeRadar() {
         (candidate) => candidate.runtimeAuthority !== "not_granted",
       ).length,
       blacktechMechanismCount: blacktechMechanisms.length,
+      blacktechReadyLocalOnlyCountBasis: "registered_design_claim_not_observed_by_radar",
       blacktechReadyLocalOnlyCount: blacktechMechanisms.filter(
         (mechanism) => mechanism.currentStatus === "owner_wired_local_only",
       ).length,
@@ -2026,6 +2704,7 @@ export function buildExternalAgentUpgradeRadar() {
       blacktechRuntimeAuthorityGrantedCount: blacktechMechanisms.filter(
         (mechanism) => mechanism.runtimeAuthority !== "not_granted",
       ).length,
+      blacktechAutopilotRoutedCountBasis: "registered_trigger_contract_only",
       blacktechAutopilotRoutedCount: blacktechMechanisms.filter(
         (mechanism) =>
           mechanism.automaticTrigger &&
@@ -2035,9 +2714,9 @@ export function buildExternalAgentUpgradeRadar() {
       ).length,
       perfectIntegrationClaim: false,
     },
-    architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
+    architectureFit: "registered_to_existing_lcx_owner_stack",
     perfectIntegrationReason:
-      "No external project should be called perfectly integrated until a concrete local probe, eval/receipt, external-channel migration, and fresh External visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
+      "No external project should be called perfectly integrated until a concrete local probe, eval/receipt, external-channel migration, and fresh External visible proof all pass. This radar only registers owner paths and proposed patterns. It does not read source contents, verify owner wiring, execute distillation/security/review, or produce acceptance or prediction-market receipts.",
     checks,
     candidates,
     blacktechMechanisms,
@@ -2066,7 +2745,75 @@ export function buildExternalAgentUpgradeRadar() {
 }
 
 function parseArgs(args: string[]) {
-  return { json: args.includes("--json") };
+  const options: {
+    json: boolean;
+    workspaceDir?: string;
+    manifestPath?: string;
+    manifestSha256?: string;
+    accountId?: string;
+    runId?: string;
+    predictionSource?: string;
+    predictionSha256?: string;
+    predictionVersion?: string;
+  } = { json: false };
+  const fields = {
+    "--workspace": "workspaceDir",
+    "--local-intake": "manifestPath",
+    "--local-intake-sha256": "manifestSha256",
+    "--intake-account-id": "accountId",
+    "--intake-run-id": "runId",
+    "--prediction-source": "predictionSource",
+    "--prediction-source-sha256": "predictionSha256",
+    "--prediction-source-version": "predictionVersion",
+  } as const;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--json") {
+      options.json = true;
+      continue;
+    }
+    const field = fields[arg as keyof typeof fields];
+    if (!field || !args[index + 1] || args[index + 1].startsWith("--")) {
+      throw new Error(
+        "Usage: lcx-external-agent-upgrade-radar.ts [--json] [--local-intake FILE --local-intake-sha256 HASH --workspace DIR --intake-account-id ID --intake-run-id ID]",
+      );
+    }
+    options[field] = args[++index];
+  }
+  if (
+    [options.manifestPath, options.manifestSha256].some((value) => value !== undefined) &&
+    ![
+      options.manifestPath,
+      options.manifestSha256,
+      options.workspaceDir,
+      options.accountId,
+      options.runId,
+    ].every(Boolean)
+  ) {
+    throw new Error("external_local_intake_explicit_host_and_pins_required");
+  }
+  if (
+    [options.predictionSource, options.predictionSha256, options.predictionVersion].some(
+      (value) => value !== undefined,
+    ) &&
+    ![
+      options.predictionSource,
+      options.predictionSha256,
+      options.predictionVersion,
+      options.workspaceDir,
+      options.accountId,
+      options.runId,
+    ].every(Boolean)
+  ) {
+    throw new Error("prediction_intake_explicit_host_and_pins_required");
+  }
+  if (options.predictionSource && options.manifestPath) {
+    throw new Error("prediction_and_external_intake_are_separate_attempts");
+  }
+  if ((options.accountId || options.runId) && !options.manifestPath && !options.predictionSource) {
+    throw new Error("external_local_intake_explicit_host_and_pins_required");
+  }
+  return options;
 }
 
 function renderText(payload: ReturnType<typeof buildExternalAgentUpgradeRadar>): string {
@@ -2076,6 +2823,12 @@ function renderText(payload: ReturnType<typeof buildExternalAgentUpgradeRadar>):
     `registeredCandidateCount=${payload.summary.registeredCandidateCount}`,
     `blacktechMechanismCount=${payload.summary.blacktechMechanismCount}`,
     `architectureFit=${payload.architectureFit}`,
+    `proofLevel=${payload.proofLevel}`,
+    `executionStatus=${payload.executionStatus}`,
+    `sourceContentRead=${payload.sourceContentRead}`,
+    `distillationExecuted=${payload.distillationExecuted}`,
+    `acceptanceEvalExecuted=${payload.acceptanceEvalExecuted}`,
+    `predictionMarketPacketProduced=${payload.predictionMarketPacketProduced}`,
     `perfectIntegrationClaim=${payload.summary.perfectIntegrationClaim}`,
     `sourceRegistrationOnlyCount=${payload.summary.sourceRegistrationOnlyCount}`,
     `sourceReceiptVerifiedCount=${payload.summary.sourceReceiptVerifiedCount}`,
@@ -2102,12 +2855,66 @@ function renderText(payload: ReturnType<typeof buildExternalAgentUpgradeRadar>):
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const payload = buildExternalAgentUpgradeRadar();
+  const args = process.argv.slice(2);
+  let options: ReturnType<typeof parseArgs>;
+  try {
+    options = parseArgs(args);
+  } catch (error) {
+    const argumentError = error instanceof Error ? error.message : String(error);
+    const payload = { ...buildExternalAgentUpgradeRadar(), ok: false, argumentError };
+    process.stdout.write(
+      args.includes("--json")
+        ? `${JSON.stringify(payload, null, 2)}\n`
+        : `${renderText(payload)}\nargument_error=${argumentError}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const localIntake = options.manifestPath
+    ? await readExternalAgentLocalIntake({
+        workspaceDir: options.workspaceDir!,
+        manifest: { path: options.manifestPath, sha256: options.manifestSha256! },
+        scope: { accountId: options.accountId!, runId: options.runId! },
+      })
+    : undefined;
+  const radar = buildExternalAgentUpgradeRadar();
+  const predictionIntake = options.predictionSource
+    ? await readPredictionMarketResearchIntake({
+        workspaceDir: options.workspaceDir!,
+        source: {
+          path: options.predictionSource,
+          sha256: options.predictionSha256!,
+          version: options.predictionVersion!,
+        },
+        scope: { accountId: options.accountId!, runId: options.runId! },
+      })
+    : undefined;
+  const payload = {
+    ...radar,
+    ok: radar.ok && localIntake?.status !== "failed" && predictionIntake?.status !== "failed",
+    ...(localIntake ? { localIntake } : {}),
+    ...(predictionIntake ? { predictionIntake } : {}),
+  };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
-    process.stdout.write(`${renderText(payload)}\n`);
+    const localLines = localIntake
+      ? [
+          `local_intake=${localIntake.status}`,
+          ...localIntake.gaps.map((gap) => `local_intake_gap=${gap}`),
+          "local_intake_downstream_started=false",
+        ]
+      : [];
+    const predictionLines = predictionIntake
+      ? [
+          `prediction_intake=${predictionIntake.status}`,
+          ...predictionIntake.gaps.map((gap) => `prediction_intake_gap=${gap}`),
+          "prediction_directional_conclusion_allowed=false",
+        ]
+      : [];
+    process.stdout.write(
+      `${[renderText(payload), ...localLines, ...predictionLines].join("\n")}\n`,
+    );
   }
   if (!payload.ok) {
     process.exitCode = 1;
