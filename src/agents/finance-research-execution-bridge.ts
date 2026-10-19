@@ -275,10 +275,9 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
           return undefined;
         }
         const { resolveFinanceCredentialEnv } = await import("./finance-credential-env.js");
-        const { readAlpacaPaperTerminalOrder, restoreAlpacaPaperProtection } =
+        const { readAlpacaPaperTerminalOrder, recoverAlpacaPaperProtectedReduction } =
           await import("./finance-alpaca-execution-adapter.js");
-        const { createFinanceUncachedFetch, createFinanceWriteTransport } =
-          await import("./finance-write-transport.js");
+        const { createFinanceUncachedFetch } = await import("./finance-write-transport.js");
         const env = resolveFinanceCredentialEnv({
           ...process.env,
           LCX_FINANCE_STATE_DIR: control.stateDirectory,
@@ -288,81 +287,41 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
         }
         const intent = claim.binding.intent;
         const read = createFinanceUncachedFetch({ directory: control.stateDirectory });
-        const fill = await readAlpacaPaperTerminalOrder({
+        const originalQuantity = claim.binding.positionQuantity;
+        const protection = claim.binding.protectiveOrders;
+        if (
+          intent.side === "sell" &&
+          protection?.length &&
+          (originalQuantity === undefined ||
+            intent.quantity >
+              originalQuantity - protection.reduce((sum, order) => sum + order.quantity, 0))
+        ) {
+          if (protection.length !== 1 || originalQuantity === undefined) {
+            return undefined;
+          }
+          // Default history recovery has read authority only. Current controller-scoped
+          // restoration belongs to its explicitly supplied resolvePending implementation.
+          return recoverAlpacaPaperProtectedReduction({
+            accountId: claim.binding.accountId,
+            intent,
+            positionQuantity: originalQuantity,
+            protection: protection[0],
+            credentials: { keyId: env.ALPACA_API_KEY_ID, secret: env.ALPACA_API_SECRET_KEY },
+            read,
+            signal,
+            allowProtectionRestore: false,
+            postJson: async () => {
+              throw new Error("history recovery has no protection write authority");
+            },
+          });
+        }
+        return readAlpacaPaperTerminalOrder({
           accountId: claim.binding.accountId,
           intent,
           credentials: { keyId: env.ALPACA_API_KEY_ID, secret: env.ALPACA_API_SECRET_KEY },
           read,
           signal,
         });
-        const originalQuantity = claim.binding.positionQuantity;
-        const protection = claim.binding.protectiveOrders;
-        if (
-          fill &&
-          intent.side === "sell" &&
-          originalQuantity !== undefined &&
-          protection?.length === 1 &&
-          intent.quantity > originalQuantity - protection[0].quantity
-        ) {
-          const remaining = originalQuantity - fill.filledQuantity;
-          const protectionType = protection[0].orderType ?? "stop";
-          const headers = {
-            "APCA-API-KEY-ID": env.ALPACA_API_KEY_ID,
-            "APCA-API-SECRET-KEY": env.ALPACA_API_SECRET_KEY,
-            "content-type": "application/json",
-          };
-          const old = await read(
-            `https://paper-api.alpaca.markets/v2/orders/${encodeURIComponent(protection[0].id)}`,
-            { headers, signal },
-          );
-          if (old.status !== 200) {
-            throw new Error("old protection unavailable");
-          }
-          const prior = JSON.parse(old.body) as Record<string, unknown>;
-          if (
-            !matchesFinanceResearchRecoveryProtection({
-              instrument: intent.instrument,
-              protection: protection[0],
-              brokerOrder: prior,
-            })
-          ) {
-            throw new Error("old protection unsettled");
-          }
-          const position = await read(
-            `https://paper-api.alpaca.markets/v2/positions/${encodeURIComponent(intent.instrument)}`,
-            { headers, signal },
-          );
-          const value =
-            position.status === 200
-              ? (JSON.parse(position.body) as Record<string, unknown>)
-              : undefined;
-          const quantity =
-            position.status === 404
-              ? 0
-              : value?.symbol === intent.instrument && value.side === "long"
-                ? Number(value.qty)
-                : NaN;
-          if (quantity !== remaining || remaining < 0) {
-            throw new Error("recovery position mismatch");
-          }
-          if (remaining > 0) {
-            const transport = createFinanceWriteTransport({ directory: control.stateDirectory });
-            await restoreAlpacaPaperProtection({
-              intent,
-              quantity: remaining,
-              stopPrice: protection[0].stopPrice,
-              orderType: protectionType,
-              ...(protection[0].limitPrice === undefined
-                ? {}
-                : { limitPrice: protection[0].limitPrice }),
-              headers,
-              signal,
-              read,
-              postJson: (url, init) => transport({ url, ...init }),
-            });
-          }
-        }
-        return fill;
       }),
   });
   return {
