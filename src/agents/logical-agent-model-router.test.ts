@@ -977,3 +977,52 @@ it.each(["queue", "result", "validation_pass", "validation_fail"] as const)(
     }
   },
 );
+
+it.each(["observation", "recording"] as const)(
+  "rejects a router return that expires during %s without granting model affinity",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const start = Date.now();
+      const observe = vi.fn(() => {
+        if (stage === "observation") {
+          vi.setSystemTime(start + 60_000);
+        }
+        return undefined;
+      });
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [adapter("small", { mode: "adapter", observe })],
+          roles: {
+            formatting: { ...policy, sameModelAsRole: "data_cleaning" },
+          },
+        }),
+      );
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      const invoke = (role: "data_cleaning" | "formatting") =>
+        router.invoke({
+          role,
+          taskId: "finalization",
+          correlationId: "finalization-run",
+          payload: {},
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => work(),
+          record: (call) => {
+            calls.push(call);
+            if (stage === "recording" && role === "data_cleaning") {
+              vi.setSystemTime(start + 60_000);
+            }
+          },
+        });
+      await expect(invoke("data_cleaning")).rejects.toThrow();
+      expect(observe).toHaveBeenCalledOnce();
+      expect(calls).toHaveLength(1);
+      // Recording happens after the model/observation receipt is finalized.
+      expect(calls[0].outcome).toBe(stage === "observation" ? "timed_out" : "completed");
+      await expect(invoke("formatting")).rejects.toThrow("model_affinity_unproven");
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

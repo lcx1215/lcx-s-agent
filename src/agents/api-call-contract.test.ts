@@ -639,3 +639,42 @@ it.each(["cancelled", "timeout"] as const)(
     expect(receipts.every((receipt) => receipt.dispatchedAt === undefined)).toBe(true);
   },
 );
+
+it("classifies a source rejection after suspended wall time as timeout", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => receipts.push(receipt),
+      },
+      async () => {
+        vi.setSystemTime(Date.now() + 60_000);
+        throw new Error("late source failure");
+      },
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(receipts).toMatchObject([{ status: "timed_out", transportError: "timeout" }]);
+});
+
+it("does not close a circuit after attempt finalization outlives the total deadline", async () => {
+  vi.useFakeTimers();
+  const circuit = createApiCircuitBreaker();
+  const success = vi.spyOn(circuit, "recordSuccess");
+  await expect(
+    governApiFetch(async () => response(), {
+      timeoutMs: 1000,
+      circuitBreaker: circuit,
+      onReceipt: (receipt) => {
+        if (receipt.operation === "http_get" && receipt.status === "succeeded") {
+          vi.setSystemTime(Date.now() + 60_000);
+        }
+      },
+    })("https://fixture.test/source"),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(success).not.toHaveBeenCalled();
+});

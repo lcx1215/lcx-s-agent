@@ -525,11 +525,17 @@ async function boundedCall<T>(
     finish(undefined, false);
     return result;
   } catch (error) {
-    if (error instanceof ApiCallError && error.kind === "timeout") {
-      controller.abort(error);
+    let failure = error;
+    try {
+      assertApiCallActive(controller.signal);
+    } catch (inactive) {
+      failure = inactive;
     }
-    finish(error);
-    throw error;
+    if (failure instanceof ApiCallError && failure.kind === "timeout") {
+      controller.abort(failure);
+    }
+    finish(failure);
+    throw failure;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", parentAbort);
@@ -748,6 +754,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                 error instanceof ApiCallError ? error.retryAfterMs : undefined,
             },
           );
+          assertApiCallActive(signal);
           if (response.dataAccess?.kind !== "cache") {
             scope.circuitBreaker?.recordSuccess();
             circuitSettled = true;

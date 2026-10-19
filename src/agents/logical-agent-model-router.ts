@@ -393,6 +393,33 @@ export class LogicalAgentModelRouter {
         controller.abort(params.signal.reason);
       };
       params.signal.addEventListener("abort", abort, { once: true });
+      let observationAttempted = false;
+      const observe = () => {
+        if (observationAttempted) {
+          return;
+        }
+        observationAttempted = true;
+        if (adapterInvoked && adapter.mode === "adapter") {
+          try {
+            const candidate = adapter.observe?.(identity);
+            if (
+              candidate !== undefined &&
+              candidate.callId === identity.callId &&
+              candidate.provider === adapter.provider &&
+              candidate.modelId === adapter.modelId &&
+              typeof candidate.transportRequestId === "string" &&
+              candidate.transportRequestId.trim() &&
+              (candidate.kind === "model_inference" ||
+                (candidate.kind === "provider_call" &&
+                  adapter.requiredSideEffects.includes("provider_call")))
+            ) {
+              observation = candidate;
+            }
+          } catch {
+            /* Observation failure cannot promote execution evidence. */
+          }
+        }
+      };
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadlineAtMs = Math.min(
         startedAtMs + policy.timeoutMs,
@@ -534,13 +561,9 @@ export class LogicalAgentModelRouter {
             throw new Error("model output contract rejected");
           }
         }
+        observe();
+        assertActive();
         outcome = "completed";
-        const completed =
-          this.#completedModels.get(params.correlationId) ?? new Map<LogicalAgentId, Set<string>>();
-        const models = completed.get(params.role) ?? new Set<string>();
-        models.add(`${adapter.provider}/${adapter.modelId}`);
-        completed.set(params.role, models);
-        this.#completedModels.set(params.correlationId, completed);
         return result;
       } catch (error) {
         if (!params.signal.aborted && Date.now() >= deadlineAtMs) {
@@ -594,71 +617,69 @@ export class LogicalAgentModelRouter {
           throw new Error(`model routing ${outcome}: ${reason}`, { cause: error });
         }
       } finally {
-        if (timer !== undefined) {
-          clearTimeout(timer);
-        }
-        params.signal.removeEventListener("abort", abort);
-        if (adapterInvoked && adapter.mode === "adapter") {
-          try {
-            const candidate = adapter.observe?.(identity);
-            if (
-              candidate !== undefined &&
-              candidate.callId === identity.callId &&
-              candidate.provider === adapter.provider &&
-              candidate.modelId === adapter.modelId &&
-              typeof candidate.transportRequestId === "string" &&
-              candidate.transportRequestId.trim() &&
-              (candidate.kind === "model_inference" ||
-                (candidate.kind === "provider_call" &&
-                  adapter.requiredSideEffects.includes("provider_call")))
-            ) {
-              observation = candidate;
-            }
-          } catch {
-            /* Observation failure cannot promote execution evidence. */
+        try {
+          observe();
+          // This receipt describes model work and observation. The synchronous
+          // recorder is notified once; it cannot retroactively change that receipt.
+          params.record(
+            Object.freeze({
+              schemaVersion: "lcx_model_call_v1",
+              ...identity,
+              policyRevision: this.routing.revision,
+              adapterId: adapter.id,
+              mode: adapter.mode,
+              ...(policy.workload ? { workload: policy.workload } : {}),
+              ...(policy.outputContract
+                ? { outputContractRevision: policy.outputContract.revision }
+                : {}),
+              ...(adapter.qualificationId ? { qualificationId: adapter.qualificationId } : {}),
+              startedAtMs,
+              latencyMs: Math.max(0, Date.now() - startedAtMs),
+              outcome,
+              adapterInvoked,
+              realModelInferenceObserved: observation !== undefined,
+              providerCallObserved: observation?.kind === "provider_call",
+              evidence: observation ? "adapter-attested" : "not-observed",
+              ...(observation?.reasoningEffort
+                ? { reasoningEffort: observation.reasoningEffort }
+                : {}),
+              ...(observation?.credentialSource
+                ? { credentialSource: observation.credentialSource }
+                : {}),
+              ...(observation?.outputNormalization
+                ? { outputNormalization: observation.outputNormalization }
+                : {}),
+              ...(observation?.evidenceCoverage
+                ? { evidenceCoverage: observation.evidenceCoverage }
+                : {}),
+              ...(observation
+                ? {
+                    observationIdSha256: createHash("sha256")
+                      .update(observation.transportRequestId)
+                      .digest("hex"),
+                  }
+                : {}),
+              ...(reason ? { reason } : {}),
+            }),
+          );
+          if (outcome === "completed") {
+            // Do not return stale output or establish affinity if recording itself
+            // outlives the call. Pool recording only appends to its local array.
+            assertActive();
+            const completed =
+              this.#completedModels.get(params.correlationId) ??
+              new Map<LogicalAgentId, Set<string>>();
+            const models = completed.get(params.role) ?? new Set<string>();
+            models.add(`${adapter.provider}/${adapter.modelId}`);
+            completed.set(params.role, models);
+            this.#completedModels.set(params.correlationId, completed);
           }
+        } finally {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
+          params.signal.removeEventListener("abort", abort);
         }
-        params.record(
-          Object.freeze({
-            schemaVersion: "lcx_model_call_v1",
-            ...identity,
-            policyRevision: this.routing.revision,
-            adapterId: adapter.id,
-            mode: adapter.mode,
-            ...(policy.workload ? { workload: policy.workload } : {}),
-            ...(policy.outputContract
-              ? { outputContractRevision: policy.outputContract.revision }
-              : {}),
-            ...(adapter.qualificationId ? { qualificationId: adapter.qualificationId } : {}),
-            startedAtMs,
-            latencyMs: Math.max(0, Date.now() - startedAtMs),
-            outcome,
-            adapterInvoked,
-            realModelInferenceObserved: observation !== undefined,
-            providerCallObserved: observation?.kind === "provider_call",
-            evidence: observation ? "adapter-attested" : "not-observed",
-            ...(observation?.reasoningEffort
-              ? { reasoningEffort: observation.reasoningEffort }
-              : {}),
-            ...(observation?.credentialSource
-              ? { credentialSource: observation.credentialSource }
-              : {}),
-            ...(observation?.outputNormalization
-              ? { outputNormalization: observation.outputNormalization }
-              : {}),
-            ...(observation?.evidenceCoverage
-              ? { evidenceCoverage: observation.evidenceCoverage }
-              : {}),
-            ...(observation
-              ? {
-                  observationIdSha256: createHash("sha256")
-                    .update(observation.transportRequestId)
-                    .digest("hex"),
-                }
-              : {}),
-            ...(reason ? { reason } : {}),
-          }),
-        );
       }
     }
     throw new Error("model routing exhausted");
