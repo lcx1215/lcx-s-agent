@@ -152,7 +152,8 @@ export async function resolveConfiguredFinanceAuth(
         store,
         profileId,
         agentDir,
-        readOnly: true,
+        // Only static api_key/token profiles reach this branch. Their original
+        // resolver supports configured exec SecretRefs without OAuth refresh or writes.
       });
       assertActive();
       if (resolved?.apiKey) {
