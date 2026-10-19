@@ -4421,6 +4421,7 @@ it.each(["absent", "present"] as const)(
     const prepared = await prepareOriginalFinanceModuleMain({
       directory: path.join(directory, "original-prior-research"),
       fault: "quality_failure",
+      asOf: new Date().toISOString(),
     });
     vi.setSystemTime(new Date(prepared.input.asOf));
     const producer = await runFinanceResearchRun({
@@ -4455,6 +4456,9 @@ it.each(["absent", "present"] as const)(
     expect(oldFeedback.some((gap) => gap.includes(specificGap))).toBe(true);
     // Follow the original producer's fixed offline session within the feedback TTL.
     const nextSession = new Date(Date.parse(producer.plan.asOf) + 86_400_000);
+    while ([0, 6].includes(nextSession.getUTCDay())) {
+      nextSession.setUTCDate(nextSession.getUTCDate() + 1);
+    }
     nextSession.setUTCHours(19, 30, 0, 0);
     const nextAsOf = nextSession.toISOString();
     vi.setSystemTime(nextSession);
