@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, constants, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -467,30 +467,75 @@ export function verifyEchoApiReport(report: unknown): boolean {
   );
 }
 
+/** Known credentials and query-value contexts; opaque unlabelled text is not a secret detector. */
 export function redactEchoApiText(value: string, sensitiveUrl?: string): string {
   let redacted = value;
-  const sensitiveValues = new Set<string>();
+  const sensitiveValues = new Map<string, boolean>();
+  const contextualKeys = new Set<string>();
+  const addValue = (value: string, bare: boolean) => {
+    if (value) {
+      for (const form of [value, JSON.stringify(value).slice(1, -1)]) {
+        sensitiveValues.set(form, bare || sensitiveValues.get(form) === true);
+      }
+    }
+  };
+  const isCredentialKey = (key: string) =>
+    /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
+      key,
+    ) || /^(?:apiKey|accessToken|refreshToken|clientSecret|auth(?:[_-]?token)?)$/iu.test(key);
+  const addQueryValue = (key: string, value: string, raw?: string, rawKey?: string) => {
+    // Ordinary identifiers need a field/value context; their presence in a
+    // query alone does not make unrelated diagnostic words credentials.
+    const bare = isCredentialKey(key);
+    for (const form of [
+      key,
+      encodeURIComponent(key),
+      new URLSearchParams({ [key]: "v" }).toString().split("=")[0],
+      rawKey,
+    ]) {
+      if (form) {
+        contextualKeys.add(form);
+      }
+    }
+    for (const form of [
+      value,
+      encodeURIComponent(value),
+      new URLSearchParams({ v: value }).toString().slice(2),
+      raw,
+    ]) {
+      if (form !== undefined) {
+        addValue(form, bare);
+      }
+    }
+  };
   if (sensitiveUrl) {
     try {
       const parsed = new URL(sensitiveUrl);
-      for (const value of parsed.searchParams.values()) {
-        if (value) {
-          sensitiveValues.add(value);
-        }
+      for (const [key, value] of parsed.searchParams) {
+        addQueryValue(key, value);
       }
       for (const part of parsed.search.slice(1).split("&")) {
         const separator = part.indexOf("=");
         if (separator >= 0 && part.slice(separator + 1)) {
-          sensitiveValues.add(part.slice(separator + 1));
+          for (const [key, value] of new URLSearchParams(part)) {
+            addQueryValue(key, value, part.slice(separator + 1), part.slice(0, separator));
+          }
         }
       }
       for (const credential of [parsed.username, parsed.password]) {
         if (!credential) {
           continue;
         }
-        sensitiveValues.add(credential);
+        addValue(credential, true);
         try {
-          sensitiveValues.add(decodeURIComponent(credential));
+          const decoded = decodeURIComponent(credential);
+          addValue(decoded, true);
+          addValue(encodeURIComponent(decoded), true);
+          const serialized = new URL("https://redacted.invalid");
+          serialized.username = decoded;
+          serialized.password = decoded;
+          addValue(serialized.username, true);
+          addValue(serialized.password, true);
         } catch {
           // Retain the raw credential even when percent decoding is invalid.
         }
@@ -501,13 +546,57 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       // Generic URL redaction below still protects malformed input.
     }
   }
+  const quote = String.raw`(?:\\*["'])?`;
+  let bare = "";
+  let urlValues = "";
+  let urlPlaceholder: string | undefined;
+  const protectUrl = () => {
+    urlPlaceholder ??= `https://redacted.invalid/${randomUUID()}/`;
+    return `${urlPlaceholder}?redacted=1`;
+  };
   if (sensitiveValues.size > 0) {
-    // One literal replacement pass avoids partial overlap and re-redacting markers.
-    const pattern = [...sensitiveValues]
-      .toSorted((left, right) => right.length - left.length)
-      .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
-      .join("|");
-    redacted = redacted.replace(new RegExp(pattern, "gu"), "[REDACTED]");
+    const escapeLiteral = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const pattern = (values: Iterable<string>) =>
+      [...values]
+        .toSorted((left, right) => right.length - left.length)
+        .map(escapeLiteral)
+        .join("|");
+    const bareValues = [...sensitiveValues]
+      .filter(([, allowed]) => allowed)
+      .map(([value]) => value);
+    bare = pattern(bareValues);
+    urlValues = pattern(bareValues.filter((value) => /^https?:\/\//iu.test(value)));
+    const all = pattern(sensitiveValues.keys());
+    if (contextualKeys.size > 0) {
+      const keys = pattern(contextualKeys);
+      redacted = redacted.replace(
+        new RegExp(
+          `((?:^|[^\\p{L}\\p{N}_-])${quote}(?:${keys})${quote}\\s*[:=]\\s*${quote})(?:${all})(?![\\p{L}\\p{N}_-])`,
+          "gu",
+        ),
+        (match: string, prefix: string, offset: number, text: string) => {
+          const knownValue = match.slice(prefix.length);
+          // Leave URL continuations parseable until generic query removal,
+          // including contextual-only identifiers that must not be masked bare.
+          const hidden =
+            /^https?:\/\//iu.test(knownValue) && /^[?&#/]/u.test(text.slice(offset + match.length))
+              ? protectUrl()
+              : "[REDACTED]";
+          return `${prefix}${hidden}`;
+        },
+      );
+    }
+    redacted = redacted.replace(
+      new RegExp(
+        `((?:[Ss]upplied(?: value)?|[Pp]rovided(?: value)?|[Vv]alue|[Pp]arameter|[Cc]redential)\\s*(?:[:=]\\s*)?["'\\[]\\s*)(?:${all})(?=\\s*[\\]"'])`,
+        "gu",
+      ),
+      "$1[REDACTED]",
+    );
+  }
+  // Keep unlabelled URL credentials parseable through query removal too.
+  if (urlValues) {
+    redacted = redacted.replace(new RegExp(urlValues, "gu"), protectUrl);
   }
   redacted = redacted.replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
     try {
@@ -517,12 +606,29 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       return url;
     }
   });
-  return redacted
-    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
-    .replace(
-      /(["']?(?:token|api[_-]?key|secret|password)["']?\s*[:=]\s*["']?)[^"',\s}]+/giu,
-      "$1[REDACTED]",
+  if (urlPlaceholder) {
+    redacted = redacted.split(`${urlPlaceholder}?[REDACTED_QUERY]`).join("[REDACTED]");
+  }
+  const barePattern = () => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_])`, "gu");
+  // Sanitize auth labels before bare values can change those labels. Complete
+  // quoted values own their delimiters; the fallback still masks malformed text.
+  redacted = redacted.replace(
+    /((?:\\*["'])?(?:token|api[_-]?key|secret|password|authorization)(?:\\*["'])?\s*[:=]\s*(?:bearer\s+)?|bearer\s+)(?:((?:\\)*["'])(?:(?!\2)(?:\\.|[^\\]))*\2|((?:\\*["'])?)[^"',;\s}]+)/giu,
+    (_match: string, prefix: string, closedQuote?: string, openQuote?: string) =>
+      `${prefix}${closedQuote ?? openQuote ?? ""}[REDACTED]${closedQuote ?? ""}`,
+  );
+  if (bare) {
+    const recordPrefix = new RegExp(`(?:^|[{\\[,;\\n])\\s*${quote}$`, "u");
+    const hiddenFieldValue = new RegExp(`^${quote}\\s*[:=]\\s*${quote}\\[REDACTED\\]`, "u");
+    redacted = redacted.replace(barePattern(), (match: string, offset: number, text: string) =>
+      /^(?:authorization|bearer|token|api[_-]?key|secret|password)$/iu.test(match) &&
+      recordPrefix.test(text.slice(0, offset)) &&
+      hiddenFieldValue.test(text.slice(offset + match.length))
+        ? match
+        : "[REDACTED]",
     );
+  }
+  return redacted;
 }
 
 async function executeEchoApiCase(
