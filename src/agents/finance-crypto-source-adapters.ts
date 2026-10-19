@@ -28,7 +28,11 @@ function requiredText(value: string, label: string): string {
 
 function parseFiniteNumber(value: unknown, label: string): number {
   const parsed =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : NaN;
   if (!Number.isFinite(parsed)) {
     throw new CryptoSourceAdapterError(`${label} must be a finite number`);
   }

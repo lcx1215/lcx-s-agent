@@ -9,6 +9,8 @@ import type {
 const holidays: Record<string, readonly string[]> = {
   "2025": [
     "01-01",
+    // National Day of Mourning: NYSE regulatory memo RM-25-01 (2025-01-02).
+    "01-09",
     "01-20",
     "02-17",
     "04-18",

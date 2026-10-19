@@ -11,6 +11,12 @@ title: "Install"
 
 Already followed [Getting Started](/start/getting-started)? You're all set — this page is for alternative install methods, platform-specific instructions, and maintenance.
 
+> LCX registry installation requires an authorized, published `lcx-agent` release.
+> Until one is available, build this repository and install its local package:
+> `pnpm install --frozen-lockfile && pnpm build && pnpm ui:build && npm pack --ignore-scripts`.
+> Pass the resulting archive via `LCX_INSTALL_TARBALL` to this checkout’s installer.
+> Do not substitute an upstream package when the LCX release is unavailable.
+
 ## System requirements
 
 - **[Node 22+](/install/node)** (the [installer script](#install-methods) will install it if missing)
@@ -75,7 +81,7 @@ For VPS/cloud hosts, avoid third-party "1-click" marketplace images when possibl
     <Tabs>
       <Tab title="npm">
         ```bash
-        npm install -g openclaw@latest
+        npm install -g lcx-agent@latest
         lcx onboard --install-daemon
         ```
 
@@ -83,7 +89,7 @@ For VPS/cloud hosts, avoid third-party "1-click" marketplace images when possibl
           If you have libvips installed globally (common on macOS via Homebrew) and `sharp` fails, force prebuilt binaries:
 
           ```bash
-          SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@latest
+          SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g lcx-agent@latest
           ```
 
           If you see `sharp: Please add node-gyp to your dependencies`, either install build tooling (macOS: Xcode CLT + `npm install -g node-gyp`) or use the env var above.
@@ -91,8 +97,8 @@ For VPS/cloud hosts, avoid third-party "1-click" marketplace images when possibl
       </Tab>
       <Tab title="pnpm">
         ```bash
-        pnpm add -g openclaw@latest
-        pnpm approve-builds -g        # approve openclaw, node-llama-cpp, sharp, etc.
+        pnpm add -g lcx-agent@latest
+        pnpm approve-builds -g        # approve lcx-agent, node-llama-cpp, sharp, etc.
         lcx onboard --install-daemon
         ```
 

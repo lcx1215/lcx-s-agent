@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_NAME="${OPENCLAW_INSTALL_E2E_IMAGE:-${CLAWDBOT_INSTALL_E2E_IMAGE:-openclaw-install-e2e:local}}"
-INSTALL_URL="${OPENCLAW_INSTALL_URL:-${CLAWDBOT_INSTALL_URL:-https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh}}"
+# Use this checkout's installer and a locally built LCX archive, never remote main.
+ARTIFACT_DIR="$(mktemp -d)"
+trap 'rm -rf "$ARTIFACT_DIR"' EXIT
+if [[ -z "${LCX_INSTALL_TARBALL:-}" ]]; then
+  BUILD_IMAGE="${LCX_INSTALL_BUILD_IMAGE:-lcx-install-build:local}"
+  docker build -t "$BUILD_IMAGE" -f "$ROOT_DIR/Dockerfile" "$ROOT_DIR"
+  docker run --rm --user root --entrypoint sh -v "$ARTIFACT_DIR:/out" "$BUILD_IMAGE" -lc 'cd /app && test -f assets/chrome-extension/manifest.json && test -f assets/chrome-extension/icons/icon128.png && npm pack --ignore-scripts --pack-destination /out'
+  LCX_INSTALL_TARBALL="$(find "$ARTIFACT_DIR" -name 'lcx-agent-*.tgz' -print -quit)"
+fi
+[[ -f "$LCX_INSTALL_TARBALL" ]] || { echo "ERROR: missing LCX build archive" >&2; exit 1; }
+LCX_INSTALL_TARBALL="$(cd "$(dirname "$LCX_INSTALL_TARBALL")" && pwd)/$(basename "$LCX_INSTALL_TARBALL")"
 
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
@@ -18,8 +28,11 @@ docker build \
 
 echo "==> Run E2E installer test"
 docker run --rm \
-  -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
-  -e OPENCLAW_INSTALL_TAG="${OPENCLAW_INSTALL_TAG:-${CLAWDBOT_INSTALL_TAG:-latest}}" \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -v "${ROOT_DIR}/scripts/docker/install-sh-common:/lcx-install-common:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
+  -e OPENCLAW_NO_PROMPT=1 \
   -e OPENCLAW_E2E_MODELS="$OPENCLAW_E2E_MODELS" \
   -e OPENCLAW_INSTALL_E2E_PREVIOUS="${OPENCLAW_INSTALL_E2E_PREVIOUS:-${CLAWDBOT_INSTALL_E2E_PREVIOUS:-}}" \
   -e OPENCLAW_INSTALL_E2E_SKIP_PREVIOUS="${OPENCLAW_INSTALL_E2E_SKIP_PREVIOUS:-${CLAWDBOT_INSTALL_E2E_SKIP_PREVIOUS:-0}}" \

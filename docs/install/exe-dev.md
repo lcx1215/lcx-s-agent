@@ -117,7 +117,7 @@ with email auth.
 ## Updating
 
 ```bash
-npm i -g openclaw@latest
+npm i -g lcx-agent@latest
 lcx doctor
 lcx gateway restart
 lcx health

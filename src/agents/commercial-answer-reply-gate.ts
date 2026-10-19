@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
+import type { ReplyPayload } from "../auto-reply/types.js";
+import { enqueueSystemEvent } from "../infra/system-events.js";
 import {
   buildPipelineResult,
   planCommercialAnswerRequirements,
   type CommercialAuditCaller,
-} from "../../scripts/operator/lcx-commercial-answer-pipeline.js";
-import type { ReplyPayload } from "../auto-reply/types.js";
-import { enqueueSystemEvent } from "../infra/system-events.js";
+} from "./commercial-answer-pipeline.js";
 import type { FinanceReplyEvidenceDecision } from "./finance-reply-evidence.js";
 import {
   isProviderCouncilGapCode,

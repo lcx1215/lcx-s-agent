@@ -1,15 +1,15 @@
 # Builds the primary LCX Agent gateway and CLI container image.
-FROM node:22-bookworm@sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935
+FROM node:22-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8
 
 # OCI base-image metadata for downstream image consumers.
 # If you change these annotations, also update:
 # - docs/install/docker.md ("Base image metadata" section)
-# - https://docs.openclaw.ai/install/docker
+# - https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md
 LABEL org.opencontainers.image.base.name="docker.io/library/node:22-bookworm" \
-  org.opencontainers.image.base.digest="sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935" \
+  org.opencontainers.image.base.digest="sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8" \
   org.opencontainers.image.source="https://github.com/lcx1215/lcx-s-agent" \
   org.opencontainers.image.url="https://github.com/lcx1215/lcx-s-agent" \
-  org.opencontainers.image.documentation="https://docs.openclaw.ai/install/docker" \
+  org.opencontainers.image.documentation="https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md" \
   org.opencontainers.image.licenses="MIT" \
   org.opencontainers.image.title="LCX Agent" \
   org.opencontainers.image.description="LCX Agent gateway and CLI runtime container image"
@@ -114,8 +114,9 @@ RUN pnpm ui:build
 
 # Expose the CLI binary without requiring npm global writes as non-root.
 USER root
-RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
- && chmod 755 /app/openclaw.mjs
+RUN ln -sf /app/lcx.mjs /usr/local/bin/lcx \
+ && ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
+ && chmod 755 /app/lcx.mjs /app/openclaw.mjs
 
 ENV NODE_ENV=production
 
@@ -137,4 +138,4 @@ USER node
 #   docker run <image> node openclaw.mjs gateway --allow-unconfigured
 HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8788/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "openclaw.mjs", "serve"]
+CMD ["node", "lcx.mjs", "serve"]

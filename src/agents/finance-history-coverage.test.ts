@@ -96,3 +96,18 @@ it("requires every UTC day for crypto and does not combine fragmented providers"
     ]).status,
   ).toBe("incomplete");
 });
+
+it("excludes the January 9, 2025 mourning closure without hiding adjacent missing sessions", () => {
+  const historical = {
+    ...request,
+    fromDate: "2025-01-08",
+    toDate: "2025-01-10",
+    asOf: "2025-01-11T00:00:00Z",
+  };
+  expect(
+    assessFinanceHistoryCoverage(historical, [row("2025-01-08"), row("2025-01-10")]),
+  ).toMatchObject({ status: "complete", expectedDays: 2 });
+  expect(
+    assessFinanceHistoryCoverage(historical, [row("2025-01-10")]).providers[0].missing,
+  ).toEqual(["2025-01-08"]);
+});

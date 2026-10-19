@@ -676,7 +676,9 @@ describe("central harness covers the whole system, not a slice of it", () => {
     expect(registry.get("finance_position_ledger_read")!.approve({ directory: ledgerDir }).ok).toBe(
       false,
     );
-    expect(spec.approve({ directory: path.relative(REPO_ROOT, ledgerDir) }).ok).toBe(false);
+    const relativeDirectory = path.basename(ledgerDir);
+    expect(path.isAbsolute(relativeDirectory)).toBe(false);
+    expect(spec.approve({ directory: relativeDirectory }).ok).toBe(false);
     expect(
       spec.approve({
         directory: `${path.dirname(ledgerDir)}/alias/../${path.basename(ledgerDir)}`,
@@ -1618,7 +1620,7 @@ describe("one snapshot per cycle, and a pointer that never moves backwards", () 
 
   it("names exactly one snapshot file per runId", () => {
     expect(runSnapshotPath("/state/lcx-central-agent-runs", "central-0-1")).toBe(
-      "/state/lcx-central-agent-runs/central-0-1.json",
+      path.join("/state/lcx-central-agent-runs", "central-0-1.json"),
     );
   });
 });

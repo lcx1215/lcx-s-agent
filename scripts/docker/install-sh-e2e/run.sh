@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_URL="${OPENCLAW_INSTALL_URL:-${CLAWDBOT_INSTALL_URL:-https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh}}"
 MODELS_MODE="${OPENCLAW_E2E_MODELS:-${CLAWDBOT_E2E_MODELS:-both}}" # both|openai|anthropic
-INSTALL_TAG="${OPENCLAW_INSTALL_TAG:-${CLAWDBOT_INSTALL_TAG:-latest}}"
 E2E_PREVIOUS_VERSION="${OPENCLAW_INSTALL_E2E_PREVIOUS:-${CLAWDBOT_INSTALL_E2E_PREVIOUS:-}}"
 SKIP_PREVIOUS="${OPENCLAW_INSTALL_E2E_SKIP_PREVIOUS:-${CLAWDBOT_INSTALL_E2E_SKIP_PREVIOUS:-0}}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
@@ -32,48 +30,26 @@ elif [[ "$MODELS_MODE" == "anthropic" && -z "$ANTHROPIC_API_TOKEN" && -z "$ANTHR
   exit 2
 fi
 
-echo "==> Resolve npm versions"
-EXPECTED_VERSION="$(npm view "openclaw@${INSTALL_TAG}" version)"
-if [[ -z "$EXPECTED_VERSION" || "$EXPECTED_VERSION" == "undefined" || "$EXPECTED_VERSION" == "null" ]]; then
-  echo "ERROR: unable to resolve openclaw@${INSTALL_TAG} version" >&2
-  exit 2
-fi
-if [[ -n "$E2E_PREVIOUS_VERSION" ]]; then
+# This image runs as appuser; both predecessor and current install share a
+# writable prefix. Do not depend on root-owned /usr/local or host npm settings.
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
+mkdir -p "$NPM_CONFIG_PREFIX"
+
+echo "==> Install this checkout's LCX build"
+[[ -f "${LCX_INSTALL_TARBALL:-}" ]] || { echo "ERROR: missing LCX build archive" >&2; exit 2; }
+EXPECTED_VERSION="$(tar -xOf "$LCX_INSTALL_TARBALL" package/package.json | node -pe 'const p=JSON.parse(require("fs").readFileSync(0,"utf8")); if(p.name!=="lcx-agent" || !p.bin?.lcx)process.exit(1); p.version')"
+if [[ "$SKIP_PREVIOUS" != "1" ]]; then
   PREVIOUS_VERSION="$E2E_PREVIOUS_VERSION"
-else
-  PREVIOUS_VERSION="$(node - <<'NODE'
-const { execSync } = require("node:child_process");
-const versions = JSON.parse(execSync("npm view lcx versions --json", { encoding: "utf8" }));
-if (!Array.isArray(versions) || versions.length === 0) process.exit(1);
-process.stdout.write(versions.length >= 2 ? versions[versions.length - 2] : versions[0]);
-NODE
-  )"
+  if [[ -z "$PREVIOUS_VERSION" ]]; then
+    PREVIOUS_VERSION="$(npm view lcx-agent versions --json | node /lcx-install-common/previous-version.cjs "$EXPECTED_VERSION")"
+  fi
+  [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "ERROR: prior LCX release must be an exact version" >&2; exit 2; }
+  npm install -g "lcx-agent@${PREVIOUS_VERSION}"
 fi
-echo "expected=$EXPECTED_VERSION previous=$PREVIOUS_VERSION"
-
-if [[ "$SKIP_PREVIOUS" == "1" ]]; then
-  echo "==> Skip preinstall previous (OPENCLAW_INSTALL_E2E_SKIP_PREVIOUS=1)"
-else
-  echo "==> Preinstall previous (forces installer upgrade path; avoids read() prompt)"
-  npm install -g "openclaw@${PREVIOUS_VERSION}"
-fi
-
-echo "==> Run official installer one-liner"
-if [[ "$INSTALL_TAG" == "beta" ]]; then
-  OPENCLAW_BETA=1 CLAWDBOT_BETA=1 curl -fsSL "$INSTALL_URL" | bash
-elif [[ "$INSTALL_TAG" != "latest" ]]; then
-  OPENCLAW_VERSION="$INSTALL_TAG" CLAWDBOT_VERSION="$INSTALL_TAG" curl -fsSL "$INSTALL_URL" | bash
-else
-  curl -fsSL "$INSTALL_URL" | bash
-fi
-
-echo "==> Verify installed version"
-INSTALLED_VERSION="$(openclaw --version 2>/dev/null | head -n 1 | tr -d '\r')"
-echo "installed=$INSTALLED_VERSION expected=$EXPECTED_VERSION"
-if [[ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]]; then
-  echo "ERROR: expected openclaw@$EXPECTED_VERSION, got openclaw@$INSTALLED_VERSION" >&2
-  exit 1
-fi
+bash /lcx-install.sh
+source /lcx-install-common/cli-verify.sh
+verify_installed_cli lcx-agent "$EXPECTED_VERSION"
 
 set_image_model() {
   local profile="$1"

@@ -190,6 +190,25 @@ describe("docker-setup.sh", () => {
     expect(log).toContain("run --rm lcx-cli config set gateway.bind lan");
   });
 
+  it.each(["lan", "tailnet", "custom"])(
+    "enables TLS and HTTPS origins for %s binds",
+    async (bind) => {
+      const isolated = await createDockerSetupSandbox();
+      try {
+        const result = runDockerSetup(isolated, { OPENCLAW_GATEWAY_BIND: bind });
+        expect(result.status).toBe(0);
+        const log = await readFile(isolated.logPath, "utf8");
+        expect(log).toContain(`config set gateway.bind ${bind}`);
+        expect(log).toContain("config set gateway.tls.enabled true");
+        expect(log).toContain(
+          'config set gateway.controlUi.allowedOrigins ["https://127.0.0.1:18789"] --strict-json',
+        );
+      } finally {
+        await rm(isolated.rootDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("precreates config identity dir for CLI device auth writes", async () => {
     const activeSandbox = requireSandbox(sandbox);
     const configDir = join(activeSandbox.rootDir, "config-identity");

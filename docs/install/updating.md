@@ -31,7 +31,7 @@ Notes:
 
   The installer will `git pull --rebase` **only** if the repo is clean.
 
-- For **global installs**, the script uses `npm install -g openclaw@latest` under the hood.
+- For **global installs**, the script uses `npm install -g lcx-agent@latest` under the hood.
 - Legacy note: `clawdbot` remains available as a compatibility shim.
 
 ## Before you update
@@ -48,11 +48,11 @@ Notes:
 Global install (pick one):
 
 ```bash
-npm i -g openclaw@latest
+npm i -g lcx-agent@latest
 ```
 
 ```bash
-pnpm add -g openclaw@latest
+pnpm add -g lcx-agent@latest
 ```
 
 We do **not** recommend Bun for the Gateway runtime (WhatsApp/Telegram bugs).
@@ -210,14 +210,14 @@ Runbook + exact service labels: [Gateway runbook](/gateway)
 Install a known-good version (replace `<version>` with the last working one):
 
 ```bash
-npm i -g openclaw@<version>
+npm i -g lcx-agent@<version>
 ```
 
 ```bash
-pnpm add -g openclaw@<version>
+pnpm add -g lcx-agent@<version>
 ```
 
-Tip: to see the current published version, run `npm view lcx version`.
+Tip: to see the current published version, run `npm view lcx-agent version`.
 
 Then restart + re-run doctor:
 

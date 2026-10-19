@@ -313,7 +313,7 @@ describe("outbound identity", () => {
     const violations: string[] = [];
     for (const file of productionSources()) {
       const rel = path.relative(repoRoot, file);
-      if (SELF_NAME_EXEMPT.has(rel)) {
+      if (SELF_NAME_EXEMPT.has(rel.split(path.sep).join("/"))) {
         continue;
       }
       for (const line of codeLines(file)) {

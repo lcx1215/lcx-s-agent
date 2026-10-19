@@ -30,8 +30,10 @@
     "paper-loop/**/*",
     "test/**/*",
     "scripts/**/*",
+    "docs/experiments/research/**/*.mts",
     "*.ts",
-    "packages/**/*"
+    "packages/**/*",
+    "ops/probes/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

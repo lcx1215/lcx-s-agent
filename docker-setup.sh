@@ -90,7 +90,7 @@ ensure_control_ui_allowed_origins() {
   local legacy_http_origin_json
   local origin_scheme="http"
   case "$OPENCLAW_GATEWAY_BIND" in
-    lan|custom) origin_scheme="https" ;;
+    lan|tailnet|custom) origin_scheme="https" ;;
   esac
   allowed_origin_json="$(printf '["%s://127.0.0.1:%s"]' "$origin_scheme" "$OPENCLAW_GATEWAY_PORT")"
   legacy_http_origin_json="$(printf '["http://127.0.0.1:%s"]' "$OPENCLAW_GATEWAY_PORT")"
@@ -122,7 +122,7 @@ sync_gateway_mode_and_bind() {
   docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
     config set gateway.bind "$OPENCLAW_GATEWAY_BIND" >/dev/null
   case "$OPENCLAW_GATEWAY_BIND" in
-    lan|custom)
+    lan|tailnet|custom)
       docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
         config set gateway.tls.enabled true >/dev/null
       ;;

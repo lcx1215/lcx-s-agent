@@ -298,6 +298,10 @@ async function execLinesWithStatus(
   }
 }
 
+function normalizeRepoPaths(files: readonly string[]): string[] {
+  return files.map((file) => file.replaceAll("\\", "/"));
+}
+
 function topLevel(file: string): string {
   return file.split("/")[0] || ".";
 }
@@ -1008,8 +1012,8 @@ async function main() {
         deadline,
       ),
     ]);
-    const trackedFiles = trackedInventory.lines;
-    const rgFiles = visibleInventory.ok ? visibleInventory.lines : trackedFiles;
+    const trackedFiles = normalizeRepoPaths(trackedInventory.lines);
+    const rgFiles = normalizeRepoPaths(visibleInventory.ok ? visibleInventory.lines : trackedFiles);
     const repoComponentFiles = [...new Set([...trackedFiles, ...rgFiles])].toSorted();
     const gitStatus = parseGitStatus(gitStatusInventory.lines);
     const [

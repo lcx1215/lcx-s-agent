@@ -8,6 +8,7 @@ import {
   financeMonthlyTrendReturn,
 } from "../../src/agents/finance-daily-strategy.js";
 import type { FinanceResearchEquityUniverseSnapshot } from "../../src/agents/finance-research-runner.js";
+import { FINANCE_RESEARCH_SAMPLES_FILENAME } from "../../src/agents/finance-state-dir.js";
 import {
   DEFAULT_UNIVERSE_THRESHOLDS,
   FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS,
@@ -206,6 +207,7 @@ describe("declared strategy to daily execution", () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "night-strategy-unreadable-"));
     mocks.read.mockRejectedValue(new Error("rule book unavailable"));
     try {
+      await fs.writeFile(path.join(directory, FINANCE_RESEARCH_SAMPLES_FILENAME), "");
       const result = await runFinanceDailyCycleOperator([
         "--mode",
         "night",
@@ -216,6 +218,8 @@ describe("declared strategy to daily execution", () => {
       expect(result).toMatchObject({
         mode: "night",
         ok: true,
+        sampleSource: { status: "available", bytes: 0, parsedCount: 0 },
+        sampleCount: 0,
         eodRefreshWarnings: ["strategy rule ledger unavailable; EOD refresh skipped"],
       });
       expect(mocks.eodRefresh).not.toHaveBeenCalled();

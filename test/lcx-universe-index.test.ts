@@ -1,14 +1,22 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import vm from "node:vm";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
+let userHome: string;
+beforeAll(async () => {
+  userHome = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-universe-home-"));
+});
+afterAll(async () => {
+  await fs.rm(userHome, { recursive: true, force: true });
+});
 
 async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
   let stdout = "";
@@ -18,7 +26,7 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
       ["--import", "tsx", "scripts/operator/lcx-universe-index.ts", ...args],
       {
         cwd: repoRoot,
-        env: process.env,
+        env: { ...process.env, LCX_USER_HOME: userHome },
         maxBuffer: EXEC_MAX_BUFFER,
       },
     ));
@@ -116,6 +124,33 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
 }
 
 describe("LCX universe index", () => {
+  it("normalizes Windows inventory paths before governance classification", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-universe-index.ts"),
+      "utf8",
+    );
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    const declaration = ast.statements.find(
+      (node) => ts.isFunctionDeclaration(node) && node.name?.text === "normalizeRepoPaths",
+    );
+    if (!declaration) {
+      throw new Error("normalization owner missing");
+    }
+    const code = ts.transpileModule(declaration.getText(ast), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const normalize = vm.runInNewContext(code + "\nnormalizeRepoPaths") as (
+      files: string[],
+    ) => string[];
+    expect(
+      normalize([
+        "src\\cli\\serve-cli.ts",
+        "scripts/operator/lcx-universe-index.ts",
+        "unowned\\file",
+      ]),
+    ).toEqual(["src/cli/serve-cli.ts", "scripts/operator/lcx-universe-index.ts", "unowned/file"]);
+  });
+
   it("routes the existing maintainer document without admitting unknown agent files", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/operator/lcx-universe-index.ts"),
@@ -156,7 +191,7 @@ describe("LCX universe index", () => {
       expect.objectContaining({
         boundary: "local_universe_index_only",
         latestStatePath: path.join(
-          process.env.LCX_USER_HOME ?? "/Users/liuchengxu",
+          userHome,
           ".openclaw",
           "workspace",
           "state",
@@ -258,12 +293,7 @@ describe("LCX universe index", () => {
     expect(typeof payload.artifacts.workspaceState.exists).toBe("boolean");
     expect(Array.isArray(payload.artifacts.workspaceState.largestFiles)).toBe(true);
     expect(payload.artifacts.liveSidecar.path).toBe(
-      path.join(
-        process.env.LCX_USER_HOME ?? "/Users/liuchengxu",
-        ".openclaw",
-        "external-channel-runtime",
-        "lcx-s-openclaw",
-      ),
+      path.join(userHome, ".openclaw", "external-channel-runtime", "lcx-s-openclaw"),
     );
     expect(Array.isArray(payload.garbageCandidates.untrackedRepoFiles)).toBe(true);
     expect(Array.isArray(payload.garbageCandidates.staleRuntimeFiles)).toBe(true);

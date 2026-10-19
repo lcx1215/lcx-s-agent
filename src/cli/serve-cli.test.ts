@@ -508,6 +508,107 @@ describe("POST /agent tokenless browser boundary", () => {
   });
 });
 
+describe("POST /agent tokenless browser boundary", () => {
+  it.each<Record<string, string>>([
+    { origin: "https://attacker.invalid", "content-type": "text/plain" },
+    { origin: "null" },
+    { origin: "not a URL" },
+    { origin: "http:localhost" },
+    { origin: "http:///localhost" },
+    { origin: "http://localhost/" },
+    { origin: "" },
+    { origin: "file://localhost" },
+    { origin: "ftp://127.0.0.1" },
+    { origin: "http://localhost/foreign/path" },
+    { origin: "http://attacker@localhost" },
+    { "sec-fetch-site": "cross-site" },
+    { origin: "http://localhost", "sec-fetch-site": "cross-site" },
+    { referer: "https://attacker.invalid/form" },
+    { referer: "null" },
+    { referer: "http:localhost/path" },
+    { referer: "file://localhost/form" },
+    { host: "attacker.invalid" },
+    { host: "" },
+    { host: "0.0.0.0:8788" },
+    { host: "attacker.invalid", origin: "http://attacker.invalid" },
+    { host: "attacker.invalid", origin: "http://localhost" },
+    { host: "localhost.attacker.invalid" },
+    { host: "localhost@attacker.invalid" },
+    { host: "127.0.0.1/path" },
+  ])("rejects unsafe ingress before agent dispatch: %j", async (headers) => {
+    const { url, runAgent } = await startServer();
+    const response = await postAgentWithHeaders(url, headers);
+    expect(response.status).toBe(403);
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(["/agent", "/agent/", "/agent///?source=browser"])(
+    "guards route alias %s before reading malformed bodies",
+    async (route) => {
+      const { url, runAgent } = await startServer();
+      const response = await fetch(`${url}${route}`, {
+        method: "POST",
+        headers: { origin: "https://attacker.invalid", "content-type": "text/plain" },
+        body: "invalid JSON",
+      });
+      expect(response.status).toBe(403);
+      expect(runAgent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<Record<string, string>>([
+    {},
+    { origin: "http://localhost:3000" },
+    { origin: "https://127.0.0.1:3000" },
+    { origin: "http://[::1]:3000" },
+    { referer: "http://localhost:3000/app?view=agent" },
+    { origin: "http://localhost", "sec-fetch-site": "same-site" },
+    { host: "[::1]:8788" },
+  ])("preserves loopback clients: %j", async (headers) => {
+    const { url, runAgent } = await startServer();
+    const response = await postAgentWithHeaders(url, headers);
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves local requests through agent route aliases", async () => {
+    const { url, runAgent } = await startServer();
+    for (const route of ["/agent/", "/agent///?source=cli"]) {
+      const response = await fetch(`${url}${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "local request" }),
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(runAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves GET and HEAD health probes public", async () => {
+    const { url, runAgent } = await startServer();
+    for (const method of ["GET", "HEAD"]) {
+      const response = await fetch(`${url}/healthz`, {
+        method,
+        headers: { host: "health.internal", origin: "https://monitor.invalid" },
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicitly authenticated LAN clients with foreign browser headers", async () => {
+    const { url, runAgent } = await startServer({ config: { bind: "lan", token: "s3cret" } });
+    const response = await postAgentWithHeaders(url, {
+      authorization: "Bearer s3cret",
+      host: "agent.internal:8788",
+      origin: "https://client.invalid",
+      "sec-fetch-site": "cross-site",
+    });
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("POST /agent authentication", () => {
   it("rejects missing, malformed, and wrong bearer tokens", async () => {
     const { url, runAgent } = await startServer({ config: { token: "s3cret" } });

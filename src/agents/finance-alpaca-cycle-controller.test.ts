@@ -520,9 +520,11 @@ it("persists a newly observed equity high across controller recreation", async (
   ).toBe(1100);
   await fs.writeFile(path.join(f.directory, filename), "{broken");
   const restart = createFinanceAlpacaCycleController(f.options);
-  await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow(
-    "incomplete account peak",
-  );
+  await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).rejects.toMatchObject({
+    message: "finance account read failed",
+    diagnostic: { stage: "safety_facts", code: "transport_cause_unavailable" },
+    cause: expect.objectContaining({ message: "incomplete account peak history" }),
+  });
 });
 
 it("retains an unknown outcome and refuses another cycle without repeating the order", async () => {
@@ -859,7 +861,13 @@ it("keeps a protected sell unknown pending until its original protection can be 
   expect(f.execute).toHaveBeenCalledTimes(executeCalls);
   expect(
     f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
-  ).toBe(false);
+  ).toBe(true);
+  const unresolved = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(unresolved[0].status).toBe("unknown");
 });
 
 it("uses persisted highs for the drawdown gate after a restart", async () => {
@@ -1152,9 +1160,13 @@ it.each(["failed", "inspect_only"] as const)(
     const baseline = historyReads();
     if (mode === "failed") {
       f.read.mockRejectedValueOnce(new Error("fixture refresh unavailable"));
-      await expect(f.controller.inspectReconciliation(AbortSignal.timeout(5000))).rejects.toThrow(
-        "fixture refresh unavailable",
-      );
+      await expect(
+        f.controller.inspectReconciliation(AbortSignal.timeout(5000)),
+      ).rejects.toMatchObject({
+        message: "finance account read failed",
+        diagnostic: { stage: "broker_reconciliation", code: "transport_cause_unavailable" },
+        cause: expect.objectContaining({ message: "fixture refresh unavailable" }),
+      });
     } else {
       await f.controller.inspectReconciliation(AbortSignal.timeout(5000));
     }

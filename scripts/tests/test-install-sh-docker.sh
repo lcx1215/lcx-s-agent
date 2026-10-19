@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_IMAGE="${OPENCLAW_INSTALL_SMOKE_IMAGE:-${CLAWDBOT_INSTALL_SMOKE_IMAGE:-openclaw-install-smoke:local}}"
 NONROOT_IMAGE="${OPENCLAW_INSTALL_NONROOT_IMAGE:-${CLAWDBOT_INSTALL_NONROOT_IMAGE:-openclaw-install-nonroot:local}}"
-INSTALL_URL="${OPENCLAW_INSTALL_URL:-${CLAWDBOT_INSTALL_URL:-https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh}}"
-CLI_INSTALL_URL="${OPENCLAW_INSTALL_CLI_URL:-${CLAWDBOT_INSTALL_CLI_URL:-https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh}}"
 SKIP_NONROOT="${OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT:-${CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT:-0}}"
 LATEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$LATEST_DIR"' EXIT
+if [[ -z "${LCX_INSTALL_TARBALL:-}" ]]; then
+  BUILD_IMAGE="${LCX_INSTALL_BUILD_IMAGE:-lcx-install-build:local}"
+  docker build -t "$BUILD_IMAGE" -f "$ROOT_DIR/Dockerfile" "$ROOT_DIR"
+  docker run --rm --user root --entrypoint sh -v "$LATEST_DIR:/out" "$BUILD_IMAGE" -lc 'cd /app && test -f assets/chrome-extension/manifest.json && test -f assets/chrome-extension/icons/icon128.png && npm pack --ignore-scripts --pack-destination /out'
+  LCX_INSTALL_TARBALL="$(find "$LATEST_DIR" -name 'lcx-agent-*.tgz' -print -quit)"
+fi
+if [[ ! -f "$LCX_INSTALL_TARBALL" ]]; then
+  echo "ERROR: LCX_INSTALL_TARBALL must identify a built LCX package" >&2
+  exit 1
+fi
+LCX_INSTALL_TARBALL="$(cd "$(dirname "$LCX_INSTALL_TARBALL")" && pwd)/$(basename "$LCX_INSTALL_TARBALL")"
 LATEST_FILE="${LATEST_DIR}/latest"
 
 echo "==> Build smoke image (upgrade, root): $SMOKE_IMAGE"
@@ -16,15 +26,18 @@ docker build \
   -f "$ROOT_DIR/scripts/docker/install-sh-smoke/Dockerfile" \
   "$ROOT_DIR/scripts/docker"
 
-echo "==> Run installer smoke test (root): $INSTALL_URL"
-docker run --rm -t \
+echo "==> Run installer smoke test (root): current LCX build"
+docker run --rm \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
   -v "${LATEST_DIR}:/out" \
-  -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
   -e OPENCLAW_INSTALL_METHOD=npm \
   -e OPENCLAW_INSTALL_LATEST_OUT="/out/latest" \
   -e OPENCLAW_INSTALL_SMOKE_PREVIOUS="${OPENCLAW_INSTALL_SMOKE_PREVIOUS:-${CLAWDBOT_INSTALL_SMOKE_PREVIOUS:-}}" \
   -e OPENCLAW_INSTALL_SMOKE_SKIP_PREVIOUS="${OPENCLAW_INSTALL_SMOKE_SKIP_PREVIOUS:-${CLAWDBOT_INSTALL_SMOKE_SKIP_PREVIOUS:-0}}" \
   -e OPENCLAW_NO_ONBOARD=1 \
+  -e OPENCLAW_NO_PROMPT=1 \
   -e DEBIAN_FRONTEND=noninteractive \
   "$SMOKE_IMAGE"
 
@@ -42,12 +55,15 @@ else
     -f "$ROOT_DIR/scripts/docker/install-sh-nonroot/Dockerfile" \
     "$ROOT_DIR/scripts/docker"
 
-  echo "==> Run installer non-root test: $INSTALL_URL"
-  docker run --rm -t \
-    -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
+  echo "==> Run installer non-root test: current LCX build"
+  docker run --rm \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
     -e OPENCLAW_INSTALL_METHOD=npm \
     -e OPENCLAW_INSTALL_EXPECT_VERSION="$LATEST_VERSION" \
     -e OPENCLAW_NO_ONBOARD=1 \
+  -e OPENCLAW_NO_PROMPT=1 \
     -e DEBIAN_FRONTEND=noninteractive \
     "$NONROOT_IMAGE"
 fi
@@ -63,10 +79,12 @@ if [[ "$SKIP_NONROOT" == "1" ]]; then
 fi
 
 echo "==> Run CLI installer non-root test (same image)"
-docker run --rm -t \
+docker run --rm \
+  -v "${LCX_INSTALL_TARBALL}:/lcx-agent.tgz:ro" \
+  -v "${ROOT_DIR}/scripts/install.sh:/lcx-install.sh:ro" \
+  -e LCX_INSTALL_TARBALL=/lcx-agent.tgz \
   --entrypoint /bin/bash \
-  -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
-  -e OPENCLAW_INSTALL_CLI_URL="$CLI_INSTALL_URL" \
   -e OPENCLAW_NO_ONBOARD=1 \
+  -e OPENCLAW_NO_PROMPT=1 \
   -e DEBIAN_FRONTEND=noninteractive \
-  "$NONROOT_IMAGE" -lc "curl -fsSL \"$CLI_INSTALL_URL\" | bash -s -- --set-npm-prefix --no-onboard"
+  "$NONROOT_IMAGE" -lc "bash /lcx-install.sh --set-npm-prefix --no-onboard"

@@ -77,7 +77,7 @@ Optional env vars:
 
 After it finishes:
 
-- Open `http://127.0.0.1:18789/` in your browser.
+- Open `https://127.0.0.1:18789/` in your browser and trust the generated Gateway certificate.
 - Paste the token into the Control UI (Settings → token).
 - Need the URL again? Run `docker compose run --rm lcx-cli dashboard --no-open`.
 
@@ -164,10 +164,10 @@ The main Docker image currently uses:
 The docker image now publishes OCI base-image annotations (sha256 is an example):
 
 - `org.opencontainers.image.base.name=docker.io/library/node:22-bookworm`
-- `org.opencontainers.image.base.digest=sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935`
+- `org.opencontainers.image.base.digest=sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8`
 - `org.opencontainers.image.source=https://github.com/lcx1215/lcx-s-agent`
 - `org.opencontainers.image.url=https://github.com/lcx1215/lcx-s-agent`
-- `org.opencontainers.image.documentation=https://docs.openclaw.ai/install/docker`
+- `org.opencontainers.image.documentation=https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md`
 - `org.opencontainers.image.licenses=MIT`
 - `org.opencontainers.image.title=LCX Agent`
 - `org.opencontainers.image.description=LCX Agent gateway and CLI runtime container image`
@@ -439,8 +439,10 @@ URL you land on and paste it back into the wizard to finish auth.
 Container probe endpoints (no auth required):
 
 ```bash
-curl -fsS http://127.0.0.1:18789/healthz
-curl -fsS http://127.0.0.1:18789/readyz
+# Use the certificate generated in the mounted Gateway configuration directory.
+GATEWAY_CA="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}/gateway/tls/gateway-cert.pem"
+curl --cacert "$GATEWAY_CA" -fsS https://127.0.0.1:18789/healthz
+curl --cacert "$GATEWAY_CA" -fsS https://127.0.0.1:18789/readyz
 ```
 
 Aliases: `/health` and `/ready`.
@@ -475,7 +477,7 @@ pnpm test:docker:qr
 Docker port publishing. Because this is a non-loopback listener, configure
 `gateway.tls.enabled: true` before startup; use HTTPS/WSS and trust the Gateway
 certificate in browsers (CLI clients can pin it). The
-setup script enables TLS automatically for `lan`/`custom` binds. A plain
+setup script enables TLS automatically for `lan`/`tailnet`/`custom` binds. A plain
 HTTP/WS host-published connection is not accepted.
 
 - `lan` (default): host browser + host CLI can reach the published gateway port over TLS.

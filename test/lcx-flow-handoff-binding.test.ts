@@ -71,6 +71,33 @@ describe("original nonapply binding consumes a native private training plan", ()
 });
 
 describe("original binding local verification intake", () => {
+  it("keeps private verification readable when the temporary root has an alias", async () => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "binding-root-alias-"));
+    const target = path.join(parent, "target");
+    const alias = path.join(parent, "alias");
+    await fs.mkdir(target);
+    await fs.symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+    try {
+      const proof = await probeOriginalBinding(alias, undefined, {});
+      expect(proof.binding.localVerification).toMatchObject({ status: "verified", exitCode: 0 });
+      expect(proof.binding.apply).toBe(false);
+      expect(proof.binding.liveTouched).toBe(false);
+      const canonicalRoot = await fs.realpath(target);
+      expect(proof.reads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: path.join(canonicalRoot, "repo/scripts/operator/lcx-external-channel-binding.ts"),
+          }),
+        ]),
+      );
+      expect(
+        proof.deniedReads.every((file) => !file.startsWith(`${canonicalRoot}${path.sep}`)),
+      ).toBe(true);
+    } finally {
+      await fs.rm(parent, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     undefined,
     "missing_receipt",

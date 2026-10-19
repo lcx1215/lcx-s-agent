@@ -156,10 +156,12 @@ const selectedConfigs =
 export default defineConfig(
   selectedConfigs.map((config) => ({
     ...config,
+    // The protocol schema is tracked source inside dist; cleaning it dirties an
+    // otherwise clean build and removes the contract shipped in the package.
     clean:
-      requestedConfigIndex === undefined
-        ? config.clean
-        : Number.parseInt(requestedConfigIndex, 10) === 0,
+      requestedConfigIndex === undefined || Number.parseInt(requestedConfigIndex, 10) === 0
+        ? ["dist/*", "!dist/protocol.schema.json"]
+        : false,
   })),
 );
 // Bundles CLI, runtime, plugin SDK, and bundled hook entrypoints.

@@ -5,6 +5,7 @@ import {
   createCoinCapCryptoAssetAdapter,
   parseBinanceCryptoTicker,
   parseCoinGeckoCryptoPrice,
+  parseCoinCapCryptoAsset,
   parseCoinbaseCryptoTicker,
   parseKrakenCryptoTicker,
 } from "./finance-crypto-source-adapters.js";
@@ -18,6 +19,59 @@ const REQUEST = {
 } as const;
 
 describe("finance crypto source adapters", () => {
+  it.each(["", "   "])("rejects blank numeric data instead of publishing zero (%j)", (value) => {
+    const cases = [
+      () =>
+        parseBinanceCryptoTicker(
+          { symbol: "BTCUSDT", price: value },
+          REQUEST.instrument,
+          "fixture:binance",
+          REQUEST.asOf,
+        ),
+      () =>
+        parseKrakenCryptoTicker(
+          { result: { XXBTZUSD: { c: [value] } } },
+          REQUEST.instrument,
+          "fixture:kraken",
+          REQUEST.asOf,
+        ),
+      () =>
+        parseCoinbaseCryptoTicker(
+          { price: value },
+          REQUEST.instrument,
+          "fixture:coinbase",
+          REQUEST.asOf,
+        ),
+      () =>
+        parseCoinCapCryptoAsset(
+          { data: { priceUsd: value } },
+          REQUEST.instrument,
+          "fixture:coincap",
+          REQUEST.asOf,
+        ),
+      () =>
+        parseCoinGeckoCryptoPrice(
+          { bitcoin: { usd: value, last_updated_at: 1788777744 } },
+          REQUEST.instrument,
+          "fixture:coingecko",
+          REQUEST.asOf,
+        ),
+    ];
+    for (const parse of cases) {
+      expect(parse).toThrow("finite number");
+    }
+  });
+
+  it("preserves explicit zero volume and trimmed numeric prices", () => {
+    const observation = parseCoinbaseCryptoTicker(
+      { price: " 100 ", volume: "0" },
+      REQUEST.instrument,
+      "fixture:coinbase",
+      REQUEST.asOf,
+    );
+    expect(observation.fields.map((field) => field.value)).toEqual([100, 0]);
+  });
+
   it("parses Binance public spot data as the primary crypto source", () => {
     const observation = parseBinanceCryptoTicker(
       { symbol: "BTCUSDT", price: "79435.97" },

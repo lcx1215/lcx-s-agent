@@ -32,9 +32,11 @@ jobs:
     steps:
       - name: Checkout CLI
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
           check-latest: true
@@ -52,15 +54,39 @@ jobs:
       - name: Set up Docker Builder
         uses: docker/setup-buildx-action@v3
 
+      - name: Build changed sandbox images
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" ]]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --name-only "$BASE_SHA" HEAD -- Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+          else
+            printf '%s\n' Dockerfile.sandbox Dockerfile.sandbox-browser > "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+          fi
+          while IFS= read -r dockerfile; do
+            [[ -n "$dockerfile" ]] || continue
+            image="lcx-sandbox-validation:${dockerfile#Dockerfile.}"
+            docker build -t "$image" -f "$dockerfile" .
+            docker run --rm --entrypoint /bin/bash "$image" -lc 'python3 --version && curl --version'
+            if [[ "$dockerfile" == "Dockerfile.sandbox-browser" ]]; then
+              docker run --rm --entrypoint chromium "$image" --version
+            fi
+          done < "$RUNNER_TEMP/lcx-sandbox-dockerfiles"
+
       - name: Run root Dockerfile CLI smoke
         run: |
           docker build -t openclaw-dockerfile-smoke:local -f Dockerfile .
-          docker run --rm --entrypoint sh openclaw-dockerfile-smoke:local -lc 'which openclaw && openclaw --version'
+          docker run --rm --entrypoint sh openclaw-dockerfile-smoke:local -lc 'which lcx && lcx --version'
 
-      - name: Run installer docker tests
+      - name: Pack this LCX build for installer verification
+        run: |
+          mkdir -p "$RUNNER_TEMP/lcx-install-artifact"
+          docker run --rm --user root --entrypoint sh -v "$RUNNER_TEMP/lcx-install-artifact:/out" openclaw-dockerfile-smoke:local -lc 'cd /app && npm pack --ignore-scripts --pack-destination /out'
+          echo "LCX_INSTALL_TARBALL=$(find "$RUNNER_TEMP/lcx-install-artifact" -name 'lcx-agent-*.tgz' -print -quit)" >> "$GITHUB_ENV"
+
+      - name: Run installer docker tests against this commit
         env:
-          CLAWDBOT_INSTALL_URL: https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh
-          CLAWDBOT_INSTALL_CLI_URL: https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh
           CLAWDBOT_NO_ONBOARD: "1"
           CLAWDBOT_INSTALL_SMOKE_SKIP_CLI: "1"
           CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT: ${{ github.event_name == 'pull_request' && '1' || '0' }}

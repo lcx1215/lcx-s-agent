@@ -70,8 +70,8 @@ const unitIsolatedFilesRaw = [
   "src/imessage/monitor.shutdown.unhandled-rejection.test.ts",
 ];
 const unitIsolatedFiles = unitIsolatedFilesRaw.filter((file) => fs.existsSync(file));
-const legacyCompatibilityFiles = ["src/plugins/loader-legacy-root.test.ts"].filter((file) =>
-  fs.existsSync(file),
+const legacyCompatibilityFiles = ["src/plugins/loader-legacy-root.test.ts"].filter(
+  (file) => process.env.LCX_TEST_BUILT_SDK === "1" && fs.existsSync(file),
 );
 
 const children = new Set();
@@ -144,7 +144,7 @@ const runs = [
             "vitest",
             "run",
             "--config",
-            "vitest.unit.config.ts",
+            "vitest.plugin-sdk.config.ts",
             "--pool=forks",
             ...legacyCompatibilityFiles,
           ],
