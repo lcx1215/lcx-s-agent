@@ -5,8 +5,8 @@ FROM node:26-bookworm@sha256:a856ae5e25d498bbe5ec85fde88f00f5ed99908fda803ba39d7
 # If you change these annotations, also update:
 # - docs/install/docker.md ("Base image metadata" section)
 # - https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md
-LABEL org.opencontainers.image.base.name="docker.io/library/node:22-bookworm" \
-  org.opencontainers.image.base.digest="sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8" \
+LABEL org.opencontainers.image.base.name="docker.io/library/node:26-bookworm" \
+  org.opencontainers.image.base.digest="sha256:a856ae5e25d498bbe5ec85fde88f00f5ed99908fda803ba39d7735ab8574f58c" \
   org.opencontainers.image.source="https://github.com/lcx1215/lcx-s-agent" \
   org.opencontainers.image.url="https://github.com/lcx1215/lcx-s-agent" \
   org.opencontainers.image.documentation="https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md" \
@@ -18,7 +18,7 @@ LABEL org.opencontainers.image.base.name="docker.io/library/node:22-bookworm" \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
-RUN corepack enable
+RUN npm install --global corepack@0.36.0 && corepack enable
 
 WORKDIR /app
 RUN chown node:node /app

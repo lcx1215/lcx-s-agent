@@ -159,12 +159,14 @@ unmaintained and are not this project's builds.
 
 The main Docker image currently uses:
 
-- `node:22-bookworm`
+- `node:26-bookworm`
 
-The docker image now publishes OCI base-image annotations (sha256 is an example):
+Corepack 0.36.0 is installed explicitly before enabling it because Node 26 no longer bundles Corepack.
 
-- `org.opencontainers.image.base.name=docker.io/library/node:22-bookworm`
-- `org.opencontainers.image.base.digest=sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8`
+The Docker image publishes these OCI base-image annotations:
+
+- `org.opencontainers.image.base.name=docker.io/library/node:26-bookworm`
+- `org.opencontainers.image.base.digest=sha256:a856ae5e25d498bbe5ec85fde88f00f5ed99908fda803ba39d7735ab8574f58c`
 - `org.opencontainers.image.source=https://github.com/lcx1215/lcx-s-agent`
 - `org.opencontainers.image.url=https://github.com/lcx1215/lcx-s-agent`
 - `org.opencontainers.image.documentation=https://github.com/lcx1215/lcx-s-agent/blob/main/docs/install/docker.md`
