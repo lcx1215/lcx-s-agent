@@ -738,3 +738,121 @@ it("cancels a body after HTTP 200 without accepting late model output", async ()
   expect(adapter.observe?.(request)).toBeUndefined();
   fs.rmSync(directory, { recursive: true, force: true });
 });
+
+it("does not dispatch a finance request when its final budget reservation cancels the caller", async () => {
+  const http = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          id: "late",
+          choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", http);
+  const controller = new AbortController();
+  const original = createFinanceModelCallBudget(1);
+  const isolated = structuredClone(cfg);
+  isolated.models!.providers!.fixture.apiKey = "final-admission-cancel-fixture";
+  const adapter = createConfiguredFinanceModelAdapter(isolated, {
+    callBudget: {
+      ...original,
+      reserve: () => {
+        original.reserve();
+        controller.abort();
+      },
+    },
+  });
+  await expect(adapter.invoke(request, controller.signal)).rejects.toMatchObject({
+    code: "process_error",
+  });
+  expect(http).not.toHaveBeenCalled();
+  expect(original.snapshot().reserved).toBe(1);
+  expect(adapter.observe?.(request)).toBeUndefined();
+});
+
+it.each(["prompt", "body"] as const)(
+  "honors the host wall deadline across finance %s work",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const deadlineAtMs = Date.now() + 1000;
+      const http = vi.fn(async () => {
+        if (stage === "body") {
+          vi.setSystemTime(deadlineAtMs + 60_000);
+        }
+        return new Response(
+          JSON.stringify({
+            id: "late",
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+          }),
+        );
+      });
+      vi.stubGlobal("fetch", http);
+      const isolated = structuredClone(cfg);
+      isolated.models!.providers!.fixture.apiKey = `host-deadline-${stage}-fixture`;
+      const budget = createFinanceModelCallBudget(1);
+      const adapter = createConfiguredFinanceModelAdapter(isolated, {
+        callBudget: budget,
+        buildPrompt: () => {
+          if (stage === "prompt") {
+            vi.setSystemTime(deadlineAtMs + 60_000);
+          }
+          return "bounded fixture";
+        },
+      });
+      await expect(
+        adapter.invoke({ ...request, deadlineAtMs }, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "runtime_timeout" });
+      expect(http).toHaveBeenCalledTimes(stage === "body" ? 1 : 0);
+      expect(budget.snapshot().reserved).toBe(stage === "body" ? 1 : 0);
+      expect(adapter.observe?.(request)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["prompt", "body"] as const)(
+  "enforces its own wall deadline for a direct finance %s invocation",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const startedAtMs = Date.now();
+      const expire = () => vi.setSystemTime(startedAtMs + 60_000);
+      const http = vi.fn(async () => {
+        if (stage === "body") {
+          expire();
+        }
+        return new Response(
+          JSON.stringify({
+            id: "direct-late",
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+          }),
+        );
+      });
+      vi.stubGlobal("fetch", http);
+      const isolated = structuredClone(cfg);
+      isolated.models!.providers!.fixture.apiKey = `direct-deadline-${stage}-fixture`;
+      const budget = createFinanceModelCallBudget(1);
+      const adapter = createConfiguredFinanceModelAdapter(isolated, {
+        timeoutMs: 1_000,
+        callBudget: budget,
+        buildPrompt: () => {
+          if (stage === "prompt") {
+            expire();
+          }
+          return "bounded direct fixture";
+        },
+      });
+      await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+        code: "runtime_timeout",
+      });
+      expect(http).toHaveBeenCalledTimes(stage === "body" ? 1 : 0);
+      expect(budget.snapshot().reserved).toBe(stage === "body" ? 1 : 0);
+      expect(adapter.observe?.(request)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

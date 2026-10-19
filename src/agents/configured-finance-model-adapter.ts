@@ -308,6 +308,16 @@ export function createConfiguredFinanceModelAdapter(
     inspectCall: () => callState,
     invoke: async (request, signal) => {
       callState = undefined;
+      const deadlineAtMs = Math.min(Date.now() + timeoutMs, request.deadlineAtMs ?? Infinity);
+      const assertActive = () => {
+        if (signal.aborted) {
+          throw new ModelAdapterError("process_error");
+        }
+        if (Date.now() >= deadlineAtMs) {
+          throw new ModelAdapterError("runtime_timeout");
+        }
+      };
+      assertActive();
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
       }
@@ -357,10 +367,9 @@ export function createConfiguredFinanceModelAdapter(
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
       }
-      if (signal.aborted) {
-        throw new ModelAdapterError("process_error");
-      }
+      assertActive();
       options.callBudget?.reserve();
+      assertActive();
       calls += 1;
       const trajectoryTicket = recordModelRequestStart({
         source: options.trajectorySource ?? "finance_engine",
@@ -385,7 +394,7 @@ export function createConfiguredFinanceModelAdapter(
       callState = {
         requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
         stage: "request_started",
-        requestDispatched: true,
+        requestDispatched: false,
         cleanupStatus: "not_required",
       };
       const requestController = new AbortController();
@@ -402,13 +411,13 @@ export function createConfiguredFinanceModelAdapter(
       requestController.signal.addEventListener("abort", observeAbort, { once: true });
       const timer = setTimeout(
         () => requestController.abort(new Error("model request timeout")),
-        timeoutMs,
+        Math.max(0, deadlineAtMs - Date.now()),
       );
       if (signal.aborted) {
         relayAbort();
       }
       try {
-        const http = await fetch(endpoint, {
+        const init: RequestInit = {
           method: "POST",
           redirect: "error",
           signal: requestController.signal,
@@ -425,7 +434,10 @@ export function createConfiguredFinanceModelAdapter(
             response_format: { type: "json_object" },
             stream: false,
           }),
-        });
+        };
+        assertActive();
+        callState = { ...callState, requestDispatched: true };
+        const http = await fetch(endpoint, init);
         receivedHttpResponse = true;
         callState = { ...callState, stage: "response_received", httpStatus: http.status };
         recordModelRequestUpdate(trajectoryTicket, {
@@ -462,6 +474,7 @@ export function createConfiguredFinanceModelAdapter(
           label: "finance model",
         });
         requestController.signal.throwIfAborted();
+        assertActive();
         response = JSON.parse(body) as typeof response;
         callState = { ...callState, stage: "body_complete" };
         const usage = normalizeModelRequestUsage(response.usage);
@@ -499,7 +512,7 @@ export function createConfiguredFinanceModelAdapter(
         signal.removeEventListener("abort", relayAbort);
         requestController.signal.removeEventListener("abort", observeAbort);
       }
-      signal.throwIfAborted();
+      assertActive();
       if (response.id) {
         observations.set(request.callId, {
           id: response.id,

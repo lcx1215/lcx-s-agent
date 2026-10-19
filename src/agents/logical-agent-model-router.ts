@@ -43,6 +43,8 @@ export type ModelCallRequest = Readonly<{
   provider: string;
   modelId: string;
   payload: unknown;
+  /** Host-owned wall deadline, never a value supplied by model output. */
+  deadlineAtMs?: number;
 }>;
 
 /** Observation is obtained by the adapter's transport observer, never from model output. */
@@ -340,6 +342,8 @@ export class LogicalAgentModelRouter {
     payload: unknown;
     capabilities: LogicalAgentCapabilities;
     signal: AbortSignal;
+    /** A caller task can expire before an individual role's timeout. */
+    deadlineAtMs?: number;
     dispatch: Dispatch;
     record: (receipt: ModelCallReceipt) => void;
   }): Promise<unknown> {
@@ -475,17 +479,38 @@ export class LogicalAgentModelRouter {
             { once: true },
           );
         });
-        timer = setTimeout(() => {
-          reason = "deadline";
-          controller.abort();
-        }, policy.timeoutMs);
+        const deadlineAtMs = Math.min(
+          Date.now() + policy.timeoutMs,
+          params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
+        );
+        const assertActive = () => {
+          if (!controller.signal.aborted && Date.now() >= deadlineAtMs) {
+            reason = "deadline";
+            controller.abort();
+          }
+          if (controller.signal.aborted) {
+            throw new Error("model call cancelled or timed out");
+          }
+        };
+        timer = setTimeout(
+          () => {
+            reason = "deadline";
+            controller.abort();
+          },
+          Math.max(0, deadlineAtMs - Date.now()),
+        );
         const result = await Promise.race([
           params.dispatch(async () => {
+            assertActive();
             adapterInvoked = true;
-            return adapter.invoke(Object.freeze({ ...identity, payload }), controller.signal);
+            return adapter.invoke(
+              Object.freeze({ ...identity, payload, deadlineAtMs }),
+              controller.signal,
+            );
           }, controller.signal),
           cancelled,
         ]);
+        assertActive();
         if (policy.outputContract) {
           let accepted = false;
           try {
@@ -493,6 +518,7 @@ export class LogicalAgentModelRouter {
           } catch {
             // Validator exceptions are contract failures, never model success.
           }
+          assertActive();
           if (!accepted) {
             reason = "output_contract";
             throw new Error("model output contract rejected");
@@ -507,6 +533,9 @@ export class LogicalAgentModelRouter {
         this.#completedModels.set(params.correlationId, completed);
         return result;
       } catch (error) {
+        if (error instanceof ModelAdapterError && error.code === "runtime_timeout") {
+          outcome = "timed_out";
+        }
         reason ??= error instanceof ModelAdapterError ? error.code : "adapter_error";
         const retryContract =
           reason === "output_contract" && policy.retryOutputContractOnce && !contractRepairUsed;
@@ -538,6 +567,7 @@ export class LogicalAgentModelRouter {
         if (
           outcome === "aborted" ||
           params.signal.aborted ||
+          Date.now() >= (params.deadlineAtMs ?? Number.POSITIVE_INFINITY) ||
           index === targets.length - 1 ||
           reason === "input_constraint" ||
           reason === "prompt_input_invalid" ||

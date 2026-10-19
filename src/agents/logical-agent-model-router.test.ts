@@ -70,6 +70,41 @@ const execute = async ({
 });
 
 describe("role model execution receipts", () => {
+  it("inherits the task wall deadline for a late-starting role and does not fall back", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const fallback = vi.fn(async () => "unexpected");
+      const pool = new LogicalAgentPool<string, unknown>({
+        taskTimeoutMs: 50,
+        modelRouting: routing({
+          adapters: [
+            adapter("small", {
+              invoke: async (request) => {
+                expect(request.deadlineAtMs).toBe(1_050);
+                vi.setSystemTime(1_051);
+                return "late";
+              },
+            }),
+            adapter("reviewer", { invoke: fallback }),
+          ],
+          defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        }),
+      });
+      const result = await pool.submit(task, async (context) => {
+        vi.setSystemTime(1_030);
+        return execute(context);
+      });
+      expect(result.status).toBe("failed");
+      expect(result.modelCalls).toEqual([
+        expect.objectContaining({ outcome: "timed_out", reason: "deadline", adapterInvoked: true }),
+      ]);
+      expect(fallback).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores original receipts only into the next same-run attempt and rejects invalid lineage", async () => {
     const pool = new LogicalAgentPool<string, unknown>({ modelRouting: routing() });
     const result = await pool.submit(task, execute, {}, {}, "repair:attempt:1");
@@ -830,3 +865,62 @@ it("includes exactly one opted-in structural repair in the outer task deadline",
     }),
   ).toBe(361_000);
 });
+
+it.each(["queue", "result", "validation_pass", "validation_fail"] as const)(
+  "rejects model work that expires at %s while deadline timers are suspended",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const invoke = vi.fn(async () => {
+        if (stage === "result") {
+          vi.setSystemTime(started + 60_000);
+        }
+        return { candidate: "late" };
+      });
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [adapter("small", { invoke })],
+          defaultPolicy: {
+            ...policy,
+            ...(stage.startsWith("validation")
+              ? {
+                  outputContract: {
+                    revision: "deadline-fixture",
+                    validate: () => {
+                      vi.setSystemTime(started + 60_000);
+                      return stage === "validation_pass";
+                    },
+                  },
+                }
+              : {}),
+          },
+        }),
+      );
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      await expect(
+        router.invoke({
+          role: "data_cleaning",
+          taskId: "late-model",
+          correlationId: "late-run",
+          payload: {},
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => {
+            if (stage === "queue") {
+              vi.setSystemTime(started + 60_000);
+            }
+            return work();
+          },
+          record: (call) => calls.push(call),
+        }),
+      ).rejects.toThrow();
+      expect(invoke).toHaveBeenCalledTimes(stage === "queue" ? 0 : 1);
+      expect(calls).toMatchObject([
+        { outcome: "timed_out", reason: "deadline", adapterInvoked: stage !== "queue" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

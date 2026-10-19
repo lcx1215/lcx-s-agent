@@ -98,6 +98,8 @@ export type ApiCircuitBreaker = Readonly<{
   beforeRequest: () => ApiCircuitState;
   recordSuccess: () => void;
   recordFailure: () => void;
+  /** Release an inconclusive half-open probe without marking the source healthy. */
+  releaseProbe?: () => void;
 }>;
 
 export function createApiCircuitBreaker(
@@ -134,6 +136,9 @@ export function createApiCircuitBreaker(
     recordSuccess: () => {
       failures = 0;
       openedAt = undefined;
+      halfOpen = false;
+    },
+    releaseProbe: () => {
       halfOpen = false;
     },
     recordFailure: () => {
@@ -180,8 +185,18 @@ type CallContext = ApiTransportOptions & {
   provider: string;
   source: string;
   operation: string;
+  /** Internal inherited wall deadline; timers may pause while the host sleeps. */
+  deadlineAtMs?: number;
 };
 const context = new AsyncLocalStorage<CallContext>();
+const callDeadlines = new WeakMap<AbortSignal, number>();
+
+function assertApiCallActive(signal: AbortSignal): void {
+  signal.throwIfAborted();
+  if (Date.now() >= (callDeadlines.get(signal) ?? Infinity)) {
+    throw new ApiCallError("timeout");
+  }
+}
 
 /**
  * Ambient attribution for the call in flight: which provider, which source adapter, which
@@ -411,7 +426,13 @@ async function boundedCall<T>(
     throw new Error("timeoutMs must be a positive number");
   }
   const started = Date.now();
+  const deadlineAtMs = Math.min(
+    started + timeoutMs,
+    options.deadlineAtMs ?? Infinity,
+    (options.signal && callDeadlines.get(options.signal)) ?? Infinity,
+  );
   const controller = new AbortController();
+  callDeadlines.set(controller.signal, deadlineAtMs);
   let settled = false;
   const finish = (error?: unknown, failed = true) => {
     if (settled) {
@@ -487,7 +508,7 @@ async function boundedCall<T>(
         ? "timeout"
         : "cancelled",
     );
-  const timer = setTimeout(() => abort("timeout"), timeoutMs);
+  const timer = setTimeout(() => abort("timeout"), Math.max(0, deadlineAtMs - Date.now()));
   options.signal?.addEventListener("abort", parentAbort, { once: true });
   try {
     if (options.signal?.aborted) {
@@ -496,13 +517,17 @@ async function boundedCall<T>(
     const result = await Promise.race([
       aborted,
       Promise.resolve().then(() => {
-        controller.signal.throwIfAborted();
+        assertApiCallActive(controller.signal);
         return operation(controller.signal);
       }),
     ]);
+    assertApiCallActive(controller.signal);
     finish(undefined, false);
     return result;
   } catch (error) {
+    if (error instanceof ApiCallError && error.kind === "timeout") {
+      controller.abort(error);
+    }
     finish(error);
     throw error;
   } finally {
@@ -518,7 +543,9 @@ export function runApiSourceCall<T>(
 ): Promise<T> {
   const resolved = { ...options, correlationId: options.correlationId ?? randomUUID() };
   return boundedCall(resolved, (signal) =>
-    context.run({ ...resolved, signal }, () => collect(signal)),
+    context.run({ ...resolved, signal, deadlineAtMs: callDeadlines.get(signal) }, () =>
+      collect(signal),
+    ),
   );
 }
 
@@ -541,6 +568,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
     };
     let circuitState: ApiCircuitState = "closed";
     let circuitChecked = false;
+    let circuitSettled = false;
     if (!fetchImpl.hasCachedResponse?.(url, { ...init, cacheMaxAgeMs: scope.cacheMaxAgeMs })) {
       circuitState = scope.circuitBreaker?.beforeRequest() ?? "closed";
       circuitChecked = true;
@@ -580,7 +608,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
         try {
           const response = await retryAsync(
             async () => {
-              signal.throwIfAborted();
+              assertApiCallActive(signal);
               const details: { -readonly [K in keyof ApiCallReceipt]?: ApiCallReceipt[K] } = {
                 attempt: ++attempt,
                 circuitState,
@@ -594,7 +622,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                   try {
                     permit = await scope.rateLimiter?.acquire(attemptSignal);
                     details.throttleWaitMs = permit?.waitMs ?? 0;
-                    attemptSignal.throwIfAborted();
+                    assertApiCallActive(attemptSignal);
                     const dispatchInit = {
                       ...init,
                       signal: attemptSignal,
@@ -609,7 +637,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                         (details.throttleWaitMs ?? 0) + Date.now() - preparationStarted;
                     }
                     try {
-                      attemptSignal.throwIfAborted();
+                      assertApiCallActive(attemptSignal);
                       if (!dispatch.skipsHttpDispatch) {
                         if (!circuitChecked) {
                           circuitState = scope.circuitBreaker?.beforeRequest() ?? "closed";
@@ -619,8 +647,9 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                         if (circuitState === "open") {
                           throw new ApiCallError("circuit_open");
                         }
-                        attemptSignal.throwIfAborted();
+                        assertApiCallActive(attemptSignal);
                         scope.beforeHttpDispatch?.();
+                        assertApiCallActive(attemptSignal);
                       }
                     } catch (error) {
                       await dispatch.cancelPreparation?.();
@@ -665,7 +694,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
 
                     body = await response.text();
                   } catch (error) {
-                    attemptSignal.throwIfAborted();
+                    assertApiCallActive(attemptSignal);
                     if (error instanceof ApiCallError) {
                       throw error;
                     }
@@ -720,6 +749,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
           );
           if (response.dataAccess?.kind !== "cache") {
             scope.circuitBreaker?.recordSuccess();
+            circuitSettled = true;
           }
           return response;
         } catch (error) {
@@ -730,12 +760,17 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                 [408, 429, 500, 502, 503, 504].includes(error.httpStatus ?? 0)))
           ) {
             scope.circuitBreaker?.recordFailure();
+            circuitSettled = true;
           }
           throw error;
         }
       },
       { circuitState },
     );
-    return result;
+    return result.finally(() => {
+      if (circuitState === "half_open" && !circuitSettled) {
+        scope.circuitBreaker?.releaseProbe?.();
+      }
+    });
   };
 }

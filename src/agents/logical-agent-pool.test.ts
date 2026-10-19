@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { planFinanceBrainOrchestration } from "./finance-brain-orchestration.js";
 import {
   createCanonicalStateRootLogicalAgentCheckpointStore,
@@ -458,6 +458,143 @@ describe("logical agent pool", () => {
     const result = await run;
     expect(result.tasks.map((task) => task.taskId)).toEqual(["root", "terminal"]);
     expect(result.finalTaskId).toBe("terminal");
+  });
+
+  it.each(["executor", "input_guard", "output_guard"] as const)(
+    "rejects a wall-expired task at %s and releases only after termination",
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000);
+        const executor = vi.fn(async () => {
+          if (stage === "executor") {
+            vi.setSystemTime(1_100);
+          }
+          return { output: "late", sideEffects: [] as const };
+        });
+        const expire = () => {
+          vi.setSystemTime(1_100);
+        };
+        const pool = new LogicalAgentPool({
+          taskTimeoutMs: 50,
+          guardrails: {
+            ...(stage === "input_guard" ? { input: expire } : {}),
+            ...(stage === "output_guard" ? { output: expire } : {}),
+          },
+        });
+        const result = await pool.submit(
+          { id: "wall-expired", agentId: "data_cleaning", input: {} },
+          executor,
+        );
+        expect(result.status).toBe("failed");
+        expect(result.error).toContain("timed out");
+        expect(executor).toHaveBeenCalledTimes(stage === "input_guard" ? 0 : 1);
+        await Promise.resolve();
+        expect(pool.status.activeRuns).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["legacy", "routed"] as const)(
+    "does not start a %s model after its task wall deadline",
+    async (mode) => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000);
+        const invoke = vi.fn(async () => "unexpected");
+        const pool = new LogicalAgentPool({
+          taskTimeoutMs: 50,
+          ...(mode === "legacy"
+            ? { modelInvoker: invoke }
+            : {
+                modelRouting: {
+                  revision: "task-wall-fixture",
+                  adapters: [
+                    {
+                      id: "fixture",
+                      provider: "fixture",
+                      modelId: "fixture",
+                      mode: "deterministic" as const,
+                      capabilities: [],
+                      requiredTools: [],
+                      requiredSideEffects: [],
+                      invoke,
+                    },
+                  ],
+                  defaultPolicy: {
+                    primary: "fixture",
+                    requiredCapabilities: [],
+                    maxInputBytes: 1024,
+                    timeoutMs: 500,
+                  },
+                },
+              }),
+        });
+        const result = await pool.submit(
+          { id: "wall-expired-model", agentId: "data_cleaning", input: {} },
+          async ({ modelSlot, signal }) => {
+            vi.setSystemTime(1_100);
+            return { output: await modelSlot.invoke({}, signal), sideEffects: [] };
+          },
+        );
+        expect(result.status).toBe("failed");
+        expect(result.error).toContain("timed out");
+        expect(invoke).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("does not dispatch a queued legacy invocation after the task wall deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      let started!: () => void;
+      let release!: () => void;
+      const firstStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const invoke = vi.fn(async () => {
+        started();
+        await blocked;
+        return "late";
+      });
+      const pool = new LogicalAgentPool({
+        maxConcurrency: 2,
+        taskTimeoutMs: 50,
+        modelInvoker: invoke,
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [
+          { id: "first", agentId: "data_cleaning", input: {} },
+          { id: "queued", agentId: "news_classification", input: {} },
+        ],
+        executor: async ({ task, modelSlot, signal }) => {
+          if (task.id === "queued") {
+            await firstStarted;
+          }
+          const pending = modelSlot.invoke({}, signal);
+          if (task.id === "queued") {
+            vi.setSystemTime(1_100);
+            release();
+          }
+          return { output: await pending, sideEffects: [] };
+        },
+      });
+      expect(result.tasks.map((task) => task.status)).toEqual(["failed", "failed"]);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(result.tasks[1]?.modelCalls?.[0]?.adapterInvoked).toBe(false);
+      expect(pool.status.activeRuns).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails a task on timeout and releases the pool slot", async () => {
