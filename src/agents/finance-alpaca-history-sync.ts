@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { withFileLock } from "../infra/file-lock.js";
+import { requireNodeSqlite } from "../memory/sqlite.js";
 import { resolveProcessScopedMap } from "../shared/process-scoped-map.js";
 import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
@@ -47,21 +47,22 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
   options.signal?.throwIfAborted();
   await fs.mkdir(options.directory, { recursive: true, mode: 0o700 });
   const lockKey = path.join(await fs.realpath(options.directory), "alpaca-history-sync");
-  // The shared lock is reentrant within one process, so reject local overlap first.
+  // Reject local overlap consistently across module copies and directory aliases.
   if (activeSyncs.has(lockKey)) {
     throw new Error("history sync already in progress");
   }
   activeSyncs.set(lockKey, true);
   try {
-    return await withFileLock(
-      lockKey,
-      {
-        retries: { retries: 0, factor: 1, minTimeout: 1, maxTimeout: 1 },
-        // A live owner must never be displaced while it can still persist pages.
-        stale: Number.MAX_SAFE_INTEGER,
-      },
-      () => syncAlpacaPaperHistoryOnTurn(options, after, maxPages),
-    );
+    // A dedicated SQLite write transaction supplies the cross-process OS lock.
+    // It survives suspension without age-based eviction and releases automatically on exit.
+    const { DatabaseSync } = requireNodeSqlite();
+    const lock = new DatabaseSync(`${lockKey}.sqlite`);
+    try {
+      lock.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE;");
+      return await syncAlpacaPaperHistoryOnTurn(options, after, maxPages);
+    } finally {
+      lock.close();
+    }
   } finally {
     activeSyncs.delete(lockKey);
   }

@@ -278,6 +278,27 @@ describe("finance intraday paper replay", () => {
     });
   });
 
+  it("starts its open-to-close benchmark at the actual session open, independent of opening-range length", () => {
+    const bars = session([100, 110, 120, 130, 135, 140]);
+    for (const openingRangeBars of [2, 3, 4]) {
+      const receipt = runFinanceIntradayPaperReplay({
+        bars,
+        ledgerHeadRef: "opening-move",
+        config: {
+          ...config,
+          openingRangeBars,
+          feeBpsPerSide: 0,
+          spreadBps: 0,
+          slippageBpsPerSide: 0,
+        },
+      });
+      expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(
+        (50 * (140 - 100)) / 10000,
+        10,
+      );
+    }
+  });
+
   it("charges the strategy and retail baseline with the same round-trip cost model", () => {
     const bars = session([100, 100, 100, 101, 101, 101]);
     const receipt = runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: null, config });

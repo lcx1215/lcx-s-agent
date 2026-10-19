@@ -213,7 +213,12 @@ export function readServePayloadTexts(result: unknown): string[] {
   }
   const texts: string[] = [];
   for (const entry of payloads) {
-    if (typeof entry !== "object" || entry === null || !("text" in entry)) {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      !("text" in entry) ||
+      ("isError" in entry && entry.isError === true)
+    ) {
       continue;
     }
     const text = entry.text;
@@ -230,36 +235,39 @@ export function readServeResultError(result: unknown): string | undefined {
     return undefined;
   }
 
+  const meta = "meta" in result ? result.meta : undefined;
+  if (typeof meta === "object" && meta !== null && "error" in meta && meta.error) {
+    const error = meta.error;
+    if (
+      typeof error === "object" &&
+      "message" in error &&
+      typeof error.message === "string" &&
+      error.message.trim() !== ""
+    ) {
+      return error.message;
+    }
+    return typeof error === "string" && error.trim() !== "" ? error : "agent run failed";
+  }
   const payloads = "payloads" in result ? result.payloads : undefined;
   if (Array.isArray(payloads)) {
-    for (const entry of payloads) {
-      if (
-        typeof entry !== "object" ||
-        entry === null ||
-        !("isError" in entry) ||
-        entry.isError !== true
-      ) {
-        continue;
-      }
-      if ("text" in entry && typeof entry.text === "string" && entry.text.trim() !== "") {
-        return entry.text;
-      }
-      return "agent returned an error payload";
+    const records = payloads.map((entry) =>
+      typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {},
+    );
+    const lastError = records.findLastIndex((entry) => entry.isError === true);
+    if (
+      lastError >= 0 &&
+      !records
+        .slice(lastError + 1)
+        .some(
+          (entry) =>
+            entry.isError !== true && typeof entry.text === "string" && entry.text.trim() !== "",
+        )
+    ) {
+      const error = records[lastError];
+      return typeof error.text === "string" && error.text.trim() !== ""
+        ? error.text
+        : "agent returned an error payload";
     }
-  }
-
-  const meta = "meta" in result ? result.meta : undefined;
-  if (typeof meta === "object" && meta !== null && "error" in meta) {
-    const error = meta.error;
-    if (typeof error === "object" && error !== null && "message" in error) {
-      if (typeof error.message === "string" && error.message.trim() !== "") {
-        return error.message;
-      }
-    }
-    if (typeof error === "string" && error.trim() !== "") {
-      return error;
-    }
-    return "agent run failed";
   }
   return undefined;
 }

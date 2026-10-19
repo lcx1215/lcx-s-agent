@@ -395,8 +395,8 @@ describe("canonical account observation", () => {
     });
     for (const [url] of read.mock.calls.filter(([url]) => /activities\/(?:CFEE|FEE)/u.test(url))) {
       const query = new URL(url).searchParams;
-      expect(query.has("after")).toBe(false);
-      expect(query.has("until")).toBe(false);
+      expect(query.get("after")).toBe("1999-01-01T00:00:00Z");
+      expect(query.get("until")).toBe("2020-01-01T00:00:00Z");
       expect(query.get("direction")).toBe("asc");
       expect(query.get("page_size")).toBe("100");
     }

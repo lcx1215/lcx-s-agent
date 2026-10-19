@@ -375,6 +375,8 @@ export async function syncFinanceBrokerReconciliation(
     let complete = false;
     for (let page = 0; page < (options.maxPages ?? 100); page++) {
       const query = new URLSearchParams({
+        after: options.after,
+        until: options.until,
         direction: "asc",
         page_size: "100",
         ...(cursor ? { page_token: cursor } : {}),

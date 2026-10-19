@@ -224,10 +224,17 @@ function parseFee(fact: Record<string, unknown>): FinanceBrokerFeeObservation {
   const description = text(fact.description)?.toLowerCase() ?? "";
   const rawQuantity = number(fact.qty);
   const nonUsdCryptoFee =
-    activityType === "CFEE" && description.includes("non usd") && rawQuantity !== undefined;
+    activityType === "CFEE" &&
+    (description.includes("non usd") || (rawQuantity !== undefined && rawQuantity !== 0));
+  if (
+    (fact.qty !== undefined && rawQuantity === undefined) ||
+    (nonUsdCryptoFee && rawQuantity === undefined)
+  ) {
+    throw new Error("fee asset quantity unavailable");
+  }
   const rawAmount = number(fact.net_amount);
   const amount = nonUsdCryptoFee
-    ? Math.abs(rawQuantity)
+    ? Math.abs(rawQuantity!)
     : rawAmount === undefined
       ? undefined
       : Math.abs(rawAmount);
@@ -602,6 +609,7 @@ export async function reconcileFinanceBrokerHistory(
   const positionsReconciled = historyStatus === "reconciled";
   const positionBaselineUsable =
     complete &&
+    invalidFeeCount === 0 &&
     invalidFillCount === 0 &&
     invalidCorporateActionCount === 0 &&
     ordersMissingFillActivityCount === 0;

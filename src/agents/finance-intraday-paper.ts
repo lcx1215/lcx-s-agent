@@ -641,7 +641,7 @@ export function runFinanceIntradayPaperReplay(params: {
     }
     const opening = bars.slice(0, config.openingRangeBars);
     const openingHigh = Math.max(...opening.map((bar) => bar.high));
-    const baselineEntry = bars[config.openingRangeBars];
+    const baselineEntry = bars[0];
     const sessionEnd = bars.at(-1)!;
     const baselineQuantity = Math.floor(
       (config.capital * config.maxAllocationFraction) / baselineEntry.open,
