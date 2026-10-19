@@ -678,3 +678,85 @@ it("does not close a circuit after attempt finalization outlives the total deadl
   ).rejects.toMatchObject({ kind: "timeout" });
   expect(success).not.toHaveBeenCalled();
 });
+
+it("rejects a direct source return after its receipt observer outlives the deadline", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => {
+          receipts.push(receipt);
+          vi.setSystemTime(Date.now() + 60_000);
+        },
+      },
+      async () => "source result",
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  // Receipt notification happens after source completion; it is not emitted twice.
+  expect(receipts).toMatchObject([{ status: "succeeded" }]);
+});
+
+it("classifies a failed source whose receipt notification crosses the deadline as timeout", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => {
+          receipts.push(receipt);
+          vi.setSystemTime(Date.now() + 60_000);
+        },
+      },
+      async () => {
+        throw new Error("source unavailable");
+      },
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(receipts).toMatchObject([{ status: "failed" }]);
+});
+
+it.each([
+  ["timeout", "http"],
+  ["timeout", "network"],
+  ["cancelled", "http"],
+  ["cancelled", "network"],
+] as const)(
+  "reopens a failed half-open probe when retry backoff ends with %s after %s",
+  async (mode, failure) => {
+    vi.useFakeTimers();
+    const breaker = createApiCircuitBreaker({ failureThreshold: 1, resetAfterMs: 100 });
+    breaker.recordFailure();
+    await vi.advanceTimersByTimeAsync(101);
+    const caller = new AbortController();
+    const fetch = vi.fn<ApiFetch>(async () => {
+      if (failure === "network") {
+        throw Object.assign(new Error("fixture connection reset"), { code: "ECONNRESET" });
+      }
+      return response(503);
+    });
+    const pending = governApiFetch(fetch, {
+      circuitBreaker: breaker,
+      signal: caller.signal,
+      timeoutMs: mode === "timeout" ? 200 : 5000,
+      retry: { attempts: 2, minDelayMs: 1000, maxDelayMs: 1000 },
+    })("https://fixture.test/probe").catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledOnce();
+    if (mode === "cancelled") {
+      caller.abort();
+    } else {
+      await vi.advanceTimersByTimeAsync(201);
+    }
+    expect(await pending).toMatchObject({ kind: mode });
+    expect(breaker.beforeRequest()).toBe("open");
+  },
+);
