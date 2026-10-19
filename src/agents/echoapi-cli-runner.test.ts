@@ -66,6 +66,73 @@ describe("EchoAPI CLI runner boundary", () => {
   });
 });
 
+describe("EchoAPI known CI credential value redaction", () => {
+  it.each([
+    {
+      url: "https://open.echoapi.com/ci?signature=fixture-query-value",
+      value: "fixture-query-value",
+    },
+    {
+      url: "https://open.echoapi.com/ci?signature=fixture%20query%2Fvalue",
+      value: "fixture query/value",
+    },
+    {
+      url: "https://open.echoapi.com/ci?signature=fixture%20query%2Fvalue",
+      value: "fixture%20query%2Fvalue",
+    },
+    { url: "https://fixture-user:fixture-password@open.echoapi.com/ci", value: "fixture-password" },
+    { url: "https://fixture-user:fixture-password@open.echoapi.com/ci", value: "fixture-user" },
+  ])("removes separately echoed credential value $value", ({ url, value }) => {
+    const output = redactEchoApiText(`CLI rejected supplied value [${value}]; status 401`, url);
+    expect(output).not.toContain(value);
+    expect(output).toContain("status 401");
+  });
+
+  it("treats query values literally and redacts longer overlapping values first", () => {
+    const url =
+      "https://open.echoapi.com/ci?one=fixture&two=fixture-long&signature=literal%2B%5Bvalue%5D.*";
+    const output = redactEchoApiText("fixture-long literal+[value].*; unrelated diagnostic", url);
+    expect(output).toBe("[REDACTED] [REDACTED]; unrelated diagnostic");
+  });
+
+  it("removes decoded URL credential values", () => {
+    const output = redactEchoApiText(
+      "credentials were fixture@user and fixture/password",
+      "https://fixture%40user:fixture%2Fpassword@open.echoapi.com/ci",
+    );
+    expect(output).not.toContain("fixture@user");
+    expect(output).not.toContain("fixture/password");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "redacts separately echoed CI values in the original runner receipt",
+    async () => {
+      const outputDir = await mkdtemp(path.join(os.tmpdir(), "echoapi-redaction-"));
+      const secret = "fixture-diagnostic-query-value";
+      try {
+        const executable = path.join(outputDir, "fake-echoapi");
+        await writeFile(
+          executable,
+          `#!/usr/bin/env node\nprocess.stderr.write(${JSON.stringify(`CLI rejected supplied value [${secret}]`)});\nprocess.exitCode = 1;\n`,
+          { mode: 0o700 },
+        );
+        const receipt = await runEchoApiCliCase({
+          ciUrl: `https://open.echoapi.com/ci?signature=${secret}`,
+          executable,
+          outputDir,
+          retainReport: false,
+        });
+        expect(receipt.passed).toBe(false);
+        expect(receipt.stderr).not.toContain(secret);
+        expect(receipt.stderr).toContain("[REDACTED]");
+        expect(JSON.stringify(receipt.target)).not.toContain(secret);
+      } finally {
+        await rm(outputDir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe("EchoAPI actual report verification", () => {
   const counts = { total: 1, success: 1, error: 0 };
   it("requires completed HTTP and assertion successes", () => {

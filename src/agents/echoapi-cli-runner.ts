@@ -469,24 +469,55 @@ export function verifyEchoApiReport(report: unknown): boolean {
 
 export function redactEchoApiText(value: string, sensitiveUrl?: string): string {
   let redacted = value;
+  const sensitiveValues = new Set<string>();
   if (sensitiveUrl) {
     try {
       const parsed = new URL(sensitiveUrl);
+      for (const value of parsed.searchParams.values()) {
+        if (value) {
+          sensitiveValues.add(value);
+        }
+      }
+      for (const part of parsed.search.slice(1).split("&")) {
+        const separator = part.indexOf("=");
+        if (separator >= 0 && part.slice(separator + 1)) {
+          sensitiveValues.add(part.slice(separator + 1));
+        }
+      }
+      for (const credential of [parsed.username, parsed.password]) {
+        if (!credential) {
+          continue;
+        }
+        sensitiveValues.add(credential);
+        try {
+          sensitiveValues.add(decodeURIComponent(credential));
+        } catch {
+          // Retain the raw credential even when percent decoding is invalid.
+        }
+      }
       const safeUrl = `${parsed.origin}${parsed.pathname}?[REDACTED_QUERY]`;
       redacted = redacted.split(parsed.href).join(safeUrl);
     } catch {
       // Generic URL redaction below still protects malformed input.
     }
   }
+  redacted = redacted.replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
+    try {
+      const parsed = new URL(url);
+      return `${parsed.origin}${parsed.pathname}${parsed.search ? "?[REDACTED_QUERY]" : ""}`;
+    } catch {
+      return url;
+    }
+  });
+  if (sensitiveValues.size > 0) {
+    // One literal replacement pass avoids partial overlap and re-redacting markers.
+    const pattern = [...sensitiveValues]
+      .toSorted((left, right) => right.length - left.length)
+      .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+      .join("|");
+    redacted = redacted.replace(new RegExp(pattern, "gu"), "[REDACTED]");
+  }
   return redacted
-    .replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
-      try {
-        const parsed = new URL(url);
-        return `${parsed.origin}${parsed.pathname}${parsed.search ? "?[REDACTED_QUERY]" : ""}`;
-      } catch {
-        return url;
-      }
-    })
     .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
     .replace(
       /(["']?(?:token|api[_-]?key|secret|password)["']?\s*[:=]\s*["']?)[^"',\s}]+/giu,
