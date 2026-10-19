@@ -73,6 +73,7 @@ export async function probeOriginalBinding(
   localVerification?: { fault?: BindingVerificationFault },
 ) {
   await fs.mkdir(root, { recursive: true });
+  root = await fs.realpath(root);
   const workspace = path.join(root, "workspace");
   const privateRepo = path.join(root, "repo");
   const guardLog = path.join(root, "guard.jsonl");
