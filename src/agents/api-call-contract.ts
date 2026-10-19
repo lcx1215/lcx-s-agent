@@ -537,6 +537,8 @@ async function boundedCall<T>(
       controller.abort(failure);
     }
     finish(failure);
+    // Failed notifications consume the same deadline as successful ones.
+    assertApiCallActive(controller.signal);
     throw failure;
   } finally {
     clearTimeout(timer);

@@ -618,7 +618,26 @@ export class LogicalAgentModelRouter {
         }
       } finally {
         try {
+          // An already timed-out target may use its declared bounded fallback.
+          // Finalization of an otherwise active target cannot create that timeout
+          // and then silently grant a fresh target budget.
+          const alreadyTimedOut = outcome === "timed_out";
+          const assertFinalizationActive = () => {
+            if (
+              alreadyTimedOut &&
+              !params.signal.aborted &&
+              Date.now() < (params.deadlineAtMs ?? Number.POSITIVE_INFINITY)
+            ) {
+              return;
+            }
+            assertActive();
+          };
           observe();
+          try {
+            assertFinalizationActive();
+          } catch {
+            // Record the final observed classification once before rejecting.
+          }
           // This receipt describes model work and observation. The synchronous
           // recorder is notified once; it cannot retroactively change that receipt.
           params.record(
@@ -662,10 +681,10 @@ export class LogicalAgentModelRouter {
               ...(reason ? { reason } : {}),
             }),
           );
+          // Failed calls must not launch a fresh fallback after bookkeeping
+          // newly expires. Preserve the explicit already-timed-out fallback path.
+          assertFinalizationActive();
           if (outcome === "completed") {
-            // Do not return stale output or establish affinity if recording itself
-            // outlives the call. Pool recording only appends to its local array.
-            assertActive();
             const completed =
               this.#completedModels.get(params.correlationId) ??
               new Map<LogicalAgentId, Set<string>>();

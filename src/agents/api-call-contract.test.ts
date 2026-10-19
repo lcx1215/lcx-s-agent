@@ -701,6 +701,29 @@ it("rejects a direct source return after its receipt observer outlives the deadl
   expect(receipts).toMatchObject([{ status: "succeeded" }]);
 });
 
+it("classifies a failed source whose receipt notification crosses the deadline as timeout", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => {
+          receipts.push(receipt);
+          vi.setSystemTime(Date.now() + 60_000);
+        },
+      },
+      async () => {
+        throw new Error("source unavailable");
+      },
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(receipts).toMatchObject([{ status: "failed" }]);
+});
+
 it.each([
   ["timeout", "http"],
   ["timeout", "network"],
