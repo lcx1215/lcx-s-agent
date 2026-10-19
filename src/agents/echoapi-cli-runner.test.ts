@@ -82,10 +82,15 @@ describe("EchoAPI known CI credential value redaction", () => {
     },
     { url: "https://fixture-user:fixture-password@open.echoapi.com/ci", value: "fixture-password" },
     { url: "https://fixture-user:fixture-password@open.echoapi.com/ci", value: "fixture-user" },
+    {
+      url: "https://open.echoapi.com/ci?signature=https%3A%2F%2Fsecret.example%2Fprivate%3Fsig%3Dfixture",
+      value: "https://secret.example/private?sig=fixture",
+    },
   ])("removes separately echoed credential value $value", ({ url, value }) => {
     const output = redactEchoApiText(`CLI rejected supplied value [${value}]; status 401`, url);
     expect(output).not.toContain(value);
     expect(output).toContain("status 401");
+    expect(output).toBe("CLI rejected supplied value [[REDACTED]]; status 401");
   });
 
   it("treats query values literally and redacts longer overlapping values first", () => {

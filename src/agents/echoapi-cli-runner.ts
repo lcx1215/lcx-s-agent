@@ -501,14 +501,6 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       // Generic URL redaction below still protects malformed input.
     }
   }
-  redacted = redacted.replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
-    try {
-      const parsed = new URL(url);
-      return `${parsed.origin}${parsed.pathname}${parsed.search ? "?[REDACTED_QUERY]" : ""}`;
-    } catch {
-      return url;
-    }
-  });
   if (sensitiveValues.size > 0) {
     // One literal replacement pass avoids partial overlap and re-redacting markers.
     const pattern = [...sensitiveValues]
@@ -517,6 +509,14 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       .join("|");
     redacted = redacted.replace(new RegExp(pattern, "gu"), "[REDACTED]");
   }
+  redacted = redacted.replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
+    try {
+      const parsed = new URL(url);
+      return `${parsed.origin}${parsed.pathname}${parsed.search ? "?[REDACTED_QUERY]" : ""}`;
+    } catch {
+      return url;
+    }
+  });
   return redacted
     .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
     .replace(
