@@ -479,10 +479,16 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       }
     }
   };
-  const isCredentialKey = (key: string) =>
-    /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
-      key,
-    ) || /^(?:apiKey|accessToken|refreshToken|clientSecret|auth(?:[_-]?token)?)$/iu.test(key);
+  const isCredentialKey = (key: string) => {
+    const words = key
+      .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1_$2")
+      .replace(/([a-z0-9])([A-Z])/gu, "$1_$2");
+    return (
+      /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
+        words,
+      ) || /^(?:apiKey|accessToken|refreshToken|clientSecret|auth(?:[_-]?token)?)$/iu.test(key)
+    );
+  };
   const addQueryValue = (key: string, value: string, raw?: string, rawKey?: string) => {
     // Ordinary identifiers need a field/value context; their presence in a
     // query alone does not make unrelated diagnostic words credentials.

@@ -297,6 +297,18 @@ describe("EchoAPI known CI credential value redaction", () => {
     ).toBe(`${key}=[REDACTED]`);
   });
 
+  it.each(["sessionToken", "sessionAPIToken"])(
+    "masks separately echoed credentials for %s",
+    (key) => {
+      expect(
+        redactEchoApiText(
+          "authentication failed for supersecret",
+          `https://open.echoapi.com/ci?${key}=supersecret`,
+        ),
+      ).toBe("authentication failed for [REDACTED]");
+    },
+  );
+
   it("removes decoded URL credential values", () => {
     const output = redactEchoApiText(
       "credentials were fixture@user and fixture/password",
