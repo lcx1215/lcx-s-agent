@@ -26,9 +26,21 @@ vi.mock("../src/agents/model-fallback.js", () => ({
     model: params.model,
   }),
 }));
-vi.mock("../src/agents/pi-embedded.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/agents/pi-embedded.js")>()),
+// Import lifecycle helpers directly so the partial barrel cannot capture real model I/O.
+vi.mock("../src/agents/pi-embedded.js", async () => ({
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/runs.js")>(
+    "../src/agents/pi-embedded-runner/runs.js",
+  )),
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/lanes.js")>(
+    "../src/agents/pi-embedded-runner/lanes.js",
+  )),
+  compactEmbeddedPiSession: async () => {
+    throw new Error("offline compaction forbidden");
+  },
   queueEmbeddedPiMessage: () => false,
+  runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
+}));
+vi.mock("../src/agents/pi-embedded-runner/run.js", () => ({
   runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
 }));
 vi.mock("../src/agents/cli-runner.js", async (importOriginal) => ({

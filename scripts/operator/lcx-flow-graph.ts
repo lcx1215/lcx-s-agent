@@ -1947,6 +1947,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "extensions/external/src/send.test.ts",
       "extensions/external/src/send.ts",
       "src/agents/answer-audit-policy.ts",
+      "src/agents/commercial-answer-pipeline.ts",
       "src/agents/commercial-answer-reply-gate.ts",
       "src/agents/visible-answer-adoption-gate.test.ts",
       "src/agents/visible-answer-adoption-gate.ts",

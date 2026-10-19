@@ -390,7 +390,10 @@ export async function readOriginalPrewriteContentReview(
   const host = {
     workspaceDir: proof.workspaceDir,
     receipt: {
-      path: path.relative(proof.workspaceDir, proof.current.receipt.latestJsonPath),
+      path: path
+        .relative(proof.workspaceDir, proof.current.receipt.latestJsonPath)
+        .split(path.sep)
+        .join("/"),
       sha256: sha(proof.current.receiptBytes),
     },
     scope: proof.currentScope,
@@ -526,9 +529,12 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
   const governanceBytes = await fs.readFile(consumed.governancePath, "utf8");
   const request = {
     schemaVersion: 1,
-    map: { path: path.relative(produced.workspaceDir, mapPath), sha256: sha(mapBytes) },
+    map: {
+      path: path.relative(produced.workspaceDir, mapPath).split(path.sep).join("/"),
+      sha256: sha(mapBytes),
+    },
     governance: {
-      path: path.relative(produced.workspaceDir, consumed.governancePath),
+      path: path.relative(produced.workspaceDir, consumed.governancePath).split(path.sep).join("/"),
       sha256: sha(governanceBytes),
     },
     itemId: "self_repair_memory_and_training_candidate_hands",

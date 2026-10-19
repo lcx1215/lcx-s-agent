@@ -220,7 +220,10 @@ describe("LCX universe index", () => {
     expect(payload.ownerCoverage.changeImpact.ok).toBe(
       payload.ownerCoverage.changeImpact.unmatchedFiles.length === 0,
     );
-    expect(payload.ownerCoverage.governanceCoverage.status).toBe("complete");
+    expect(
+      payload.ownerCoverage.governanceCoverage.status,
+      JSON.stringify(payload.ownerCoverage.governanceCoverage),
+    ).toBe("complete");
     expect(payload.ownerCoverage.governanceCoverage.scope).toBe("repo_tracked_and_visible_files");
     expect(payload.ownerCoverage.governanceCoverage.summary.totalComponents).toBe(
       payload.summary.trackedAndVisibleFiles,

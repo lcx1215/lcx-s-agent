@@ -2,11 +2,49 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { buildSelfRepairHandsReceipt } from "../scripts/operator/lcx-self-repair-hands.js";
 import {
   probeOriginalSelfRepairOwnerMap,
   type SelfRepairOwnerMapFault,
   type SelfRepairReaderFault,
 } from "./fixtures/lcx-waterflow-self-repair-owner-map-probe.js";
+
+function expectPublicationSnapshot(
+  persisted: ReturnType<typeof buildSelfRepairHandsReceipt>,
+  output: ReturnType<typeof buildSelfRepairHandsReceipt>,
+) {
+  const project = (receipt: ReturnType<typeof buildSelfRepairHandsReceipt>) => {
+    if (!receipt.processEvidence) {
+      throw new Error("original_writer_evidence_missing");
+    }
+    const {
+      status: _status,
+      publication: _publication,
+      successfulWrites,
+      ...writer
+    } = receipt.processEvidence.writer;
+    return {
+      ...receipt,
+      writtenArtifacts: receipt.writtenArtifacts.filter((file) => file !== receipt.latestJsonPath),
+      processEvidence: {
+        ...receipt.processEvidence,
+        writer: {
+          ...writer,
+          successfulWrites: successfulWrites.filter((item) => item.field !== "/latestJsonPath"),
+        },
+      },
+    };
+  };
+  expect(project(persisted)).toEqual(project(output));
+  expect(persisted.processEvidence?.writer).toMatchObject({
+    status: "writing",
+    publication: "pending_in_snapshot",
+  });
+  expect(output.processEvidence?.writer).toMatchObject({
+    status: "completed",
+    publication: "completed_after_await",
+  });
+}
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -87,7 +125,10 @@ describe("original self-repair safe reader -> governance -> owner control map", 
         semanticTruth: "not_proven",
         sourceReview: { status: "blocked", blockers: [reasons[fault]] },
       });
-      expect(result.persistedWriter).toEqual(result.nativeWriter);
+      expectPublicationSnapshot(
+        result.persistedWriter as ReturnType<typeof buildSelfRepairHandsReceipt>,
+        result.nativeWriter as ReturnType<typeof buildSelfRepairHandsReceipt>,
+      );
       expect(result.candidateExists).toBe(false);
       expect(result.directOwner.runReceipt).toMatchObject({
         status: "blocked",

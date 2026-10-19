@@ -114,7 +114,8 @@ const logPath=${JSON.stringify(observationsPath)};
 function deny(kind,args){fs.appendFileSync(logPath,JSON.stringify({kind,args})+'\\n');throw new Error('private_intake_io_forbidden:'+kind);}
 globalThis.fetch=()=>deny('fetch');
 const loaderIpcPath=path.join(os.tmpdir(),'tsx-'+(process.geteuid?process.geteuid():os.userInfo().username),process.ppid+'.pipe');
-for(const [owner,names] of [[http,['get','request']],[https,['get','request']],[net,['connect','createConnection']],[tls,['connect']],[cp,['exec','execFile','execSync','execFileSync','spawn','spawnSync','fork']]])for(const name of names){const original=owner[name];owner[name]=function(...args){if(owner===net&&name==='createConnection'&&args[0]===loaderIpcPath){fs.appendFileSync(logPath,JSON.stringify({kind:'local_loader_ipc',path:args[0]})+'\\n');return Reflect.apply(original,this,args);}return deny(name,args);};}
+const nativeLoaderIpcPath=process.platform==='win32'?${JSON.stringify("\\\\?\\pipe\\")}+loaderIpcPath:loaderIpcPath;
+for(const [owner,names] of [[http,['get','request']],[https,['get','request']],[net,['connect','createConnection']],[tls,['connect']],[cp,['exec','execFile','execSync','execFileSync','spawn','spawnSync','fork']]])for(const name of names){const original=owner[name];owner[name]=function(...args){if(owner===net&&name==='createConnection'&&args[0]===nativeLoaderIpcPath){fs.appendFileSync(logPath,JSON.stringify({kind:'local_loader_ipc',path:args[0]})+'\\n');return Reflect.apply(original,this,args);}return deny(name,args);};}
 syncBuiltinESMExports();
 `,
   );

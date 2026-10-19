@@ -10,7 +10,11 @@ import {
   buildFinanceBrokerAccountResearchEvidence,
   writeFinanceNightReviewEvidence,
 } from "../../src/agents/finance-night-review-context.js";
-import { financeResearchPortfolioContextSchema } from "../../src/agents/finance-research-portfolio-plan.js";
+import {
+  financeResearchPortfolioContextSchema,
+  financeScheduledResearchHandoffSchema,
+  financeResearchControllerHandoffSchema,
+} from "../../src/agents/finance-research-portfolio-plan.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -96,6 +100,8 @@ export async function probeOriginalResearchInput(params: {
   let output: Awaited<ReturnType<typeof run>> | undefined;
   let failure: string | undefined;
   const context = vm.createContext({
+    Buffer,
+    createHash,
     fs,
     path,
     process: { env: {} },
@@ -103,6 +109,8 @@ export async function probeOriginalResearchInput(params: {
     REPO_ROOT: repo,
     RESEARCH_SCRIPT: path.join(repo, "scripts/operator/lcx-finance-research-run.ts"),
     financeResearchPortfolioContextSchema,
+    financeScheduledResearchHandoffSchema,
+    financeResearchControllerHandoffSchema,
     buildFinanceBrokerAccountResearchEvidence,
     readFinanceScheduledResearchFeedback,
     writeFinanceNightReviewEvidence,

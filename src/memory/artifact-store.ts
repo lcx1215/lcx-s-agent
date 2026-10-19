@@ -297,7 +297,13 @@ export class ArtifactStore {
             .get(),
         );
       }
-      return new ArtifactStore(db, fs.realpathSync(params.workspaceDir), readOnly, ftsAvailable);
+      // Match fs.promises.realpath used by recorders, including Windows 8.3 temp aliases.
+      return new ArtifactStore(
+        db,
+        fs.realpathSync.native(params.workspaceDir),
+        readOnly,
+        ftsAvailable,
+      );
     } catch (error) {
       db?.close();
       if (error instanceof ArtifactStoreError) {

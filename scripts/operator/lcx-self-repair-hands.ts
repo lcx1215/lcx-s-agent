@@ -289,7 +289,7 @@ function hashShort(value: string): string {
 
 function relativeToWorkspace(workspaceDir: string, filePath: string): string {
   const relative = path.relative(workspaceDir, filePath);
-  return relative.startsWith("..") ? filePath : relative;
+  return relative.startsWith("..") ? filePath : relative.split(path.sep).join("/");
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -1271,7 +1271,7 @@ async function main() {
         }
         const { buffer } = await readFileWithinRoot({
           rootDir: options.workspaceDir,
-          relativePath: path.relative(options.workspaceDir, file),
+          relativePath: path.relative(options.workspaceDir, file).split(path.sep).join("/"),
           maxBytes: 512 * 1024,
         });
         return JSON.parse(buffer.toString("utf8")) as unknown;
@@ -1374,7 +1374,10 @@ async function main() {
             const input = await readSelfRepairCandidateReviewInput({
               workspaceDir: options.workspaceDir,
               receipt: {
-                path: path.relative(options.workspaceDir, receipt.latestJsonPath),
+                path: path
+                  .relative(options.workspaceDir, receipt.latestJsonPath)
+                  .split(path.sep)
+                  .join("/"),
                 sha256: latestReceiptSha256,
               },
               scope: { accountId: options.reviewAccountId ?? "", runId: options.reviewRunId ?? "" },

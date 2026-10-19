@@ -429,13 +429,7 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
   const priorSnapshot = { generatedAt: "2026-09-21T22:00:00.000Z", selected: ["SPY", "OLD"] };
   const refreshedSnapshot = { generatedAt: "2026-09-22T22:00:00.000Z", selected: ["SPY", "NEW"] };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse
-    .mockReturnValueOnce(priorSnapshot)
-    .mockImplementationOnce(() => {
-      writeUniverseSnapshot(refreshedSnapshot);
-      return refreshedSnapshot;
-    })
-    .mockReturnValue(refreshedSnapshot);
+  mocks.readUniverse.mockReturnValue(priorSnapshot);
   mocks.runCycle
     .mockResolvedValueOnce({
       ...success,
@@ -447,13 +441,17 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
         issues: [],
       }),
     })
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        snapshotPersisted: true,
-        generatedAt: refreshedSnapshot.generatedAt,
-        selected: refreshedSnapshot.selected,
-      }),
+    .mockImplementationOnce(async () => {
+      writeUniverseSnapshot(refreshedSnapshot);
+      mocks.readUniverse.mockReturnValue(refreshedSnapshot);
+      return {
+        ...success,
+        stdout: JSON.stringify({
+          snapshotPersisted: true,
+          generatedAt: refreshedSnapshot.generatedAt,
+          selected: refreshedSnapshot.selected,
+        }),
+      };
     });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay
@@ -1245,6 +1243,10 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
         directory,
         accountId: "paper-account",
         artifactRecallOptions: { config: {}, agentId: "main", workspaceDir: knowledgeWorkspace },
+        marketCollectionTool: expect.objectContaining({
+          name: "finance_market_collection_refresh",
+          execute: expect.any(Function),
+        }),
         instruments: ["SPY"],
         financialCapabilities: [
           expect.objectContaining({
@@ -1272,6 +1274,10 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
         directory,
         accountId: "paper-account",
         artifactRecallOptions: { config: {}, agentId: "main", workspaceDir: knowledgeWorkspace },
+        marketCollectionTool: expect.objectContaining({
+          name: "finance_market_collection_refresh",
+          execute: expect.any(Function),
+        }),
         instruments: ["SPY"],
         financialCapabilities: [
           expect.objectContaining({
@@ -1391,7 +1397,7 @@ it("monitors only symbols from the validated dynamic universe, never a static ti
       "--no-source-heartbeat",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(3);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "AAA",
     "BBB",
@@ -1482,7 +1488,7 @@ it("has no intraday candidates when the dynamic universe receipt is missing or s
       "--no-source-heartbeat",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(3);
   expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
 });
 
@@ -1555,13 +1561,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     selected: ["SPY", "NEW"],
   };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse
-    .mockReturnValueOnce(priorSnapshot)
-    .mockImplementationOnce(() => {
-      writeUniverseSnapshot(refreshedSnapshot);
-      return refreshedSnapshot;
-    })
-    .mockReturnValue(refreshedSnapshot);
+  mocks.readUniverse.mockReturnValue(priorSnapshot);
   mocks.runCycle
     .mockResolvedValueOnce({
       ...success,
@@ -1573,13 +1573,17 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
         issues: [],
       }),
     })
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        snapshotPersisted: true,
-        generatedAt: "2026-09-22T22:00:00.000Z",
-        selected: ["SPY", "NEW"],
-      }),
+    .mockImplementationOnce(async () => {
+      writeUniverseSnapshot(refreshedSnapshot);
+      mocks.readUniverse.mockReturnValue(refreshedSnapshot);
+      return {
+        ...success,
+        stdout: JSON.stringify({
+          snapshotPersisted: true,
+          generatedAt: "2026-09-22T22:00:00.000Z",
+          selected: ["SPY", "NEW"],
+        }),
+      };
     });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   let progressAtStop: Record<string, unknown> | undefined;
@@ -1620,7 +1624,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     ]),
   ).resolves.toBe(143);
 
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(4);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(6);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "OLD",
@@ -1716,7 +1720,7 @@ it("recovers a long-lived monitor after startup without a universe and a success
     ]),
   ).resolves.toBe(143);
 
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(4);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(6);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "RECOVERED",
@@ -1743,7 +1747,7 @@ it("clears a previously bound universe when the night selector fails", async () 
     selected: ["SPY", "STALE"],
   };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse.mockReturnValueOnce(priorSnapshot);
+  mocks.readUniverse.mockReturnValue(priorSnapshot);
   mocks.runCycle
     .mockResolvedValueOnce({
       ...success,
@@ -1791,7 +1795,7 @@ it("clears a previously bound universe when the night selector fails", async () 
     "SPY",
     "STALE",
   ]);
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(3);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(5);
   expect(progressAtStop).toMatchObject({
     placementEnabled: false,
     universeStatus: "unavailable",
@@ -2393,11 +2397,11 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   const researchArgv = mocks.runCycle.mock.calls[0][0].argv as string[];
   const evidencePath = researchArgv[researchArgv.indexOf("--controller-evidence") + 1];
   const frozenContextPath = researchArgv[researchArgv.indexOf("--portfolio-context") + 1];
-  expect(evidencePath).toMatch(
-    /^.*\/day-research-controller-evidence-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
+  expect(path.basename(evidencePath)).toMatch(
+    /^day-research-controller-evidence-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
   );
-  expect(frozenContextPath).toMatch(
-    /^.*\/day-research-portfolio-context-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
+  expect(path.basename(frozenContextPath)).toMatch(
+    /^day-research-portfolio-context-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
   );
   expect(frozenContextPath).not.toBe(context);
   expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(
@@ -2612,7 +2616,7 @@ it.each(["context_read", "progress_write"] as const)(
             return originalRead(file, options);
           })
         : vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-            if (String(to).endsWith("/progress.json")) {
+            if (path.basename(String(to)) === "progress.json") {
               throw new Error("transient EIO");
             }
             return originalRename(from, to);

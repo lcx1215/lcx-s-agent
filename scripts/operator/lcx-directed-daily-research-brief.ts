@@ -2729,7 +2729,7 @@ export async function executeDirectedDailyResearchTask(options: {
       const normalized = path.relative(root, path.resolve(root, options.caseDirectory));
       if (
         !/^state\/directed-daily-research-batches\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/cases$/u.test(
-          normalized,
+          normalized.split(path.sep).join("/"),
         )
       ) {
         throw new Error("directed_research_case_scope_outside_batch");

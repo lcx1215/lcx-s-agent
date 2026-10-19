@@ -5,6 +5,7 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { compactCommercialAcceptanceFailures } from "../scripts/operator/local-brain-training-plan.js";
 import { recordAgentArtifact } from "../src/agents/artifact-result-recording.js";
 import { buildCentralGovernanceInput } from "../src/agents/central-harness/governance-input.js";
 import type { OpenClawConfig } from "../src/config/config.js";
@@ -122,7 +123,7 @@ function harness(
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   const factory = vm.runInThisContext(
-    `(function(dependencies) { const { recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
+    `(function(dependencies) { const { recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, compactCommercialAcceptanceFailures, readCommercialAcceptanceFeedback, GOVERNANCE_AUTOPILOT_LATEST_PATH, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
   ) as (dependencies: Record<string, unknown>) => Harness;
   return factory({
     recordAgentArtifact: options.recorder ?? recordAgentArtifact,
@@ -135,6 +136,12 @@ function harness(
       }),
     repoRoot: workspace,
     EXEC_MAX_BUFFER: 1024,
+    compactCommercialAcceptanceFailures,
+    GOVERNANCE_AUTOPILOT_LATEST_PATH: path.join(workspace, "missing-prior-governance.json"),
+    readCommercialAcceptanceFeedback: async () => ({
+      status: "unavailable",
+      reason: "private_fixture_no_prior_receipt",
+    }),
     buildLcxRunReceipt,
     createLcxRunId,
     boundaryFromFlags,
@@ -243,7 +250,14 @@ it.each([
     );
     expect(run).toMatchObject({ parsed: true, ok: payload.ok, exitCode });
     expect(run.runReceipt.status).toBe(!ok ? "blocked" : exitCode ? "failed" : "passed");
-    await assertOriginal(run, payload, "2026-01-05T00:00:00.000Z");
+    await assertOriginal(
+      run,
+      {
+        ...payload,
+        acceptanceFeedback: { status: "unavailable", reason: "private_fixture_no_prior_receipt" },
+      },
+      "2026-01-05T00:00:00.000Z",
+    );
   },
 );
 

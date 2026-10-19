@@ -308,7 +308,7 @@ describe("offline same-cycle central handoff", () => {
       .slice(first, last + 1)
       .map((statement) => statement.getText(ast))
       .join("\n");
-    const body = `const {reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
+    const body = `const {compactCommercialAcceptanceFailures,reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
       ${functions}
       ${commands.getText(ast)}
       const problemRadarCommand=OWNER_COMMANDS.find(command=>command.id==='problemRadar');
@@ -334,7 +334,9 @@ describe("offline same-cycle central handoff", () => {
           throw new Error("missing original handoff path");
         }
         inputPaths.push(inputPath);
-        expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+          expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        }
         inputs.push(JSON.parse(await fs.readFile(inputPath, "utf8")));
       } else {
         await options.beforeDirect?.();
@@ -357,6 +359,7 @@ describe("offline same-cycle central handoff", () => {
       handoff: (owners: FixtureRun[]) => Promise<FixtureRun>;
     };
     const harness = evaluate({
+      compactCommercialAcceptanceFailures,
       reviewCleanupBeforeDecision,
       ownerArtifactRecordingConfig: null,
       DEFAULT_WORKSPACE_DIR: os.tmpdir(),

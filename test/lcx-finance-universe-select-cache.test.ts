@@ -213,7 +213,7 @@ afterEach(() => {
   });
   collectedHistorySymbols.splice(0);
   for (const dir of dirs.splice(0)) {
-    fsSync.rmSync(dir, { recursive: true, force: true });
+    fsSync.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

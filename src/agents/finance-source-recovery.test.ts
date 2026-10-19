@@ -32,6 +32,13 @@ function batch(jobs: unknown[]) {
 }
 
 describe("finance source recovery", () => {
+  it("accepts the original raw batch and its receipt wrapper with the same recovery plan", () => {
+    const original = batch([job("raw-batch")]);
+    expect(buildFinanceSourceRecoveryPlan(original, AS_OF)).toEqual(
+      buildFinanceSourceRecoveryPlan({ batch: original }, AS_OF),
+    );
+    expect(() => buildFinanceSourceRecoveryPlan({ batch: undefined }, AS_OF)).toThrow();
+  });
   it.each([
     { transportError: "network_error", networkCode: "ECONNRESET", action: "retry" },
     { transportError: "timeout", action: "retry" },

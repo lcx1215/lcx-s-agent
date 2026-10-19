@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sendExternalMessage } from "../extensions/external/src/send.js";
-import * as commercialOwner from "../scripts/operator/lcx-commercial-answer-pipeline.js";
 import {
   auditWorkflowHandoffs,
   type WorkflowHandoffEvidence,
 } from "../scripts/operator/lcx-flow-graph.js";
+import * as commercialOwner from "../src/agents/commercial-answer-pipeline.js";
 import * as visible from "../src/agents/visible-answer-adoption-gate.js";
 import * as replyHelpers from "../src/auto-reply/reply/agent-runner-helpers.js";
 import * as replyAgentOwner from "../src/auto-reply/reply/agent-runner.js";
@@ -33,9 +33,21 @@ vi.mock("../src/agents/model-fallback.js", () => ({
     model: params.model,
   }),
 }));
-vi.mock("../src/agents/pi-embedded.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/agents/pi-embedded.js")>()),
+// Import lifecycle helpers directly so the partial barrel cannot capture real model I/O.
+vi.mock("../src/agents/pi-embedded.js", async () => ({
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/runs.js")>(
+    "../src/agents/pi-embedded-runner/runs.js",
+  )),
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/lanes.js")>(
+    "../src/agents/pi-embedded-runner/lanes.js",
+  )),
+  compactEmbeddedPiSession: async () => {
+    throw new Error("offline compaction forbidden");
+  },
   queueEmbeddedPiMessage: () => false,
+  runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
+}));
+vi.mock("../src/agents/pi-embedded-runner/run.js", () => ({
   runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
 }));
 vi.mock("../src/agents/cli-runner.js", async (importOriginal) => ({

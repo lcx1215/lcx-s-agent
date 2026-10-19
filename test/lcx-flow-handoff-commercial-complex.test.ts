@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import * as commercial from "../scripts/operator/lcx-commercial-answer-pipeline.js";
+import * as commercial from "../src/agents/commercial-answer-pipeline.js";
 import * as visible from "../src/agents/visible-answer-adoption-gate.js";
 import { resetInboundDedupe } from "../src/auto-reply/reply/inbound-dedupe.js";
 import { onAgentEvent, type AgentEventPayload } from "../src/infra/agent-events.js";
@@ -37,9 +37,20 @@ vi.mock("../src/agents/model-fallback.js", () => ({
     model: params.model,
   }),
 }));
-vi.mock("../src/agents/pi-embedded.js", async (original) => ({
-  ...(await original<typeof import("../src/agents/pi-embedded.js")>()),
+vi.mock("../src/agents/pi-embedded.js", async () => ({
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/runs.js")>(
+    "../src/agents/pi-embedded-runner/runs.js",
+  )),
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/lanes.js")>(
+    "../src/agents/pi-embedded-runner/lanes.js",
+  )),
+  compactEmbeddedPiSession: async () => {
+    throw new Error("offline compaction forbidden");
+  },
   queueEmbeddedPiMessage: () => false,
+  runEmbeddedPiAgent: (params: unknown) => io.reply(params),
+}));
+vi.mock("../src/agents/pi-embedded-runner/run.js", () => ({
   runEmbeddedPiAgent: (params: unknown) => io.reply(params),
 }));
 vi.mock("../src/agents/cli-runner.js", async (original) => ({

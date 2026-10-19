@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sendExternalMessage } from "../extensions/external/src/send.js";
-import * as commercialOwner from "../scripts/operator/lcx-commercial-answer-pipeline.js";
 import {
   auditWorkflowHandoffs,
   type WorkflowHandoffEvidence,
 } from "../scripts/operator/lcx-flow-graph.js";
+import * as commercialOwner from "../src/agents/commercial-answer-pipeline.js";
 import { createCommercialAnswerReplyGate } from "../src/agents/commercial-answer-reply-gate.js";
 import * as groundingOwner from "../src/agents/finance-answer-grounding-gate.js";
 import type { FinanceResearchRunReceipt } from "../src/agents/finance-research-runner.js";
@@ -62,8 +62,17 @@ vi.mock("../src/agents/model-fallback.js", () => ({
     model: params.model,
   }),
 }));
-vi.mock("../src/agents/pi-embedded.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/agents/pi-embedded.js")>()),
+// Import lifecycle helpers directly so the partial barrel cannot capture real model I/O.
+vi.mock("../src/agents/pi-embedded.js", async () => ({
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/runs.js")>(
+    "../src/agents/pi-embedded-runner/runs.js",
+  )),
+  ...(await vi.importActual<typeof import("../src/agents/pi-embedded-runner/lanes.js")>(
+    "../src/agents/pi-embedded-runner/lanes.js",
+  )),
+  compactEmbeddedPiSession: async () => {
+    throw new Error("offline compaction forbidden");
+  },
   queueEmbeddedPiMessage: () => false,
   runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
 }));
@@ -341,9 +350,18 @@ async function run(options: ProbeOptions = {}) {
           throw new Error("actual bounded tool feedback source binding missing");
         }
         const qualityFailure = feedback.failedGates.find((gate) => gate.id === "quality");
-        const qualityFinding = feedback.qualityFeedback.find((finding) =>
-          finding.includes("closure_missing_or_invalid"),
-        );
+        // The bounded projection may omit structural bookkeeping; use the already
+        // read, hash-bound native receipt rather than inventing an omitted detail.
+        if (createHash("sha256").update(raw).digest("hex") !== receiptSha256) {
+          throw new Error("native quality feedback receipt identity mismatch");
+        }
+        const qualityFinding =
+          feedback.qualityFeedback.find((finding) =>
+            finding.includes("closure_missing_or_invalid"),
+          ) ??
+          nativeReceipt?.quality?.attempts
+            .at(-1)
+            ?.feedback.find((finding) => finding.includes("closure_missing_or_invalid"));
         const learningGap = feedback.failures
           .find((failure) => failure.moduleId === "finance_learning_memory")
           ?.missingEvidence.find((gap) => gap === "retrievable_finance_capability_card");

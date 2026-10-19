@@ -36,6 +36,7 @@ afterEach(() => {
 function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
   const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "research-bridge-"));
   directories.push(stateDirectory);
+  const accountId = `fixture-${path.basename(stateDirectory)}`;
   const instrument = assetClass === "crypto" ? "BTC/USD" : "SPY";
   const at = new Date().toISOString();
   const model = {
@@ -93,13 +94,12 @@ function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
   });
   const read = vi.fn(async (url: string) => ({
     status: 200,
-    body:
-      new URL(url).pathname === "/v2/account" ? JSON.stringify({ id: stateDirectory }) : terminal,
+    body: new URL(url).pathname === "/v2/account" ? JSON.stringify({ id: accountId }) : terminal,
   }));
   const control: FinanceResearchExecutionControl = {
     mode: "alpaca_paper",
     stateDirectory,
-    recovery: { safetyStateDir: stateDirectory, accountId: stateDirectory, venue: "alpaca:paper" },
+    recovery: { safetyStateDir: stateDirectory, accountId, venue: "alpaca:paper" },
     riskContext: {
       drawdownFraction: 0,
       averagingDown: false,
@@ -122,7 +122,7 @@ function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
         createFinanceExecutionSafetyContext({
           ...binding,
           stateDir: stateDirectory,
-          accountId: stateDirectory,
+          accountId,
           policy: {
             planId: "fixture-plan",
             revision: "1",
@@ -137,7 +137,7 @@ function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
             maxInstrumentEvidenceAgeMs: 60_000,
           },
           readFacts: async () => ({
-            accountId: stateDirectory,
+            accountId,
             adapterId: binding.adapterId,
             venue: binding.venue,
             instrument,
@@ -208,7 +208,7 @@ describe("research operator calls the existing execution bridge", () => {
   it("runs supplied evidence and model output through the stock paper controller", async () => {
     const f = fixture();
     const result = await runFinanceResearchTurn(["--instrument", f.instrument], f.deps);
-    expect(result).toMatchObject({
+    expect(result, JSON.stringify(result)).toMatchObject({
       status: "placed",
       receipt: {
         evidence: [

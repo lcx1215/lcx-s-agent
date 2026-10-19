@@ -434,7 +434,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   const branch = await execute("git", ["branch", "--show-current"], { cwd: repo, env });
   const snapshot = receipts.createLcxRunSnapshot({
     sourceCommit: git.stdout.trim(),
-    sourceBranch: branch.stdout.trim(),
+    sourceBranch: branch.stdout.trim() || "detached",
     observedAt: checkedAt,
     authorityOwner: "lcx-governance-autopilot",
   });

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import vm from "node:vm";
 import ts from "typescript";
@@ -65,9 +65,23 @@ export async function probeUniverseWhole(
     await fs.writeFile(path.join(repo, file), bytes);
     sourceHashes[file] = sha(bytes);
   }
+  // Resolve the impact owner's shared graph dependency without copying its transitive CLIs.
+  await fs.symlink(
+    path.join(sourceRoot, "scripts/operator/lcx-flow-graph.ts"),
+    path.join(repo, "scripts/operator/lcx-flow-graph.ts"),
+    "file",
+  );
   // Dependencies are read-only symlinks. Never create fixture files inside them.
-  await fs.symlink(path.join(sourceRoot, "src"), path.join(repo, "src"));
-  await fs.symlink(path.join(sourceRoot, "node_modules"), path.join(repo, "node_modules"));
+  await fs.symlink(
+    path.join(sourceRoot, "src"),
+    path.join(repo, "src"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await fs.symlink(
+    path.join(sourceRoot, "node_modules"),
+    path.join(repo, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   await fs.writeFile(path.join(repo, "package.json"), '{"type":"module"}\n');
   await fs.writeFile(path.join(repo, "test/unchanged.test.ts"), "// unchanged fixture\n");
   await fs.writeFile(path.join(repo, "test/changed.test.ts"), "// initial fixture\n");
@@ -97,11 +111,28 @@ export async function probeUniverseWhole(
     await fs.mkdir(path.join(repo, "unknown-fixture"));
     await fs.writeFile(path.join(repo, "unknown-fixture/unknown.zzz"), "unmapped\n");
   }
+  let timeoutPreload: string | undefined;
   if (fault === "git_timeout") {
-    const bin = path.join(root, "bin");
-    await fs.mkdir(bin);
-    await fs.writeFile(path.join(bin, "git"), "#!/bin/sh\nexec /bin/sleep 10\n", { mode: 0o755 });
-    env.PATH = `${bin}${path.delimiter}${env.PATH ?? ""}`;
+    timeoutPreload = path.join(root, "slow-git.mjs");
+    // Substitute only git's process boundary; execute the unchanged CLI on every platform.
+    await fs.writeFile(
+      timeoutPreload,
+      `
+      import childProcess from "node:child_process";
+      import { syncBuiltinESMExports } from "node:module";
+      import { promisify } from "node:util";
+      const original = childProcess.execFile;
+      const run = promisify(original);
+      const select = (file, args) => file === "git"
+        ? [process.execPath, ["-e", "setTimeout(() => {}, 10000)"]]
+        : [file, args];
+      const substitute = (file, args, options, callback) =>
+        original(...select(file, args), options, callback);
+      substitute[promisify.custom] = (file, args, options) => run(...select(file, args), options);
+      childProcess.execFile = substitute;
+      syncBuiltinESMExports();
+    `,
+    );
   }
   let cliBytes = "";
   let cliExitCode: unknown = 0;
@@ -113,6 +144,7 @@ export async function probeUniverseWhole(
       [
         "--import",
         "tsx",
+        ...(timeoutPreload ? ["--import", pathToFileURL(timeoutPreload).href] : []),
         path.join(repo, sourcePath),
         "--json",
         "--no-write",
@@ -255,7 +287,9 @@ export async function probeUniverseWhole(
       exitCode: 0,
     },
     execFileAsync: (command: string, args: string[], options: object) =>
-      nativeExec(command, args, { ...options, env }),
+      fault === "git_timeout" && command === "git"
+        ? nativeExec(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { ...options, env })
+        : nativeExec(command, args, { ...options, env }),
     capturePhase: (name: string, value: unknown) => {
       phaseObservations[name] = clone(value);
     },

@@ -78,7 +78,7 @@ describe("fresh original preflight files -> original research reader -> native d
   }
   it("actually reads this attempt's fresh broker evidence and rule into the original runner", async () => {
     const result = await probe();
-    expect(inputs).toHaveLength(1);
+    expect(inputs, JSON.stringify(result.processResult)).toHaveLength(1);
     const fresh = JSON.parse(result.originalEvidenceBytes);
     expect(inputs[0].controllerEvidence).toEqual(expect.arrayContaining(fresh));
     expect(inputs[0].portfolioContext).toEqual(JSON.parse(result.originalContextBytes));
@@ -105,23 +105,16 @@ describe("fresh original preflight files -> original research reader -> native d
     "source_whitespace_cross_account",
     "missing_account_scope",
     "invalid_broker_summary",
-  ] as const)(
-    "rejects %s in original normalization without writing a planned receipt",
-    async (fault) => {
-      const result = await probe(fault);
-      expect(inputs).toHaveLength(1);
-      const broker = inputs[0].controllerEvidence!.find(
-        (item) => item.source.trim() === "finance-broker-profit-summary",
-      )!;
-      expect(broker).toBeDefined();
-      expect(result.originalEvidenceSha256).not.toBe(result.consumedEvidenceSha256);
-      expect(result.failure).toMatch(/broker account scope/);
-      expect(result.output).toBeUndefined();
-      expect(result.receiptReadback).toBeUndefined();
-      expect(recording.recordFinanceResearchResult).not.toHaveBeenCalled();
-      expect(result.processResult).toMatchObject({ ok: false, status: "failed", exitCode: 1 });
-    },
-  );
+  ] as const)("rejects %s at the pinned input boundary before the runner", async (fault) => {
+    const result = await probe(fault);
+    expect(inputs).toEqual([]);
+    expect(result.originalEvidenceSha256).not.toBe(result.consumedEvidenceSha256);
+    expect(result.failure).toMatch(/controller handoff controllerEvidence path or bytes mismatch/);
+    expect(result.output).toBeUndefined();
+    expect(result.receiptReadback).toBeUndefined();
+    expect(recording.recordFinanceResearchResult).not.toHaveBeenCalled();
+    expect(result.processResult).toMatchObject({ ok: false, status: "failed", exitCode: 1 });
+  });
   it.each([
     "missing_evidence",
     "invalid_evidence_json",
@@ -131,7 +124,9 @@ describe("fresh original preflight files -> original research reader -> native d
     const result = await probe(fault);
     expect(inputs).toEqual([]);
     expect(result.failure).toMatch(
-      fault.startsWith("missing") ? /ENOENT/ : /JSON|position|property|Unexpected/,
+      fault.startsWith("missing")
+        ? /ENOENT/
+        : /controller handoff (controllerEvidence|portfolioContext) path or bytes mismatch/,
     );
     expect(result.output).toBeUndefined();
     expect(result.receiptReadback).toBeUndefined();

@@ -15,6 +15,7 @@ import {
   buildFinanceNightReviewEvidence,
   writeFinanceNightReviewEvidence,
 } from "../src/agents/finance-night-review-context.js";
+import { FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME } from "../src/agents/finance-portfolio-composition.js";
 import { appendFinanceExecutionReceipt } from "../src/agents/finance-position-ledger.js";
 import { financeResearchPortfolioAbstentionSchema } from "../src/agents/finance-research-portfolio-plan.js";
 import { FINANCE_SCHEDULER_LOCK } from "../src/agents/finance-scheduler-lock.js";
@@ -283,6 +284,7 @@ async function probe(
     RUNS_LOG: FINANCE_DAILY_CYCLE_RUNS_FILENAME,
     FINANCE_SCHEDULER_LOCK,
     FINANCE_RESEARCH_SAMPLES_FILENAME,
+    FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME,
     readFinanceSchedulerState,
     writeFinanceSchedulerState,
     financeEtClock,
@@ -298,7 +300,10 @@ async function probe(
     },
     writeFinanceNightReviewEvidence,
     captureFinanceIntradayCloseBars: blockedOwner,
-    refreshFinanceUniverseSelection: blockedOwner,
+    refreshFinanceUniverseSelection: vi.fn(async () => ({
+      status: "failed",
+      error: "private_fixture_universe_unavailable",
+    })),
     runNightTuning: blockedOwner,
   });
   const code = ts.transpileModule(`${declarations.join("\n")}\nglobalThis.nativeFire=fire;`, {
@@ -363,7 +368,10 @@ describe("original independent night review under a failed forecast source", () 
       expect(proof.terminal?.nightReview).toMatchObject({ ok: false, receiptPersisted: false });
       expect(proof.terminal?.tuningLifecycle).toBeUndefined();
       expect(proof.terminal?.intradayCloseCapture).toBeUndefined();
-      expect(proof.terminal?.universeSelection).toBeUndefined();
+      expect(proof.terminal?.universeSelection).toMatchObject({
+        status: "failed",
+        error: "private_fixture_universe_unavailable",
+      });
     },
   );
   it.each([

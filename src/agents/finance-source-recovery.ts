@@ -177,7 +177,9 @@ export function buildFinanceSourceRecoveryPlan(input: unknown, asOf: string) {
         asOf: state.originalAsOf,
         jobs: state.jobs,
       }
-    : sourceBatch.parse(wrapped.success ? wrapped.data.batch : input);
+    : sourceBatch.parse(
+        wrapped.success && Object.hasOwn(wrapped.data, "batch") ? wrapped.data.batch : input,
+      );
   if (nowMs < Date.parse(batch.asOf)) {
     throw new Error("recovery time cannot precede source batch");
   }
