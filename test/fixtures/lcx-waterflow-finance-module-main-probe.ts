@@ -134,7 +134,9 @@ export async function prepareOriginalFinanceModuleMain(params: {
     ruleId: "private-trend",
     observedAt: "2026-09-01T00:01:00Z",
   });
-  const asOf = new Date().toISOString();
+  // Keep this offline proof inside a fixed session. A live clock after the US
+  // close selects today's bar, which the prior-calendar-date history gate rejects.
+  const asOf = "2026-09-17T15:00:00.000Z";
   const scope = await readFinanceActiveStrategyResearchScope({
     directory: book,
     asOf,
