@@ -622,6 +622,7 @@ export function createConfiguredFinanceModelAdapter(
         if (deadlineExpired) {
           throw new ModelAdapterError("runtime_timeout");
         }
+        assertActive();
         throw error instanceof ModelAdapterError ? error : new ModelAdapterError("process_error");
       } finally {
         clearTimeout(timer);

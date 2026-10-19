@@ -537,6 +537,50 @@ describe("configured research model transport", () => {
       }),
     ).resolves.toEqual({ apiKey: "env-fixture-key", source: "auth_profile" });
   });
+  it.each(
+    (["transport", "error_body"] as const).flatMap((stage) =>
+      [false, true].map((cancel) => ({ stage, cancel })),
+    ),
+  )(
+    "rechecks wall expiry on $stage failure while preserving caller cancellation=$cancel",
+    async ({ stage, cancel }) => {
+      vi.useFakeTimers();
+      try {
+        const deadlineAtMs = Date.now() + 25;
+        const controller = new AbortController();
+        const expire = () => {
+          vi.setSystemTime(deadlineAtMs + 1);
+          if (cancel) {
+            controller.abort(new Error("caller cancelled"));
+          }
+        };
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => {
+            if (stage === "transport") {
+              expire();
+              throw new Error("private transport failure");
+            }
+            return new Response(
+              new ReadableStream({
+                cancel: () => {
+                  expire();
+                },
+              }),
+              { status: 503 },
+            );
+          }),
+        );
+        const adapter = createConfiguredFinanceModelAdapter(cfg, { timeoutMs: 1000 });
+        await expect(
+          adapter.invoke({ ...request, deadlineAtMs }, controller.signal),
+        ).rejects.toMatchObject({ code: cancel ? "process_error" : "runtime_timeout" });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("uses an explicit host directory in the original static credential owner", async () => {
     const profileCfg = structuredClone(cfg);
     delete profileCfg.models!.providers!.fixture.apiKey;
