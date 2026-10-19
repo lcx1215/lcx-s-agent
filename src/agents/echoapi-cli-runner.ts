@@ -484,7 +484,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1_$2")
       .replace(/([a-z0-9])([A-Z])/gu, "$1_$2");
     return (
-      /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
+      /(?:^|[_-])(?:token|jwt|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
         words,
       ) || /^(?:apiKey|accessToken|refreshToken|clientSecret|auth(?:[_-]?token)?)$/iu.test(key)
     );

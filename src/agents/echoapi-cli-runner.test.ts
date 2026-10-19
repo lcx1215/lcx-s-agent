@@ -297,7 +297,7 @@ describe("EchoAPI known CI credential value redaction", () => {
     ).toBe(`${key}=[REDACTED]`);
   });
 
-  it.each(["sessionToken", "sessionAPIToken"])(
+  it.each(["sessionToken", "sessionAPIToken", "jwt", "accessJWT"])(
     "masks separately echoed credentials for %s",
     (key) => {
       expect(
