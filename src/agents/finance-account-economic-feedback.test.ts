@@ -82,3 +82,74 @@ it.each(["foreign", "future", "missing"])(
     expect(result).not.toHaveProperty("inheritedGrossPnl");
   },
 );
+
+it("carries newer unresolved fees separately from the historical reconciled costs", () => {
+  const s = source();
+  const gap = {
+    reconciliationRef: "d".repeat(64),
+    reconciliationAt: asOf,
+    reconciliationStatus: "unresolved",
+    latestCashDifference: 0.24,
+    latestFeeCash: -4.29,
+  };
+  const result = projectFinanceAccountEconomicFeedback(
+    {
+      ...s,
+      postRepair: {
+        attribution: { ...s.postRepair.attribution, ...gap },
+      },
+    },
+    "paper",
+    asOf,
+  );
+  expect(result).toMatchObject({
+    ...gap,
+    status: "partial",
+    historicalCashFees: 4.05,
+    inheritedGrossPnl: 61.25,
+    pendingFees: "unknown",
+    modelBill: null,
+  });
+});
+
+it("does not disclose a reconciliation gap beyond the requested cutoff", () => {
+  const s = source();
+  expect(
+    projectFinanceAccountEconomicFeedback(
+      {
+        ...s,
+        postRepair: {
+          attribution: {
+            ...s.postRepair.attribution,
+            reconciliationAt: "2026-10-15T08:00:00.000Z",
+            reconciliationStatus: "unresolved",
+          },
+        },
+      },
+      "paper",
+      asOf,
+    ),
+  ).toMatchObject({ status: "unavailable" });
+});
+
+it("keeps inherited exits driven by new decisions as a nonadditive subset instead of losing sell feedback", () => {
+  const s = source();
+  const r = projectFinanceAccountEconomicFeedback(
+    {
+      ...s,
+      postRepair: {
+        attribution: {
+          ...s.postRepair.attribution,
+          inheritedExitsByNewDecision: { grossPnl: 40 },
+        },
+      },
+    },
+    "paper",
+    asOf,
+  );
+  expect(r).toMatchObject({
+    inheritedGrossPnl: 61.25,
+    inheritedExitDecisionGrossPnl: 40,
+    newDecisionGrossPnl: 0,
+  });
+});

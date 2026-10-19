@@ -295,3 +295,103 @@ it("reads exact hash-bound snapshots and cutoff from the original ledger without
     ),
   ).toHaveProperty("status", "unavailable");
 });
+
+it("retains historical attribution but exposes a newer unresolved cash snapshot and clears it only on reconciliation", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "economic-fee-gap-"));
+  dirs.push(dir);
+  const f = fixture();
+  const append = (at: string, payload: Record<string, unknown>[]) =>
+    appendFinanceBrokerHistory(dir, {
+      kind: "broker_history",
+      accountId: "paper",
+      venue: "alpaca:paper",
+      query: at,
+      cursor: "",
+      payload,
+    });
+  await append("activities:initial", [f.activities[0]]);
+  const opening = await append(`reconciliation:${from}`, [f.opening]);
+  await append(`reconciliation:${through}`, [snapshot(through, 2050, 10, 115)]);
+  const at = "2026-10-15T06:10:00.000Z";
+  const unresolved = await append(`reconciliation:${at}`, [
+    {
+      ...snapshot(at, 2050, 10, 115),
+      status: "unresolved",
+      feesInterpreted: false,
+      cashDifference: 0.24024382,
+      cashComponents: { feeCash: -4.29 },
+    },
+  ]);
+  const anchor = { ...f.anchor, ref: opening.record.ref };
+  const old = await readFinancePaperEconomicAttribution(dir, "paper", anchor, through);
+  expect(old).not.toHaveProperty("reconciliationStatus");
+  const gap = await readFinancePaperEconomicAttribution(dir, "paper", anchor, at);
+  expect(gap).toMatchObject({
+    status: "partially_attributed",
+    through,
+    attributedGrossPnl: 50,
+    reconciliationRef: unresolved.record.ref,
+    reconciliationAt: at,
+    reconciliationStatus: "unresolved",
+    latestCashDifference: 0.24024382,
+    latestFeeCash: -4.29,
+  });
+  const recoveredAt = "2026-10-15T06:20:00.000Z";
+  await append(`reconciliation:${recoveredAt}`, [snapshot(recoveredAt, 2050, 10, 115)]);
+  const recovered = await readFinancePaperEconomicAttribution(dir, "paper", anchor, recoveredAt);
+  expect(recovered).toMatchObject({
+    status: "gross_price_contributions_attributed",
+    through: recoveredAt,
+  });
+  expect(recovered).not.toHaveProperty("reconciliationStatus");
+});
+
+it("uses explicit fee creation time ahead of settlement date without claiming balance posting time", () => {
+  const f = fixture();
+  const lateFee = {
+    id: "late-created",
+    activity_type: "FEE",
+    status: "executed",
+    currency: "USD",
+    net_amount: "-0.24",
+    date: "2026-10-14",
+    created_at: "2026-10-15T05:45:00.000Z",
+  };
+  const r = attributeFinancePaperEconomics({ ...f, activities: [...f.activities, lateFee] });
+  expect(r.fees.periodConfirmedReportedCashFees).toBeCloseTo(3.24);
+  expect(r.fees.feeEvidence.find((e) => e.activityId === lateFee.id)).toHaveProperty(
+    "createdAt",
+    lateFee.created_at,
+  );
+  expect(r.fees.periodTimingBasis).toContain("not_balance_posting");
+});
+
+it.each([
+  {
+    id: "explicit-first",
+    transaction_time: "2026-10-15T04:00:00.000Z",
+    created_at: "2026-10-15T05:45:00.000Z",
+    expected: 3,
+    unknown: [],
+  },
+  { id: "future-created", created_at: "2026-10-15T07:00:00.000Z", expected: 3, unknown: [] },
+  { id: "bad-created", created_at: "2026-10-15T05:45:00", expected: 3, unknown: ["bad-created"] },
+])("preserves fee timing priority and uncertainty for $id", ({ expected, unknown, ...fee }) => {
+  const f = fixture();
+  const r = attributeFinancePaperEconomics({
+    ...f,
+    activities: [
+      ...f.activities,
+      {
+        ...fee,
+        activity_type: "FEE",
+        status: "executed",
+        currency: "USD",
+        net_amount: "-0.24",
+        date: "2026-10-14",
+      },
+    ],
+  });
+  expect(r.fees.periodConfirmedReportedCashFees).toBe(expected);
+  expect(r.fees.periodTimeAmbiguousActivityIds).toEqual(unknown);
+});
