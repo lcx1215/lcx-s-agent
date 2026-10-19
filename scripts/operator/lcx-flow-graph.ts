@@ -3444,7 +3444,7 @@ async function verifySelfRepairDiagnosticFeedback(
   ) {
     throw new Error("feedback_future_candidate_boundary_invalid");
   }
-  const workspace = await fs.realpath(future.workspaceDir);
+  const workspace = path.resolve(future.workspaceDir);
   const safeRead = async (filePath: string) =>
     readFileWithinRoot({
       rootDir: workspace,
@@ -3456,7 +3456,7 @@ async function verifySelfRepairDiagnosticFeedback(
   if (
     sha(root.buffer) !== ref.sha256 ||
     typeof future.latestJsonPath !== "string" ||
-    path.resolve(future.latestJsonPath) !== root.realPath
+    (await fs.realpath(future.latestJsonPath)) !== root.realPath
   ) {
     throw new Error("feedback_future_root_pin_conflict");
   }
