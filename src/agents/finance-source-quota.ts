@@ -426,7 +426,7 @@ export function createFinanceQuotaGuard(
                 refusal.message =
                   `API budget_exhausted: lane "${lane}" has spent ${usedByThisLane}/${allowance.own}` +
                   ` of ${policy.id}'s day budget and the shared reserve is spent` +
-                  ` (${reserveUsed}/${allowance.reserve} used, other lanes active)`;
+                  ` (${reserveUsed}/${allowance.reserve} used, protected shares retained)`;
                 throw refusal;
               }
               usedReserve = need > 0;
