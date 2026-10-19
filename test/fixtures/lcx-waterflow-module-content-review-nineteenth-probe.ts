@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -65,7 +66,7 @@ syncBuiltinESMExports();
   const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
   const args = [
     "--import",
-    guardPath,
+    pathToFileURL(guardPath).href,
     "--import",
     "tsx",
     "scripts/operator/module-learning-pipeline-review.ts",
