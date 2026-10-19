@@ -479,7 +479,8 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
       produced,
       options.scenario === "review_timeout"
         ? {
-            timeoutMs: 25,
+            // Leave room for real pinned-file reads before exercising the model deadline.
+            timeoutMs: 1_000,
             qualityOptions: {
               modelInvoker: async (request, signal) => {
                 const call = { request, abortObserved: signal.aborted };
@@ -492,7 +493,14 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
                   { once: true },
                 );
                 // Only this lowest model response seam is uncooperative. No fake quality receipt.
-                await new Promise<void>((resolve) => setTimeout(resolve, 75));
+                await new Promise<void>((resolve) => {
+                  const finishLate = () => setTimeout(resolve, 75);
+                  if (signal.aborted) {
+                    finishLate();
+                  } else {
+                    signal.addEventListener("abort", finishLate, { once: true });
+                  }
+                });
                 return {};
               },
             },
