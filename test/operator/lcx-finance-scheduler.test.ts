@@ -4421,7 +4421,9 @@ it.each(["absent", "present"] as const)(
     const prepared = await prepareOriginalFinanceModuleMain({
       directory: path.join(directory, "original-prior-research"),
       fault: "quality_failure",
+      asOf: new Date().toISOString(),
     });
+    vi.setSystemTime(new Date(prepared.input.asOf));
     const producer = await runFinanceResearchRun({
       input: prepared.input,
       workspaceDir: prepared.workspace,
@@ -4452,7 +4454,14 @@ it.each(["absent", "present"] as const)(
     const specificGap =
       "offline_quality_contradiction: supplied evidence does not justify the draft";
     expect(oldFeedback.some((gap) => gap.includes(specificGap))).toBe(true);
-    vi.setSystemTime(new Date("2026-10-05T19:30:00Z"));
+    // Follow the original producer's fixed offline session within the feedback TTL.
+    const nextSession = new Date(Date.parse(producer.plan.asOf) + 86_400_000);
+    while ([0, 6].includes(nextSession.getUTCDay())) {
+      nextSession.setUTCDate(nextSession.getUTCDate() + 1);
+    }
+    nextSession.setUTCHours(19, 30, 0, 0);
+    const nextAsOf = nextSession.toISOString();
+    vi.setSystemTime(nextSession);
     const workspace = prepared.workspace;
     vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
     vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspace, "private-next-state"));
@@ -4513,9 +4522,12 @@ it.each(["absent", "present"] as const)(
     fs.writeFileSync(context, JSON.stringify(producer.plan.portfolioContext));
     const ask = producer.plan.ask;
     const sourceAt = producer.plan.asOf;
-    const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-02");
+    const archive = path.join(workspace, "state", "finance-research-runs", sourceAt.slice(0, 10));
     fs.mkdirSync(archive, { recursive: true });
-    const filename = path.join(archive, "2026-10-02T19-30-00-000Z__finance-research-run.json");
+    const filename = path.join(
+      archive,
+      `${sourceAt.replace(/[:.]/gu, "-")}__finance-research-run.json`,
+    );
     // Archive the complete actual return unchanged; only source/model IO above is synthetic.
     const bytes = JSON.stringify(producer, null, 2) + "\n";
     fs.writeFileSync(filename, bytes);
@@ -4535,6 +4547,13 @@ it.each(["absent", "present"] as const)(
       JSON.stringify(readFinanceSchedulerState(directory)),
       [day],
     );
+    const priorFeedbackReadback = readFinanceScheduledResearchFeedback({
+      directory,
+      asOf: new Date().toISOString(),
+      ask,
+      portfolioContext: producer.plan.portfolioContext,
+      signal: new AbortController().signal,
+    });
     let nextFile: { argv: string[]; path: string; bytes: string } | undefined;
     let nextCliOutput: Awaited<ReturnType<typeof runFinanceResearchCli>> | undefined;
     let nextWrittenReadback:
@@ -4606,6 +4625,7 @@ it.each(["absent", "present"] as const)(
             phase,
             sourceSha256,
             oldQualityFeedback: oldFeedback,
+            priorFeedbackReadback,
             capturedChild: nextFile,
             nextEvidenceSha256: createHash("sha256").update(nextFile.bytes).digest("hex"),
             schedulerReadback: readFinanceSchedulerState(directory).lastRun,
@@ -5002,7 +5022,7 @@ it.each(["absent", "present"] as const)(
       expect(nextCliOutput.receipt.status).not.toBe("candidate");
       expect(nextCliOutput.receipt.portfolioPlan).toBeUndefined();
       expect(nextRunnerInputs[0]?.portfolioContext).toMatchObject(producer.plan.portfolioContext!);
-      expect(nextRunnerInputs[0]?.asOf).toBe("2026-10-05T19:30:00.000Z");
+      expect(nextRunnerInputs[0]?.asOf).toBe(nextAsOf);
       expect(
         nextRunnerInputs[0]?.controllerEvidence?.some(
           (item) => item.text.includes(sourceSha256) && item.text.includes(specificGap),
