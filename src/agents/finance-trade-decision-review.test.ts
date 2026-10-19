@@ -2340,6 +2340,13 @@ it.each(["daily", "intraday"])(
       sourceRef: "a".repeat(64),
       closingRef: "c".repeat(64),
       inheritedGrossPnl: 61.25,
+      inheritedExitDecisionGrossPnl: 40,
+      through: "2026-10-15T05:00:00.000Z",
+      reconciliationRef: "d".repeat(64),
+      reconciliationAt: "2026-10-15T06:00:00.000Z",
+      reconciliationStatus: "unresolved" as const,
+      latestCashDifference: 0.24,
+      latestFeeCash: -4.29,
       newDecisionGrossPnl: 0,
       historicalCashFees: 4.05,
       historicalAssetFeeValue: 0.08052845,
@@ -2378,5 +2385,9 @@ it.each(["daily", "intraday"])(
     expect(prompt).toContain("inherited gains do not prove the new method works");
     expect(prompt).toContain("never deduct them twice");
     expect(prompt).toContain("existing rationale and costRiskAssessment");
+    expect(prompt).toContain("nonadditive subset");
+    expect(prompt).toContain("latestFeeCash is signed activity cash");
+    expect(prompt).toContain("reconciliationAt is the separate reconciliation time");
+    expect(prompt).toContain("without treating it as profit or clearing the block");
   },
 );

@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import * as authProfiles from "./auth-profiles.js";
 import {
   createConfiguredFinanceModelAdapter,
   createFinanceModelCallBudget,
@@ -402,6 +403,105 @@ describe("configured research model transport", () => {
     await adapter.invoke(request, new AbortController().signal);
     expect(http).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["own", "inherited", "caller"])(
+    "bounds pending credential resolution by %s cancellation",
+    async (cause) => {
+      vi.useFakeTimers();
+      try {
+        const profileCfg = structuredClone(cfg);
+        delete profileCfg.models!.providers!.fixture.apiKey;
+        vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockReturnValue({
+          version: 1,
+          profiles: {
+            "fixture:default": { type: "api_key", provider: "fixture", key: "fixture-key" },
+          },
+        });
+        let finishAuth: ((value: { apiKey: string; provider: string }) => void) | undefined;
+        const resolveKey = vi.spyOn(authProfiles, "resolveApiKeyForProfile").mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finishAuth = resolve;
+            }),
+        );
+        const http = vi.fn();
+        vi.stubGlobal("fetch", http);
+        const budget = createFinanceModelCallBudget(1);
+        const adapter = createConfiguredFinanceModelAdapter(profileCfg, {
+          timeoutMs: 100,
+          callBudget: budget,
+        });
+        const controller = new AbortController();
+        let outcome: unknown;
+        const pending = adapter
+          .invoke(
+            { ...request, ...(cause === "inherited" ? { deadlineAtMs: Date.now() + 25 } : {}) },
+            controller.signal,
+          )
+          .catch((error: unknown) => {
+            outcome = error;
+          });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(resolveKey).toHaveBeenCalledTimes(1);
+        if (cause === "caller") {
+          controller.abort(new Error("caller cancelled"));
+        }
+        await vi.advanceTimersByTimeAsync(cause === "inherited" ? 25 : 100);
+        expect(outcome).toMatchObject({
+          code: cause === "caller" ? "process_error" : "runtime_timeout",
+        });
+        expect(budget.snapshot().reserved).toBe(0);
+        expect(http).not.toHaveBeenCalled();
+        finishAuth?.({ apiKey: "late-fixture-key", provider: "fixture" });
+        await pending;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(http).not.toHaveBeenCalled();
+        expect(budget.snapshot().reserved).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["empty", "rejected"])(
+    "does not try another credential after wall expiry with a %s lookup",
+    async (result) => {
+      vi.useFakeTimers();
+      try {
+        const profileCfg = structuredClone(cfg);
+        delete profileCfg.models!.providers!.fixture.apiKey;
+        vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockReturnValue({
+          version: 1,
+          profiles: {
+            "fixture:default": { type: "api_key", provider: "fixture", key: "first-key" },
+            "fixture:backup": { type: "api_key", provider: "fixture", key: "second-key" },
+          },
+        });
+        const resolveKey = vi
+          .spyOn(authProfiles, "resolveApiKeyForProfile")
+          .mockImplementationOnce(async () => {
+            vi.setSystemTime(Date.now() + 101);
+            if (result === "rejected") {
+              throw new Error("private lookup error");
+            }
+            return null;
+          })
+          .mockResolvedValue({ apiKey: "late-backup-key", provider: "fixture" });
+        const http = vi.fn();
+        vi.stubGlobal("fetch", http);
+        const adapter = createConfiguredFinanceModelAdapter(profileCfg, { timeoutMs: 100 });
+        await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+          code: "runtime_timeout",
+        });
+        expect(resolveKey).toHaveBeenCalledTimes(1);
+        expect(http).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("reads static auth profiles and environment references without modifying the store", async () => {
     const profileCfg = structuredClone(cfg);
