@@ -10,7 +10,10 @@ import {
   buildFinanceBrokerAccountResearchEvidence,
   writeFinanceNightReviewEvidence,
 } from "../../src/agents/finance-night-review-context.js";
-import { financeResearchPortfolioContextSchema } from "../../src/agents/finance-research-portfolio-plan.js";
+import {
+  financeResearchPortfolioContextSchema,
+  financeScheduledResearchHandoffSchema,
+} from "../../src/agents/finance-research-portfolio-plan.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -98,6 +101,9 @@ export async function probeOriginalResearchInput(params: {
   const context = vm.createContext({
     fs,
     path,
+    createHash,
+    Buffer,
+    financeScheduledResearchHandoffSchema,
     process: { env: {} },
     URL,
     REPO_ROOT: repo,
