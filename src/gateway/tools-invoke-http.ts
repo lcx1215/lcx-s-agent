@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { resolveAgentDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import {
   resolveEffectiveToolPolicy,
@@ -247,6 +248,7 @@ export async function handleToolsInvokeHttpRequest(
 
   // Build tool list (core + plugin tools).
   const allTools = createOpenClawTools({
+    agentDir: resolveAgentDir(cfg, agentId ?? resolveDefaultAgentId(cfg)),
     agentSessionKey: sessionKey,
     agentChannel: messageChannel ?? undefined,
     agentAccountId: accountId,

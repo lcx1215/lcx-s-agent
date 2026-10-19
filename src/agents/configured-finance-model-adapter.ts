@@ -119,7 +119,16 @@ export async function resolveConfiguredFinanceAuth(
   provider: string,
   suppliedStore?: AuthProfileStore,
   agentDir?: string,
+  signal?: AbortSignal,
+  deadlineAtMs?: number,
 ): Promise<{ apiKey: string; source: "configuration" | "environment" | "auth_profile" }> {
+  const assertActive = () => {
+    signal?.throwIfAborted();
+    if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+      throw new ModelAdapterError("runtime_timeout");
+    }
+  };
+  assertActive();
   const inline = getCustomProviderApiKey(cfg, provider);
   if (inline) {
     return { apiKey: inline, source: "configuration" };
@@ -132,6 +141,7 @@ export async function resolveConfiguredFinanceAuth(
     ? structuredClone(suppliedStore)
     : loadAuthProfileStoreForSecretsRuntime(agentDir);
   for (const profileId of resolveAuthProfileOrder({ cfg, store, provider })) {
+    assertActive();
     const credential = store.profiles[profileId];
     if (credential?.type !== "api_key" && credential?.type !== "token") {
       continue;
@@ -142,16 +152,62 @@ export async function resolveConfiguredFinanceAuth(
         store,
         profileId,
         agentDir,
-        readOnly: true,
+        // Only static api_key/token profiles reach this branch. Their original
+        // resolver supports configured exec SecretRefs without OAuth refresh or writes.
       });
+      assertActive();
       if (resolved?.apiKey) {
         return { apiKey: resolved.apiKey, source: "auth_profile" };
       }
     } catch {
+      assertActive();
       /* Try another existing static profile, without exposing secret-resolution errors. */
     }
   }
   throw new ModelAdapterError("provider_auth");
+}
+
+/** Bound secret lookup without allowing a late credential to dispatch a request. */
+async function resolveFinanceAuthBeforeDeadline(
+  cfg: OpenClawConfig,
+  provider: string,
+  agentDir: string | undefined,
+  signal: AbortSignal,
+  deadlineAtMs: number,
+) {
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(new ModelAdapterError("process_error"));
+  const expire = () => controller.abort(new ModelAdapterError("runtime_timeout"));
+  let rejectAbort: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort?.(controller.signal.reason);
+  controller.signal.addEventListener("abort", onAbort, { once: true });
+  signal.addEventListener("abort", relayAbort, { once: true });
+  const timer = setTimeout(expire, Math.max(0, deadlineAtMs - Date.now()));
+  if (signal.aborted) {
+    relayAbort();
+  } else if (Date.now() >= deadlineAtMs) {
+    expire();
+  }
+  try {
+    return await Promise.race([
+      aborted,
+      resolveConfiguredFinanceAuth(
+        cfg,
+        provider,
+        undefined,
+        agentDir,
+        controller.signal,
+        deadlineAtMs,
+      ),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", relayAbort);
+    controller.signal.removeEventListener("abort", onAbort);
+  }
 }
 
 /** Repair only terminal delimiters after a complete string; never add field values. */
@@ -358,7 +414,14 @@ export function createConfiguredFinanceModelAdapter(
             : "prompt_input_invalid",
         );
       }
-      const auth = await resolveConfiguredFinanceAuth(cfg, provider, undefined, options.agentDir);
+      const auth = await resolveFinanceAuthBeforeDeadline(
+        cfg,
+        provider,
+        options.agentDir,
+        signal,
+        deadlineAtMs,
+      );
+      assertActive();
       accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
       const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
       if (cooldownUntil > Date.now()) {
