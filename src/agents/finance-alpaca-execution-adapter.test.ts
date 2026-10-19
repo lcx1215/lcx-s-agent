@@ -15,6 +15,7 @@ import {
   readAlpacaPaperTerminalOrder,
   AlpacaOrderUncertainError,
   AlpacaOrderRejectedError,
+  AlpacaProtectionUncertainError,
   type AlpacaExecutionAdapterOptions,
 } from "./finance-alpaca-execution-adapter.js";
 import type { FinanceExecutionIntent } from "./finance-execution-adapter.js";
@@ -650,6 +651,7 @@ it.each(["BTC/USD", "ETH/USD"])(
                 ...body,
                 id: "crypto-protection",
                 status: "new",
+                filled_qty: "0",
               }),
             }
           : {
@@ -1354,6 +1356,7 @@ describe("protected crypto recovery", () => {
       qty: "1",
       time_in_force: "gtc",
       status: "new",
+      filled_qty: "0",
       stop_price: "90",
       limit_price: "89",
     };
@@ -1379,6 +1382,85 @@ describe("protected crypto recovery", () => {
       });
     return { intent, entry, protection, read, recover };
   }
+
+  it.each([
+    { status: "partially_filled", filled_qty: "0.5" },
+    { status: "filled", filled_qty: "1" },
+    { status: "calculated", filled_qty: "1" },
+    { status: "filled", filled_qty: "0" },
+    { status: "new", filled_qty: "0.1" },
+    { status: "accepted", filled_qty: "0.1" },
+    { status: "pending_new", filled_qty: "0.1" },
+    { filled_qty: undefined },
+    { filled_qty: null },
+    { filled_qty: "" },
+    { filled_qty: "invalid" },
+  ])(
+    "leaves consumed or ambiguous protection unresolved on submit and response loss: %j",
+    async (patch) => {
+      stubCredentials(PAPER);
+      for (const responseLost of [false, true]) {
+        const f = fixture();
+        Object.assign(f.protection, patch);
+        let protection: Record<string, unknown> | undefined;
+        const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(
+          async (_url, init) => {
+            const body = JSON.parse(init.body);
+            if (body.type !== "stop_limit") {
+              return { status: 200, body: JSON.stringify(f.entry) };
+            }
+            protection = { ...body, ...f.protection };
+            if (responseLost) {
+              throw new Error("response lost");
+            }
+            return { status: 200, body: JSON.stringify(protection) };
+          },
+        );
+        const adapter = createAlpacaExecutionAdapter({
+          instruments: ["BTC/USD"],
+          postJson,
+          statusFetch: async () => ({ status: 200, body: JSON.stringify(protection ?? f.entry) }),
+          fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+        });
+        await expect(
+          adapter.execute(f.intent, new AbortController().signal),
+        ).rejects.toBeInstanceOf(AlpacaProtectionUncertainError);
+        expect(postJson).toHaveBeenCalledTimes(2);
+      }
+    },
+  );
+
+  it.each(["new", "accepted", "pending_new"])(
+    "preserves zero-filled submitted protection in %s state",
+    async (status) => {
+      stubCredentials(PAPER);
+      const f = fixture();
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: ["BTC/USD"],
+        statusFetch: async () => ({ status: 200, body: JSON.stringify(f.entry) }),
+        fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+        postJson: async (_url, init) => {
+          const body = JSON.parse(init.body);
+          return {
+            status: 200,
+            body: JSON.stringify(
+              body.type === "stop_limit"
+                ? {
+                    ...body,
+                    ...f.protection,
+                    status,
+                  }
+                : f.entry,
+            ),
+          };
+        },
+      });
+      await expect(adapter.execute(f.intent, new AbortController().signal)).resolves.toMatchObject({
+        filledQuantity: 1,
+        protectionOrder: { status },
+      });
+    },
+  );
 
   it.each(["BTC/USD", "ETH/USD"])(
     "recovers %s entry and protection response loss without duplicate orders",
@@ -1447,6 +1529,15 @@ describe("protected crypto recovery", () => {
     { status: "canceled" },
     { status: "accepted" },
     { status: "pending_new" },
+    { status: "partially_filled", filled_qty: "0.5" },
+    { status: "filled", filled_qty: "1" },
+    { status: "calculated", filled_qty: "1" },
+    { status: "filled", filled_qty: "0" },
+    { filled_qty: "0.1" },
+    { filled_qty: undefined },
+    { filled_qty: null },
+    { filled_qty: "" },
+    { filled_qty: "invalid" },
   ])("blocks read-only restart with mismatched or unconfirmed protection: %j", async (patch) => {
     const f = fixture();
     Object.assign(f.protection, patch);

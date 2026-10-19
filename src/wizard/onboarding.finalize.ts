@@ -24,8 +24,10 @@ import type { OnboardOptions } from "../commands/onboard-types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
+import { isConfiguredLocalGatewayTlsUrl } from "../gateway/local-tls-url.js";
 import { CANONICAL_PROJECT_URL } from "../infra/canonical-identity.js";
 import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
+import { readGatewayTlsFingerprint } from "../infra/tls/gateway.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
 import { runTui } from "../tui/tui.js";
@@ -344,9 +346,15 @@ export async function finalizeOnboardingWizard(
     });
 
     if (hatchChoice === "tui") {
+      const tlsFingerprint =
+        nextConfig.gateway?.tls?.enabled === true &&
+        isConfiguredLocalGatewayTlsUrl(nextConfig, links.wsUrl)
+          ? await readGatewayTlsFingerprint(nextConfig.gateway.tls)
+          : undefined;
       restoreTerminalState("pre-onboarding tui", { resumeStdinIfPaused: true });
       await runTui({
         url: links.wsUrl,
+        tlsFingerprint,
         token: settings.authMode === "token" ? settings.gatewayToken : undefined,
         password: settings.authMode === "password" ? resolvedGatewayPassword : "",
         // Safety: onboarding TUI should not auto-deliver to lastProvider/lastTo.

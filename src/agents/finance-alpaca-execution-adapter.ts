@@ -303,6 +303,16 @@ function matchesCryptoProtection(
   );
 }
 
+// Receipts currently account only for the entry fill. A consumed protective sell needs
+// broker-history reconciliation before that receipt can safely confirm a position.
+function hasUnconsumedCryptoProtection(order: AlpacaOrderResponse, allowPending: boolean): boolean {
+  return (
+    asFiniteNumber(order.filled_qty) === 0 &&
+    (order.status === "new" ||
+      (allowPending && (order.status === "accepted" || order.status === "pending_new")))
+  );
+}
+
 /** Read-only restart recovery; 404 and nonterminal states never authorize resubmission. */
 export async function readAlpacaPaperTerminalOrder(options: {
   accountId: string;
@@ -377,7 +387,7 @@ export async function readAlpacaPaperTerminalOrder(options: {
   const status = typeof protection.status === "string" ? protection.status : "";
   if (
     !matchesCryptoProtection(protection, intent, protectionClientOrderId, fill.filledQuantity) ||
-    !["new", "partially_filled", "filled", "calculated"].includes(status)
+    !hasUnconsumedCryptoProtection(protection, false)
   ) {
     throw new Error("paper reconciliation crypto protection identity or state mismatch");
   }
@@ -1129,18 +1139,9 @@ export function createAlpacaExecutionAdapter(
             const orderId = String(payload.id);
             knownProtectionOrderId = orderId;
             const status = typeof payload.status === "string" ? payload.status : "";
-            if (
-              ![
-                "new",
-                "accepted",
-                "pending_new",
-                "partially_filled",
-                "filled",
-                "calculated",
-              ].includes(status)
-            ) {
+            if (!hasUnconsumedCryptoProtection(payload, true)) {
               throw new Error(
-                `protective order returned unsupported status ${status || "missing"}`,
+                `protective order returned consumed or unverified state ${status || "missing"}`,
               );
             }
             return Object.freeze({

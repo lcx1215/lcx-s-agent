@@ -58,6 +58,17 @@ function dateMs(value: string | undefined) {
     : NaN;
 }
 
+/** Undefined means the date or published calendar year is unverified. */
+export function isFinanceUsEquitySessionDate(date: string): boolean | undefined {
+  const time = dateMs(date);
+  const closures = holidays[date.slice(0, 4)];
+  if (!Number.isFinite(time) || !closures) {
+    return undefined;
+  }
+  const weekday = new Date(time).getUTCDay();
+  return weekday !== 0 && weekday !== 6 && !closures.includes(date.slice(5));
+}
+
 /** Calendar completeness is separate from freshness and cross-source price agreement. */
 export function assessFinanceHistoryCoverage(
   request: FinanceMarketCollectionRequest,
@@ -97,7 +108,8 @@ export function assessFinanceHistoryCoverage(
   for (let time = from; time <= to; time += dayMs) {
     const date = new Date(time);
     const label = date.toISOString().slice(0, 10);
-    if (equity && !holidays[label.slice(0, 4)]) {
+    const equitySession = equity ? isFinanceUsEquitySessionDate(label) : undefined;
+    if (equity && equitySession === undefined) {
       return {
         status: "unverified" as const,
         gaps: ["historical_calendar_year_unverified"],
@@ -105,12 +117,7 @@ export function assessFinanceHistoryCoverage(
         providers: [],
       };
     }
-    if (
-      crypto ||
-      (date.getUTCDay() !== 0 &&
-        date.getUTCDay() !== 6 &&
-        !holidays[label.slice(0, 4)].includes(label.slice(5)))
-    ) {
+    if (crypto || equitySession) {
       expected.push(label);
     }
   }
