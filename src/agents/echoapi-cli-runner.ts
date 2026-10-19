@@ -483,11 +483,20 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
     /(?:^|[_-])(?:token|signature|sig|secret|password|passwd|key|authorization|credential)$/iu.test(
       key,
     ) || /^(?:apiKey|accessToken|refreshToken|clientSecret|auth(?:[_-]?token)?)$/iu.test(key);
-  const addQueryValue = (key: string, value: string, raw?: string) => {
+  const addQueryValue = (key: string, value: string, raw?: string, rawKey?: string) => {
     // Ordinary identifiers need a field/value context; their presence in a
     // query alone does not make unrelated diagnostic words credentials.
     const bare = isCredentialKey(key);
-    contextualKeys.add(key);
+    for (const form of [
+      key,
+      encodeURIComponent(key),
+      new URLSearchParams({ [key]: "v" }).toString().split("=")[0],
+      rawKey,
+    ]) {
+      if (form) {
+        contextualKeys.add(form);
+      }
+    }
     for (const form of [
       value,
       encodeURIComponent(value),
@@ -509,7 +518,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
         const separator = part.indexOf("=");
         if (separator >= 0 && part.slice(separator + 1)) {
           for (const [key, value] of new URLSearchParams(part)) {
-            addQueryValue(key, value, part.slice(separator + 1));
+            addQueryValue(key, value, part.slice(separator + 1), part.slice(0, separator));
           }
         }
       }
@@ -601,26 +610,13 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
     redacted = redacted.split(`${urlPlaceholder}?[REDACTED_QUERY]`).join("[REDACTED]");
   }
   const barePattern = () => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${bare})(?![\\p{L}\\p{N}_])`, "gu");
-  if (bare) {
-    // Preserve field names only until their values have been sanitized. A value
-    // followed by punctuation is not necessarily a field name (userinfo, prose).
-    const fieldSeparator = new RegExp(`^${quote}\\s*[:=]`, "u");
-    redacted = redacted.replace(barePattern(), (match: string, offset: number, text: string) =>
-      /^(?:authorization|bearer|token|api[_-]?key|secret|password)$/iu.test(match) &&
-      fieldSeparator.test(text.slice(offset + match.length))
-        ? match
-        : "[REDACTED]",
-    );
-  }
-  redacted = redacted
-    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
-    .replace(
-      new RegExp(
-        `(${quote}(?:token|api[_-]?key|secret|password)${quote}\\s*[:=]\\s*${quote})[^"',;\\s}]+`,
-        "giu",
-      ),
-      "$1[REDACTED]",
-    );
+  // Sanitize auth labels before bare values can change those labels. Complete
+  // quoted values own their delimiters; the fallback still masks malformed text.
+  redacted = redacted.replace(
+    /((?:\\*["'])?(?:token|api[_-]?key|secret|password|authorization)(?:\\*["'])?\s*[:=]\s*(?:bearer\s+)?|bearer\s+)(?:((?:\\)*["'])(?:(?!\2)(?:\\.|[^\\]))*\2|((?:\\*["'])?)[^"',;\s}]+)/giu,
+    (_match: string, prefix: string, closedQuote?: string, openQuote?: string) =>
+      `${prefix}${closedQuote ?? openQuote ?? ""}[REDACTED]${closedQuote ?? ""}`,
+  );
   if (bare) {
     const recordPrefix = new RegExp(`(?:^|[{\\[,;\\n])\\s*${quote}$`, "u");
     const hiddenFieldValue = new RegExp(`^${quote}\\s*[:=]\\s*${quote}\\[REDACTED\\]`, "u");

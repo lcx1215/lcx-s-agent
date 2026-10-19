@@ -270,6 +270,33 @@ describe("EchoAPI known CI credential value redaction", () => {
     ).toBe(`${key}=[REDACTED] status 401`);
   });
 
+  it("preserves the bearer label until its following credential is hidden", () => {
+    const output = redactEchoApiText(
+      "bearer second-secret status 401",
+      "https://open.echoapi.com/ci?signature=bearer",
+    );
+    expect(output).not.toContain("second-secret");
+    expect(output).toContain("401");
+  });
+
+  it.each([
+    ['token="second;secret"', 'token="[REDACTED]"'],
+    ['authorization="second;secret"', 'authorization="[REDACTED]"'],
+    ['authorization: Bearer "second;secret"', 'authorization: Bearer "[REDACTED]"'],
+    ['token=\\"second;secret\\"', 'token=\\"[REDACTED]\\"'],
+  ])("redacts the complete quoted credential in %s", (input, expected) => {
+    expect(redactEchoApiText(input)).toBe(expected);
+  });
+
+  it.each(["ci%5Fid", "ci+id", "ci%20id"])("redacts the encoded contextual key %s", (key) => {
+    expect(
+      redactEchoApiText(
+        `${key}=private-project`,
+        `https://open.echoapi.com/ci?${key}=private-project`,
+      ),
+    ).toBe(`${key}=[REDACTED]`);
+  });
+
   it("removes decoded URL credential values", () => {
     const output = redactEchoApiText(
       "credentials were fixture@user and fixture/password",
