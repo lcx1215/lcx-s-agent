@@ -905,3 +905,54 @@ it.each(["json", "terminal"] as const)(
     }
   },
 );
+
+it.each(["fetch", "body"] as const)(
+  "distinguishes timer expiry and caller cancellation while %s is pending",
+  async (phase) => {
+    vi.useFakeTimers();
+    try {
+      for (const mode of ["own", "host", "caller"] as const) {
+        const startedAtMs = Date.now();
+        const caller = new AbortController();
+        const http = vi.fn<typeof fetch>(async (_url, init) => {
+          const signal = init?.signal;
+          if (!signal) {
+            throw new Error("fixture signal missing");
+          }
+          if (phase === "body") {
+            return new Response(new ReadableStream<Uint8Array>());
+          }
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        });
+        vi.stubGlobal("fetch", http);
+        const isolated = structuredClone(cfg);
+        isolated.models!.providers!.fixture.apiKey = `timer-${phase}-${mode}-fixture`;
+        const adapter = createConfiguredFinanceModelAdapter(isolated, { timeoutMs: 1_000 });
+        const outcome = adapter
+          .invoke(
+            mode === "host" ? { ...request, deadlineAtMs: startedAtMs + 100 } : request,
+            caller.signal,
+          )
+          .catch((error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(http).toHaveBeenCalledOnce();
+        if (phase === "body") {
+          expect(adapter.inspectCall?.()?.stage).toBe("response_received");
+        }
+        if (mode === "caller") {
+          caller.abort(new Error("fixture caller cancellation"));
+        } else {
+          await vi.advanceTimersByTimeAsync(mode === "host" ? 101 : 1001);
+        }
+        expect(await outcome).toMatchObject({
+          code: mode === "caller" ? "process_error" : "runtime_timeout",
+        });
+        expect(adapter.inspectCall?.()?.stage).toBe("cancelled");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

@@ -344,6 +344,8 @@ export class LogicalAgentModelRouter {
     signal: AbortSignal;
     /** A caller task can expire before an individual role's timeout. */
     deadlineAtMs?: number;
+    /** Host-owned classifier for an inherited task deadline's abort reason. */
+    isDeadlineAbort?: (reason: unknown) => boolean;
     dispatch: Dispatch;
     record: (receipt: ModelCallReceipt) => void;
   }): Promise<unknown> {
@@ -384,14 +386,20 @@ export class LogicalAgentModelRouter {
       let adapterInvoked = false;
       let observation: ModelCallObservation | undefined;
       const controller = new AbortController();
-      const abort = () => controller.abort();
+      const abort = () => {
+        if (params.isDeadlineAbort?.(params.signal.reason)) {
+          reason = "deadline";
+        }
+        controller.abort(params.signal.reason);
+      };
       params.signal.addEventListener("abort", abort, { once: true });
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         if (params.signal.aborted) {
-          outcome = "aborted";
-          reason = "cancelled";
-          throw new Error("model call cancelled");
+          const expired = params.isDeadlineAbort?.(params.signal.reason) === true;
+          outcome = expired ? "timed_out" : "aborted";
+          reason = expired ? "deadline" : "cancelled";
+          throw new Error("model call cancelled or timed out");
         }
         const anyTool = params.capabilities.allowedTools.includes(LOGICAL_AGENT_ANY_TOOL);
         const allowed =
