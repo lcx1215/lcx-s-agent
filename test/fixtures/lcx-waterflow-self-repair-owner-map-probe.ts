@@ -236,7 +236,7 @@ export async function probeOriginalSelfRepairOwnerMap(params: {
   const snapshot = createLcxRunSnapshot({
     observedAt: new Date().toISOString(),
     sourceCommit: commit.stdout.trim(),
-    sourceBranch: branch.stdout.trim(),
+    sourceBranch: branch.stdout.trim() || "detached",
     authorityOwner: "lcx-governance-autopilot",
   });
   const parentRunId = createLcxRunId({

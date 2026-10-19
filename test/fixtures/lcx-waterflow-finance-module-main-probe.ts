@@ -231,7 +231,7 @@ export async function prepareOriginalFinanceModuleMain(params: {
             adjusted: false,
             fieldDefinition: "private fixture price",
             sourceTimestamp: asOf,
-            sourceUrlOrArtifact: `fixture://${role}/SPY`,
+            sourceUrlOrArtifact: `fixture://${role}/${request.instrument}`,
           },
         ],
       };
@@ -261,7 +261,7 @@ export async function prepareOriginalFinanceModuleMain(params: {
           sourceTimestamp: `${date}T20:00:00.000Z`,
           observedAt: asOf,
           delayStatus: "official_lagged" as const,
-          sourceUrlOrArtifact: "fixture://private-eod/SPY",
+          sourceUrlOrArtifact: `fixture://private-eod/${request.instrument}`,
           data: { date, open: close, high: close, low: close, close, volume: 100 },
         };
       });
@@ -310,7 +310,12 @@ export async function prepareOriginalFinanceModuleMain(params: {
       if (!active) {
         throw new Error("original request lost the exact private rule");
       }
-      const market = request.evidence.find((entry) => entry.id === "finance-model:SPY");
+      const markets = request.evidence.filter((entry) => entry.id.startsWith("finance-model:"));
+      const market = markets.length === 1 ? markets[0] : undefined;
+      const instrument = market?.id.slice("finance-model:".length);
+      if (market && (!instrument || !market.text.startsWith(`${instrument}\n`))) {
+        throw new Error("original model input market identity conflicts with source body");
+      }
       const historyWindow = market?.text.match(
         /\d+ closes \d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}/u,
       )?.[0];
@@ -320,7 +325,7 @@ export async function prepareOriginalFinanceModuleMain(params: {
         market?.text.match(/"sourceTimestamp":"([^"]+)"/u)?.[1] ??
         (params.dailyExecutableRule ? "not_requested_research_close_only" : undefined);
       if (!market || !historyWindow || !observedCount || !quoteTimestamp) {
-        throw new Error("original model input lacks dated SPY source observations");
+        throw new Error("original model input lacks unique dated target source observations");
       }
       const evidenceSummary = `[${market.id}] ${historyWindow}; ${observedCount}; quote sourceTimestamp=${quoteTimestamp}. Rule ${active.ruleId} bounds the research budget to ${active.body.frozenRule.researchBudgetFraction}; account profitability and execution readiness remain unknown.`;
       sourceBodyUses.push({
@@ -359,12 +364,12 @@ export async function prepareOriginalFinanceModuleMain(params: {
             baseCase: "retain the controller-bounded allocation while evidence remains valid",
             bullCase: "source history recovers without increasing the controller budget",
             bearCase: "drawdown invalidates the source-backed research hypothesis",
-            keyCausalChain: `SPY ${observedCount} (${historyWindow}; quote ${quoteTimestamp}) -> rule ${active.ruleId} budget boundary -> bounded exposure hypothesis, not established causation`,
+            keyCausalChain: `${instrument} ${observedCount} (${historyWindow}; quote ${quoteTimestamp}) -> rule ${active.ruleId} budget boundary -> bounded exposure hypothesis, not established causation`,
             upstreamDrivers: [
-              "controller-declared SPY budget and observed historical close levels",
+              `controller-declared budget and observed ${instrument} historical close levels`,
             ],
             downstreamAssetImpacts: [
-              "SPY sleeve exposure and possible drawdown within the declared budget",
+              `${instrument} research exposure and possible drawdown within the declared budget`,
             ],
             confidenceOrConviction: "medium",
             whatChangesMyMind: `Invalidate on source loss or contradiction to ${historyWindow}, quote time ${quoteTimestamp}, or rule ${active.ruleId} budget boundary.`,
@@ -377,7 +382,7 @@ export async function prepareOriginalFinanceModuleMain(params: {
       return {
         kind: "artifact",
         artifact: {
-          answer: `Under the supplied dated evidence, this three-month SPY strategy candidate retains only the private rule budget if the supplied evidence remains valid. Stop the research hypothesis on source loss or contradictory drawdown; this is no order permission.`,
+          answer: `Under the supplied dated evidence, this three-month ${instrument} research candidate retains only the private rule budget if the supplied evidence remains valid. Stop the research hypothesis on source loss or contradictory drawdown; this is no order permission.`,
           claims: [
             {
               id: "controller-budget",

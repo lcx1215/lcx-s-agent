@@ -160,7 +160,7 @@ export async function consumeGovernance(
   const snapshot = createLcxRunSnapshot({
     observedAt: new Date().toISOString(),
     sourceCommit: gitCommit.stdout.trim(),
-    sourceBranch: gitBranch.stdout.trim(),
+    sourceBranch: gitBranch.stdout.trim() || "detached",
     authorityOwner: "lcx-governance-autopilot",
   });
   const parentRunId = createLcxRunId({
