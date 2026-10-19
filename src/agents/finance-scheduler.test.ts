@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -125,21 +126,45 @@ describe("durable scheduler claims on the unified lifecycle", () => {
   );
   it("runs the trading cycle after an accepted research plan", async () => {
     const contextPath = writeResearchContext();
-    mocks.run.mockResolvedValueOnce({
-      exitCode: 0,
-      status: "succeeded",
-      ok: true,
-      stdout: JSON.stringify({
-        status: "candidate",
-        plan: { asOf: "2026-09-22T19:30:00.000Z" },
-        gates: ["source", "committee", "quality", "module_execution"].map((id) => ({
-          id,
-          passed: true,
-        })),
-        portfolioPlanWritten: path.join(root, "research-portfolio-plan-latest.json"),
-      }),
-      stderr: "",
-      outputTruncated: false,
+    mocks.run.mockImplementationOnce(async ({ argv }: { argv: string[] }) => {
+      const handoffPath = argv[argv.indexOf("--controller-handoff") + 1];
+      const handoffBytes = fs.readFileSync(handoffPath);
+      const handoff = JSON.parse(handoffBytes.toString("utf8"));
+      const planPath = argv[argv.indexOf("--portfolio-plan-out") + 1];
+      // The child is mocked here; exercise the scheduler's actual producer/input binding.
+      const planBytes = Buffer.from(JSON.stringify({ fixture: "accepted child plan" }));
+      fs.writeFileSync(planPath, planBytes);
+      return {
+        exitCode: 0,
+        status: "succeeded",
+        ok: true,
+        stdout: JSON.stringify({
+          status: "candidate",
+          plan: { asOf: "2026-09-22T19:30:00.000Z" },
+          gates: ["source", "committee", "quality", "module_execution"].map((id) => ({
+            id,
+            passed: true,
+          })),
+          portfolioPlanWritten: planPath,
+          portfolioPlanWrite: {
+            path: planPath,
+            sha256: createHash("sha256").update(planBytes).digest("hex"),
+            asOf: handoff.sourceScope.asOf,
+            accountId: handoff.sourceScope.accountId,
+            venue: handoff.sourceScope.venue,
+          },
+          controllerHandoff: {
+            ...handoff,
+            producer: {
+              path: handoffPath,
+              sha256: createHash("sha256").update(handoffBytes).digest("hex"),
+              bytes: handoffBytes.length,
+            },
+          },
+        }),
+        stderr: "",
+        outputTruncated: false,
+      };
     });
     expect(
       await runFinanceScheduler([

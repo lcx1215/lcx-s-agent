@@ -203,7 +203,13 @@ describe("finance night review context", () => {
         omittedDecisionCount: 0,
       });
       const review = JSON.parse(evidence[0].text).profitReview;
-      expect(review.questions).toHaveLength(6);
+      expect(review.questions).toHaveLength(8);
+      expect(review.questions).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Use accountPerformance"),
+          expect.stringContaining("Use methodPerformance"),
+        ]),
+      );
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
       const portfolio = JSON.parse(evidence[2].text);
       expect(portfolio.costsReconciled).toBe(false);
@@ -226,6 +232,7 @@ describe("finance night review context", () => {
       // account reader selects only sealed snapshots available at the cutoff.
       expect(JSON.parse(sharedBrokerSummary.text)).toMatchObject({
         ...brokerSummary,
+        accountPerformance: [{ status: "unavailable", reason: "no_account_economic_observation" }],
         accounts: brokerSummary.accounts.filter(
           (account: { status: string }) => account.status !== "snapshot_outside_cutoff",
         ),
@@ -233,6 +240,7 @@ describe("finance night review context", () => {
           (snapshot: { accountId: string }) => snapshot.accountId !== "future-account",
         ),
       });
+      expect(brokerSummary.accountPerformance).toHaveLength(2);
       expect(sharedBrokerSummary.text).not.toContain("future-account");
       expect(brokerSummary).not.toHaveProperty("executionAuthority");
       expect(brokerSummary.positionSnapshots[0]).not.toHaveProperty("brokerCash");

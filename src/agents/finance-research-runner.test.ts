@@ -2834,14 +2834,23 @@ it("plans every registered source independently and loads configured source cred
       "fmp_eod_bulk",
       "fmp_earning_call_transcript",
       "fmp_institutional_ownership_symbol_positions_summary",
+      "deribit_public_option_summary",
+      "deribit_public_future_summary",
     ]);
     expect(inventory.unavailableProviders).toEqual([]);
-    expect(receipt.plan.expectedJobCount).toBe(
-      inventory.registeredAdapterIds.length - inventory.unplannedAdapterIds.length,
+    // The two Deribit probes remain diagnostic jobs without a concrete contract target.
+    const unboundProbes = receipt.plan.sourceInspections.filter(
+      (job) => job.candidateAdapterIds.length === 0,
     );
-    expect(
-      receipt.plan.sourceInspections.every((job) => job.candidateAdapterIds.length === 1),
-    ).toBe(true);
+    expect(unboundProbes).toHaveLength(2);
+    expect(receipt.plan.expectedJobCount).toBe(
+      inventory.registeredAdapterIds.length -
+        inventory.unplannedAdapterIds.length +
+        unboundProbes.length,
+    );
+    expect(receipt.plan.sourceInspections.every((job) => job.candidateAdapterIds.length <= 1)).toBe(
+      true,
+    );
     expect(
       new Set(receipt.plan.sourceInspections.flatMap((job) => job.candidateAdapterIds)).size,
     ).toBe(inventory.registeredAdapterIds.length - inventory.unplannedAdapterIds.length);
