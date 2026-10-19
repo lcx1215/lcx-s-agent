@@ -558,7 +558,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       const keys = pattern(contextualKeys);
       redacted = redacted.replace(
         new RegExp(
-          `((?:^|[\\s?&({,])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?=$|[\\s"'&,;.)}!?\\]])`,
+          `((?:^|[^\\p{L}\\p{N}_-])["']?(?:${keys})["']?\\s*[:=]\\s*["']?)(?:${all})(?![\\p{L}\\p{N}_-])`,
           "gu",
         ),
         "$1[REDACTED]",

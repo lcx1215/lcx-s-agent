@@ -181,6 +181,28 @@ describe("EchoAPI known CI credential value redaction", () => {
     ).toBe(`${key}=[REDACTED]`);
   });
 
+  it.each([
+    ["[", "]"],
+    ["<", ">"],
+    ["|", "|"],
+  ])("redacts a complete contextual field enclosed by %s%s", (before, after) => {
+    expect(
+      redactEchoApiText(
+        `${before}ci_id=private-project${after}`,
+        "https://open.echoapi.com/ci?ci_id=private-project",
+      ),
+    ).toBe(`${before}ci_id=[REDACTED]${after}`);
+  });
+
+  it.each(["xci_id=private-project", "ci_id=private-project-extended"])(
+    "does not treat a partial field or value as the supplied identifier: %s",
+    (text) => {
+      expect(redactEchoApiText(text, "https://open.echoapi.com/ci?ci_id=private-project")).toBe(
+        text,
+      );
+    },
+  );
+
   it("removes decoded URL credential values", () => {
     const output = redactEchoApiText(
       "credentials were fixture@user and fixture/password",
