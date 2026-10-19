@@ -298,13 +298,12 @@ export class ArtifactStore {
             .get(),
         );
       }
-      return new ArtifactStore(
-        db,
-        fs.realpathSync.native(params.workspaceDir),
-        fs.realpathSync(params.workspaceDir),
-        readOnly,
-        ftsAvailable,
-      );
+      const workspaceDir = fs.realpathSync.native(params.workspaceDir);
+      const legacyWorkspaceDir = fs.realpathSync(params.workspaceDir);
+      if (fs.realpathSync.native(legacyWorkspaceDir) !== workspaceDir) {
+        throw new ArtifactStoreError("artifact_workspace_changed_during_open");
+      }
+      return new ArtifactStore(db, workspaceDir, legacyWorkspaceDir, readOnly, ftsAvailable);
     } catch (error) {
       db?.close();
       if (error instanceof ArtifactStoreError) {

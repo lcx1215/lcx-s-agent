@@ -300,6 +300,23 @@ describe("owner artifacts in the existing memory database", () => {
     }
   });
 
+  it("rejects an open when native and legacy resolution reach different workspaces", async () => {
+    const other = path.join(root, "other-namespace");
+    await fs.mkdir(other);
+    const nativeRealpath = fsSync.realpathSync.native;
+    const resolve = vi.spyOn(fsSync, "realpathSync").mockReturnValue(nativeRealpath(other));
+    Object.assign(resolve, { native: nativeRealpath });
+    let opened: ArtifactStore | undefined;
+    try {
+      expect(() => {
+        opened = ArtifactStore.open({ dbPath, workspaceDir: root, readOnly: true });
+      }).toThrow("artifact_workspace_changed_during_open");
+    } finally {
+      resolve.mockRestore();
+      opened?.close();
+    }
+  });
+
   it("does not index a truncated envelope's opaque media prefix", async () => {
     const encoded = JSON.stringify({
       schemaVersion: "lcx_agent_artifact_v1",
