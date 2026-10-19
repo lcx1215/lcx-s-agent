@@ -137,10 +137,19 @@ export async function resolveConfiguredFinanceAuth(
   if (env) {
     return { apiKey: env, source: "environment" };
   }
-  const store = suppliedStore
-    ? structuredClone(suppliedStore)
-    : loadAuthProfileStoreForSecretsRuntime(agentDir);
-  for (const profileId of resolveAuthProfileOrder({ cfg, store, provider })) {
+  let store: AuthProfileStore;
+  let profileIds: string[];
+  try {
+    store = suppliedStore
+      ? structuredClone(suppliedStore)
+      : loadAuthProfileStoreForSecretsRuntime(agentDir);
+    profileIds = resolveAuthProfileOrder({ cfg, store, provider });
+  } catch (error) {
+    assertActive();
+    throw error;
+  }
+  assertActive();
+  for (const profileId of profileIds) {
     assertActive();
     const credential = store.profiles[profileId];
     if (credential?.type !== "api_key" && credential?.type !== "token") {
@@ -157,6 +166,7 @@ export async function resolveConfiguredFinanceAuth(
       /* Try another existing static profile, without exposing secret-resolution errors. */
     }
   }
+  assertActive();
   throw new ModelAdapterError("provider_auth");
 }
 
@@ -415,7 +425,13 @@ export function createConfiguredFinanceModelAdapter(
       );
       assertActive();
       accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
-      const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      let cooldownUntil: number;
+      try {
+        cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      } catch (error) {
+        assertActive();
+        throw error;
+      }
       assertActive();
       if (cooldownUntil > Date.now()) {
         callState = {

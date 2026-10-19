@@ -1118,64 +1118,96 @@ it.each(["fetch", "body"] as const)(
   },
 );
 
-it.each(["prompt_failure", "cooldown_lookup", "late_http_402", "caller_late_http_402"] as const)(
-  "preserves the deadline before %s can change the adapter outcome",
-  async (stage) => {
+it.each([
+  "prompt_failure",
+  "cooldown_lookup",
+  "cooldown_lookup_failure",
+  "late_http_402",
+  "caller_late_http_402",
+] as const)("preserves the deadline before %s can change the adapter outcome", async (stage) => {
+  const started = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(started);
+  const config = structuredClone(cfg);
+  config.models!.providers!.fixture.apiKey = `deadline-stage-${stage}`;
+  const directory = path.join(os.tmpdir(), "fixture-virtual-cooldown");
+  const read = fs.readFileSync.bind(fs);
+  if (stage.startsWith("cooldown_lookup")) {
+    vi.spyOn(fs, "readFileSync").mockImplementation((filename, options) => {
+      if (typeof filename === "string" && filename.startsWith(directory + path.sep)) {
+        clock.mockReturnValue(started + 60_000);
+        if (stage === "cooldown_lookup_failure") {
+          throw new Error("private invalid cooldown state");
+        }
+        return JSON.stringify({
+          schema: "finance_provider_payment_cooldown_v1",
+          until: started + 120_000,
+        });
+      }
+      return read(filename, options);
+    });
+  }
+  const caller = new AbortController();
+  const cancelBody = vi.fn();
+  const fetch = vi.fn(async () => {
+    if (stage === "caller_late_http_402") {
+      caller.abort();
+    } else {
+      clock.mockReturnValue(started + 60_000);
+    }
+    return new Response(new ReadableStream({ cancel: cancelBody }), { status: 402 });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const adapter = createConfiguredFinanceModelAdapter(config, {
+    timeoutMs: 1000,
+    ...(stage.startsWith("cooldown_lookup") ? { availabilityStateDirectory: directory } : {}),
+    ...(stage === "prompt_failure"
+      ? {
+          buildPrompt: () => {
+            clock.mockReturnValue(started + 60_000);
+            throw new Error("invalid late prompt");
+          },
+        }
+      : {}),
+  });
+  await expect(adapter.invoke(request, caller.signal)).rejects.toMatchObject({
+    code: stage === "caller_late_http_402" ? "process_error" : "runtime_timeout",
+  });
+  expect(fetch).toHaveBeenCalledTimes(stage.endsWith("http_402") ? 1 : 0);
+  if (stage.endsWith("http_402")) {
+    expect(cancelBody).toHaveBeenCalledOnce();
+    expect(adapter.unavailableReason?.()).toBeUndefined();
+    expect(adapter.inspectCall?.()).toMatchObject({
+      stage: "cancelled",
+      httpStatus: 402,
+      requestDispatched: true,
+      cleanupStatus: "confirmed",
+    });
+    expect(adapter.inspectCall?.()?.paymentRefusalSource).toBeUndefined();
+  }
+});
+
+it.each(["empty", "throwing"] as const)(
+  "keeps deadline precedence when static auth load is %s",
+  async (mode) => {
     const started = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(started);
     const config = structuredClone(cfg);
-    config.models!.providers!.fixture.apiKey = `deadline-stage-${stage}`;
-    const directory = path.join(os.tmpdir(), "fixture-virtual-cooldown");
-    const read = fs.readFileSync.bind(fs);
-    if (stage === "cooldown_lookup") {
-      vi.spyOn(fs, "readFileSync").mockImplementation((filename, options) => {
-        if (typeof filename === "string" && filename.startsWith(directory + path.sep)) {
-          clock.mockReturnValue(started + 60_000);
-          return JSON.stringify({
-            schema: "finance_provider_payment_cooldown_v1",
-            until: started + 120_000,
-          });
-        }
-        return read(filename, options);
-      });
-    }
-    const caller = new AbortController();
-    const cancelBody = vi.fn();
-    const fetch = vi.fn(async () => {
-      if (stage === "caller_late_http_402") {
-        caller.abort();
-      } else {
-        clock.mockReturnValue(started + 60_000);
+    delete config.models!.providers!.fixture.apiKey;
+    vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockImplementation(() => {
+      clock.mockReturnValue(started + 60_000);
+      if (mode === "throwing") {
+        throw new Error("private auth load failure");
       }
-      return new Response(new ReadableStream({ cancel: cancelBody }), { status: 402 });
+      return { version: 1, profiles: {} };
     });
+    const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
-    const adapter = createConfiguredFinanceModelAdapter(config, {
-      timeoutMs: 1000,
-      ...(stage === "cooldown_lookup" ? { availabilityStateDirectory: directory } : {}),
-      ...(stage === "prompt_failure"
-        ? {
-            buildPrompt: () => {
-              clock.mockReturnValue(started + 60_000);
-              throw new Error("invalid late prompt");
-            },
-          }
-        : {}),
-    });
-    await expect(adapter.invoke(request, caller.signal)).rejects.toMatchObject({
-      code: stage === "caller_late_http_402" ? "process_error" : "runtime_timeout",
-    });
-    expect(fetch).toHaveBeenCalledTimes(stage.endsWith("http_402") ? 1 : 0);
-    if (stage.endsWith("http_402")) {
-      expect(cancelBody).toHaveBeenCalledOnce();
-      expect(adapter.unavailableReason?.()).toBeUndefined();
-      expect(adapter.inspectCall?.()).toMatchObject({
-        stage: "cancelled",
-        httpStatus: 402,
-        requestDispatched: true,
-        cleanupStatus: "confirmed",
-      });
-      expect(adapter.inspectCall?.()?.paymentRefusalSource).toBeUndefined();
-    }
+    await expect(
+      createConfiguredFinanceModelAdapter(config, { timeoutMs: 1000 }).invoke(
+        request,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "runtime_timeout" });
+    expect(fetch).not.toHaveBeenCalled();
   },
 );

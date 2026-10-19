@@ -523,6 +523,8 @@ async function boundedCall<T>(
     ]);
     assertApiCallActive(controller.signal);
     finish(undefined, false);
+    // Notification is synchronous bookkeeping; it must not permit a stale return.
+    assertApiCallActive(controller.signal);
     return result;
   } catch (error) {
     let failure = error;
@@ -589,8 +591,17 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
       }
     }
     let lastAttemptStatus: ApiCallReceipt["status"] | undefined;
+    let failedProbeAttempt = false;
     const emitAttempt = (receipt: ApiCallReceipt) => {
       lastAttemptStatus = receipt.status;
+      if (
+        receipt.status === "failed" &&
+        (receipt.transportError === "network_error" ||
+          (receipt.transportError === "http_error" &&
+            [408, 429, 500, 502, 503, 504].includes(receipt.httpStatus ?? 0)))
+      ) {
+        failedProbeAttempt = true;
+      }
       scope.onReceipt?.(receipt);
     };
     // One total budget covers attempts and backoff, not a fresh budget for each retry.
@@ -777,7 +788,11 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
     );
     return result.finally(() => {
       if (circuitState === "half_open" && !circuitSettled) {
-        scope.circuitBreaker?.releaseProbe?.();
+        if (failedProbeAttempt) {
+          scope.circuitBreaker?.recordFailure();
+        } else {
+          scope.circuitBreaker?.releaseProbe?.();
+        }
       }
     });
   };
