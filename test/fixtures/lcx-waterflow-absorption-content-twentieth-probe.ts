@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.js";
@@ -136,7 +137,7 @@ syncBuiltinESMExports();
   );
   const args = [
     "--import",
-    preload,
+    pathToFileURL(preload).href,
     "--import",
     "tsx",
     "scripts/operator/lcx-module-learning-absorption-gate.ts",

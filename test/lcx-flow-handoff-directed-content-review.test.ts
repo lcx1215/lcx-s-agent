@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildCommercialAcceptanceHarness } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
@@ -332,7 +333,7 @@ globalThis.fetch = deny("fetch"); http.request = deny("http.request"); http.get 
       "--import",
       "tsx",
       "--import",
-      guardPath,
+      pathToFileURL(guardPath).href,
       "scripts/operator/lcx-directed-daily-research-brief.ts",
       "--json",
       "--date",
@@ -812,7 +813,7 @@ globalThis.fetch = deny("fetch"); http.request = deny("http.request"); http.get 
         "--import",
         "tsx",
         "--import",
-        guardPath,
+        pathToFileURL(guardPath).href,
         "scripts/operator/lcx-directed-daily-research-brief.ts",
         "--review",
         "--json",

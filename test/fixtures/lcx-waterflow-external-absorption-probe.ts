@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { probeDistillationSample } from "./lcx-waterflow-distillation-sample-probe.js";
 
@@ -95,7 +96,7 @@ export async function probeExternalAbsorption(params: {
   );
   const args = [
     "--import",
-    preload,
+    pathToFileURL(preload).href,
     "--import",
     "tsx",
     "scripts/operator/lcx-module-learning-absorption-gate.ts",
