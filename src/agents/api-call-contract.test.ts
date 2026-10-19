@@ -413,6 +413,53 @@ describe("API call governance", () => {
     );
   });
 
+  it.each(["client_error", "cancelled", "local_budget"] as const)(
+    "releases a half-open source probe after %s without pretending recovery",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const breaker = createApiCircuitBreaker({ failureThreshold: 1, resetAfterMs: 1000 });
+      const fetch = vi
+        .fn<ApiFetch>()
+        .mockResolvedValueOnce(response(503))
+        .mockResolvedValueOnce(response(outcome === "client_error" ? 404 : 200))
+        .mockResolvedValue(response());
+      const governed = governApiFetch(fetch, { circuitBreaker: breaker, retry: { attempts: 1 } });
+      await expect(governed("https://example.test/fault")).rejects.toMatchObject({
+        httpStatus: 503,
+      });
+      await vi.advanceTimersByTimeAsync(1001);
+      const controller = new AbortController();
+      if (outcome === "cancelled") {
+        controller.abort();
+      }
+      const probe = governApiFetch(fetch, {
+        circuitBreaker: breaker,
+        retry: { attempts: 1 },
+        signal: controller.signal,
+        beforeHttpDispatch: () => {
+          if (outcome === "local_budget") {
+            throw new ApiCallError("budget_exhausted");
+          }
+        },
+      });
+      await expect(probe("https://example.test/probe")).rejects.toMatchObject(
+        outcome === "client_error"
+          ? { httpStatus: 404 }
+          : { kind: outcome === "cancelled" ? "cancelled" : "budget_exhausted" },
+      );
+      // A locally interrupted or request-specific probe supplies no recovery proof.
+      expect(breaker.beforeRequest()).toBe("half_open");
+      breaker.recordFailure();
+      expect(breaker.beforeRequest()).toBe("open");
+      await vi.advanceTimersByTimeAsync(1001);
+      await expect(governed("https://example.test/recovered")).resolves.toMatchObject({
+        status: 200,
+      });
+      expect(breaker.beforeRequest()).toBe("closed");
+      expect(fetch).toHaveBeenCalledTimes(outcome === "client_error" ? 3 : 2);
+    },
+  );
+
   it("does not open a source circuit for permanent client HTTP errors", async () => {
     const breaker = createApiCircuitBreaker({ failureThreshold: 1, resetAfterMs: 60_000 });
     const fetch = vi
@@ -508,3 +555,208 @@ it("preserves the caller's one-attempt limit when a source sets its own retry de
   ).rejects.toMatchObject({ httpStatus: 429 });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it.each(["rate_queue", "preparation", "body", "body_http_503", "body_http_403"] as const)(
+  "rejects expired %s work after wall-clock suspension before timer callbacks resume",
+  async (stage) => {
+    vi.useFakeTimers();
+    const receipts: ApiCallReceipt[] = [];
+    const start = Date.now();
+    const jump = () => vi.setSystemTime(start + 60_000);
+    const dispatch = vi.fn<ApiFetch>(async () => ({
+      ...response(stage === "body_http_503" ? 503 : stage === "body_http_403" ? 403 : 200),
+      text: async () => {
+        if (stage.startsWith("body")) {
+          jump();
+        }
+        return "late evidence";
+      },
+    }));
+    const fetch = Object.assign(dispatch, {
+      prepare: async () => {
+        if (stage === "preparation") {
+          jump();
+        }
+        return dispatch;
+      },
+    });
+    const rateLimiter =
+      stage === "rate_queue"
+        ? {
+            acquire: async () => {
+              jump();
+              return { waitMs: 60_000, release: () => {} };
+            },
+          }
+        : undefined;
+    await expect(
+      governApiFetch(fetch, {
+        timeoutMs: 1000,
+        rateLimiter,
+        retry: { attempts: 1 },
+        onReceipt: (receipt) => receipts.push(receipt),
+      })("https://fixture.test/source"),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    expect(dispatch).toHaveBeenCalledTimes(stage.startsWith("body") ? 1 : 0);
+    expect(receipts.some((receipt) => receipt.status === "timed_out")).toBe(true);
+  },
+);
+
+it.each(["cancelled", "timeout"] as const)(
+  "does not invoke prepared HTTP when final budget admission becomes %s",
+  async (kind) => {
+    vi.useFakeTimers();
+    const parent = new AbortController();
+    const receipts: ApiCallReceipt[] = [];
+    const dispatch = Object.assign(
+      vi.fn<ApiFetch>(async () => response()),
+      {
+        cancelPreparation: vi.fn(async () => {}),
+      },
+    );
+    const fetch = Object.assign(
+      vi.fn<ApiFetch>(async () => response()),
+      {
+        prepare: async () => dispatch,
+      },
+    );
+    await expect(
+      governApiFetch(fetch, {
+        signal: parent.signal,
+        timeoutMs: 1000,
+        beforeHttpDispatch: () => {
+          if (kind === "cancelled") {
+            parent.abort();
+          } else {
+            vi.setSystemTime(Date.now() + 60_000);
+          }
+        },
+        onReceipt: (receipt) => receipts.push(receipt),
+      })("https://fixture.test/source"),
+    ).rejects.toMatchObject({ kind });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(dispatch.cancelPreparation).toHaveBeenCalledOnce();
+    expect(receipts.every((receipt) => receipt.dispatchedAt === undefined)).toBe(true);
+  },
+);
+
+it("classifies a source rejection after suspended wall time as timeout", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => receipts.push(receipt),
+      },
+      async () => {
+        vi.setSystemTime(Date.now() + 60_000);
+        throw new Error("late source failure");
+      },
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(receipts).toMatchObject([{ status: "timed_out", transportError: "timeout" }]);
+});
+
+it("does not close a circuit after attempt finalization outlives the total deadline", async () => {
+  vi.useFakeTimers();
+  const circuit = createApiCircuitBreaker();
+  const success = vi.spyOn(circuit, "recordSuccess");
+  await expect(
+    governApiFetch(async () => response(), {
+      timeoutMs: 1000,
+      circuitBreaker: circuit,
+      onReceipt: (receipt) => {
+        if (receipt.operation === "http_get" && receipt.status === "succeeded") {
+          vi.setSystemTime(Date.now() + 60_000);
+        }
+      },
+    })("https://fixture.test/source"),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(success).not.toHaveBeenCalled();
+});
+
+it("rejects a direct source return after its receipt observer outlives the deadline", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => {
+          receipts.push(receipt);
+          vi.setSystemTime(Date.now() + 60_000);
+        },
+      },
+      async () => "source result",
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  // Receipt notification happens after source completion; it is not emitted twice.
+  expect(receipts).toMatchObject([{ status: "succeeded" }]);
+});
+
+it("classifies a failed source whose receipt notification crosses the deadline as timeout", async () => {
+  vi.useFakeTimers();
+  const receipts: ApiCallReceipt[] = [];
+  await expect(
+    runApiSourceCall(
+      {
+        provider: "fixture",
+        source: "fixture",
+        operation: "collect",
+        timeoutMs: 1000,
+        onReceipt: (receipt) => {
+          receipts.push(receipt);
+          vi.setSystemTime(Date.now() + 60_000);
+        },
+      },
+      async () => {
+        throw new Error("source unavailable");
+      },
+    ),
+  ).rejects.toMatchObject({ kind: "timeout" });
+  expect(receipts).toMatchObject([{ status: "failed" }]);
+});
+
+it.each([
+  ["timeout", "http"],
+  ["timeout", "network"],
+  ["cancelled", "http"],
+  ["cancelled", "network"],
+] as const)(
+  "reopens a failed half-open probe when retry backoff ends with %s after %s",
+  async (mode, failure) => {
+    vi.useFakeTimers();
+    const breaker = createApiCircuitBreaker({ failureThreshold: 1, resetAfterMs: 100 });
+    breaker.recordFailure();
+    await vi.advanceTimersByTimeAsync(101);
+    const caller = new AbortController();
+    const fetch = vi.fn<ApiFetch>(async () => {
+      if (failure === "network") {
+        throw Object.assign(new Error("fixture connection reset"), { code: "ECONNRESET" });
+      }
+      return response(503);
+    });
+    const pending = governApiFetch(fetch, {
+      circuitBreaker: breaker,
+      signal: caller.signal,
+      timeoutMs: mode === "timeout" ? 200 : 5000,
+      retry: { attempts: 2, minDelayMs: 1000, maxDelayMs: 1000 },
+    })("https://fixture.test/probe").catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledOnce();
+    if (mode === "cancelled") {
+      caller.abort();
+    } else {
+      await vi.advanceTimersByTimeAsync(201);
+    }
+    expect(await pending).toMatchObject({ kind: mode });
+    expect(breaker.beforeRequest()).toBe("open");
+  },
+);

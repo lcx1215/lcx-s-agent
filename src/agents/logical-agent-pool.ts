@@ -689,13 +689,15 @@ export class LogicalAgentPool<TInput, TResult> {
 
       let cleanupUnconfirmed = false;
       const attempt = executeWithTimeout(
-        async (signal) => {
+        async (signal, deadlineAtMs, assertActive) => {
           const modelSlot = this.#createTaskModelSlot(
             modelScope,
             job,
             signal,
             capabilities,
             modelCalls,
+            deadlineAtMs,
+            assertActive,
           );
           try {
             await this.#guardrails.input?.({
@@ -704,6 +706,7 @@ export class LogicalAgentPool<TInput, TResult> {
               input: job.task.input,
               capabilities,
             });
+            assertActive();
             const execution = await job.executor({
               task: job.task,
               agent,
@@ -715,6 +718,7 @@ export class LogicalAgentPool<TInput, TResult> {
               capabilities,
               signal,
             });
+            assertActive();
             await this.#guardrails.output?.({
               task: job.task,
               agent,
@@ -722,9 +726,14 @@ export class LogicalAgentPool<TInput, TResult> {
               sideEffects: execution.sideEffects,
               capabilities,
             });
+            assertActive();
             modelScope.closed = true;
             await this.#waitForTaskModelInvocations(modelScope);
-            return execution;
+            assertActive();
+            const normalized = normalizeExecutionResult<TResult>(execution, capabilities);
+            const output = cloneAndFreeze(normalized.output);
+            assertActive();
+            return { output, sideEffects: normalized.sideEffects };
           } catch (error: unknown) {
             modelScope.closed = true;
             await this.#waitForTaskModelInvocations(modelScope);
@@ -746,7 +755,6 @@ export class LogicalAgentPool<TInput, TResult> {
         .then(
           (execution): LogicalAgentTaskResult<TResult> => {
             try {
-              const normalized = normalizeExecutionResult<TResult>(execution, capabilities);
               return {
                 taskId: job.task.id,
                 agentId: job.task.agentId,
@@ -754,8 +762,8 @@ export class LogicalAgentPool<TInput, TResult> {
                 modelId: this.#config.modelId,
                 startedAt,
                 completedAt: Date.now(),
-                output: cloneAndFreeze(normalized.output),
-                sideEffects: normalized.sideEffects,
+                output: execution.output,
+                sideEffects: execution.sideEffects,
               };
             } catch (error: unknown) {
               return failedTaskResult<TResult>(job.task, this.#config.modelId, startedAt, error);
@@ -815,6 +823,8 @@ export class LogicalAgentPool<TInput, TResult> {
     taskSignal: AbortSignal,
     capabilities: LogicalAgentCapabilities,
     receipts: ModelCallReceipt[],
+    deadlineAtMs: number,
+    assertActive: () => void,
   ): LogicalAgentModelSlot {
     return Object.freeze({
       modelId: this.#modelRouter?.primaryModelId(job.task.agentId) ?? this.#config.modelId,
@@ -826,11 +836,12 @@ export class LogicalAgentPool<TInput, TResult> {
           );
         }
         const controller = new AbortController();
-        const abort = () => controller.abort();
+        const abort = () =>
+          controller.abort(taskSignal.aborted ? taskSignal.reason : signal.reason);
         for (const source of [signal, taskSignal]) {
           source.addEventListener("abort", abort, { once: true });
           if (source.aborted) {
-            controller.abort();
+            controller.abort(source.reason);
           }
         }
         const invocation = (
@@ -842,10 +853,12 @@ export class LogicalAgentPool<TInput, TResult> {
                 payload: request,
                 capabilities,
                 signal: controller.signal,
+                deadlineAtMs,
+                isDeadlineAbort: isTaskTimeoutError,
                 dispatch: (invoke, dispatchSignal) => this.#invokeModel(invoke, dispatchSignal),
                 record: (receipt) => receipts.push(receipt),
               })
-            : this.#invokeLegacyModel(job, request, controller.signal, receipts)
+            : this.#invokeLegacyModel(job, request, controller.signal, receipts, assertActive)
         ).finally(() => {
           for (const source of [signal, taskSignal]) {
             source.removeEventListener("abort", abort);
@@ -869,15 +882,19 @@ export class LogicalAgentPool<TInput, TResult> {
     request: unknown,
     signal: AbortSignal,
     receipts: ModelCallReceipt[],
+    assertActive: () => void,
   ): Promise<unknown> {
     const startedAtMs = Date.now();
     let outcome: ModelCallReceipt["outcome"] = "failed";
     let adapterInvoked = false;
     try {
       const value = await this.#invokeModel(() => {
+        assertActive();
         adapterInvoked = true;
         return this.#modelInvoker(request, signal);
       }, signal);
+      assertActive();
+      signal.throwIfAborted();
       outcome = "completed";
       return value;
     } finally {
@@ -896,7 +913,11 @@ export class LogicalAgentPool<TInput, TResult> {
           mode: "injected",
           startedAtMs,
           latencyMs: Math.max(0, Date.now() - startedAtMs),
-          outcome: signal.aborted ? "aborted" : outcome,
+          outcome: signal.aborted
+            ? isTaskTimeoutError(signal.reason)
+              ? "timed_out"
+              : "aborted"
+            : outcome,
           adapterInvoked,
           realModelInferenceObserved: false,
           providerCallObserved: false,
@@ -1201,8 +1222,18 @@ function normalizeExecutionResult<TResult>(
   };
 }
 
+const taskTimeoutErrors = new WeakSet<object>();
+
+function isTaskTimeoutError(reason: unknown): boolean {
+  return typeof reason === "object" && reason !== null && taskTimeoutErrors.has(reason);
+}
+
 function executeWithTimeout<TResult>(
-  executor: (signal: AbortSignal) => TResult | Promise<TResult>,
+  executor: (
+    signal: AbortSignal,
+    deadlineAtMs: number,
+    assertActive: () => void,
+  ) => TResult | Promise<TResult>,
   timeoutMs: number,
   parentSignal?: AbortSignal,
   onCleanupUnconfirmed?: () => void,
@@ -1210,12 +1241,14 @@ function executeWithTimeout<TResult>(
   const controller = new AbortController();
   const cancellationErrors: unknown[] = [];
   const signal = createSafeAbortSignal(controller, cancellationErrors);
+  const deadlineAtMs = Date.now() + timeoutMs;
   let timedOut = false;
   let cancelled = parentSignal?.aborted === true;
   let outcomeSettled = false;
   let rejectOutcome: ((reason?: unknown) => void) | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutError: Error | undefined;
   const rejectIfPending = (reason: unknown) => {
     if (outcomeSettled) {
       return;
@@ -1246,13 +1279,52 @@ function executeWithTimeout<TResult>(
       rejectIfPending(new Error("logical-agent task cancelled; cleanup_unconfirmed"));
     }
   };
+  const expire = () => {
+    if (timedOut || outcomeSettled) {
+      return;
+    }
+    timedOut = true;
+    const failure = new Error(`logical-agent task timed out after ${timeoutMs}ms`);
+    timeoutError = failure;
+    taskTimeoutErrors.add(failure);
+    try {
+      controller.abort(failure);
+    } catch (error: unknown) {
+      cancellationErrors.push(error);
+    }
+    const cancellationDetail =
+      cancellationErrors.length === 0
+        ? ""
+        : `; abort listener failures: ${cancellationErrors.map(formatUnknownError).join("; ")}`;
+    failure.message += cancellationDetail;
+    cleanupTimer = setTimeout(() => {
+      if (!outcomeSettled) {
+        onCleanupUnconfirmed?.();
+        rejectIfPending(new Error(`${failure.message}; cleanup_unconfirmed`));
+      }
+    }, 2_000);
+    void termination.then(() => rejectIfPending(failure));
+  };
+  const assertActive = () => {
+    // Timer callbacks may be suspended; boundary checks reuse the same cleanup path.
+    if (!cancelled && Date.now() >= deadlineAtMs) {
+      expire();
+    }
+    if (timedOut) {
+      throw timeoutError;
+    }
+    if (cancelled) {
+      throw new Error("logical-agent task cancelled");
+    }
+  };
   parentSignal?.addEventListener("abort", cancel, { once: true });
   const execution = Promise.resolve()
     .then(() => {
       if (cancelled) {
         throw new Error("logical-agent task cancelled before start");
       }
-      return executor(signal);
+      assertActive();
+      return executor(signal, deadlineAtMs, assertActive);
     })
     .finally(() => parentSignal?.removeEventListener("abort", cancel));
   const termination = execution.then(
@@ -1261,32 +1333,14 @@ function executeWithTimeout<TResult>(
   );
   const outcome = new Promise<TResult>((resolve, reject) => {
     rejectOutcome = reject;
-    timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        controller.abort();
-      } catch (error: unknown) {
-        cancellationErrors.push(error);
-      }
-      const cancellationDetail =
-        cancellationErrors.length === 0
-          ? ""
-          : `; abort listener failures: ${cancellationErrors.map(formatUnknownError).join("; ")}`;
-      const timeoutError = new Error(
-        `logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`,
-      );
-      cleanupTimer = setTimeout(() => {
-        if (!outcomeSettled) {
-          onCleanupUnconfirmed?.();
-          rejectIfPending(new Error(`${timeoutError.message}; cleanup_unconfirmed`));
-        }
-      }, 2_000);
-      void termination.then(() => rejectIfPending(timeoutError));
-    }, timeoutMs);
+    timer = setTimeout(expire, Math.max(0, deadlineAtMs - Date.now()));
     execution.then(
       (value) => {
         if (outcomeSettled) {
           return;
+        }
+        if (!cancelled && Date.now() >= deadlineAtMs) {
+          expire();
         }
         if (cancelled) {
           rejectIfPending(new Error("logical-agent task cancelled"));
@@ -1299,6 +1353,9 @@ function executeWithTimeout<TResult>(
       (error: unknown) => {
         if (outcomeSettled) {
           return;
+        }
+        if (!cancelled && Date.now() >= deadlineAtMs) {
+          expire();
         }
         if (!timedOut) {
           outcomeSettled = true;

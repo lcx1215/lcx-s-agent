@@ -70,6 +70,41 @@ const execute = async ({
 });
 
 describe("role model execution receipts", () => {
+  it("inherits the task wall deadline for a late-starting role and does not fall back", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const fallback = vi.fn(async () => "unexpected");
+      const pool = new LogicalAgentPool<string, unknown>({
+        taskTimeoutMs: 50,
+        modelRouting: routing({
+          adapters: [
+            adapter("small", {
+              invoke: async (request) => {
+                expect(request.deadlineAtMs).toBe(1_050);
+                vi.setSystemTime(1_051);
+                return "late";
+              },
+            }),
+            adapter("reviewer", { invoke: fallback }),
+          ],
+          defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        }),
+      });
+      const result = await pool.submit(task, async (context) => {
+        vi.setSystemTime(1_030);
+        return execute(context);
+      });
+      expect(result.status).toBe("failed");
+      expect(result.modelCalls).toEqual([
+        expect.objectContaining({ outcome: "timed_out", reason: "deadline", adapterInvoked: true }),
+      ]);
+      expect(fallback).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores original receipts only into the next same-run attempt and rejects invalid lineage", async () => {
     const pool = new LogicalAgentPool<string, unknown>({ modelRouting: routing() });
     const result = await pool.submit(task, execute, {}, {}, "repair:attempt:1");
@@ -830,3 +865,221 @@ it("includes exactly one opted-in structural repair in the outer task deadline",
     }),
   ).toBe(361_000);
 });
+
+it.each(["unavailable", "capability", "input", "late_unavailable"] as const)(
+  "classifies expired %s preflight as a deadline without adapter work or fallback",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const invoke = vi.fn(async () => ({}));
+      const fallback = vi.fn(async () => ({}));
+      const unavailable = vi.fn(() => {
+        if (stage === "late_unavailable") {
+          vi.setSystemTime(started + 2000);
+        }
+        return "provider_auth" as const;
+      });
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [
+            adapter("small", {
+              invoke,
+              ...(stage === "capability" ? { capabilities: [] } : {}),
+              ...(stage.endsWith("unavailable") ? { unavailableReason: unavailable } : {}),
+            }),
+            adapter("reviewer", { invoke: fallback }),
+          ],
+          defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        }),
+      );
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      await expect(
+        router.invoke({
+          role: "data_cleaning",
+          taskId: "expired-preflight",
+          correlationId: "expired-preflight-run",
+          payload: stage === "input" ? { padding: "x".repeat(2000) } : {},
+          deadlineAtMs: started + (stage === "late_unavailable" ? 1000 : -1),
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => work(),
+          record: (call) => calls.push(call),
+        }),
+      ).rejects.toThrow();
+      expect(calls).toMatchObject([
+        { outcome: "timed_out", reason: "deadline", adapterInvoked: false },
+      ]);
+      expect(invoke).not.toHaveBeenCalled();
+      expect(fallback).not.toHaveBeenCalled();
+      expect(unavailable).toHaveBeenCalledTimes(stage === "late_unavailable" ? 1 : 0);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["queue", "result", "validation_pass", "validation_fail"] as const)(
+  "rejects model work that expires at %s while deadline timers are suspended",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const invoke = vi.fn(async () => {
+        if (stage === "result") {
+          vi.setSystemTime(started + 60_000);
+        }
+        return { candidate: "late" };
+      });
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [adapter("small", { invoke })],
+          defaultPolicy: {
+            ...policy,
+            ...(stage.startsWith("validation")
+              ? {
+                  outputContract: {
+                    revision: "deadline-fixture",
+                    validate: () => {
+                      vi.setSystemTime(started + 60_000);
+                      return stage === "validation_pass";
+                    },
+                  },
+                }
+              : {}),
+          },
+        }),
+      );
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      await expect(
+        router.invoke({
+          role: "data_cleaning",
+          taskId: "late-model",
+          correlationId: "late-run",
+          payload: {},
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => {
+            if (stage === "queue") {
+              vi.setSystemTime(started + 60_000);
+            }
+            return work();
+          },
+          record: (call) => calls.push(call),
+        }),
+      ).rejects.toThrow();
+      expect(invoke).toHaveBeenCalledTimes(stage === "queue" ? 0 : 1);
+      expect(calls).toMatchObject([
+        { outcome: "timed_out", reason: "deadline", adapterInvoked: stage !== "queue" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["observation", "recording"] as const)(
+  "rejects a router return that expires during %s without granting model affinity",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const start = Date.now();
+      const observe = vi.fn(() => {
+        if (stage === "observation") {
+          vi.setSystemTime(start + 60_000);
+        }
+        return undefined;
+      });
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [adapter("small", { mode: "adapter", observe })],
+          roles: {
+            formatting: { ...policy, sameModelAsRole: "data_cleaning" },
+          },
+        }),
+      );
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      const invoke = (role: "data_cleaning" | "formatting") =>
+        router.invoke({
+          role,
+          taskId: "finalization",
+          correlationId: "finalization-run",
+          payload: {},
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => work(),
+          record: (call) => {
+            calls.push(call);
+            if (stage === "recording" && role === "data_cleaning") {
+              vi.setSystemTime(start + 60_000);
+            }
+          },
+        });
+      await expect(invoke("data_cleaning")).rejects.toThrow();
+      expect(observe).toHaveBeenCalledOnce();
+      expect(calls).toHaveLength(1);
+      // Recording happens after the model/observation receipt is finalized.
+      expect(calls[0].outcome).toBe(stage === "observation" ? "timed_out" : "completed");
+      await expect(invoke("formatting")).rejects.toThrow("model_affinity_unproven");
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["observation", "recording"] as const)(
+  "prevents fallback after failed model finalization expires in %s",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const fallback = vi.fn(async () => "fallback result");
+      const calls: import("./logical-agent-model-router.js").ModelCallReceipt[] = [];
+      const router = new LogicalAgentModelRouter(
+        routing({
+          adapters: [
+            adapter("small", {
+              mode: "adapter",
+              invoke: async () => {
+                throw new Error("model unavailable");
+              },
+              observe: () => {
+                if (stage === "observation") {
+                  vi.setSystemTime(started + 60_000);
+                }
+                return undefined;
+              },
+            }),
+            adapter("reviewer", { invoke: fallback }),
+          ],
+          defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        }),
+      );
+      await expect(
+        router.invoke({
+          role: "data_cleaning",
+          taskId: "failed-finalization",
+          correlationId: "failed-finalization",
+          payload: {},
+          capabilities: NARROW_GRANT,
+          signal: new AbortController().signal,
+          dispatch: async (work) => work(),
+          record: (call) => {
+            calls.push(call);
+            if (stage === "recording") {
+              vi.setSystemTime(started + 60_000);
+            }
+          },
+        }),
+      ).rejects.toThrow("cancelled or timed out");
+      expect(fallback).not.toHaveBeenCalled();
+      expect(calls).toHaveLength(1);
+      expect(calls[0].outcome).toBe(stage === "observation" ? "timed_out" : "failed");
+      if (stage === "observation") {
+        expect(calls[0].reason).toBe("deadline");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

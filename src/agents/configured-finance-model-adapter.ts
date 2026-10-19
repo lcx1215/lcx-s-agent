@@ -118,7 +118,17 @@ export async function resolveConfiguredFinanceAuth(
   cfg: OpenClawConfig,
   provider: string,
   suppliedStore?: AuthProfileStore,
+  agentDir?: string,
+  signal?: AbortSignal,
+  deadlineAtMs?: number,
 ): Promise<{ apiKey: string; source: "configuration" | "environment" | "auth_profile" }> {
+  const assertActive = () => {
+    signal?.throwIfAborted();
+    if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+      throw new ModelAdapterError("runtime_timeout");
+    }
+  };
+  assertActive();
   const inline = getCustomProviderApiKey(cfg, provider);
   if (inline) {
     return { apiKey: inline, source: "configuration" };
@@ -127,24 +137,80 @@ export async function resolveConfiguredFinanceAuth(
   if (env) {
     return { apiKey: env, source: "environment" };
   }
-  const store = suppliedStore
-    ? structuredClone(suppliedStore)
-    : loadAuthProfileStoreForSecretsRuntime();
-  for (const profileId of resolveAuthProfileOrder({ cfg, store, provider })) {
+  let store: AuthProfileStore;
+  let profileIds: string[];
+  try {
+    store = suppliedStore
+      ? structuredClone(suppliedStore)
+      : loadAuthProfileStoreForSecretsRuntime(agentDir);
+    profileIds = resolveAuthProfileOrder({ cfg, store, provider });
+  } catch (error) {
+    assertActive();
+    throw error;
+  }
+  assertActive();
+  for (const profileId of profileIds) {
+    assertActive();
     const credential = store.profiles[profileId];
     if (credential?.type !== "api_key" && credential?.type !== "token") {
       continue;
     }
     try {
-      const resolved = await resolveApiKeyForProfile({ cfg, store, profileId });
+      const resolved = await resolveApiKeyForProfile({ cfg, store, profileId, agentDir });
+      assertActive();
       if (resolved?.apiKey) {
         return { apiKey: resolved.apiKey, source: "auth_profile" };
       }
     } catch {
+      assertActive();
       /* Try another existing static profile, without exposing secret-resolution errors. */
     }
   }
+  assertActive();
   throw new ModelAdapterError("provider_auth");
+}
+
+/** Bound secret lookup without allowing a late credential to dispatch a request. */
+async function resolveFinanceAuthBeforeDeadline(
+  cfg: OpenClawConfig,
+  provider: string,
+  agentDir: string | undefined,
+  signal: AbortSignal,
+  deadlineAtMs: number,
+) {
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(new ModelAdapterError("process_error"));
+  const expire = () => controller.abort(new ModelAdapterError("runtime_timeout"));
+  let rejectAbort: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort?.(controller.signal.reason);
+  controller.signal.addEventListener("abort", onAbort, { once: true });
+  signal.addEventListener("abort", relayAbort, { once: true });
+  const timer = setTimeout(expire, Math.max(0, deadlineAtMs - Date.now()));
+  if (signal.aborted) {
+    relayAbort();
+  } else if (Date.now() >= deadlineAtMs) {
+    expire();
+  }
+  try {
+    return await Promise.race([
+      aborted,
+      resolveConfiguredFinanceAuth(
+        cfg,
+        provider,
+        undefined,
+        agentDir,
+        controller.signal,
+        deadlineAtMs,
+      ),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", relayAbort);
+    controller.signal.removeEventListener("abort", onAbort);
+  }
 }
 
 /** Repair only terminal delimiters after a complete string; never add field values. */
@@ -308,6 +374,16 @@ export function createConfiguredFinanceModelAdapter(
     inspectCall: () => callState,
     invoke: async (request, signal) => {
       callState = undefined;
+      const deadlineAtMs = Math.min(Date.now() + timeoutMs, request.deadlineAtMs ?? Infinity);
+      const assertActive = () => {
+        if (signal.aborted) {
+          throw new ModelAdapterError("process_error");
+        }
+        if (Date.now() >= deadlineAtMs) {
+          throw new ModelAdapterError("runtime_timeout");
+        }
+      };
+      assertActive();
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
       }
@@ -331,6 +407,7 @@ export function createConfiguredFinanceModelAdapter(
           throw new Error("rendered finance input exceeds prompt budget");
         }
       } catch (error) {
+        assertActive();
         // Request assembly is local: preserve a safe category without charging a
         // provider call or replaying the unchanged invalid packet on another model.
         throw new ModelAdapterError(
@@ -339,9 +416,23 @@ export function createConfiguredFinanceModelAdapter(
             : "prompt_input_invalid",
         );
       }
-      const auth = await resolveConfiguredFinanceAuth(cfg, provider);
+      const auth = await resolveFinanceAuthBeforeDeadline(
+        cfg,
+        provider,
+        undefined,
+        signal,
+        deadlineAtMs,
+      );
+      assertActive();
       accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
-      const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      let cooldownUntil: number;
+      try {
+        cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      } catch (error) {
+        assertActive();
+        throw error;
+      }
+      assertActive();
       if (cooldownUntil > Date.now()) {
         callState = {
           requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
@@ -357,10 +448,9 @@ export function createConfiguredFinanceModelAdapter(
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
       }
-      if (signal.aborted) {
-        throw new ModelAdapterError("process_error");
-      }
+      assertActive();
       options.callBudget?.reserve();
+      assertActive();
       calls += 1;
       const trajectoryTicket = recordModelRequestStart({
         source: options.trajectorySource ?? "finance_engine",
@@ -385,7 +475,7 @@ export function createConfiguredFinanceModelAdapter(
       callState = {
         requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
         stage: "request_started",
-        requestDispatched: true,
+        requestDispatched: false,
         cleanupStatus: "not_required",
       };
       const requestController = new AbortController();
@@ -400,15 +490,21 @@ export function createConfiguredFinanceModelAdapter(
         }
       };
       requestController.signal.addEventListener("abort", observeAbort, { once: true });
+      let deadlineExpired = false;
       const timer = setTimeout(
-        () => requestController.abort(new Error("model request timeout")),
-        timeoutMs,
+        () => {
+          if (!requestController.signal.aborted) {
+            deadlineExpired = true;
+            requestController.abort(new Error("model request timeout"));
+          }
+        },
+        Math.max(0, deadlineAtMs - Date.now()),
       );
       if (signal.aborted) {
         relayAbort();
       }
       try {
-        const http = await fetch(endpoint, {
+        const init: RequestInit = {
           method: "POST",
           redirect: "error",
           signal: requestController.signal,
@@ -425,13 +521,28 @@ export function createConfiguredFinanceModelAdapter(
             response_format: { type: "json_object" },
             stream: false,
           }),
-        });
+        };
+        assertActive();
+        callState = { ...callState, requestDispatched: true };
+        const http = await fetch(endpoint, init);
         receivedHttpResponse = true;
         callState = { ...callState, stage: "response_received", httpStatus: http.status };
         recordModelRequestUpdate(trajectoryTicket, {
           stage: "response_received",
           httpStatus: http.status,
         });
+        try {
+          assertActive();
+        } catch (error) {
+          // Retain the response fact, but never apply a late status or leave its
+          // body running. The shared bounded reader records cleanup certainty.
+          requestController.abort(error);
+          await readBoundedFinanceResponseText(http, {
+            signal: requestController.signal,
+            discardBody: true,
+          });
+          throw error;
+        }
         if (!http.ok) {
           if (http.status === 402) {
             markPaymentCooldown(accountKey, availabilityDirectory);
@@ -462,12 +573,57 @@ export function createConfiguredFinanceModelAdapter(
           label: "finance model",
         });
         requestController.signal.throwIfAborted();
+        assertActive();
         response = JSON.parse(body) as typeof response;
         callState = { ...callState, stage: "body_complete" };
         const usage = normalizeModelRequestUsage(response.usage);
         if (usage) {
           recordModelRequestUpdate(trajectoryTicket, { stage: "usage_received", ...usage });
         }
+        assertActive();
+        if (response.id) {
+          observations.set(request.callId, {
+            id: response.id,
+            credentialSource: auth.source,
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(evidenceCoverage ? { evidenceCoverage } : {}),
+          });
+        }
+        const choice = response.choices?.[0];
+        if (choice?.finish_reason === "length") {
+          throw new ModelAdapterError("output_truncated");
+        }
+        if (!choice || !choice.message?.content) {
+          throw new ModelAdapterError("output_invalid");
+        }
+        let value: unknown;
+        let normalized = false;
+        try {
+          value = JSON.parse(choice.message.content) as unknown;
+        } catch {
+          assertActive();
+          if (choice.finish_reason !== "stop") {
+            throw new ModelAdapterError("output_invalid");
+          }
+          try {
+            value = normalizeTerminalDelimiters(choice.message.content);
+            normalized = true;
+          } catch {
+            assertActive();
+            throw new ModelAdapterError("output_invalid");
+          }
+        }
+        assertActive();
+        if (normalized && response.id) {
+          observations.set(request.callId, {
+            id: response.id,
+            normalized: true,
+            credentialSource: auth.source,
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(evidenceCoverage ? { evidenceCoverage } : {}),
+          });
+        }
+        return value;
       } catch (error) {
         if (requestController.signal.aborted) {
           callState = {
@@ -493,49 +649,15 @@ export function createConfiguredFinanceModelAdapter(
             errorKind: "transport",
           });
         }
+        if (deadlineExpired) {
+          throw new ModelAdapterError("runtime_timeout");
+        }
+        assertActive();
         throw error instanceof ModelAdapterError ? error : new ModelAdapterError("process_error");
       } finally {
         clearTimeout(timer);
         signal.removeEventListener("abort", relayAbort);
         requestController.signal.removeEventListener("abort", observeAbort);
-      }
-      signal.throwIfAborted();
-      if (response.id) {
-        observations.set(request.callId, {
-          id: response.id,
-          credentialSource: auth.source,
-          ...(reasoningEffort ? { reasoningEffort } : {}),
-          ...(evidenceCoverage ? { evidenceCoverage } : {}),
-        });
-      }
-      const choice = response.choices?.[0];
-      if (choice?.finish_reason === "length") {
-        throw new ModelAdapterError("output_truncated");
-      }
-      if (!choice || !choice.message?.content) {
-        throw new ModelAdapterError("output_invalid");
-      }
-      try {
-        return JSON.parse(choice.message.content) as unknown;
-      } catch {
-        if (choice.finish_reason !== "stop") {
-          throw new ModelAdapterError("output_invalid");
-        }
-        try {
-          const value = normalizeTerminalDelimiters(choice.message.content);
-          if (response.id) {
-            observations.set(request.callId, {
-              id: response.id,
-              normalized: true,
-              credentialSource: auth.source,
-              ...(reasoningEffort ? { reasoningEffort } : {}),
-              ...(evidenceCoverage ? { evidenceCoverage } : {}),
-            });
-          }
-          return value;
-        } catch {
-          throw new ModelAdapterError("output_invalid");
-        }
       }
     },
     observe: (request): ModelCallObservation | undefined => {

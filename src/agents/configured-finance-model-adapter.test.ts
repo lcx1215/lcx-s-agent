@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import * as authProfiles from "./auth-profiles.js";
 import {
   createConfiguredFinanceModelAdapter,
   createFinanceModelCallBudget,
@@ -403,6 +404,105 @@ describe("configured research model transport", () => {
     expect(http).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["own", "inherited", "caller"])(
+    "bounds pending credential resolution by %s cancellation",
+    async (cause) => {
+      vi.useFakeTimers();
+      try {
+        const profileCfg = structuredClone(cfg);
+        delete profileCfg.models!.providers!.fixture.apiKey;
+        vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockReturnValue({
+          version: 1,
+          profiles: {
+            "fixture:default": { type: "api_key", provider: "fixture", key: "fixture-key" },
+          },
+        });
+        let finishAuth: ((value: { apiKey: string; provider: string }) => void) | undefined;
+        const resolveKey = vi.spyOn(authProfiles, "resolveApiKeyForProfile").mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finishAuth = resolve;
+            }),
+        );
+        const http = vi.fn();
+        vi.stubGlobal("fetch", http);
+        const budget = createFinanceModelCallBudget(1);
+        const adapter = createConfiguredFinanceModelAdapter(profileCfg, {
+          timeoutMs: 100,
+          callBudget: budget,
+        });
+        const controller = new AbortController();
+        let outcome: unknown;
+        const pending = adapter
+          .invoke(
+            { ...request, ...(cause === "inherited" ? { deadlineAtMs: Date.now() + 25 } : {}) },
+            controller.signal,
+          )
+          .catch((error: unknown) => {
+            outcome = error;
+          });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(resolveKey).toHaveBeenCalledTimes(1);
+        if (cause === "caller") {
+          controller.abort(new Error("caller cancelled"));
+        }
+        await vi.advanceTimersByTimeAsync(cause === "inherited" ? 25 : 100);
+        expect(outcome).toMatchObject({
+          code: cause === "caller" ? "process_error" : "runtime_timeout",
+        });
+        expect(budget.snapshot().reserved).toBe(0);
+        expect(http).not.toHaveBeenCalled();
+        finishAuth?.({ apiKey: "late-fixture-key", provider: "fixture" });
+        await pending;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(http).not.toHaveBeenCalled();
+        expect(budget.snapshot().reserved).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["empty", "rejected"])(
+    "does not try another credential after wall expiry with a %s lookup",
+    async (result) => {
+      vi.useFakeTimers();
+      try {
+        const profileCfg = structuredClone(cfg);
+        delete profileCfg.models!.providers!.fixture.apiKey;
+        vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockReturnValue({
+          version: 1,
+          profiles: {
+            "fixture:default": { type: "api_key", provider: "fixture", key: "first-key" },
+            "fixture:backup": { type: "api_key", provider: "fixture", key: "second-key" },
+          },
+        });
+        const resolveKey = vi
+          .spyOn(authProfiles, "resolveApiKeyForProfile")
+          .mockImplementationOnce(async () => {
+            vi.setSystemTime(Date.now() + 101);
+            if (result === "rejected") {
+              throw new Error("private lookup error");
+            }
+            return null;
+          })
+          .mockResolvedValue({ apiKey: "late-backup-key", provider: "fixture" });
+        const http = vi.fn();
+        vi.stubGlobal("fetch", http);
+        const adapter = createConfiguredFinanceModelAdapter(profileCfg, { timeoutMs: 100 });
+        await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+          code: "runtime_timeout",
+        });
+        expect(resolveKey).toHaveBeenCalledTimes(1);
+        expect(http).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("reads static auth profiles and environment references without modifying the store", async () => {
     const profileCfg = structuredClone(cfg);
     delete profileCfg.models!.providers!.fixture.apiKey;
@@ -437,6 +537,67 @@ describe("configured research model transport", () => {
       }),
     ).resolves.toEqual({ apiKey: "env-fixture-key", source: "auth_profile" });
   });
+  it.each(
+    (["transport", "error_body"] as const).flatMap((stage) =>
+      [false, true].map((cancel) => ({ stage, cancel })),
+    ),
+  )(
+    "rechecks wall expiry on $stage failure while preserving caller cancellation=$cancel",
+    async ({ stage, cancel }) => {
+      vi.useFakeTimers();
+      try {
+        const deadlineAtMs = Date.now() + 25;
+        const controller = new AbortController();
+        const expire = () => {
+          vi.setSystemTime(deadlineAtMs + 1);
+          if (cancel) {
+            controller.abort(new Error("caller cancelled"));
+          }
+        };
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => {
+            if (stage === "transport") {
+              expire();
+              throw new Error("private transport failure");
+            }
+            return new Response(
+              new ReadableStream({
+                cancel: () => {
+                  expire();
+                },
+              }),
+              { status: 503 },
+            );
+          }),
+        );
+        const adapter = createConfiguredFinanceModelAdapter(cfg, { timeoutMs: 1000 });
+        await expect(
+          adapter.invoke({ ...request, deadlineAtMs }, controller.signal),
+        ).rejects.toMatchObject({ code: cancel ? "process_error" : "runtime_timeout" });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("uses an explicit host directory in the original static credential owner", async () => {
+    const profileCfg = structuredClone(cfg);
+    delete profileCfg.models!.providers!.fixture.apiKey;
+    const load = vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockReturnValue({
+      version: 1,
+      profiles: { fixture: { type: "api_key", provider: "fixture", key: "fixture-key" } },
+    });
+    const resolveKey = vi
+      .spyOn(authProfiles, "resolveApiKeyForProfile")
+      .mockResolvedValue({ apiKey: "fixture-key", provider: "fixture" });
+    await resolveConfiguredFinanceAuth(profileCfg, "fixture", undefined, "/trusted/fixture-agent");
+    expect(load).toHaveBeenCalledWith("/trusted/fixture-agent");
+    expect(resolveKey).toHaveBeenCalledWith(
+      expect.objectContaining({ agentDir: "/trusted/fixture-agent" }),
+    );
+  });
+
   it("does not borrow another provider key or refresh an OAuth profile", async () => {
     const profileCfg = structuredClone(cfg);
     delete profileCfg.models!.providers!.fixture.apiKey;
@@ -738,3 +899,315 @@ it("cancels a body after HTTP 200 without accepting late model output", async ()
   expect(adapter.observe?.(request)).toBeUndefined();
   fs.rmSync(directory, { recursive: true, force: true });
 });
+
+it("does not dispatch a finance request when its final budget reservation cancels the caller", async () => {
+  const http = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          id: "late",
+          choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", http);
+  const controller = new AbortController();
+  const original = createFinanceModelCallBudget(1);
+  const isolated = structuredClone(cfg);
+  isolated.models!.providers!.fixture.apiKey = "final-admission-cancel-fixture";
+  const adapter = createConfiguredFinanceModelAdapter(isolated, {
+    callBudget: {
+      ...original,
+      reserve: () => {
+        original.reserve();
+        controller.abort();
+      },
+    },
+  });
+  await expect(adapter.invoke(request, controller.signal)).rejects.toMatchObject({
+    code: "process_error",
+  });
+  expect(http).not.toHaveBeenCalled();
+  expect(original.snapshot().reserved).toBe(1);
+  expect(adapter.observe?.(request)).toBeUndefined();
+});
+
+it.each(["prompt", "body"] as const)(
+  "honors the host wall deadline across finance %s work",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const deadlineAtMs = Date.now() + 1000;
+      const http = vi.fn(async () => {
+        if (stage === "body") {
+          vi.setSystemTime(deadlineAtMs + 60_000);
+        }
+        return new Response(
+          JSON.stringify({
+            id: "late",
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+          }),
+        );
+      });
+      vi.stubGlobal("fetch", http);
+      const isolated = structuredClone(cfg);
+      isolated.models!.providers!.fixture.apiKey = `host-deadline-${stage}-fixture`;
+      const budget = createFinanceModelCallBudget(1);
+      const adapter = createConfiguredFinanceModelAdapter(isolated, {
+        callBudget: budget,
+        buildPrompt: () => {
+          if (stage === "prompt") {
+            vi.setSystemTime(deadlineAtMs + 60_000);
+          }
+          return "bounded fixture";
+        },
+      });
+      await expect(
+        adapter.invoke({ ...request, deadlineAtMs }, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "runtime_timeout" });
+      expect(http).toHaveBeenCalledTimes(stage === "body" ? 1 : 0);
+      expect(budget.snapshot().reserved).toBe(stage === "body" ? 1 : 0);
+      expect(adapter.observe?.(request)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["prompt", "body"] as const)(
+  "enforces its own wall deadline for a direct finance %s invocation",
+  async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const startedAtMs = Date.now();
+      const expire = () => vi.setSystemTime(startedAtMs + 60_000);
+      const http = vi.fn(async () => {
+        if (stage === "body") {
+          expire();
+        }
+        return new Response(
+          JSON.stringify({
+            id: "direct-late",
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+          }),
+        );
+      });
+      vi.stubGlobal("fetch", http);
+      const isolated = structuredClone(cfg);
+      isolated.models!.providers!.fixture.apiKey = `direct-deadline-${stage}-fixture`;
+      const budget = createFinanceModelCallBudget(1);
+      const adapter = createConfiguredFinanceModelAdapter(isolated, {
+        timeoutMs: 1_000,
+        callBudget: budget,
+        buildPrompt: () => {
+          if (stage === "prompt") {
+            expire();
+          }
+          return "bounded direct fixture";
+        },
+      });
+      await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+        code: "runtime_timeout",
+      });
+      expect(http).toHaveBeenCalledTimes(stage === "body" ? 1 : 0);
+      expect(budget.snapshot().reserved).toBe(stage === "body" ? 1 : 0);
+      expect(adapter.observe?.(request)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["json", "terminal"] as const)(
+  "rejects a direct finance result that expires during %s decoding",
+  async (mode) => {
+    vi.useFakeTimers();
+    const startedAtMs = Date.now();
+    const decoded = '{"kind":"review","review":{"notes":["fact"]}}';
+    const content = mode === "json" ? decoded : '{"kind":"review","review":{"notes":["fact"]]}}';
+    const parse = JSON.parse;
+    const activeTimers: number[] = [];
+    const parseSpy = vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      const value: unknown = parse(text, reviver);
+      if (text === decoded) {
+        activeTimers.push(vi.getTimerCount());
+        vi.setSystemTime(startedAtMs + 60_000);
+      }
+      return value;
+    });
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                id: "late-decoding",
+                choices: [{ finish_reason: "stop", message: { content } }],
+              }),
+            ),
+        ),
+      );
+      const isolated = structuredClone(cfg);
+      isolated.models!.providers!.fixture.apiKey = `decode-deadline-${mode}-fixture`;
+      const adapter = createConfiguredFinanceModelAdapter(isolated, { timeoutMs: 1_000 });
+      await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+        code: "runtime_timeout",
+      });
+      expect(activeTimers).toHaveLength(1);
+      expect(activeTimers[0]).toBeGreaterThan(0);
+      expect(adapter.inspectCall?.()?.stage).toBe("failed");
+      const observation = adapter.observe?.(request);
+      expect(observation?.kind).toBe("provider_call");
+      expect(observation?.outputNormalization).toBeUndefined();
+    } finally {
+      parseSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["fetch", "body"] as const)(
+  "distinguishes timer expiry and caller cancellation while %s is pending",
+  async (phase) => {
+    vi.useFakeTimers();
+    try {
+      for (const mode of ["own", "host", "caller"] as const) {
+        const startedAtMs = Date.now();
+        const caller = new AbortController();
+        const http = vi.fn<typeof fetch>(async (_url, init) => {
+          const signal = init?.signal;
+          if (!signal) {
+            throw new Error("fixture signal missing");
+          }
+          if (phase === "body") {
+            return new Response(new ReadableStream<Uint8Array>());
+          }
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        });
+        vi.stubGlobal("fetch", http);
+        const isolated = structuredClone(cfg);
+        isolated.models!.providers!.fixture.apiKey = `timer-${phase}-${mode}-fixture`;
+        const adapter = createConfiguredFinanceModelAdapter(isolated, { timeoutMs: 1_000 });
+        const outcome = adapter
+          .invoke(
+            mode === "host" ? { ...request, deadlineAtMs: startedAtMs + 100 } : request,
+            caller.signal,
+          )
+          .catch((error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(http).toHaveBeenCalledOnce();
+        if (phase === "body") {
+          expect(adapter.inspectCall?.()?.stage).toBe("response_received");
+        }
+        if (mode === "caller") {
+          caller.abort(new Error("fixture caller cancellation"));
+        } else {
+          await vi.advanceTimersByTimeAsync(mode === "host" ? 101 : 1001);
+        }
+        expect(await outcome).toMatchObject({
+          code: mode === "caller" ? "process_error" : "runtime_timeout",
+        });
+        expect(adapter.inspectCall?.()?.stage).toBe("cancelled");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  "prompt_failure",
+  "cooldown_lookup",
+  "cooldown_lookup_failure",
+  "late_http_402",
+  "caller_late_http_402",
+] as const)("preserves the deadline before %s can change the adapter outcome", async (stage) => {
+  const started = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(started);
+  const config = structuredClone(cfg);
+  config.models!.providers!.fixture.apiKey = `deadline-stage-${stage}`;
+  const directory = path.join(os.tmpdir(), "fixture-virtual-cooldown");
+  const read = fs.readFileSync.bind(fs);
+  if (stage.startsWith("cooldown_lookup")) {
+    vi.spyOn(fs, "readFileSync").mockImplementation((filename, options) => {
+      if (typeof filename === "string" && filename.startsWith(directory + path.sep)) {
+        clock.mockReturnValue(started + 60_000);
+        if (stage === "cooldown_lookup_failure") {
+          throw new Error("private invalid cooldown state");
+        }
+        return JSON.stringify({
+          schema: "finance_provider_payment_cooldown_v1",
+          until: started + 120_000,
+        });
+      }
+      return read(filename, options);
+    });
+  }
+  const caller = new AbortController();
+  const cancelBody = vi.fn();
+  const fetch = vi.fn(async () => {
+    if (stage === "caller_late_http_402") {
+      caller.abort();
+    } else {
+      clock.mockReturnValue(started + 60_000);
+    }
+    return new Response(new ReadableStream({ cancel: cancelBody }), { status: 402 });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const adapter = createConfiguredFinanceModelAdapter(config, {
+    timeoutMs: 1000,
+    ...(stage.startsWith("cooldown_lookup") ? { availabilityStateDirectory: directory } : {}),
+    ...(stage === "prompt_failure"
+      ? {
+          buildPrompt: () => {
+            clock.mockReturnValue(started + 60_000);
+            throw new Error("invalid late prompt");
+          },
+        }
+      : {}),
+  });
+  await expect(adapter.invoke(request, caller.signal)).rejects.toMatchObject({
+    code: stage === "caller_late_http_402" ? "process_error" : "runtime_timeout",
+  });
+  expect(fetch).toHaveBeenCalledTimes(stage.endsWith("http_402") ? 1 : 0);
+  if (stage.endsWith("http_402")) {
+    expect(cancelBody).toHaveBeenCalledOnce();
+    expect(adapter.unavailableReason?.()).toBeUndefined();
+    expect(adapter.inspectCall?.()).toMatchObject({
+      stage: "cancelled",
+      httpStatus: 402,
+      requestDispatched: true,
+      cleanupStatus: "confirmed",
+    });
+    expect(adapter.inspectCall?.()?.paymentRefusalSource).toBeUndefined();
+  }
+});
+
+it.each(["empty", "throwing"] as const)(
+  "keeps deadline precedence when static auth load is %s",
+  async (mode) => {
+    const started = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(started);
+    const config = structuredClone(cfg);
+    delete config.models!.providers!.fixture.apiKey;
+    vi.spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime").mockImplementation(() => {
+      clock.mockReturnValue(started + 60_000);
+      if (mode === "throwing") {
+        throw new Error("private auth load failure");
+      }
+      return { version: 1, profiles: {} };
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      createConfiguredFinanceModelAdapter(config, { timeoutMs: 1000 }).invoke(
+        request,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "runtime_timeout" });
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
