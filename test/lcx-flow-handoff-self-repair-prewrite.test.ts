@@ -96,6 +96,26 @@ describe.skipIf(before)("original latest candidate root byte observation", () =>
   });
 });
 describe.skipIf(before)("same-attempt original self-repair consumers", () => {
+  it("accepts a canonical producer map through a stable workspace alias", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-prewrite-map-alias-"));
+    roots.push(directory);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network forbidden")));
+    const result = await probeOriginalSelfRepairSameAttempt({
+      directory,
+      scenario: "read",
+      observeNextFeedback: true,
+      canonicalProducerMap: true,
+    });
+    expect(result.nextFeedback?.completed.diagnosticFeedback?.status).toBe("read");
+    expect(
+      result.scenarioAudit?.gaps.filter(
+        (gap) =>
+          gap.reason.startsWith("feedback_read_") ||
+          gap.reason === "consumer_did_not_receive_output:owner_coverage_map",
+      ),
+    ).toEqual([]);
+  });
+
   it.each(["read", "missing_memory", "review_timeout"] as const)(
     "retains original scope and propagates the %s outcome through review, governance and owner feedback",
     async (scenario) => {
