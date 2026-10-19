@@ -3472,7 +3472,8 @@ async function verifySelfRepairDiagnosticFeedback(
   if (
     !map ||
     typeof map.path !== "string" ||
-    path.resolve(workspaceAlias, map.path) !== path.resolve(producer.receipt.path) ||
+    (await fs.realpath(path.resolve(workspaceAlias, map.path))) !==
+      (await fs.realpath(producer.receipt.path)) ||
     map.sha256 !== producer.receipt.sha256
   ) {
     throw new Error("feedback_current_map_pin_mismatch");
