@@ -118,6 +118,7 @@ export async function resolveConfiguredFinanceAuth(
   cfg: OpenClawConfig,
   provider: string,
   suppliedStore?: AuthProfileStore,
+  agentDir?: string,
 ): Promise<{ apiKey: string; source: "configuration" | "environment" | "auth_profile" }> {
   const inline = getCustomProviderApiKey(cfg, provider);
   if (inline) {
@@ -129,14 +130,20 @@ export async function resolveConfiguredFinanceAuth(
   }
   const store = suppliedStore
     ? structuredClone(suppliedStore)
-    : loadAuthProfileStoreForSecretsRuntime();
+    : loadAuthProfileStoreForSecretsRuntime(agentDir);
   for (const profileId of resolveAuthProfileOrder({ cfg, store, provider })) {
     const credential = store.profiles[profileId];
     if (credential?.type !== "api_key" && credential?.type !== "token") {
       continue;
     }
     try {
-      const resolved = await resolveApiKeyForProfile({ cfg, store, profileId });
+      const resolved = await resolveApiKeyForProfile({
+        cfg,
+        store,
+        profileId,
+        agentDir,
+        readOnly: true,
+      });
       if (resolved?.apiKey) {
         return { apiKey: resolved.apiKey, source: "auth_profile" };
       }
@@ -210,6 +217,8 @@ export type ConfiguredFinanceCallState = Readonly<z.infer<typeof ConfiguredFinan
 export function createConfiguredFinanceModelAdapter(
   cfg: OpenClawConfig,
   options: {
+    /** Trusted host identity; never supplied by model-authored tool parameters. */
+    agentDir?: string;
     maxTokens?: number;
     maxTokensByRole?: Partial<Record<LogicalAgentId, number>>;
     buildPrompt?: (payload: unknown) => string;
@@ -349,7 +358,7 @@ export function createConfiguredFinanceModelAdapter(
             : "prompt_input_invalid",
         );
       }
-      const auth = await resolveConfiguredFinanceAuth(cfg, provider);
+      const auth = await resolveConfiguredFinanceAuth(cfg, provider, undefined, options.agentDir);
       accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
       const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
       if (cooldownUntil > Date.now()) {

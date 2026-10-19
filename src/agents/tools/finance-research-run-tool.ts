@@ -143,6 +143,8 @@ function boundedInteger(
 /** All channel plugins use the same agent tool; transport never owns research or model selection. */
 export function createFinanceResearchRunTool(options?: {
   workspaceDir?: string;
+  /** Trusted host context, excluded from the model-visible schema. */
+  agentDir?: string;
   config?: OpenClawConfig;
   slotModels?: FinanceWorkflowSlotModels;
   executeResearch?: typeof runFinanceResearchRun;
@@ -237,6 +239,7 @@ export function createFinanceResearchRunTool(options?: {
         const workflow =
           params.live === true
             ? createFinanceModelWorkflow(options?.config ?? loadConfig(), {
+                agentDir: options?.agentDir,
                 slotModels: options?.slotModels,
                 maxCalls: maxModelCalls,
                 maxTokens: 8_192,

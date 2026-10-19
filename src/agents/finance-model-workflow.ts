@@ -381,6 +381,7 @@ function contractRepairFeedback(
 export function createFinanceModelWorkflow(
   cfg: OpenClawConfig,
   options: {
+    agentDir?: string;
     maxCalls?: number;
     maxTokens?: number;
     timeoutMs?: number;
@@ -398,6 +399,7 @@ export function createFinanceModelWorkflow(
   const adapterTimeoutMs = Math.max(options.timeoutMs ?? 180_000, 180_000);
   const cloud = manifest.models.map((modelRef) => {
     const adapter = factory(cfg, {
+      agentDir: options.agentDir,
       modelRef,
       callBudget,
       maxCalls: options.maxCalls ?? 48,
