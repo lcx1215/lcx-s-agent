@@ -397,6 +397,7 @@ export function createConfiguredFinanceModelAdapter(
           throw new Error("rendered finance input exceeds prompt budget");
         }
       } catch (error) {
+        assertActive();
         // Request assembly is local: preserve a safe category without charging a
         // provider call or replaying the unchanged invalid packet on another model.
         throw new ModelAdapterError(
@@ -415,6 +416,7 @@ export function createConfiguredFinanceModelAdapter(
       assertActive();
       accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
       const cooldownUntil = readPaymentCooldown(accountKey, availabilityDirectory);
+      assertActive();
       if (cooldownUntil > Date.now()) {
         callState = {
           requestIdSha256: createHash("sha256").update(request.callId).digest("hex"),
@@ -513,6 +515,18 @@ export function createConfiguredFinanceModelAdapter(
           stage: "response_received",
           httpStatus: http.status,
         });
+        try {
+          assertActive();
+        } catch (error) {
+          // Retain the response fact, but never apply a late status or leave its
+          // body running. The shared bounded reader records cleanup certainty.
+          requestController.abort(error);
+          await readBoundedFinanceResponseText(http, {
+            signal: requestController.signal,
+            discardBody: true,
+          });
+          throw error;
+        }
         if (!http.ok) {
           if (http.status === 402) {
             markPaymentCooldown(accountKey, availabilityDirectory);
