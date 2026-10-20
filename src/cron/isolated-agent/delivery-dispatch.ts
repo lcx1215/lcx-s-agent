@@ -25,7 +25,7 @@ import {
 
 export function matchesMessagingToolDeliveryTarget(
   target: { provider?: string; to?: string; accountId?: string },
-  delivery: { channel?: string; to?: string; accountId?: string },
+  delivery: { channel?: string; to?: string; routeTarget?: string; accountId?: string },
 ): boolean {
   if (!delivery.channel || !delivery.to || !target.to) {
     return false;
@@ -42,7 +42,12 @@ export function matchesMessagingToolDeliveryTarget(
   // is already stripped to chatId only, but the agent's message tool may pass a
   // topic-qualified target (e.g. "-1003597428309:topic:462").
   if (channel === "external") {
-    return normalizeTargetForComparison(channel, target.to) === delivery.to;
+    const targetKey = normalizeTargetForComparison(channel, target.to);
+    const deliveryKey = normalizeTargetForComparison(
+      channel,
+      delivery.routeTarget ?? formatExternalTarget(delivery.to, "direct"),
+    );
+    return targetKey !== undefined && targetKey === deliveryKey;
   }
   const normalizedTargetTo = target.to.replace(/:topic:\d+$/, "");
   return normalizedTargetTo === delivery.to;

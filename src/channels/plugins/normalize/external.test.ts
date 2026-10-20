@@ -24,8 +24,9 @@ it("uses the same External identity for policy and duplicate suppression without
   ).toBe(true);
   const origin = formatExternalTarget("group:123", "direct");
   expect(parseExternalTarget(origin)).toEqual({ id: "group:123", kind: "direct" });
-  expect(normalizeTargetForComparison("external", origin)).toBe("group:123");
-  expect(normalizeTargetForComparison("external", "group:123")).toBe("123");
+  expect(normalizeTargetForComparison("external", origin)).not.toBe(
+    normalizeTargetForComparison("external", "group:123"),
+  );
   expect(() =>
     enforceCrossContextPolicy({
       channel: "external",
@@ -42,4 +43,29 @@ it("uses the same External identity for policy and duplicate suppression without
       messagingToolSentTargets: [{ tool: "message", provider: "external", to: "group:123" }],
     }),
   ).toBe(false);
+});
+
+it("keeps same-ID direct, group and channel conversations distinct for context policy and reply suppression", () => {
+  const cfg = { tools: { message: { crossContext: { allowWithinProvider: false } } } };
+  for (const to of ["group:foo", "channel:foo"]) {
+    expect(() =>
+      enforceCrossContextPolicy({
+        channel: "external",
+        action: "send",
+        cfg,
+        args: { to },
+        toolContext: {
+          currentChannelProvider: "external",
+          currentChannelId: "external:conversation:foo",
+        },
+      }),
+    ).toThrow("Cross-context messaging denied");
+    expect(
+      shouldSuppressMessagingToolReplies({
+        messageProvider: "external",
+        originatingTo: "external:conversation:foo",
+        messagingToolSentTargets: [{ tool: "message", provider: "external", to }],
+      }),
+    ).toBe(false);
+  }
 });

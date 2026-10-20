@@ -1,6 +1,9 @@
 import { expect, it, vi } from "vitest";
 import { runSubagentAnnounceFlow } from "../../agents/subagent-announce.js";
-import { normalizeExternalTarget } from "../../channels/plugins/normalize/external.js";
+import {
+  formatExternalTarget,
+  normalizeExternalTarget,
+} from "../../channels/plugins/normalize/external.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   createChannelTestPluginBase,
@@ -98,12 +101,21 @@ it("keeps External cron group context and escaped raw identity through resolutio
         ),
       ).toBe(raw);
       expect(
-        matchesMessagingToolDeliveryTarget(
-          { provider: "external", to: route },
-          { channel: "external", to: raw },
-        ),
+        matchesMessagingToolDeliveryTarget({ provider: "external", to: route }, delivery),
       ).toBe(true);
+      expect(
+        matchesMessagingToolDeliveryTarget(
+          { provider: "external", to: formatExternalTarget(raw, "direct") },
+          delivery,
+        ),
+      ).toBe(false);
     }
+    expect(
+      matchesMessagingToolDeliveryTarget(
+        { provider: "external", to: "group:" },
+        { channel: "external", to: "foo", routeTarget: "group:" },
+      ),
+    ).toBe(false);
   } finally {
     setActivePluginRegistry(createTestRegistry([]), "external-cron-reset");
   }

@@ -674,11 +674,7 @@ export async function runCronIsolatedAgentTurn(params: {
     deliveryRequested &&
     runResult.didSendViaMessagingTool === true &&
     (runResult.messagingToolSentTargets ?? []).some((target) =>
-      matchesMessagingToolDeliveryTarget(target, {
-        channel: resolvedDelivery.channel,
-        to: resolvedDelivery.to,
-        accountId: resolvedDelivery.accountId,
-      }),
+      matchesMessagingToolDeliveryTarget(target, resolvedDelivery),
     );
 
   const deliveryResult = await dispatchCronDelivery({

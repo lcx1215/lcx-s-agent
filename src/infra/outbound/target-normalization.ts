@@ -64,7 +64,8 @@ function hashSignature(value: string): string {
 /** Comparison keys are identities, never dispatch targets. */
 export function normalizeTargetForComparison(provider: string, raw?: string): string | undefined {
   if (provider.trim().toLowerCase() === "external") {
-    return raw ? parseExternalTarget(raw)?.id : undefined;
+    const parsed = raw ? parseExternalTarget(raw) : undefined;
+    return parsed ? JSON.stringify([parsed.kind ?? "direct", parsed.id]) : undefined;
   }
   return normalizeTargetForProvider(provider, raw);
 }
