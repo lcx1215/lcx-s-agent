@@ -1075,20 +1075,55 @@ export async function readFinanceIntradayExecutionCoverage(
 /** Bounded projection of original account outcomes, never fills, P&L or new authority. */
 export async function readFinanceIntradayAccountHistory(
   directory: string,
-  params: { accountId: string; asOf: string },
+  params: {
+    accountId: string;
+    asOf: string;
+    cursor?: string;
+    signalIds?: readonly string[];
+    maximumEntries?: 2 | 8;
+  },
 ) {
+  const maximumEntries = params.maximumEntries ?? 8;
+  const maximumEntryBytes = maximumEntries === 2 ? 2_500 : 11_000;
   const base = {
     boundary:
       "historical_execution_outcomes_not_current_facts_fills_profit_or_authority; model_text_is_untrusted",
     accountId: params.accountId,
     venue: "alpaca:paper" as const,
     asOf: params.asOf,
-    window: { maximumOutcomes: 24, maximumEntries: 8, maximumBytes: 12_000 },
+    window: {
+      maximumOutcomes: 24,
+      maximumEntries,
+      maximumBytes: maximumEntries === 2 ? 4_000 : 12_000,
+    },
     scopeLimitation: "legacy_outcomes_without_native_account_identity_are_excluded",
   };
   try {
     const asOf = new Date(Iso.parse(params.asOf)).toISOString();
     Text.parse(params.accountId);
+    const scope = caseflowFingerprint({ accountId: params.accountId, asOf });
+    const cursor =
+      params.cursor === undefined
+        ? undefined
+        : z
+            .object({
+              scope: z.literal(scope),
+              at: Iso,
+              sequence: z.number().int().positive(),
+            })
+            .strict()
+            .parse(
+              JSON.parse(
+                Buffer.from(z.string().max(512).parse(params.cursor), "base64url").toString("utf8"),
+              ),
+            );
+    const signalIds =
+      params.signalIds === undefined
+        ? undefined
+        : z.array(Text).min(1).max(8).parse(params.signalIds);
+    if (cursor && signalIds) {
+      throw new Error("intraday history cursor and exact signals are exclusive");
+    }
     try {
       await fs.stat(financeIntradayControlLedgerPath(directory));
     } catch (error) {
@@ -1109,11 +1144,23 @@ export async function readFinanceIntradayAccountHistory(
       db.exec("BEGIN");
       verifyDecisionHead(db);
       const rows = db
-        .prepare(`SELECT d.ref, d.body, o.body AS outcome, o.recorded_at
+        .prepare(`SELECT d.ref, d.body, d.sequence, o.body AS outcome, o.recorded_at
         FROM finance_intraday_outcomes o JOIN finance_intraday_decisions d ON d.signal_id=o.signal_id
         WHERE COALESCE(json_extract(o.body,'$.executionScope.accountId'),json_extract(o.body,'$.tradeDecisionReview.request.accountId'))=?
-        AND o.recorded_at<? ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 25`)
-        .all(params.accountId, asOf);
+        AND o.recorded_at<?
+        AND (? IS NULL OR o.recorded_at<? OR (o.recorded_at=? AND d.sequence<?))
+        AND (? IS NULL OR d.signal_id IN (SELECT value FROM json_each(?)))
+        ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 25`)
+        .all(
+          params.accountId,
+          asOf,
+          cursor?.at ?? null,
+          cursor?.at ?? null,
+          cursor?.at ?? null,
+          cursor?.sequence ?? null,
+          signalIds ? JSON.stringify(signalIds) : null,
+          signalIds ? JSON.stringify(signalIds) : null,
+        );
       const entries = rows.slice(0, 24).map((row) => {
         if (
           typeof row.body !== "string" ||
@@ -1148,6 +1195,7 @@ export async function readFinanceIntradayAccountHistory(
           throw new Error("intraday history account, signal or cutoff mismatch");
         }
         return {
+          detailGap: null as string | null,
           decisionRef: row.ref,
           outcomeRef: caseflowFingerprint(outcome),
           recordedAt: decision.recordedAt,
@@ -1179,28 +1227,88 @@ export async function readFinanceIntradayAccountHistory(
       // Cover distinct recent instruments before repeated outcomes for one signal stream.
       const selected: typeof entries = [];
       const instruments = new Set<string>();
-      for (const entry of entries) {
+      for (const entry of cursor || signalIds ? [] : entries) {
         if (!instruments.has(entry.instrument)) {
           selected.push(entry);
           instruments.add(entry.instrument);
         }
-        if (selected.length === 8) {
+        if (selected.length === maximumEntries) {
           break;
         }
       }
       for (const entry of entries) {
-        if (selected.length === 8) {
+        if (selected.length === maximumEntries) {
           break;
         }
         if (!selected.includes(entry)) {
           selected.push(entry);
         }
       }
-      while (selected.length > 0 && Buffer.byteLength(JSON.stringify(selected), "utf8") > 11_000) {
+      // A large legitimate observation must not turn continuation into an empty
+      // terminal page. Retain its immutable refs and disclose omitted details.
+      if (
+        selected.length > 0 &&
+        Buffer.byteLength(JSON.stringify(selected[0]), "utf8") > maximumEntryBytes
+      ) {
+        const entry = selected[0];
+        const boundedIdentity = (text: string) =>
+          Buffer.byteLength(text, "utf8") <= 256 ? text : "";
+        selected[0] = {
+          ...entry,
+          signalId: boundedIdentity(entry.signalId),
+          instrument: boundedIdentity(entry.instrument),
+          strategyRule: boundedIdentity(entry.strategyRule),
+          receiptId: null,
+          reasons: [],
+          omittedReasons: entry.omittedReasons + entry.reasons.length,
+          rationale: null,
+          strategyReassessment: null,
+          expectationGap: null,
+          executionFailure: null,
+          executionSafetyFailure: null,
+          detailGap: "oversize_entry_details_omitted_retain_original_decision_and_outcome_refs",
+        };
+      }
+      while (
+        selected.length > 1 &&
+        Buffer.byteLength(JSON.stringify(selected), "utf8") > maximumEntryBytes
+      ) {
         selected.pop();
       }
+      // Initial diversified snapshot resumes immediately after its newest row;
+      // subsequent pages are chronological so diversity selection cannot skip history.
+      const anchor = cursor || signalIds ? rows[selected.length - 1] : rows[0];
+      const more = cursor ? rows.length > selected.length : rows.length > 1;
+      const nextCursor =
+        !signalIds && selected.length > 0 && more && anchor
+          ? Buffer.from(
+              JSON.stringify({ scope, at: anchor.recorded_at, sequence: anchor.sequence }),
+            ).toString("base64url")
+          : null;
       db.exec("COMMIT");
-      return {
+      const result = {
+        nextCursor,
+        ...(signalIds
+          ? {
+              requestedSignalCount: signalIds.length,
+              missingSignalIndexes: signalIds.flatMap((id, index) =>
+                entries.some((entry) => entry.signalId === id) ? [] : [index],
+              ),
+              omittedSignalIndexes: signalIds.flatMap((id, index) =>
+                entries.some((entry) => entry.signalId === id) &&
+                !selected.some(
+                  (entry) =>
+                    entry.outcomeRef === entries.find((item) => item.signalId === id)?.outcomeRef,
+                )
+                  ? [index]
+                  : [],
+              ),
+            }
+          : {}),
+        ...(entries.length > 0 && selected.length === 0
+          ? { readGap: "history_entry_exceeds_byte_budget" }
+          : {}),
+        continuationBoundary: "read_only_history_coverage_not_model_adoption",
         ...base,
         status: "observed" as const,
         entries: selected,
@@ -1208,6 +1316,15 @@ export async function readFinanceIntradayAccountHistory(
         omittedEntries: entries.length - selected.length,
         earlierHistoryMayBeOmitted: rows.length > 24,
       };
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") > base.window.maximumBytes) {
+        return {
+          ...base,
+          status: "unavailable" as const,
+          reason: "intraday_history_projection_exceeds_byte_budget",
+          entries: [],
+        };
+      }
+      return result;
     } finally {
       releaseDatabase(db);
     }

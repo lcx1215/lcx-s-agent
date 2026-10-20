@@ -24,6 +24,7 @@ import {
   type FinanceStrategyStage,
 } from "./finance-decision-policy.js";
 import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
+import { readFinanceIntradayAccountHistory } from "./finance-intraday-control-ledger.js";
 import {
   createFinanceMarketCollectionRegistry,
   FINANCE_EOD_HISTORY_MAX_RECORDS,
@@ -1786,6 +1787,11 @@ type FinanceLedgerReadRequest =
       instrument?: string;
       limit: number;
     }>
+  | Readonly<{
+      tool: "finance_intraday_account_history";
+      cursor?: string;
+      signalIds?: readonly string[];
+    }>
   | Readonly<{ tool: "finance_thesis_ledger_read"; thesisId: string }>;
 
 function financeLedgerReadRequestsFromCommittee(
@@ -1831,6 +1837,27 @@ function financeLedgerReadRequestsFromCommittee(
         ...(typeof value.instrument === "string" ? { instrument: value.instrument } : {}),
         limit: Number(value.limit),
       };
+    } else if (value.tool === "finance_intraday_account_history") {
+      if (
+        Object.keys(value).some((key) => !["tool", "cursor", "signalIds"].includes(key)) ||
+        (value.cursor !== undefined &&
+          (typeof value.cursor !== "string" || value.cursor.length > 512)) ||
+        (value.signalIds !== undefined &&
+          (!Array.isArray(value.signalIds) ||
+            value.signalIds.length < 1 ||
+            value.signalIds.length > 8 ||
+            value.signalIds.some(
+              (id) => typeof id !== "string" || id.length < 1 || id.length > 240,
+            ))) ||
+        (value.cursor !== undefined && value.signalIds !== undefined)
+      ) {
+        throw new Error("finance_intraday_history_read_request_invalid");
+      }
+      request = {
+        tool: value.tool,
+        ...(typeof value.cursor === "string" ? { cursor: value.cursor } : {}),
+        ...(Array.isArray(value.signalIds) ? { signalIds: value.signalIds as string[] } : {}),
+      };
     } else if (value.tool === "finance_thesis_ledger_read") {
       if (
         Object.keys(value).some((key) => !["tool", "thesisId"].includes(key)) ||
@@ -1868,6 +1895,24 @@ async function executeFinanceLedgerReadRequests(params: {
         payload = { ok: false, status: "aborted", reason: "run_signal_aborted_before_read" };
       } else if (!params.financeStateDir) {
         payload = { ok: false, status: "unavailable", reason: "host_finance_state_unavailable" };
+      } else if (request.tool === "finance_intraday_account_history") {
+        const binding = await resolveLedgerReadPaperAccount(params);
+        payload =
+          binding.ok && params.portfolioContext?.venue !== "paper"
+            ? await readFinanceIntradayAccountHistory(params.financeStateDir, {
+                accountId: binding.accountId,
+                asOf: params.asOf,
+                cursor: request.cursor,
+                signalIds: request.signalIds,
+                maximumEntries: 2,
+              })
+            : {
+                ok: false,
+                status: "unavailable",
+                reason: binding.ok
+                  ? "intraday_history_requires_alpaca_paper_scope"
+                  : binding.reason,
+              };
       } else if (request.tool === "finance_position_ledger_read") {
         const binding = await resolveLedgerReadPaperAccount(params);
         if (!binding.ok) {
@@ -3119,6 +3164,14 @@ export async function runFinanceResearchRun(
           outputPath: "artifact.supportingAnalysis.financeLedgerReadRequests",
           maxRequests: 2,
           allowed: [
+            {
+              tool: "finance_intraday_account_history",
+              optionalCursor:
+                "nextCursor from the same account/cutoff history projection; bounded chronological continuation",
+              optionalSignalIds: "1..8 exact original signal ids; exclusive with cursor",
+              boundary:
+                "Historical outcomes only, not current readiness or adoption. Request only relevant omissions; existing two-request budget applies.",
+            },
             {
               tool: "finance_position_ledger_read",
               historyKind: ["receipt", "order", "fill", "fee"],

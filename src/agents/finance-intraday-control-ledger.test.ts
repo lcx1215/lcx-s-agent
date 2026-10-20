@@ -877,7 +877,8 @@ it("recovers bounded account outcomes across sessions without attributing anonym
     await appendFinanceIntradayOutcome(directory, {
       signalId,
       status: index === 0 ? "uncertain" : "refused",
-      reasons: ["account_read_failed"],
+      reasons:
+        index === 10 ? ["\u0001".repeat(240), "\u0002".repeat(240)] : ["account_read_failed"],
       ...(index === 28
         ? {}
         : {
@@ -909,6 +910,56 @@ it("recovers bounded account outcomes across sessions without attributing anonym
     decisionRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
     outcomeRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
   });
+  // A bounded recent snapshot must still permit recovery of an older original.
+  const recovered = new Set(history.entries.map((entry) => entry.signalId));
+  let cursor = "nextCursor" in history ? history.nextCursor : null;
+  let pageCount = 0;
+  while (typeof cursor === "string") {
+    expect(pageCount++).toBeLessThan(20);
+    const page = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "selected",
+      asOf,
+      cursor,
+      maximumEntries: 2,
+    });
+    expect(page.status).toBe("observed");
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(4_000);
+    if (page.entries.some((entry) => entry.signalId === "history-10")) {
+      expect(page.entries.find((entry) => entry.signalId === "history-10")?.detailGap).toContain(
+        "oversize_entry_details_omitted",
+      );
+    }
+    expect(page.entries.length).toBeLessThanOrEqual(8);
+    page.entries.forEach((entry) => recovered.add(entry.signalId));
+    cursor = "nextCursor" in page ? page.nextCursor : null;
+  }
+  expect(recovered.size).toBe(28);
+  expect(recovered.has("history-0")).toBe(true);
+  const initialCursor = "nextCursor" in history ? history.nextCursor : undefined;
+  if (typeof initialCursor !== "string") {
+    throw new Error("missing historical continuation");
+  }
+  expect(
+    await readFinanceIntradayAccountHistory(directory, {
+      accountId: "foreign",
+      asOf,
+      cursor: initialCursor,
+    }),
+  ).toMatchObject({ status: "unavailable" });
+  expect(
+    await readFinanceIntradayAccountHistory(directory, {
+      accountId: "selected",
+      asOf: "2026-09-22T13:00:00.000Z",
+      cursor: initialCursor,
+    }),
+  ).toMatchObject({ status: "unavailable" });
+  const exact = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf,
+    signalIds: ["history-0", "history-29"],
+  });
+  expect(exact.entries.map((entry) => entry.signalId)).toEqual(["history-0"]);
+  expect(exact).toMatchObject({ missingSignalIndexes: [1], nextCursor: null });
   // Reopen the same original book after a weekend; no in-memory feedback cache is needed.
   expect(
     await readFinanceIntradayAccountHistory(directory, { accountId: "selected", asOf }),

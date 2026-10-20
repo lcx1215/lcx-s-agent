@@ -3141,6 +3141,23 @@ describe("finance research runner", () => {
       count: 1,
       invalid: false,
     },
+    {
+      name: "intraday account override",
+      requests: [{ tool: "finance_intraday_account_history", accountId: "foreign" }],
+      count: 1,
+      invalid: true,
+    },
+    {
+      name: "intraday oversized signal selection",
+      requests: [
+        {
+          tool: "finance_intraday_account_history",
+          signalIds: Array.from({ length: 9 }, (_, i) => `signal-${i}`),
+        },
+      ],
+      count: 1,
+      invalid: true,
+    },
     { name: "empty queries", requests: [], count: 0, invalid: false },
     {
       name: "missing host with explicit Paper context",
@@ -3223,6 +3240,39 @@ describe("finance research runner", () => {
       invalidationConditions: ["A contrary observation appears."],
       observedAt: "2026-09-01T00:00:00.000Z",
     });
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "history-account",
+      venue: "alpaca:paper",
+      query: "reconciliation:history",
+      cursor: "",
+      payload: [{ status: "partial", observedAt: "2026-09-08T10:00:00.000Z" }],
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T11:00:00.000Z"));
+    try {
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "older-original-feedback",
+        instrument: "SPY",
+        sessionDate: "2026-09-08",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-08T10:59:00.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "a".repeat(64),
+        strategyRule: "opening_range_breakout_long_next_bar_v1",
+      });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId: "older-original-feedback",
+        status: "refused",
+        reasons: ["historical_account_read_failed"],
+        executionScope: { accountId: "history-account", venue: "alpaca:paper" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     let qualityEvidence: readonly { id: string; text: string }[] = [];
     const invoker = async (request: unknown) => {
       const payload = request as {
@@ -3235,6 +3285,7 @@ describe("finance research runner", () => {
         };
         output.artifact.supportingAnalysis.financeLedgerReadRequests = [
           { tool: "finance_thesis_ledger_read", thesisId: "existing-thesis" },
+          { tool: "finance_intraday_account_history", signalIds: ["older-original-feedback"] },
         ];
         return output;
       }
@@ -3270,6 +3321,13 @@ describe("finance research runner", () => {
       );
       expect(ledgerEvidence?.text).toContain("existing-thesis");
       expect(ledgerEvidence?.text).toContain('"ok":true');
+      const historyEvidence = qualityEvidence.find((item) =>
+        item.id.startsWith("finance-ledger-read:finance_intraday_account_history:"),
+      );
+      expect(historyEvidence?.text).toContain("older-original-feedback");
+      expect(historyEvidence?.text).toContain("historical_account_read_failed");
+      expect(historyEvidence?.text).toContain('"status":"observed"');
+      expect(historyEvidence?.text).toContain('"missingSignalIndexes":[]');
       expect(result.gates.some((gate) => gate.id === "module_execution")).toBe(false);
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
