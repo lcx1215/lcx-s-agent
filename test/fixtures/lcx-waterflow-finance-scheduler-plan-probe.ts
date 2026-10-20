@@ -469,7 +469,7 @@ export async function probeOriginalFinanceSchedulerPlan(params: {
               status: attempt.status,
               error: attempt.error,
               latencyMs: attempt.latencyMs,
-              apiCalls: attempt.apiCalls.map(({ status, timeoutMs, transportError }) => ({
+              apiCalls: attempt.apiCalls?.map(({ status, timeoutMs, transportError }) => ({
                 status,
                 timeoutMs,
                 transportError,
