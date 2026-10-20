@@ -384,6 +384,23 @@ describe("lcx-change-impact-plan", () => {
     );
     expect(result.recommendedFastCommands.join(" ")).toContain("local-text-worker.test.ts");
   });
+  it("routes cloud and canonical answer files without admitting unknown operators", async () => {
+    const unknown = "scripts/operator/lcx-unclassified-cloud.ts";
+    const result = await runPlanArgs([
+      "--files",
+      "deploy/cloud/.env.example",
+      "docs/install/cloud.md",
+      "scripts/operator/lcx-cloud-preflight.ts",
+      "src/agents/commercial-answer-pipeline.ts",
+      unknown,
+    ]);
+    expect(result.unmatchedFiles).toEqual([unknown]);
+    expect(result.affectedLanes).toEqual(
+      expect.arrayContaining(["local_deployment_boundary", "external_message_visible_reply"]),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("keeps unknown artifact paths blocked", async () => {
     const result = await runPlan(".artifacts/unowned/report.json");
     expect(result.ok).toBe(false);

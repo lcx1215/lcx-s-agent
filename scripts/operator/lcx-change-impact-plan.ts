@@ -634,6 +634,7 @@ const PATH_RULES: PathRule[] = [
     lane: "external_message_visible_reply",
     patterns: [
       /^scripts\/operator\/lcx-commercial-answer-pipeline\.ts$/u,
+      /^src\/agents\/commercial-answer-pipeline\.ts$/u,
       /^scripts\/operator\/lcx-directed-daily-research-brief\.ts$/u,
       /^scripts\/operator\/lcx-external-short-intent-fuzzer\.ts$/u,
       /^scripts\/operator\/lcx-visible-answer-quality-fuzzer\.ts$/u,
@@ -1124,6 +1125,9 @@ const PATH_RULES: PathRule[] = [
     lane: "local_deployment_boundary",
     patterns: [
       /^Dockerfile[\w.-]*$/u,
+      /^deploy\/cloud\/\.env\.example$/u,
+      /^docs\/install\/cloud\.md$/u,
+      /^scripts\/operator\/lcx-cloud-preflight\.ts$/u,
       /^docker-compose\.yml$/u,
       /^docker-setup\.sh$/u,
       /^setup-podman\.sh$/u,
