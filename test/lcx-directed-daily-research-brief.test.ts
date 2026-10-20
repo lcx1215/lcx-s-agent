@@ -584,10 +584,9 @@ async function preparePublishedDirectedReview(
           elapsedMs: Math.round(performance.now() - executionStartedAt),
           batch,
           batchExecution:
-            "batchExecution" in execution
+            "batchExecution" in execution && execution.batchExecution
               ? {
                   status: execution.batchExecution.status,
-                  deadlineMs: execution.batchExecution.deadlineMs,
                   tasks: execution.batchExecution.tasks.map((task) => ({
                     taskId: task.taskId,
                     status: task.status,
@@ -599,7 +598,7 @@ async function preparePublishedDirectedReview(
             "taskExecution" in execution
               ? {
                   status: execution.taskExecution.status,
-                  gaps: execution.taskExecution.gaps,
+                  gaps: "gaps" in execution.taskExecution ? execution.taskExecution.gaps : [],
                 }
               : undefined,
           sourceBudget: {
