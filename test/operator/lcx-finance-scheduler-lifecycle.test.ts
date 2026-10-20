@@ -29,6 +29,9 @@ function start(argv: string[], ipc = false) {
     stdio: ipc ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
   });
   children.add(child);
+  if (!child.stdout || !child.stderr) {
+    throw new Error("fixture child stdout and stderr pipes are required");
+  }
   const output = { stdout: "", stderr: "" };
   child.stdout.on("data", (chunk: Buffer) => {
     output.stdout += String(chunk);
