@@ -9,10 +9,55 @@ import {
   buildExternalChannelBindingSummary,
   parseExternalChannelBindingArgs,
   runExternalChannelBinding,
+  externalChannelStatusSucceeded,
 } from "../scripts/operator/lcx-external-channel-binding.js";
 import { resolveExternalChannelTruth } from "../scripts/operator/lcx-external-channel-status.js";
 
 describe("lcx-external-channel-binding", () => {
+  it("requires running runtime evidence and successful zero-drift checks", () => {
+    const proof = {
+      statusCommandOk: true,
+      driftCommandOk: true,
+      driftSummary: "summary missing=0 different=0",
+    };
+    const healthy = { channels: { external: { configured: true, running: true } } };
+    expect(externalChannelStatusSucceeded(healthy, proof)).toBe(true);
+    expect(
+      externalChannelStatusSucceeded(
+        { channelAccounts: { external: [{ configured: true, running: true }] } },
+        proof,
+      ),
+    ).toBe(true);
+    expect(
+      externalChannelStatusSucceeded(
+        {
+          ...healthy,
+          channelAccounts: { external: [{ configured: true, running: false }] },
+        },
+        proof,
+      ),
+    ).toBe(false);
+    expect(
+      externalChannelStatusSucceeded(
+        { channels: { external: { configured: true, running: false } } },
+        proof,
+      ),
+    ).toBe(false);
+    expect(externalChannelStatusSucceeded({ ok: true }, proof)).toBe(false);
+    expect(externalChannelStatusSucceeded(healthy, { ...proof, driftCommandOk: false })).toBe(
+      false,
+    );
+    expect(
+      externalChannelStatusSucceeded(healthy, {
+        ...proof,
+        driftSummary: "summary missing=0 different=1",
+      }),
+    ).toBe(false);
+    expect(externalChannelStatusSucceeded(healthy, { ...proof, statusCommandOk: false })).toBe(
+      false,
+    );
+  });
+
   it("keeps platform compatibility separate from runtime activation and model promotion", async () => {
     expect(() => parseExternalChannelBindingArgs(["--compatibility-only", "--apply"])).toThrow(
       "cannot apply",
