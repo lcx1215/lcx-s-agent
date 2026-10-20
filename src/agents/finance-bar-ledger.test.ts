@@ -61,6 +61,27 @@ function pointInput(overrides: Partial<PointInput> = {}): PointInput {
   };
 }
 
+it("releases a bar writer through an equivalent directory spelling", async () => {
+  const directory = await storeDirectory();
+  const alias = path.join(path.dirname(directory), path.basename(directory).toUpperCase());
+  const directoryAlias = await fs.stat(alias).then(
+    () => alias,
+    () => directory,
+  );
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  try {
+    await appendFinanceBars(directory, ohlcvInput());
+    close.mockClear();
+    closeFinanceBarLedger(directoryAlias);
+    expect(close).toHaveBeenCalledTimes(1);
+    await fs.rm(directory, { recursive: true });
+  } finally {
+    close.mockRestore();
+    closeFinanceBarLedger(directory);
+  }
+});
+
 /** Older writers filed repeats; build that valid, immutable history without the new write dedupe. */
 function appendLegacyRecord(
   directory: string,

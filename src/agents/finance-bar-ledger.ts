@@ -251,7 +251,7 @@ type BarWriter = {
 const barWriters = new Map<string, BarWriter>();
 function acquireBarWriter(directory: string): BarWriter {
   mkdirSync(directory, { recursive: true });
-  const filename = financeBarLedgerPath(realpathSync(directory));
+  const filename = financeBarLedgerPath(realpathSync.native(directory));
   const cached = barWriters.get(filename);
   const stat = statSync(filename, { throwIfNoEntry: false });
   if (cached && !cached.busy) {
@@ -293,7 +293,7 @@ const barWriteTurns = new Map<string, Promise<void>>();
 export function closeFinanceBarLedger(directory: string): void {
   let filename: string;
   try {
-    filename = financeBarLedgerPath(realpathSync(directory));
+    filename = financeBarLedgerPath(realpathSync.native(directory));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return;
@@ -313,7 +313,7 @@ export function closeFinanceBarLedger(directory: string): void {
 
 async function withBarWriteTurn<T>(directory: string, write: () => Promise<T>): Promise<T> {
   mkdirSync(directory, { recursive: true });
-  const filename = financeBarLedgerPath(realpathSync(directory));
+  const filename = financeBarLedgerPath(realpathSync.native(directory));
   const previous = barWriteTurns.get(filename) ?? Promise.resolve();
   let release!: () => void;
   const turn = new Promise<void>((resolve) => {
