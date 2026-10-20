@@ -560,6 +560,9 @@ async function preparePublishedDirectedReview(
   const execution = batch
     ? await executeDirectedDailyResearchBatch({
         ...prepared.options,
+        // This feedback fixture needs the real durable batch, not a 10s deadline probe.
+        // Use the owner's default; budget/cancellation fixtures retain prepareBatch's limit.
+        timeoutMs: undefined,
         ...(firstRunAdmission
           ? {
               admission: {
