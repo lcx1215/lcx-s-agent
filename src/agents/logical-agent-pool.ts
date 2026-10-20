@@ -515,22 +515,18 @@ export class LogicalAgentPool<TInput, TResult> {
   }
 
   /** Functions are deliberately excluded; adapter code changes require a new revision. */
-  get modelRoutingFingerprint(): string | undefined {
-    return this.#modelRouter
-      ? createHash("sha256")
-          .update(
-            stableStringify({
-              routing: this.#modelRouter.routing,
-              allowProviderCalls: this.#allowProviderCalls,
-              // Earlier open grants bypassed false; do not resume their completed tasks.
-              providerCallGateVersion: 1,
-              // Included only when a caller narrowed the grant, so an un-narrowed pool keeps
-              // exactly its previous fingerprint.
-              ...(this.#capabilities ? { capabilities: this.#capabilities } : {}),
-            }),
-          )
-          .digest("hex")
-      : undefined;
+  get modelRoutingFingerprint(): string {
+    return createHash("sha256")
+      .update(
+        stableStringify({
+          routing: this.#modelRouter?.routing ?? null,
+          allowProviderCalls: this.#allowProviderCalls,
+          // Legacy/injected pools must also invalidate pre-gate completed tasks.
+          providerCallGateVersion: 1,
+          ...(this.#capabilities ? { capabilities: this.#capabilities } : {}),
+        }),
+      )
+      .digest("hex");
   }
 
   get config(): LocalModelPoolConfig {

@@ -1153,6 +1153,41 @@ describe("logical agent pool", () => {
     ]);
   });
 
+  it.each(["legacy-base", "explicit-opt-in"] as const)(
+    "refuses non-router provider checkpoint reuse after grant changes (%s)",
+    async (kind) => {
+      const checkpointStore = createInMemoryLogicalAgentCheckpointStore<string>();
+      const tasks = [{ id: "provider-checkpoint", agentId: "risk_check" as const, input: {} }];
+      const runId = `provider-checkpoint-${kind}`;
+      const initial = await runLogicalAgentPlan({
+        tasks,
+        runId,
+        checkpointStore,
+        pool: new LogicalAgentPool({ allowProviderCalls: true }),
+        executor: () => ({ output: "previous", sideEffects: ["provider_call"] as const }),
+      });
+      expect(initial.status).toBe("completed");
+      if (kind === "legacy-base") {
+        checkpointStore.save({
+          ...checkpointStore.load(runId)!,
+          planFingerprint: fingerprintLogicalAgentPlan(tasks, [], "provider-checkpoint", {}),
+        });
+      }
+      const executor = vi.fn(() => ({ output: "next", sideEffects: [] }));
+      await expect(
+        runLogicalAgentPlan({
+          tasks,
+          runId,
+          checkpointStore,
+          resume: true,
+          pool: new LogicalAgentPool(),
+          executor,
+        }),
+      ).rejects.toThrow("fingerprint mismatch");
+      expect(executor).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects undeclared side effects at the capability boundary", async () => {
     // The default grant is open, so the boundary is only observable on a narrowed pool.
     const pool = new LogicalAgentPool<{ ask: string }, string>({
