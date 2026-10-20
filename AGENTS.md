@@ -66,6 +66,10 @@ adds project contracts. Keep volatile commands, models and incidents in runbooks
   strict types, avoid `any`/`@ts-nocheck`, follow formatting and do not hand-edit
   generated output/node_modules. Source/tests: `src/`; extensions: `extensions/`;
   docs: `docs/`.
+- Validate only as much as the change needs. Reduce unnecessary boundary tests,
+  reruns and checks; do not delay delivery out of fear. Reuse unchanged valid
+  results; expand only for concrete failures, relevant changes or unresolved
+  questions. Preserve targeted permission, trading, side-effect and recovery checks.
 - Lazy CLI help and package entry names do not establish runtime wiring; inspect
   registration/argument parsing and scoped execution when that behavior is at issue.
 - For a new window continuing complex LCX work, use `lcx-context-recovery-exam`
