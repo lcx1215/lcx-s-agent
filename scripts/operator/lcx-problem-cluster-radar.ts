@@ -7,7 +7,10 @@ import {
   readLatestShadowSnapshot,
   type ShadowLatestSnapshot,
 } from "./lcx-multi-agent-pattern-shadow.ts";
-import { buildLocalBrainTrainingPlan } from "./local-brain-training-plan.ts";
+import {
+  buildLocalBrainTrainingPlan,
+  isHistoricalLocalModelLaneSnapshot,
+} from "./local-brain-training-plan.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
@@ -351,6 +354,7 @@ function decisionSignals(
 
 function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const payload = inputs.trainingPlan?.payload;
+  const historical = isHistoricalLocalModelLaneSnapshot(payload);
   const signals: ProblemSignal[] = [];
   const ownerDecisionSignals = decisionSignals(payload, {
     stable_eval_timeout_after_latest_start: {
@@ -428,9 +432,14 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
     ownerEntrypoint: "scripts/operator/local-brain-training-plan.ts",
     sourceOwners: ["local-brain-training-plan"],
     signals,
-    nextAction:
-      "Hold promotion and repair eval runtime, output contract, teacher sample quality, timeout budget, or eval scope through local-brain-training-plan before judging the candidate.",
-    actionability: activeOwnerBlockedRepair ? "blocked_by_owner_gate" : undefined,
+    nextAction: historical
+      ? "Retain failed local evals and promotion blocks as historical evidence; the configured remote lane is current. Recheck lane relevance before any local repair or training."
+      : "Hold promotion and repair eval runtime, output contract, teacher sample quality, timeout budget, or eval scope through local-brain-training-plan before judging the candidate.",
+    actionability: historical
+      ? "watch"
+      : activeOwnerBlockedRepair
+        ? "blocked_by_owner_gate"
+        : undefined,
     blockingReasons: activeOwnerBlockedRepair ? ["active_local_brain_guard_or_eval"] : [],
   });
 }
@@ -530,6 +539,7 @@ function evolutionAccelerationCluster(inputs: RadarInputs): ProblemCluster | und
 
 function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const payload = inputs.trainingPlan?.payload;
+  const historical = isHistoricalLocalModelLaneSnapshot(payload);
   const latestEval = recordValue(payload?.latestEval);
   const latestPassingEval = recordValue(payload?.latestPassingEval);
   const qwen = recordValue(payload?.qwenCapabilityConsolidation);
@@ -652,8 +662,9 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     ownerEntrypoint: "scripts/operator/local-brain-training-plan.ts",
     sourceOwners: ["local-brain-training-plan"],
     signals,
-    nextAction:
-      "Keep runtime on one clean latest-passing adapter; bind the external message channel to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and real user-visible External proof is collected.",
+    nextAction: historical
+      ? "Retain local adapter promotion failures as historical evidence; external-channel binding still requires its original owner proof and authorization."
+      : "Keep runtime on one clean latest-passing adapter; bind the external message channel to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and real user-visible External proof is collected.",
     actionability:
       hasActiveHeavyLocalBrainProcess(payload) ||
       ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch") ||
@@ -663,7 +674,9 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         "live_external_brain_binding_deferred",
       ])
         ? "blocked_by_owner_gate"
-        : undefined,
+        : historical
+          ? "watch"
+          : undefined,
     blockingReasons: [
       ...(hasActiveHeavyLocalBrainProcess(payload) ? ["active_local_brain_guard_or_eval"] : []),
       ...(ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch")
@@ -1223,12 +1236,25 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
   const blockedClusters = clusters.filter(
     (cluster) => cluster.actionability === "blocked_by_owner_gate",
   );
-  const repairableSignals = repairableSignalEntries(clusters, inputs.repairVerification);
-  const pendingVerificationSignals = pendingVerificationSignalEntries(
-    clusters,
+  // Keep all original diagnostic signals. Only their current-lane repair priority changes;
+  // failed evals never become clean promotion proof and binding gates remain independent.
+  const repairSignalClusters = isHistoricalLocalModelLaneSnapshot(inputs.trainingPlan?.payload)
+    ? clusters.filter(
+        (cluster) =>
+          !["training_eval_runtime_cluster", "adapter_promotion_truth_cluster"].includes(
+            cluster.id,
+          ),
+      )
+    : clusters;
+  const repairableSignals = repairableSignalEntries(
+    repairSignalClusters,
     inputs.repairVerification,
   );
-  const watchClusters = clusters.filter((cluster) => cluster.severity === "P3");
+  const pendingVerificationSignals = pendingVerificationSignalEntries(
+    repairSignalClusters,
+    inputs.repairVerification,
+  );
+  const watchClusters = clusters.filter((cluster) => cluster.actionability === "watch");
   return {
     ok: true,
     boundary: "local_problem_cluster_radar_only",

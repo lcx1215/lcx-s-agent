@@ -112,17 +112,30 @@ function terminateChild(child: ChildProcess): void {
 }
 
 export function parseLocalModelJson(raw: string): Record<string, unknown> {
+  if (raw.length > 2_000_000) {
+    throw new ModelAdapterError("output_limit");
+  }
   const trimmed = raw.trim();
   const candidates: Record<string, unknown>[] = [];
-  for (let searchFrom = 0; searchFrom < trimmed.length; searchFrom += 1) {
+  let inspectedCharacters = 0;
+  // Preserve bounded nested-envelope recovery without rescanning every offset
+  // before the same opening brace or allowing malformed output to monopolize JS.
+  for (let searchFrom = 0, candidateCount = 0; searchFrom < trimmed.length; ) {
     const start = trimmed.indexOf("{", searchFrom);
     if (start < 0) {
       break;
     }
+    if (++candidateCount > 64) {
+      throw new ModelAdapterError("output_limit");
+    }
+    searchFrom = start + 1;
     let depth = 0;
     let inString = false;
     let escaped = false;
     for (let index = start; index < trimmed.length; index += 1) {
+      if (++inspectedCharacters > 4_000_000) {
+        throw new ModelAdapterError("output_limit");
+      }
       const char = trimmed[index];
       if (escaped) {
         escaped = false;
@@ -147,7 +160,11 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
           try {
             const parsed = JSON.parse(trimmed.slice(start, index + 1)) as unknown;
             if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-              candidates.push(parsed as Record<string, unknown>);
+              const candidate = parsed as Record<string, unknown>;
+              if (typeof candidate.kind === "string") {
+                return candidate;
+              }
+              candidates.push(candidate);
             }
           } catch {
             // Keep searching; model runtimes may emit a short prefix before JSON.
@@ -156,10 +173,6 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
         }
       }
     }
-  }
-  const withKind = candidates.find((candidate) => typeof candidate.kind === "string");
-  if (withKind) {
-    return withKind;
   }
   const declaredKind = trimmed.match(/"kind"\s*:\s*"(plan|review|artifact)"/u)?.[1];
   if (declaredKind === "plan") {
@@ -667,7 +680,7 @@ export function buildQualityHarnessModelPromptWithCoverage(
       ? [
           `finding_packet=${JSON.stringify(request.findingPacket)}`,
           "The complete final artifact is present once in dependencyOutputs.formatting; finding_packet.evidenceSha256 binds the full normalized evidence set, including records reviewed in other batches.",
-          'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and artifactClaimId naming the exact current final claim; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
+          'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs already cited by the exact current final claim named by artifactClaimId; evidence elsewhere in the packet cannot substitute for the citations of that claim. Mark unresolved if the final claim still lacks the required citation; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
         ]
       : []),
     `previous=${(completeHandoffRequired ? dependencyJson : clipPromptText(dependencyJson, batchDependencyLimit)) || "none"}`,

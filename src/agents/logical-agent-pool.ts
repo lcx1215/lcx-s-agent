@@ -1704,6 +1704,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   const runId = params.runId?.trim() || createLogicalAgentRunId();
   const events: LogicalAgentRunEvent[] = [];
   let eventSequence = 0;
+  let persistEventCursor: ((sequence: number) => void) | undefined;
   const emit = (
     kind: LogicalAgentRunEventKind,
     taskId?: string,
@@ -1719,6 +1720,9 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       atMs: Date.now(),
       ...(payload === undefined ? {} : { payload }),
     }) satisfies LogicalAgentRunEvent;
+    // Once recoverable work exists, reserve every event ID durably before
+    // observers can see it, including failed-task and terminal events.
+    persistEventCursor?.(event.sequence);
     events.push(event);
     try {
       params.eventSink?.(event);
@@ -1746,6 +1750,23 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
         tasks,
       })
     : new Map<string, LogicalAgentTaskResult<TResult>>();
+  let checkpointEstablished = Boolean(restoredCheckpoint);
+  let persistedEventSequence = restoredCheckpoint?.lastEventSequence ?? 0;
+  persistEventCursor = (sequence) => {
+    if (!checkpointEstablished || !params.checkpointStore || sequence <= persistedEventSequence) {
+      return;
+    }
+    params.checkpointStore.save(
+      checkpointForResults({
+        runId,
+        planFingerprint,
+        tasks,
+        results: restoredResults,
+        lastEventSequence: sequence,
+      }),
+    );
+    persistedEventSequence = sequence;
+  };
   if (params.resume) {
     pool.restoreCompletedModelCalls(runId, [...restoredResults.values()]);
     eventSequence = restoredCheckpoint?.lastEventSequence ?? 0;
@@ -1795,6 +1816,8 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
         lastEventSequence: eventSequence + 1,
       });
       params.checkpointStore.save(checkpoint);
+      checkpointEstablished = true;
+      persistedEventSequence = checkpoint.lastEventSequence;
       emit("checkpoint_saved", undefined, {
         completedTaskCount: checkpoint.completedTaskIds.length,
         checkpointEventSequence: checkpoint.lastEventSequence,

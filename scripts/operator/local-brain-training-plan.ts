@@ -6,8 +6,16 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import JSON5 from "json5";
+import { resolveFinanceWorkflowSlotModels } from "../../src/agents/finance-model-workflow.ts";
+import { splitTrailingAuthProfile } from "../../src/agents/model-ref-profile.ts";
+import {
+  buildModelAliasIndex,
+  findNormalizedProviderValue,
+  resolveModelRefFromString,
+} from "../../src/agents/model-selection.ts";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { resolveLcxIdentityMigrationPlan } from "../../src/config/paths.ts";
+import type { OpenClawConfig } from "../../src/config/types.ts";
 import type { TrainingRepairPlanContext } from "./lcx-automation-repair-lock.js";
 import { buildLearningSedimentationBridge } from "./lcx-learning-sedimentation-bridge.ts";
 import {
@@ -285,6 +293,7 @@ export type QwenBaseModelMigrationSnapshot = {
   };
   decision:
     | "blocked_training_active"
+    | "blocked_process_observation"
     | "candidate_not_cached"
     | "memory_too_small_for_candidate"
     | "ready_for_no_adapter_smoke";
@@ -333,6 +342,243 @@ export type ActiveTrainingProcess = {
   command: string;
   role: "guard" | "saturator" | "teacher_batch" | "local_brain_eval" | "mlx" | "other";
 };
+
+export type ActiveTrainingProcessObservation = {
+  status: "observed" | "skipped" | "unavailable";
+  processes: ActiveTrainingProcess[];
+};
+
+type RuntimeConfigurationObservation = {
+  status: "observed" | "unavailable" | "invalid";
+  configPath: string;
+  config?: unknown;
+};
+
+/** Scope the old distillation/eval lane, not independent local text/vision tools. */
+export function inspectLocalModelLaneRelevance(params: {
+  configuration: RuntimeConfigurationObservation;
+  processObservation: ActiveTrainingProcessObservation;
+  teacherEnabled: boolean;
+}) {
+  const selections: {
+    path: string;
+    modelRef?: string;
+    locality: "local" | "remote" | "unknown";
+  }[] = [];
+  const reasons: string[] = [];
+  const root = isRecord(params.configuration.config) ? params.configuration.config : undefined;
+  if (params.configuration.status !== "observed" || !root) {
+    reasons.push("runtime_configuration_not_observed");
+  } else {
+    const cfg = root as OpenClawConfig;
+    const agents = isRecord(root.agents) ? root.agents : {};
+    const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+    const providers =
+      isRecord(root.models) && isRecord(root.models.providers) ? root.models.providers : {};
+    const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: "anthropic" });
+    const inspectRef = (value: unknown, field: string) => {
+      if (typeof value !== "string" || !value.trim() || value.includes("${")) {
+        selections.push({ path: field, locality: "unknown" });
+        return;
+      }
+      const resolved = resolveModelRefFromString({
+        raw: value,
+        defaultProvider: "anthropic",
+        aliasIndex,
+      });
+      // Preserve the canonical alias/profile syntax without treating an unqualified
+      // fallback model as an explicitly configured remote replacement.
+      if (!resolved || (!splitTrailingAuthProfile(value).model.includes("/") && !resolved.alias)) {
+        selections.push({ path: field, locality: "unknown" });
+        return;
+      }
+      const { ref } = resolved;
+      const provider = findNormalizedProviderValue(providers, ref.provider);
+      let locality: "local" | "remote" | "unknown" = "unknown";
+      if (/^(?:ollama|mlx(?:-local)?|local(?:-brain)?|llamacpp|lmstudio)$/iu.test(ref.provider)) {
+        locality = "local";
+      } else if (isRecord(provider) && typeof provider.baseUrl === "string") {
+        try {
+          const endpoint = new URL(provider.baseUrl);
+          const host = endpoint.hostname.toLowerCase();
+          const localHost =
+            host === "localhost" ||
+            host === "[::1]" ||
+            host.startsWith("127.") ||
+            /\.(?:local|lan)$/u.test(host);
+          // Private/ambiguous endpoints and CLI transports require independent evidence.
+          const privateHost =
+            /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|169\.254\.)/u.test(host) ||
+            host.startsWith("[");
+          locality = localHost
+            ? "local"
+            : endpoint.protocol === "https:" &&
+                host.includes(".") &&
+                !privateHost &&
+                !provider.baseUrl.includes("${")
+              ? "remote"
+              : "unknown";
+        } catch {
+          /* Keep unknown. */
+        }
+      }
+      selections.push({ path: field, modelRef: `${ref.provider}/${ref.model}`, locality });
+    };
+    const inspectSelection = (value: unknown, field: string, required = false) => {
+      if (value === undefined && !required) {
+        return;
+      }
+      if (typeof value === "string") {
+        inspectRef(value, field);
+      } else if (isRecord(value)) {
+        if (value.primary !== undefined || required) {
+          inspectRef(value.primary, `${field}.primary`);
+        }
+        if (value.fallbacks !== undefined) {
+          if (Array.isArray(value.fallbacks)) {
+            value.fallbacks.forEach((ref, index) => inspectRef(ref, `${field}.fallbacks.${index}`));
+          } else {
+            selections.push({ path: `${field}.fallbacks`, locality: "unknown" });
+          }
+        }
+        if (Object.keys(value).some((key) => !["primary", "fallbacks"].includes(key))) {
+          selections.push({ path: field, locality: "unknown" });
+        }
+      } else {
+        selections.push({ path: field, locality: "unknown" });
+      }
+    };
+    inspectSelection(defaults.model, "agents.defaults.model", true);
+    if (isRecord(defaults.heartbeat)) {
+      inspectSelection(defaults.heartbeat.model, "agents.defaults.heartbeat.model");
+    }
+    if (defaults.subagents !== undefined && !isRecord(defaults.subagents)) {
+      reasons.push("subagent_configuration_unknown");
+    }
+    if (isRecord(defaults.subagents)) {
+      inspectSelection(defaults.subagents.model, "agents.defaults.subagents.model");
+    }
+    if (agents.list !== undefined && !Array.isArray(agents.list)) {
+      reasons.push("agent_overrides_unknown");
+    }
+    if (Array.isArray(agents.list)) {
+      agents.list.forEach((agent, index) => {
+        if (!isRecord(agent) || typeof agent.id !== "string") {
+          reasons.push("agent_override_unknown");
+          return;
+        }
+        inspectSelection(agent.model, `agents.list.${index}.model`);
+        if (isRecord(agent.heartbeat)) {
+          inspectSelection(agent.heartbeat.model, `agents.list.${index}.heartbeat.model`);
+        }
+        if (agent.subagents !== undefined && !isRecord(agent.subagents)) {
+          reasons.push("subagent_override_unknown");
+        }
+        if (isRecord(agent.subagents)) {
+          inspectSelection(agent.subagents.model, `agents.list.${index}.subagents.model`);
+        }
+      });
+    }
+    if (isRecord(root.tools) && isRecord(root.tools.subagents)) {
+      inspectSelection(root.tools.subagents.model, "tools.subagents.model");
+    }
+    // The finance owner supplies compatibility slot selection; absent slots inherit the
+    // configured primary/fallbacks above. A malformed explicit slot declaration is unknown.
+    const declaredSlots = isRecord(root.tools) ? root.tools.financeModelSlots : undefined;
+    const fleetSlots =
+      isRecord(root.plugins) &&
+      isRecord(root.plugins.entries) &&
+      isRecord(root.plugins.entries["lcx-model-fleet"]) &&
+      isRecord(root.plugins.entries["lcx-model-fleet"].config)
+        ? root.plugins.entries["lcx-model-fleet"].config.slotModels
+        : undefined;
+    const slots = resolveFinanceWorkflowSlotModels(cfg);
+    if (slots) {
+      for (const slot of ["fast", "reasoning", "review"] as const) {
+        inspectRef(slots[slot], `financeModelSlots.${slot}`);
+      }
+    } else if (declaredSlots !== undefined || fleetSlots !== undefined) {
+      reasons.push("finance_slot_configuration_unknown");
+    }
+    if (JSON.stringify(root).includes('"$include"')) {
+      reasons.push("unresolved_config_include");
+    }
+  }
+  const configuredSelectionStatus = selections.some((selection) => selection.locality === "local")
+    ? "local_selected"
+    : reasons.length ||
+        selections.length === 0 ||
+        selections.some((selection) => selection.locality === "unknown")
+      ? "unknown"
+      : "remote_only";
+  if (params.processObservation.status !== "observed") {
+    reasons.push("training_process_observation_unknown");
+  }
+  if (params.processObservation.processes.length > 0) {
+    reasons.push("training_or_eval_process_observed");
+  }
+  if (params.teacherEnabled) {
+    reasons.push("teacher_runtime_enabled");
+  }
+  if (configuredSelectionStatus === "local_selected") {
+    reasons.push("local_model_selected_adapter_relationship_not_disproved");
+  }
+  if (configuredSelectionStatus === "unknown") {
+    reasons.push("configured_model_selection_unknown");
+  }
+  const historicalOnly =
+    configuredSelectionStatus === "remote_only" &&
+    params.processObservation.status === "observed" &&
+    params.processObservation.processes.length === 0 &&
+    !params.teacherEnabled;
+  if (historicalOnly) {
+    reasons.push("explicit_remote_selections_teacher_disabled_and_observed_idle");
+  }
+  return {
+    boundary: "local_model_lane_relevance_only" as const,
+    status: historicalOnly
+      ? ("historical_only" as const)
+      : configuredSelectionStatus === "local_selected" ||
+          params.processObservation.processes.length > 0 ||
+          params.teacherEnabled
+        ? ("current" as const)
+        : ("unknown" as const),
+    configurationStatus: params.configuration.status,
+    configPath: params.configuration.configPath,
+    configuredSelectionStatus,
+    processObservationStatus: params.processObservation.status,
+    activeTrainingProcessCount: params.processObservation.processes.length,
+    teacherEnabled: params.teacherEnabled,
+    selections,
+    reasons,
+    promotionProof: false,
+    independentLocalTools: "not_legacy_adapter_training_or_promotion_proof",
+  };
+}
+
+/** Shared by current owner consumers; missing or contradictory evidence keeps the old gate. */
+export function isHistoricalLocalModelLaneSnapshot(
+  payload: Record<string, unknown> | undefined,
+): boolean {
+  const isRecordValue = (value: unknown) => (isRecord(value) ? value : undefined);
+  const relevance = isRecordValue(payload?.localModelLaneRelevance);
+  const observation = isRecordValue(payload?.activeProcessObservation);
+  return (
+    relevance?.boundary === "local_model_lane_relevance_only" &&
+    relevance.status === "historical_only" &&
+    relevance.configurationStatus === "observed" &&
+    relevance.configuredSelectionStatus === "remote_only" &&
+    relevance.processObservationStatus === "observed" &&
+    relevance.activeTrainingProcessCount === 0 &&
+    relevance.teacherEnabled === false &&
+    observation?.status === "observed" &&
+    Array.isArray(observation.processes) &&
+    observation.processes.length === 0 &&
+    Array.isArray(payload?.activeProcesses) &&
+    payload.activeProcesses.length === 0 &&
+    isRecordValue(payload?.miniMaxTeacherRuntime)?.enabled === false
+  );
+}
 
 type ModuleLearningReviewSnapshot = {
   ok?: unknown;
@@ -396,6 +642,8 @@ type TrainingDecision = {
   action: string;
   reason: string;
   codexRepairEligible: boolean;
+  historicalCodexRepairEligible?: boolean;
+  relevance?: "historical_only";
   nextCommand?: string;
   repairContext?: TrainingRepairPlanContext;
 };
@@ -901,11 +1149,30 @@ export function inspectMiniMaxTeacherRuntimeConfig(
   };
 }
 
-async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntimeSnapshot> {
+async function readRuntimeConfiguration(): Promise<RuntimeConfigurationObservation> {
   const migrationPlan = resolveLcxIdentityMigrationPlan();
   const configPath = migrationPlan.readConfigPath;
   const raw = await fs.readFile(configPath, "utf8").catch(() => undefined);
   if (raw === undefined) {
+    return { status: "unavailable", configPath };
+  }
+  try {
+    const config: unknown = JSON5.parse(raw);
+    return isRecord(config)
+      ? { status: "observed", configPath, config }
+      : { status: "invalid", configPath };
+  } catch {
+    return { status: "invalid", configPath };
+  }
+}
+
+async function readMiniMaxTeacherRuntimeSnapshot(
+  configuration: RuntimeConfigurationObservation,
+): Promise<MiniMaxTeacherRuntimeSnapshot> {
+  const migrationPlan = resolveLcxIdentityMigrationPlan();
+  const { configPath } = configuration;
+  const raw = configuration.config;
+  if (configuration.status !== "observed") {
     return {
       boundary: "local_minimax_teacher_runtime_status_only",
       enabled: false,
@@ -932,7 +1199,7 @@ async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntim
       }
     }
     return {
-      ...inspectMiniMaxTeacherRuntimeConfig(JSON5.parse(raw), { authProfileStore }),
+      ...inspectMiniMaxTeacherRuntimeConfig(raw, { authProfileStore }),
       configPath,
     };
   } catch {
@@ -2307,14 +2574,28 @@ function activeTrainingRole(command: string): ActiveTrainingProcess["role"] {
   return "other";
 }
 
-async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTrainingProcess[]> {
+export async function observeActiveTrainingProcesses(
+  enabled: boolean,
+  probe: () => Promise<{ stdout: string } | undefined> = () =>
+    execFileSafely("ps", ["-ax", "-o", "pid=,ppid=,etime=,command="], { maxBuffer: 1024 * 1024 }),
+): Promise<ActiveTrainingProcessObservation> {
   if (!enabled) {
-    return [];
+    return { status: "skipped", processes: [] };
   }
-  const result = (await execFileSafely("ps", ["-ax", "-o", "pid=,ppid=,etime=,command="], {
-    maxBuffer: 1024 * 1024,
-  })) ?? { stdout: "" };
-  return result.stdout.split(/\r?\n/u).flatMap((line) => {
+  let result: { stdout: string } | undefined;
+  try {
+    result = await probe();
+  } catch {
+    /* Keep unavailable, including synchronous process-spawn denial. */
+  }
+  if (!result || !result.stdout.trim()) {
+    return { status: "unavailable", processes: [] };
+  }
+  const lines = result.stdout.split(/\r?\n/u).filter((line) => line.trim());
+  if (lines.some((line) => !/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.test(line))) {
+    return { status: "unavailable", processes: [] };
+  }
+  const processes = lines.flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line);
     if (!match) {
       return [];
@@ -2324,7 +2605,7 @@ async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTraining
     const eligibleTrainingProcess =
       pid !== process.pid &&
       !line.includes("--resolve-current-adapter") &&
-      /minimax-brain-training-guard|local-brain-distill-eval|minimax-quota-brain-saturator|minimax-brain-teacher-batch|mlx_lm generate/u.test(
+      /minimax-brain-training-guard|local-brain-distill-eval|minimax-quota-brain-saturator|minimax-brain-teacher-batch|mlx_lm(?:\s+|\.)(?:generate|lora)(?:\s|$)/u.test(
         command,
       ) &&
       !/\b(?:rg|grep)\s/u.test(command);
@@ -2341,6 +2622,7 @@ async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTraining
       },
     ];
   });
+  return { status: "observed", processes };
 }
 
 function activeHeavyEvalSummary(activeProcesses: ActiveTrainingProcess[]) {
@@ -2435,6 +2717,7 @@ function activeQwenMigrationBlockAction(activeProcesses: ActiveTrainingProcess[]
 
 export async function buildQwenBaseModelMigrationPlan(params: {
   activeProcesses: ActiveTrainingProcess[];
+  processObservationStatus?: ActiveTrainingProcessObservation["status"];
   activeHeavyEvalCounts: QwenBaseModelMigrationSnapshot["activeHeavyEvalCounts"];
   homeDir?: string;
   machineMemoryBytes?: number;
@@ -2449,11 +2732,13 @@ export async function buildQwenBaseModelMigrationPlan(params: {
     typeof memoryBytes === "number" && memoryBytes < MIN_QWEN_1_7B_SMOKE_MEMORY_BYTES;
   const decision = active
     ? "blocked_training_active"
-    : !candidateCached
-      ? "candidate_not_cached"
-      : memoryTooSmall
-        ? "memory_too_small_for_candidate"
-        : "ready_for_no_adapter_smoke";
+    : params.processObservationStatus !== "observed"
+      ? "blocked_process_observation"
+      : !candidateCached
+        ? "candidate_not_cached"
+        : memoryTooSmall
+          ? "memory_too_small_for_candidate"
+          : "ready_for_no_adapter_smoke";
   const allowedNextCommand =
     decision === "ready_for_no_adapter_smoke"
       ? "node --import tsx scripts/operator/local-brain-distill-eval.ts --no-adapter --model Qwen/Qwen3-1.7B --case-id portfolio_mixed_q_t_nvda --summary-only --json --timeout-ms 180000"
@@ -2461,11 +2746,13 @@ export async function buildQwenBaseModelMigrationPlan(params: {
   const action =
     decision === "blocked_training_active"
       ? activeQwenMigrationBlockAction(params.activeProcesses)
-      : decision === "candidate_not_cached"
-        ? "download_or_preload_candidate_before_any_smoke"
-        : decision === "memory_too_small_for_candidate"
-          ? "keep_qwen3_0_6b_and_do_not_attempt_candidate"
-          : "run_no_adapter_smoke_before_any_lora_training";
+      : decision === "blocked_process_observation"
+        ? "observe_training_processes_before_any_migration_probe"
+        : decision === "candidate_not_cached"
+          ? "download_or_preload_candidate_before_any_smoke"
+          : decision === "memory_too_small_for_candidate"
+            ? "keep_qwen3_0_6b_and_do_not_attempt_candidate"
+            : "run_no_adapter_smoke_before_any_lora_training";
   return {
     boundary: "local_qwen_base_model_migration_plan_only",
     currentModel: QWEN_MIGRATION_CURRENT_MODEL,
@@ -2541,6 +2828,8 @@ function evalNonPromotionReason(snapshot: EvalSnapshot): string {
 
 function buildDecisions(params: {
   activeProcesses: ActiveTrainingProcess[];
+  processObservationStatus: ActiveTrainingProcessObservation["status"];
+  localModelLaneRelevance: ReturnType<typeof inspectLocalModelLaneRelevance>;
   overlappingHeavyEval: boolean;
   latestGuardStart?: JsonRecord;
   latestGuardFailure?: JsonRecord;
@@ -2595,6 +2884,15 @@ function buildDecisions(params: {
       severity: "info",
       action: "do_not_start_disabled_minimax_training",
       reason: params.miniMaxTeacherRuntime.reason,
+      codexRepairEligible: false,
+    });
+  } else if (!active && params.processObservationStatus !== "observed") {
+    decisions.push({
+      id: "training_process_observation_unknown",
+      lane: "training",
+      severity: "info",
+      action: "observe_training_processes_before_starting_work",
+      reason: `Process observation is ${params.processObservationStatus}; an empty process list is not idle proof.`,
       codexRepairEligible: false,
     });
   } else {
@@ -2960,6 +3258,22 @@ function buildDecisions(params: {
 
   return decisions.map((decision) => {
     if (
+      params.localModelLaneRelevance.status === "historical_only" &&
+      [
+        "guard_failed_after_latest_start",
+        "output_contract_or_parser_failure",
+        "teacher_sample_quality_failure",
+      ].includes(decision.id)
+    ) {
+      return {
+        ...decision,
+        historicalCodexRepairEligible: decision.codexRepairEligible,
+        codexRepairEligible: false,
+        relevance: "historical_only" as const,
+        nextCommand: undefined,
+      };
+    }
+    if (
       !decision.codexRepairEligible ||
       !decision.nextCommand?.includes("lcx-automation-repair-lock.ts")
     ) {
@@ -2981,6 +3295,7 @@ function buildDecisions(params: {
 
 function buildEvolutionAccelerationQueue(params: {
   activeProcesses: ActiveTrainingProcess[];
+  processObservationStatus: ActiveTrainingProcessObservation["status"];
   activeHeavyEvalCounts: {
     localBrainEval: number;
     externalLocalBrainEval: number;
@@ -3000,7 +3315,7 @@ function buildEvolutionAccelerationQueue(params: {
     params.activeHeavyEvalCounts.localBrainEval > 0 ||
     params.activeHeavyEvalCounts.externalLocalBrainEval > 0 ||
     params.activeHeavyEvalCounts.mlx > 0;
-  const canStartHeavyWorkNow = !activeHeavyWork;
+  const canStartHeavyWorkNow = !activeHeavyWork && params.processObservationStatus === "observed";
   const decisionIds = new Set(params.decisions.map((decision) => decision.id));
   const steps: EvolutionAccelerationStep[] = [];
   const commonNotTouched = [
@@ -3195,6 +3510,25 @@ function buildEvolutionAccelerationQueue(params: {
     notTouched: commonNotTouched,
   });
 
+  if (params.processObservationStatus !== "observed") {
+    for (const step of steps) {
+      if (
+        step.executionClass.startsWith("idle_only_") &&
+        step.status !== "informational" &&
+        step.status !== "complete"
+      ) {
+        step.status = "blocked_by_missing_proof";
+        step.blockedByDecisionIds = [
+          ...new Set([
+            ...(step.blockedByDecisionIds ?? []),
+            "training_process_observation_unknown",
+          ]),
+        ];
+        step.reason += ` Process observation is ${params.processObservationStatus}; observe idle before execution.`;
+        step.command = undefined;
+      }
+    }
+  }
   const sortedSteps = steps.toSorted((left, right) => left.priority - right.priority);
   const readyNowCount = sortedSteps.filter((step) => step.status === "ready_now").length;
   const idleOnlyCount = sortedSteps.filter((step) => step.status === "ready_when_idle").length;
@@ -3336,7 +3670,10 @@ async function moduleLearningReviewSnapshot(
   };
 }
 
-export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<JsonRecord> {
+export async function buildLocalBrainTrainingPlan(
+  options: CliOptions,
+  dependencies: { observeProcesses?: typeof observeActiveTrainingProcesses } = {},
+): Promise<JsonRecord> {
   const acceptanceFeedback = await readCommercialAcceptanceFeedback({
     receiptPath: options.acceptanceFeedbackReceipt,
     expectedSha256: options.acceptanceFeedbackSha256,
@@ -3348,7 +3685,10 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const worktree = normalizeWorktree(options.worktree);
   const registeredEvalCaseIds = await readRegisteredEvalCaseIds(worktree);
   const workspaceDir = normalizeWorkspaceDir(options.workspaceDir);
-  const activeProcesses = await activeTrainingProcesses(options.processCheck);
+  const activeProcessObservation = await (
+    dependencies.observeProcesses ?? observeActiveTrainingProcesses
+  )(options.processCheck);
+  const activeProcesses = activeProcessObservation.processes;
   const latestGuardEvent = latestEvent(guardEvents, () => true);
   const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
   const latestEvolutionCooldown = latestEvent(
@@ -3446,7 +3786,13 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   });
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
-  const miniMaxTeacherRuntime = await readMiniMaxTeacherRuntimeSnapshot();
+  const runtimeConfiguration = await readRuntimeConfiguration();
+  const miniMaxTeacherRuntime = await readMiniMaxTeacherRuntimeSnapshot(runtimeConfiguration);
+  const localModelLaneRelevance = inspectLocalModelLaneRelevance({
+    configuration: runtimeConfiguration,
+    processObservation: activeProcessObservation,
+    teacherEnabled: miniMaxTeacherRuntime.enabled,
+  });
   const latestGuardStartAt = eventTime(latestGuardStart);
   const stableEvalTimeoutCountAfterLatestStart = countEvalTimeoutsAfter(
     guardEvents,
@@ -3457,11 +3803,14 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const learningSedimentationBridge = await learningSedimentationBridgeSnapshot(workspaceDir);
   const qwenBaseModelMigration = await buildQwenBaseModelMigrationPlan({
     activeProcesses,
+    processObservationStatus: activeProcessObservation.status,
     activeHeavyEvalCounts: activeHeavyEval.counts,
   });
   const decisions = buildDecisions({
     acceptanceFeedback,
     activeProcesses,
+    processObservationStatus: activeProcessObservation.status,
+    localModelLaneRelevance,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
     latestGuardStart,
     latestGuardFailure,
@@ -3482,6 +3831,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   });
   const evolutionAccelerationQueue = buildEvolutionAccelerationQueue({
     activeProcesses,
+    processObservationStatus: activeProcessObservation.status,
     activeHeavyEvalCounts: activeHeavyEval.counts,
     decisions,
     qwenCapabilityConsolidation,
@@ -3502,6 +3852,8 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     quotaLogPath: quotaLogPath ?? "",
     ...(acceptanceFeedback.status !== "not_requested" ? { acceptanceFeedback } : {}),
     activeProcesses,
+    activeProcessObservation,
+    localModelLaneRelevance,
     activeHeavyEvalCounts: activeHeavyEval.counts,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
     latestGuardStartAt,

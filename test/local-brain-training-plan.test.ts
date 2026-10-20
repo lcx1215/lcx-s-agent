@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildCommercialAcceptanceHarness } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
 import {
   compactCommercialAcceptanceFailures,
@@ -12,6 +12,8 @@ import {
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
   inspectMiniMaxTeacherRuntimeConfig,
+  inspectLocalModelLaneRelevance,
+  observeActiveTrainingProcesses,
   nativeContractRepairCases,
 } from "../scripts/operator/local-brain-training-plan.js";
 import {
@@ -61,6 +63,297 @@ function planSection(plan: Record<string, unknown>, ...keys: string[]): Record<s
 }
 
 describe("local-brain-training-plan", () => {
+  it("does not treat a skipped process observation as idle permission", async () => {
+    const guardLogPath = await writeJsonl("lcx-process-observation-", []);
+    const quotaLogPath = await writeJsonl("lcx-process-observation-quota-", []);
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-process-workspace-"));
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      workspaceDir,
+      json: true,
+      processCheck: false,
+    });
+    expect(plan.activeProcessObservation).toMatchObject({ status: "skipped", processes: [] });
+    expect(planSection(plan, "evolutionAccelerationQueue").canStartHeavyWorkNow).toBe(false);
+    expect(plan.decisions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "training_not_active" })]),
+    );
+    expect(planSection(plan, "qwenBaseModelMigration").allowedNextCommand).toBeUndefined();
+  });
+
+  it.each([
+    ["remote-alias@workspace-profile", "historical_only"],
+    ["local-brain@workspace-profile", "current"],
+    ["unqualified@workspace-profile", "unknown"],
+    ["cloud/main@workspace-profile", "historical_only"],
+  ])("preserves canonical model/profile selection for %s", (model, status) => {
+    const result = inspectLocalModelLaneRelevance({
+      configuration: {
+        status: "observed",
+        configPath: "/fixture/config.json",
+        config: {
+          models: {
+            providers: {
+              cloud: { baseUrl: "https://models.example.com" },
+              local: { baseUrl: "http://127.0.0.1:11434" },
+            },
+          },
+          agents: {
+            defaults: {
+              model,
+              models: {
+                "cloud/main": { alias: "remote-alias" },
+                "local/qwen": { alias: "local-brain" },
+              },
+            },
+          },
+        },
+      },
+      processObservation: { status: "observed", processes: [] },
+      teacherEnabled: false,
+    });
+    expect(result.status).toBe(status);
+  });
+
+  it("classifies explicit remote configuration while retaining local and unknown selections", () => {
+    const remote = () => ({
+      models: {
+        providers: {
+          cloud: { baseUrl: "https://models.example.com" },
+          local: { baseUrl: "http://127.0.0.1:11434" },
+        },
+      },
+      agents: {
+        defaults: {
+          model: { primary: "cloud/main", fallbacks: ["cloud/backup"] },
+          models: { "local/qwen": { alias: "local-brain" } },
+        },
+      },
+      tools: {
+        financeModelSlots: {
+          fast: "cloud/fast",
+          reasoning: "cloud/reason",
+          review: "cloud/review",
+        },
+      },
+    });
+    const inspect = (
+      config: unknown,
+      processObservation: { status: "observed" | "skipped" | "unavailable"; processes: [] } = {
+        status: "observed",
+        processes: [],
+      },
+      teacherEnabled = false,
+    ) =>
+      inspectLocalModelLaneRelevance({
+        configuration: { status: "observed", configPath: "/fixture/config.json", config },
+        processObservation,
+        teacherEnabled,
+      });
+    expect(inspect(remote())).toMatchObject({
+      status: "historical_only",
+      configuredSelectionStatus: "remote_only",
+      promotionProof: false,
+    });
+    const localPrimary = remote();
+    localPrimary.agents.defaults.model.primary = "local/qwen";
+    expect(inspect(localPrimary).status).toBe("current");
+    const localBackup = remote();
+    localBackup.agents.defaults.model.fallbacks = ["local/qwen"];
+    expect(inspect(localBackup).status).toBe("current");
+    const alias = remote();
+    alias.agents.defaults.model.primary = "local-brain";
+    expect(inspect(alias)).toMatchObject({
+      status: "current",
+      configuredSelectionStatus: "local_selected",
+    });
+    const localFinance = remote();
+    localFinance.tools.financeModelSlots.reasoning = "local/qwen";
+    expect(inspect(localFinance).status).toBe("current");
+    expect(
+      inspect({
+        ...remote(),
+        agents: { ...remote().agents, list: [{ id: "research", model: "local/qwen" }] },
+      }).status,
+    ).toBe("current");
+    expect(
+      inspect({
+        ...remote(),
+        agents: {
+          ...remote().agents,
+          list: [{ id: "research", subagents: { model: "local/qwen" } }],
+        },
+      }).status,
+    ).toBe("current");
+    expect(
+      inspect({
+        ...remote(),
+        agents: {
+          defaults: {
+            ...remote().agents.defaults,
+            subagents: { model: { primary: "cloud/main", fallbacks: ["local/qwen"] } },
+          },
+        },
+      }).status,
+    ).toBe("current");
+    expect(
+      inspect({ ...remote(), tools: { financeModelSlots: { fast: "cloud/fast" } } }).status,
+    ).toBe("unknown");
+    expect(inspect({ ...remote(), $include: "unread-config.json" }).status).toBe("unknown");
+    expect(
+      inspect({ ...remote(), agents: { defaults: { model: "unknown-provider/qwen" } } }).status,
+    ).toBe("unknown");
+    expect(inspect({}).status).toBe("unknown");
+    expect(inspect(remote(), { status: "skipped", processes: [] }).status).toBe("unknown");
+    expect(inspect(remote(), { status: "unavailable", processes: [] }).status).toBe("unknown");
+    expect(inspect(remote(), { status: "observed", processes: [] }, true).status).toBe("current");
+    expect(
+      inspectLocalModelLaneRelevance({
+        configuration: { status: "unavailable", configPath: "/missing" },
+        processObservation: { status: "observed", processes: [] },
+        teacherEnabled: false,
+      }).status,
+    ).toBe("unknown");
+  });
+
+  it("observes LoRA training and retains uncertainty when ps is skipped or unavailable", async () => {
+    const probe = async () => ({
+      stdout:
+        "101 1 00:01 python -m mlx_lm lora --train\n102 1 00:01 python -m mlx_lm.lora --train\n103 1 00:01 python -m mlx_lm generate --prompt test\n104 1 00:01 /sbin/launchd",
+    });
+    const observed = await observeActiveTrainingProcesses(true, probe);
+    expect(observed.status).toBe("observed");
+    expect(observed.processes.map((entry) => entry.pid)).toEqual([101, 102, 103]);
+    expect(observed.processes.every((entry) => entry.role === "mlx")).toBe(true);
+    const active = inspectLocalModelLaneRelevance({
+      configuration: { status: "observed", configPath: "/fixture", config: {} },
+      processObservation: observed,
+      teacherEnabled: false,
+    });
+    expect(active.status).toBe("current");
+    expect(
+      await observeActiveTrainingProcesses(false, () => {
+        throw new Error("must not execute");
+      }),
+    ).toEqual({ status: "skipped", processes: [] });
+    expect(
+      await observeActiveTrainingProcesses(true, () => {
+        throw new Error("sync denied");
+      }),
+    ).toEqual({ status: "unavailable", processes: [] });
+    expect(await observeActiveTrainingProcesses(true, async () => undefined)).toEqual({
+      status: "unavailable",
+      processes: [],
+    });
+    expect(
+      await observeActiveTrainingProcesses(true, async () => {
+        throw new Error("denied");
+      }),
+    ).toEqual({ status: "unavailable", processes: [] });
+    expect(await observeActiveTrainingProcesses(true, async () => ({ stdout: "" }))).toEqual({
+      status: "unavailable",
+      processes: [],
+    });
+    expect(
+      await observeActiveTrainingProcesses(true, async () => ({ stdout: "broken output" })),
+    ).toEqual({ status: "unavailable", processes: [] });
+    expect(
+      await observeActiveTrainingProcesses(true, async () => ({
+        stdout: "100 1 00:01 /sbin/launchd",
+      })),
+    ).toEqual({ status: "observed", processes: [] });
+  });
+
+  it("keeps historical failures in the owner while removing their current automatic repair eligibility", async () => {
+    const guardLogPath = await writeJsonl("lcx-history-owner-", [
+      {
+        at: "2026-05-09T10:00:00Z",
+        event: "step_non_passing",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/old-qwen",
+          summary: {
+            passed: 0,
+            total: 1,
+            failedCaseIds: ["case-a"],
+            parseErrorCaseIds: ["case-a"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-history-owner-quota-", []);
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-history-owner-workspace-"));
+    const configPath = path.join(workspaceDir, "fixture-config.json5");
+    await fs.writeFile(
+      configPath,
+      `{models:{providers:{cloud:{baseUrl:"https://models.example.com"}}},agents:{defaults:{model:"cloud/main"}}}`,
+    );
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+    const options = { guardLogPath, quotaLogPath, workspaceDir, json: true, processCheck: true };
+    const plan = await buildLocalBrainTrainingPlan(options, {
+      observeProcesses: async () => ({ status: "observed", processes: [] }),
+    });
+    expect(plan.localModelLaneRelevance).toMatchObject({
+      status: "historical_only",
+      configuredSelectionStatus: "remote_only",
+    });
+    expect(plan.latestEval).toMatchObject({ promotionReady: false, passed: 0, total: 1 });
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "output_contract_or_parser_failure",
+          codexRepairEligible: false,
+          historicalCodexRepairEligible: true,
+          relevance: "historical_only",
+          nextCommand: undefined,
+        }),
+      ]),
+    );
+    expect(planSection(plan, "codexAutoRepair").eligible).toBe(false);
+    const unknown = await buildLocalBrainTrainingPlan(options, {
+      observeProcesses: async () => ({ status: "unavailable", processes: [] }),
+    });
+    expect(unknown.localModelLaneRelevance).toMatchObject({ status: "unknown" });
+    expect(unknown.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "output_contract_or_parser_failure",
+          codexRepairEligible: true,
+        }),
+      ]),
+    );
+    expect(planSection(unknown, "evolutionAccelerationQueue").canStartHeavyWorkNow).toBe(false);
+    const active = await buildLocalBrainTrainingPlan(options, {
+      observeProcesses: async () => ({
+        status: "observed",
+        processes: [{ pid: 111, command: "python -m mlx_lm lora --train", role: "mlx" }],
+      }),
+    });
+    expect(active.localModelLaneRelevance).toMatchObject({ status: "current" });
+    expect(active.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "output_contract_or_parser_failure",
+          codexRepairEligible: true,
+        }),
+      ]),
+    );
+  });
+
+  it("does not offer a Qwen migration smoke without an observed process snapshot", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-qwen-unknown-process-"));
+    const plan = await buildQwenBaseModelMigrationPlan({
+      activeProcesses: [],
+      activeHeavyEvalCounts: { localBrainEval: 0, externalLocalBrainEval: 0, mlx: 0 },
+      homeDir,
+      machineMemoryBytes: 16 * 1024 * 1024 * 1024,
+    });
+    expect(plan.decision).toBe("blocked_process_observation");
+    expect(plan.allowedNextCommand).toBeUndefined();
+  });
+
   it("routes a covered fresh strict failure to repair, preserving stale and unrelated evals", () => {
     const receipt = {
       generatedAt: "2026-09-11T04:00:00Z",
@@ -268,6 +561,7 @@ describe("local-brain-training-plan", () => {
 
     try {
       const plan = await buildQwenBaseModelMigrationPlan({
+        processObservationStatus: "observed",
         homeDir,
         machineMemoryBytes: 8 * 1024 * 1024 * 1024,
         activeHeavyEvalCounts: {
@@ -316,6 +610,7 @@ describe("local-brain-training-plan", () => {
 
     try {
       const plan = await buildQwenBaseModelMigrationPlan({
+        processObservationStatus: "observed",
         homeDir,
         machineMemoryBytes: 8 * 1024 * 1024 * 1024,
         activeHeavyEvalCounts: {
@@ -352,6 +647,7 @@ describe("local-brain-training-plan", () => {
 
     try {
       const plan = await buildQwenBaseModelMigrationPlan({
+        processObservationStatus: "observed",
         homeDir,
         machineMemoryBytes: 8 * 1024 * 1024 * 1024,
         activeHeavyEvalCounts: {
@@ -549,12 +845,15 @@ describe("local-brain-training-plan", () => {
     ]);
     const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
 
-    const plan = await buildLocalBrainTrainingPlan({
-      guardLogPath,
-      quotaLogPath,
-      json: true,
-      processCheck: false,
-    });
+    const plan = await buildLocalBrainTrainingPlan(
+      {
+        guardLogPath,
+        quotaLogPath,
+        json: true,
+        processCheck: false,
+      },
+      { observeProcesses: async () => ({ status: "observed", processes: [] }) },
+    );
 
     expect(plan.latestEval).toMatchObject({
       name: "candidate_hardened_eval",
@@ -924,12 +1223,15 @@ describe("local-brain-training-plan", () => {
     ]);
     const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
 
-    const plan = await buildLocalBrainTrainingPlan({
-      guardLogPath,
-      quotaLogPath,
-      json: true,
-      processCheck: false,
-    });
+    const plan = await buildLocalBrainTrainingPlan(
+      {
+        guardLogPath,
+        quotaLogPath,
+        json: true,
+        processCheck: false,
+      },
+      { observeProcesses: async () => ({ status: "observed", processes: [] }) },
+    );
 
     expect(plan.latestDataset).toMatchObject({
       counts: { train: 18 },
@@ -1095,12 +1397,15 @@ describe("local-brain-training-plan", () => {
     ]);
     const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
 
-    const plan = await buildLocalBrainTrainingPlan({
-      guardLogPath,
-      quotaLogPath,
-      json: true,
-      processCheck: false,
-    });
+    const plan = await buildLocalBrainTrainingPlan(
+      {
+        guardLogPath,
+        quotaLogPath,
+        json: true,
+        processCheck: false,
+      },
+      { observeProcesses: async () => ({ status: "observed", processes: [] }) },
+    );
 
     expect(plan.externalChannelBinding).toMatchObject({
       boundary: "local_external_channel_binding_plan_only",
@@ -1790,14 +2095,17 @@ describe("local-brain-training-plan", () => {
     );
 
     try {
-      const plan = await buildLocalBrainTrainingPlan({
-        guardLogPath,
-        quotaLogPath,
-        worktree,
-        workspaceDir,
-        json: true,
-        processCheck: false,
-      });
+      const plan = await buildLocalBrainTrainingPlan(
+        {
+          guardLogPath,
+          quotaLogPath,
+          worktree,
+          workspaceDir,
+          json: true,
+          processCheck: false,
+        },
+        { observeProcesses: async () => ({ status: "observed", processes: [] }) },
+      );
 
       expect(plan.moduleLearningReview).toMatchObject({
         counts: expect.objectContaining({

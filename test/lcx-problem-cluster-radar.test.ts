@@ -41,6 +41,108 @@ async function runJsonScript(script: string) {
 }
 
 describe("lcx-problem-cluster-radar", () => {
+  it("keeps disabled idle local-lane failures historical without making promotion healthy", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        localModelLaneRelevance: {
+          boundary: "local_model_lane_relevance_only",
+          status: "historical_only",
+          configurationStatus: "observed",
+          configuredSelectionStatus: "remote_only",
+          processObservationStatus: "observed",
+          activeTrainingProcessCount: 0,
+          teacherEnabled: false,
+          reasons: ["explicit_remote_selections_teacher_disabled_and_observed_idle"],
+        },
+        activeProcesses: [],
+        activeProcessObservation: { status: "observed", processes: [] },
+        miniMaxTeacherRuntime: { enabled: false },
+        latestEval: { passed: 1, total: 2, promotionReady: false },
+        stableEvalTimeoutCountAfterLatestStart: 3,
+        decisions: [
+          {
+            id: "output_contract_or_parser_failure",
+            action: "repair_old_eval",
+            reason: "old candidate parser failed",
+            codexRepairEligible: true,
+          },
+        ],
+      }),
+    });
+    const training = result.clusters.find(
+      (cluster) => cluster.id === "training_eval_runtime_cluster",
+    );
+    expect(training?.actionability).toBe("watch");
+    expect(training?.signals.map((signal) => signal.id)).toContain(
+      "output_contract_or_parser_failure",
+    );
+    expect(result.repairableSignals).toEqual([]);
+    expect(result.actionableClusters).not.toContain("adapter_promotion_truth_cluster");
+    expect(
+      result.clusters.find((cluster) => cluster.id === "adapter_promotion_truth_cluster")?.signals,
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "latest_eval_not_promotion_ready" })]),
+    );
+  });
+
+  it("retains current and unknown lane gates and does not release external binding", () => {
+    const historical = {
+      boundary: "local_model_lane_relevance_only",
+      status: "historical_only",
+      configurationStatus: "observed",
+      configuredSelectionStatus: "remote_only",
+      processObservationStatus: "observed",
+      activeTrainingProcessCount: 0,
+      teacherEnabled: false,
+    };
+    const base = {
+      activeProcesses: [],
+      activeProcessObservation: { status: "observed", processes: [] },
+      miniMaxTeacherRuntime: { enabled: false },
+      latestEval: { promotionReady: false },
+      decisions: [{ id: "output_contract_or_parser_failure", codexRepairEligible: true }],
+    };
+    for (const relevance of [
+      undefined,
+      { ...historical, status: "unknown" },
+      { ...historical, configuredSelectionStatus: "local_selected" },
+      { ...historical, processObservationStatus: "unavailable" },
+      { ...historical, configurationStatus: "unavailable" },
+    ]) {
+      const result = buildProblemClusterRadar({
+        trainingPlan: owner("local-brain-training-plan", {
+          ...base,
+          localModelLaneRelevance: relevance,
+        }),
+      });
+      expect(result.actionableClusters).toContain("training_eval_runtime_cluster");
+      expect(result.repairableSignals.map((signal) => signal.signalId)).toContain(
+        "output_contract_or_parser_failure",
+      );
+    }
+    const active = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        ...base,
+        localModelLaneRelevance: historical,
+        activeProcesses: [{ role: "mlx" }],
+      }),
+    });
+    expect(active.actionableClusters).toContain("training_eval_runtime_cluster");
+    const binding = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        ...base,
+        localModelLaneRelevance: historical,
+        decisions: [
+          ...base.decisions,
+          { id: "live_external_brain_binding_deferred", codexRepairEligible: false },
+        ],
+        externalChannelBinding: { status: "blocked_no_selected_clean_adapter" },
+      }),
+    });
+    expect(binding.blockedClusters).toContain("adapter_promotion_truth_cluster");
+    expect(binding.actionableClusters).not.toContain("training_eval_runtime_cluster");
+  });
+
   it("compares ISO timestamps by instant instead of local string shape", () => {
     expect(isIsoTimeSameOrAfter("2026-05-19T13:20:46-04:00", "2026-05-19T14:35:30.371Z")).toBe(
       true,

@@ -266,7 +266,7 @@ function usage(): never {
       "The strict neutral promotion gate never applies hardening, retries, recovery, or case labels; it only changes the gate decision.",
       "Use --case-file only with --blind; rows must be generalization-harness JSONL and labels stay scorer-side.",
       "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
-      "Checkpoint resume is fail-closed when the model, adapter, case set, prompt mode, or contract flags change.",
+      "Checkpoint resume is fail-closed when the model, adapter, Python command, timeout, case set, prompt mode, or contract flags change.",
     ].join("\n"),
   );
 }
@@ -5592,6 +5592,8 @@ const checkpointPath =
 const shardFingerprint = hashText(
   JSON.stringify({
     model: options.model,
+    pythonBin: options.pythonBin,
+    timeoutMs: options.timeoutMs,
     adapterPath: resolvedOptions.adapterPath ?? null,
     requestedCaseIds,
     evalCaseIds: evalCases.map((evalCase) => evalCase.id),
@@ -5623,7 +5625,7 @@ if (options.resume) {
     checkpoint.fingerprint !== shardFingerprint
   ) {
     throw new Error(
-      "eval checkpoint fingerprint mismatch; refuse to mix model, adapter, case set, prompt mode, or contract flags",
+      "eval checkpoint fingerprint mismatch; refuse to mix model, adapter, Python command, timeout, case set, prompt mode, or contract flags",
     );
   }
   const expectedCaseIds = evalCases.map((evalCase) => evalCase.id);

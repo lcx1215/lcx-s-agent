@@ -6,6 +6,54 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => {
+  it.each(["timeout", "python"] as const)(
+    "rejects resumed shards when the %s setting changes",
+    (setting) => {
+      const root = mkdtempSync(path.join(tmpdir(), "lcx-eval-runtime-binding-"));
+      try {
+        const checkpoint = path.join(root, "checkpoint.json");
+        const base = [
+          "--import",
+          "tsx",
+          "scripts/operator/local-brain-distill-eval.ts",
+          "--contract-only",
+          "--case-id",
+          "broad_finance_module_taxonomy_coverage",
+          "--summary-only",
+          "--json",
+          "--checkpoint",
+          checkpoint,
+          "--python",
+          path.join(root, "never-execute-python"),
+          "--timeout-ms",
+          "1000",
+        ];
+        const run = (args: string[]) =>
+          spawnSync(process.execPath, args, {
+            cwd: path.resolve(__dirname, ".."),
+            encoding: "utf8",
+            timeout: 10_000,
+          });
+        expect(run(base).status).toBe(0);
+        expect(run([...base, "--resume"]).status).toBe(0);
+        const before = readFileSync(checkpoint, "utf8");
+        const changed = [
+          ...base,
+          "--resume",
+          ...(setting === "timeout"
+            ? ["--timeout-ms", "2000"]
+            : ["--python", path.join(root, "another-never-execute-python")]),
+        ];
+        const result = run(changed);
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("eval checkpoint fingerprint mismatch");
+        expect(readFileSync(checkpoint, "utf8")).toBe(before);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("supports current adapter resolution instead of requiring static adapter paths", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(

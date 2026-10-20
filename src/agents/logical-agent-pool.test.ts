@@ -1295,6 +1295,7 @@ describe("logical agent pool", () => {
   it("emits a trace, checkpoints completed work, and resumes only the unfinished suffix", async () => {
     const store = createInMemoryLogicalAgentCheckpointStore<string>();
     const events: string[] = [];
+    const publishedCursors: Array<{ sequence: number; persisted: number | undefined }> = [];
     let rootRuns = 0;
     let specialistRuns = 0;
     const tasks: Array<LogicalAgentTask<{ ask: string }>> = [
@@ -1330,7 +1331,13 @@ describe("logical agent pool", () => {
       tasks,
       executor,
       checkpointStore: store,
-      eventSink: (event) => events.push(event.kind),
+      eventSink: (event) => {
+        events.push(event.kind);
+        publishedCursors.push({
+          sequence: event.sequence,
+          persisted: store.load("recoverable-run")?.lastEventSequence,
+        });
+      },
       handoffs: [
         {
           fromTaskId: "root",
@@ -1350,9 +1357,13 @@ describe("logical agent pool", () => {
       completedTaskIds: ["root"],
     });
     const firstCheckpoint = store.load("recoverable-run");
-    expect(firstCheckpoint?.lastEventSequence).toBe(
-      first.events.find((event) => event.kind === "checkpoint_saved")?.sequence,
-    );
+    expect(firstCheckpoint?.lastEventSequence).toBe(first.events.at(-1)?.sequence);
+    expect(publishedCursors[0].persisted).toBeUndefined();
+    expect(
+      publishedCursors
+        .filter((entry) => entry.persisted !== undefined)
+        .every((entry) => entry.sequence === entry.persisted),
+    ).toBe(true);
 
     const resumed = await runLogicalAgentPlan({
       runId: "recoverable-run",
@@ -1376,6 +1387,8 @@ describe("logical agent pool", () => {
     expect(resumed.resumed).toBe(true);
     expect(resumed.events[0]?.kind).toBe("run_resumed");
     expect(resumed.events[0]?.sequence).toBe((firstCheckpoint?.lastEventSequence ?? 0) + 1);
+    const combinedEvents = [...first.events, ...resumed.events];
+    expect(new Set(combinedEvents.map((event) => event.eventId)).size).toBe(combinedEvents.length);
     expect(rootRuns).toBe(1);
     expect(specialistRuns).toBe(2);
     expect(events).toContain("run_completed");

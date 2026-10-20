@@ -81,6 +81,7 @@ import {
 } from "./lcx-problem-cluster-radar.ts";
 import {
   compactCommercialAcceptanceFailures,
+  isHistoricalLocalModelLaneSnapshot,
   readCommercialAcceptanceFeedback,
 } from "./local-brain-training-plan.ts";
 
@@ -666,6 +667,14 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
   }
 
   if (id === "trainingPlan") {
+    const processObservation = recordValue(payload.activeProcessObservation);
+    const compactProcesses = (processes: unknown) =>
+      Array.isArray(processes)
+        ? processes.map((entry) => ({
+            pid: recordValue(entry)?.pid,
+            role: recordValue(entry)?.role,
+          }))
+        : undefined;
     const liveExternalBrainBinding = recordValue(payload.liveExternalBrainBinding);
     const externalChannelBinding = recordValue(payload.externalChannelBinding);
     const accelerationQueue = recordValue(payload.evolutionAccelerationQueue);
@@ -674,6 +683,15 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     return {
       acceptanceFeedback: payload.acceptanceFeedback,
       activeProcessCount: arrayValue(payload.activeProcesses).length,
+      activeProcesses: compactProcesses(payload.activeProcesses),
+      activeProcessObservation: processObservation
+        ? {
+            status: processObservation.status,
+            processes: compactProcesses(processObservation.processes),
+          }
+        : undefined,
+      localModelLaneRelevance: payload.localModelLaneRelevance,
+      miniMaxTeacherRuntime: { enabled: recordValue(payload.miniMaxTeacherRuntime)?.enabled },
       activeHeavyEvalCounts: payload.activeHeavyEvalCounts,
       latestGuardEvent: payload.latestGuardEvent,
       latestEvolutionCooldown: payload.latestEvolutionCooldown,
@@ -1356,7 +1374,7 @@ function buildSelfRepairAutoSignal(
     (caseId, index, array) => array.indexOf(caseId) === index,
   );
 
-  if (dirtyCaseIds.length > 0) {
+  if (dirtyCaseIds.length > 0 && !isHistoricalLocalModelLaneSnapshot(trainingCompact)) {
     const compactCases = dirtyCaseIds.slice(0, 8).join(",");
     return {
       policyTriggerId: "candidate_eval_dirty_cases",
@@ -2289,9 +2307,11 @@ const releaseBlocked =
   universeIndexGovernanceIncomplete ||
   structuralOwnerFailures.length > 0;
 const governanceCheckedAt = governanceSnapshot.observedAt;
+// Owner outputs are generated after the run snapshot; freshness is measured when consumed.
+const globalEvidenceProjectionCheckedAt = new Date().toISOString();
 const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   byOwner.mindModel?.projection,
-  governanceCheckedAt,
+  globalEvidenceProjectionCheckedAt,
   { adapterId: "governance-autopilot", sourceOwner: "mindModel" },
 );
 const globalEvidenceProjection: GlobalEvidenceProjectionRead = globalEvidenceProjectionReader.read;

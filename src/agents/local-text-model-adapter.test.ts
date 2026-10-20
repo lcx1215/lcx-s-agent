@@ -87,6 +87,34 @@ describe("local text model adapter contract", () => {
     });
   });
 
+  it.each(["{".repeat(4096), "x".repeat(2_000_001)])(
+    "rejects excessive parser work as an output limit",
+    (raw) => {
+      expect(() => parseLocalModelJson(raw)).toThrow(
+        expect.objectContaining({ code: "output_limit" }),
+      );
+    },
+  );
+
+  it("accepts a complete envelope with more nested objects than the recovery budget", () => {
+    const value = {
+      kind: "artifact",
+      artifact: {
+        answer: "observed",
+        claims: Array.from({ length: 100 }, (_, index) => ({ id: `c${index}`, text: "fact" })),
+      },
+    };
+    expect(parseLocalModelJson(`loading\n${JSON.stringify(value)}`)).toEqual(value);
+  });
+
+  it("keeps quoted braces and escaped quotes inside a valid envelope", () => {
+    const value = {
+      kind: "artifact",
+      artifact: { answer: 'literal { brace } and "quote"', claims: [] },
+    };
+    expect(parseLocalModelJson(`loading\n${JSON.stringify(value)}`)).toEqual(value);
+  });
+
   it("rejects output without a JSON object", () => {
     expect(() => parseLocalModelJson("not-json")).toThrow(
       "local text model output did not contain a JSON object",
