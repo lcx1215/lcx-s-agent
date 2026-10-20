@@ -64,6 +64,14 @@ describe("external message protocol", () => {
 
   it("normalizes explicit external targets", () => {
     expect(normalizeExternalTarget(" external:conversation-1 ")).toBe("conversation-1");
+    for (const prefix of ["group", "room", "channel", "dm", "user", "direct", "conversation"]) {
+      expect(normalizeExternalTarget(`${prefix}:conversation-1`)).toBe("conversation-1");
+      expect(normalizeExternalTarget(` External:${prefix}:conversation-1 `)).toBe("conversation-1");
+    }
+    expect(normalizeExternalTarget("external:group:dm:123")).toBe("dm:123");
+    expect(normalizeExternalTarget("direct:group:123")).toBe("group:123");
+    expect(normalizeExternalTarget("tenant:conversation-1")).toBe("tenant:conversation-1");
+    expect(normalizeExternalTarget("external:group: ")).toBeUndefined();
     expect(normalizeExternalTarget(" ")).toBeUndefined();
   });
 });

@@ -124,6 +124,10 @@ export function buildExternalOutboundRequest(
   if (!account.outboundUrl) {
     throw new Error("external outboundUrl is not configured");
   }
+  const target = params.target.trim();
+  if (!target) {
+    throw new Error("external target is required");
+  }
   const messageId = params.messageId?.trim() || randomUUID();
   const headers = new Headers({
     "content-type": "application/json",
@@ -136,7 +140,7 @@ export function buildExternalOutboundRequest(
     channel: "external",
     accountId: account.accountId,
     messageId,
-    target: params.target,
+    target,
     text: params.text,
     ...(params.mediaUrls?.length ? { mediaUrls: params.mediaUrls } : {}),
     ...(params.replyToId ? { replyToId: params.replyToId } : {}),

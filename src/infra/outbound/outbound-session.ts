@@ -819,7 +819,7 @@ function resolveExternalSession(
           ? "channel"
           : undefined;
   const peerKind = explicitKind ?? resolvedKind ?? "direct";
-  const peerId = stripKindPrefix(trimmed);
+  const peerId = trimmed.replace(/^(user|channel|group|conversation|room|dm|direct):/i, "").trim();
   if (!peerId) {
     return null;
   }

@@ -164,5 +164,12 @@ export function normalizeExternalTarget(target: string): string | undefined {
   if (!trimmed) {
     return undefined;
   }
-  return trimmed.replace(/^external:/i, "").trim() || undefined;
+  // Routing syntax belongs to the channel/session layer, not the receiver's ID.
+  return (
+    trimmed
+      .replace(/^external:/i, "")
+      .trim()
+      .replace(/^(group|room|channel|dm|user|direct|conversation):/i, "")
+      .trim() || undefined
+  );
 }
