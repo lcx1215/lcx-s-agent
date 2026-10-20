@@ -36,6 +36,7 @@ import {
 } from "../../src/agents/finance-bar-ledger.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import { latestCompletedWeekdaySessionDate } from "../../src/agents/finance-cycle-schedule.js";
+import { initializeFinanceIntradayControlLedger } from "../../src/agents/finance-intraday-control-ledger.js";
 import {
   appendFinanceIntradayBars,
   readFinanceIntradayLedger,
@@ -68,6 +69,7 @@ import {
 } from "../../src/agents/finance-scheduler-state.js";
 import {
   financeBarLedgerPath,
+  financeIntradayControlLedgerPath,
   financeResearchScoredPath,
   financeTuningProposalsPath,
 } from "../../src/agents/finance-state-dir.js";
@@ -88,6 +90,7 @@ import * as checkpointStore from "../../src/agents/logical-agent-pool-checkpoint
 import type { QualityHarnessModelRequest } from "../../src/agents/quality-harness-contract.js";
 import * as quantTools from "../../src/agents/tools/quant-math-tool.js";
 import type { OpenClawConfig } from "../../src/config/config.js";
+import { requireNodeSqlite } from "../../src/memory/sqlite.js";
 import { prepareOriginalFinanceModuleMain } from "../fixtures/lcx-waterflow-finance-module-main-probe.js";
 
 const mocks = vi.hoisted(() => ({
@@ -816,6 +819,49 @@ it("reports status without creating a missing state directory", async () => {
   expect(fs.existsSync(missing)).toBe(false);
   expect(mocks.runCycle).not.toHaveBeenCalled();
 });
+
+it.each(["once", "loop"] as const)(
+  "limits intraday cursor startup migration to the writer loop: %s",
+  async (command) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-21T10:00:00Z"));
+    initializeFinanceIntradayControlLedger(directory);
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+    try {
+      db.exec(
+        "DROP TRIGGER finance_intraday_cursor_auth_no_update; DROP TRIGGER finance_intraday_cursor_auth_no_delete; DROP TABLE finance_intraday_cursor_auth; DELETE FROM finance_intraday_control_migrations WHERE version=5",
+      );
+      const before = db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all();
+      mocks.runIntradayMonitorTick.mockResolvedValue({ status: "outside_cash_session" });
+      if (command === "loop") {
+        mocks.delay.mockImplementationOnce(async () => {
+          emitSchedulerSignal("SIGTERM");
+        });
+      }
+      await expect(
+        runFinanceScheduler([
+          ...(command === "once" ? ["--once", "night"] : ["--loop"]),
+          "--dir",
+          directory,
+          "--intraday-monitor",
+          "--intraday-instruments",
+          "SPY",
+          "--no-source-heartbeat",
+        ]),
+      ).resolves.toBe(command === "once" ? 0 : 143);
+      const authTable = db
+        .prepare("SELECT name FROM sqlite_master WHERE name='finance_intraday_cursor_auth'")
+        .get();
+      expect(Boolean(authTable)).toBe(command === "loop");
+      if (command === "once") {
+        expect(db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
+      }
+    } finally {
+      db.close();
+    }
+  },
+);
 
 it("continues to the night slot after a failed day without retrying either slot on the next tick", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });

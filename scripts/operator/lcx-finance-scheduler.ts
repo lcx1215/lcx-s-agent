@@ -3542,7 +3542,7 @@ export async function runFinanceScheduler(
   try {
     release = acquireFinanceSchedulerLock(root.directory);
     initializeFinanceSchedulerDatabase(root.directory);
-    if (runtimeOptions.intraday) {
+    if (runtimeOptions.command === "loop" && runtimeOptions.intraday) {
       // The writer may start outside market hours, before its first outcome is recorded.
       initializeFinanceIntradayControlLedger(root.directory);
     }
