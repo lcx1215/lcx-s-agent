@@ -13,6 +13,8 @@ import {
 import {
   createFinanceTradeDecisionReviewer,
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+  FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+  type FinanceTradeDecisionReviewRequest,
   type FinanceIntradayTradeDecisionReviewRequest,
 } from "./finance-trade-decision-review.js";
 import { createFinanceTradeResultRecallCapability } from "./finance-trade-result-recall.js";
@@ -732,78 +734,105 @@ it.each(["accountId", "asOf", "owner", "id", "field", "path"])(
     ).toBe(false);
   },
 );
-it("puts the actual recalled reason and source SHA into call2, which changes the scripted judgment", async () => {
-  const source = await seed();
-  const payloads: unknown[] = [];
-  const model: LogicalAgentModelAdapter = {
-    id: "fixture",
-    provider: "offline-scripted",
-    modelId: "fixture",
-    mode: "adapter",
-    capabilities: ["quality_harness"],
-    requiredTools: [],
-    requiredSideEffects: [],
-    invoke: vi.fn(async (call) => {
-      payloads.push(call.payload);
-      if (payloads.length === 1) {
+it.each(["intraday", "daily"] as const)(
+  "puts recalled reason and SHA into the %s consumer and changes its judgment",
+  async (mode) => {
+    const reviewPacket: FinanceTradeDecisionReviewRequest =
+      mode === "intraday"
+        ? packet
+        : {
+            ...packet,
+            schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+            rebalanceBand: 0.05,
+            candidates: [
+              {
+                candidateId: candidate.candidateId,
+                instrument: candidate.instrument,
+                side: candidate.side,
+                targetWeight: 0.4,
+                currentWeight: 0.1,
+                weightDelta: 0.3,
+                notional: 1000,
+                strategySignal: "hold",
+                annualisedVol: 0.2,
+                researchClose: 100,
+                lastBarDate: "2026-09-29",
+                executionQuote: candidate.executionQuote,
+              },
+            ],
+          };
+    const source = await seed();
+    const payloads: unknown[] = [];
+    const model: LogicalAgentModelAdapter = {
+      id: "fixture",
+      provider: "offline-scripted",
+      modelId: "fixture",
+      mode: "adapter",
+      capabilities: ["quality_harness"],
+      requiredTools: [],
+      requiredSideEffects: [],
+      invoke: vi.fn(async (call) => {
+        payloads.push(call.payload);
+        if (payloads.length === 1) {
+          return {
+            schemaVersion: reviewPacket.schemaVersion,
+            evidenceRequests: [request],
+            hypothesis: "Check the prior spread rejection before judgment",
+          };
+        }
+        const consumed = JSON.stringify(call.payload).includes("spread_cost_exceeds_edge");
         return {
-          schemaVersion: packet.schemaVersion,
-          evidenceRequests: [request],
-          hypothesis: "Check the prior spread rejection before judgment",
+          schemaVersion: reviewPacket.schemaVersion,
+          decisions: [
+            {
+              candidateId: candidate.candidateId,
+              decision: consumed ? "veto" : "approve",
+              rationale: consumed
+                ? "Prior spread_cost_exceeds_edge requires current verification"
+                : "No recalled constraint",
+            },
+          ],
         };
-      }
-      const consumed = JSON.stringify(call.payload).includes("spread_cost_exceeds_edge");
-      return {
-        schemaVersion: packet.schemaVersion,
-        decisions: [
-          {
-            candidateId: candidate.candidateId,
-            decision: consumed ? "veto" : "approve",
-            rationale: consumed
-              ? "Prior spread_cost_exceeds_edge requires current verification"
-              : "No recalled constraint",
-          },
-        ],
-      };
-    }),
-  };
-  const financialCapabilities = createFinanceTradeReviewFinancialCapabilities({
-    config: cfg,
-    workspaceDir: root,
-  });
-  const result = await createFinanceTradeDecisionReviewer(
-    {},
-    {
-      adapterFactory: () => model,
-      evidenceScope: {
-        directory: root,
-        accountId: "paper-a",
-        instruments: ["AAA"],
-        financialCapabilities,
-      },
-    },
-  )(packet, new AbortController().signal);
-  expect(result).toMatchObject({
-    status: "completed",
-    modelCalls: 2,
-    toolEvidence: [{ status: "completed" }],
-    decisions: [{ decision: "veto" }],
-  });
-  expect(JSON.stringify(payloads[1])).toContain(source.sha256);
-  expect(JSON.stringify(payloads[1])).toContain("spread_cost_exceeds_edge");
-  expect(Buffer.byteLength(JSON.stringify(result.toolEvidence![0]))).toBeLessThanOrEqual(2048);
-  const direct = await createFinanceTradeReviewEvidenceExecutor({
-    directory: root,
-    accountId: "paper-a",
-    instruments: ["AAA"],
-    financialCapabilities: [
+      }),
+    };
+    const financialCapabilities = createFinanceTradeReviewFinancialCapabilities({
+      config: cfg,
+      workspaceDir: root,
+    });
+    const result = await createFinanceTradeDecisionReviewer(
+      {},
       {
-        toolName: "unavailable",
-        moduleIds: ["finance_learning_memory"],
-        description: "readonly",
-        execute: async () => ({ available: false, gap: "not_ready" }),
+        adapterFactory: () => model,
+        evidenceScope: {
+          directory: root,
+          accountId: "paper-a",
+          instruments: ["AAA"],
+          financialCapabilities,
+        },
       },
-    ],
-  })([{ ...request, toolName: "unavailable" }], packet, new AbortController().signal);
-  expect(direct[0].status).toBe("unavailable");
-});
+    )(reviewPacket, new AbortController().signal);
+    expect(result).toMatchObject({
+      status: "completed",
+      modelCalls: 2,
+      toolEvidence: [{ status: "completed" }],
+      decisions: [{ decision: "veto" }],
+    });
+    expect(JSON.stringify(payloads[1])).toContain(source.sha256);
+    expect(JSON.stringify(payloads[1])).toContain("spread_cost_exceeds_edge");
+    expect(Buffer.byteLength(JSON.stringify(result.toolEvidence![0]))).toBeLessThanOrEqual(2048);
+    const direct = await createFinanceTradeReviewEvidenceExecutor({
+      directory: root,
+      accountId: "paper-a",
+      instruments: ["AAA"],
+      financialCapabilities: [
+        {
+          toolName: "unavailable",
+          moduleIds: ["finance_learning_memory"],
+          description: "readonly",
+          execute: async () => ({ available: false, gap: "not_ready" }),
+        },
+      ],
+    })([{ ...request, toolName: "unavailable" }], reviewPacket, new AbortController().signal);
+    expect(direct[0].status).toBe("unavailable");
+  },
+);

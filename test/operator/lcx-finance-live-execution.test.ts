@@ -11,6 +11,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildFinanceLiveExecutionPayload as buildWithoutController,
+  formatFinanceLiveExecutionPayload,
   parseArgs,
   type Options,
 } from "../../scripts/operator/lcx-finance-live-execution.ts";
@@ -442,4 +443,60 @@ it("does not treat CLI labels and attended flags as controller authorization", a
     "execution_safety_context_required",
   );
   expect(factory).not.toHaveBeenCalled();
+});
+
+it.each([
+  { allowInstruments: [], declared: ["AAPL"], placed: true },
+  { allowInstruments: ["AAPL"], declared: ["AAPL"], placed: true },
+  { allowInstruments: ["QQQ"], declared: ["QQQ"], placed: false },
+])(
+  "declares the requested Alpaca instrument within budget $allowInstruments",
+  async ({ allowInstruments, declared, placed }) => {
+    const directory = await storeDirectory();
+    const execute = vi.fn(async () => ({
+      filledQuantity: 10,
+      fillPrice: 231.4,
+      filledAt: AS_OF,
+      venueRef: "synthetic:never-sent",
+      terminalOrderIdentity: { orderId: "synthetic-terminal", terminal: true as const },
+    }));
+    const factory = vi
+      .spyOn(alpacaAdapters, "createAlpacaExecutionAdapter")
+      .mockImplementation((config) => ({
+        id: "alpaca-venue",
+        venue: "fixture",
+        kind: "venue",
+        orderTypes: ["market"],
+        instruments: config.instruments,
+        credentialsAuthority: "external",
+        execute,
+      }));
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({ adapter: "alpaca", allowInstruments, ledgerDirectory: directory }),
+    );
+    expect(factory).toHaveBeenCalledWith(expect.objectContaining({ instruments: declared }));
+    expect(payload.nodes.declared_execution_adapter.declaredInstruments).toEqual(declared);
+    expect(payload.riskBudget.allowedInstruments).toEqual(
+      allowInstruments.length ? allowInstruments : [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
+    );
+    expect(payload.nodes.order_placement.status).toBe(placed ? "placed" : "refused");
+    expect(execute).toHaveBeenCalledTimes(placed ? 1 : 0);
+    const human = formatFinanceLiveExecutionPayload(payload);
+    expect(human).toContain("alpaca-venue，fixture");
+    expect(human).toContain(payload.boundary);
+    expect(human).toContain(payload.liveTouchedReason);
+    expect(human).toContain(`liveTouched=${placed}`);
+    expect(human).not.toContain("仅 paper");
+    expect(human).not.toContain("真实下单路径仍未实现");
+  },
+);
+
+it("renders paper execution from its actual payload boundary", async () => {
+  const directory = await storeDirectory();
+  const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
+  const human = formatFinanceLiveExecutionPayload(payload);
+  expect(human).toContain(payload.nodes.declared_execution_adapter.adapterId);
+  expect(human).toContain(payload.boundary);
+  expect(human).toContain(payload.liveTouchedReason);
+  expect(human).toContain("liveTouched=false");
 });

@@ -61,10 +61,14 @@ export async function readFinanceAccountTradingBook(params: {
   if (params.venue !== "alpaca:paper") {
     throw new Error("account trading book requires the exact Alpaca paper venue");
   }
-  const execution = await readFinanceAccountPositionLedger(params.directory, {
-    accountId: params.accountId,
-    venue: params.venue,
-  });
+  const execution = await readFinanceAccountPositionLedger(
+    params.directory,
+    {
+      accountId: params.accountId,
+      venue: params.venue,
+    },
+    { signal: params.signal },
+  );
   params.signal?.throwIfAborted();
   const brokerHistory = await reconcileFinanceBrokerHistory(
     params.directory,

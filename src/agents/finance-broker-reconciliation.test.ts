@@ -771,3 +771,51 @@ it("stops cancelled reconciliation before accepting a late account response", as
   expect(syncMocks.history).not.toHaveBeenCalled();
   expect(syncMocks.append).not.toHaveBeenCalled();
 });
+
+it("keeps executed fee activities blocked until the broker cash actually reflects their debit", () => {
+  const activities = [
+    {
+      id: "funding",
+      activity_type: "JNLC",
+      status: "executed",
+      net_amount: "100",
+      currency: "USD",
+    },
+    {
+      id: "cat",
+      activity_type: "FEE",
+      status: "executed",
+      net_amount: "-0.01",
+      currency: "USD",
+      created_at: "2026-10-15T00:06:26.239442Z",
+      date: "2026-10-14",
+    },
+    {
+      id: "reg",
+      activity_type: "FEE",
+      status: "executed",
+      net_amount: "-0.23",
+      currency: "USD",
+      created_at: "2026-10-15T00:16:46.654286Z",
+      date: "2026-10-14",
+    },
+  ];
+  const input = {
+    activities,
+    positions: [],
+    completeFromInception: true,
+    asOf: "2026-10-15T07:20:00.000Z",
+  };
+  const lagging = reconcileFinanceBrokerActivities({ ...input, cash: 100 });
+  expect(lagging).toMatchObject({
+    status: "unresolved",
+    feesInterpreted: false,
+  });
+  expect(lagging.cashComponents.feeCash).toBeCloseTo(-0.24, 8);
+  expect(lagging.cashDifference).toBeCloseTo(0.24, 8);
+  expect(lagging.issues).toContain("cash_difference");
+  expect(reconcileFinanceBrokerActivities({ ...input, cash: 99.76 })).toMatchObject({
+    status: "reconciled",
+    feesInterpreted: true,
+  });
+});

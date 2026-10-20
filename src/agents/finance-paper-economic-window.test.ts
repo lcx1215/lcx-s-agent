@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeUsEquityLocalTimeInstant } from "./finance-cycle-schedule.js";
 import {
@@ -152,7 +153,11 @@ describe("whole-account close economics on original owners", () => {
       cursor: "",
       payload: [f],
     });
+    const { DatabaseSync } = requireNodeSqlite();
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
     const r = await readFinancePaperEconomicWindow(dir, "account-a", "2026-10-16T01:00:00.000Z");
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes("typeof(body)"))).toHaveLength(1);
+    prepare.mockRestore();
     expect(r).toHaveProperty("history.accountEquityReturn", -0.020000000000000018);
     expect(
       await readFinancePaperEconomicWindow(dir, "other", "2026-10-16T01:00:00.000Z"),

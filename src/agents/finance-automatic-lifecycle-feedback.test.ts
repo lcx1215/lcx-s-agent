@@ -33,6 +33,42 @@ afterEach(() => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
+it("verifies the broker history once for all account projections in one observation", async () => {
+  const observedAt = "2026-10-06T10:00:00Z";
+  for (const accountId of ["first", "second"]) {
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: `reconciliation:${observedAt}`,
+      cursor: "",
+      payload: [{ observedAt, positions: [], openOrders: [] }],
+    });
+  }
+  const { DatabaseSync } = requireNodeSqlite();
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+  const first = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(first).toMatchObject({
+    positionManagement: {
+      accounts: expect.arrayContaining([
+        expect.objectContaining({ accountId: "first", observedAt, positionCount: 0 }),
+      ]),
+    },
+    economicFeedback: {
+      accounts: expect.arrayContaining([
+        expect.objectContaining({ accountId: "first" }),
+        expect.objectContaining({ accountId: "second" }),
+      ]),
+    },
+  });
+  const fullScans = () =>
+    prepare.mock.calls.filter(([sql]) => /FROM finance_broker_history ORDER BY sequence/u.test(sql))
+      .length;
+  expect(fullScans()).toBe(1);
+  await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  expect(fullScans()).toBe(2);
+});
+
 it("shares each verified read once per observation and sees new source on the next call", async () => {
   const observedAt = "2026-10-06T10:00:00Z";
   const appendSnapshot = (at: string, positions: readonly Record<string, unknown>[]) =>

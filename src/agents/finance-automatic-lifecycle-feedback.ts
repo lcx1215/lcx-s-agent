@@ -14,6 +14,7 @@ import {
 import {
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
+  withFinanceBrokerHistorySnapshot,
 } from "./finance-position-ledger.js";
 import { readFinancePositionManagementFeedback } from "./finance-position-management-feedback.js";
 import { readFinanceRuleReadinessState } from "./finance-rule-readiness-state.js";
@@ -507,6 +508,22 @@ export async function buildFinanceAutomaticLifecycleFeedback(
   const state = params.directory
     ? { directory: params.directory, source: "explicit" as const }
     : resolveFinanceStateDir();
+  try {
+    return await withFinanceBrokerHistorySnapshot(state.directory, () =>
+      buildLifecycleObservation(state, observedAt),
+    );
+  } catch {
+    // A shared snapshot is an optimization, never permission to skip validation.
+    // Preserve the original readers' local gaps and other usable evidence when
+    // its full-chain verification fails; those readers still reject the bad chain.
+    return buildLifecycleObservation(state, observedAt);
+  }
+}
+
+async function buildLifecycleObservation(
+  state: ReturnType<typeof resolveFinanceStateDir>,
+  observedAt: string,
+) {
   // Each reader verifies the original chain once for this call. Lazy promises preserve
   // the consumers' own failure handling and expire with this observation.
   let positions: ReturnType<typeof readFinancePositionLedger> | undefined;
