@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import * as commercial from "../scripts/operator/lcx-commercial-answer-pipeline.js";
+import * as commercial from "../src/agents/commercial-answer-pipeline.js";
 import * as visible from "../src/agents/visible-answer-adoption-gate.js";
 import { resetInboundDedupe } from "../src/auto-reply/reply/inbound-dedupe.js";
 import { onAgentEvent, type AgentEventPayload } from "../src/infra/agent-events.js";
