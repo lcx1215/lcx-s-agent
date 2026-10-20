@@ -115,6 +115,19 @@ describe.skipIf(before)("same-attempt original self-repair consumers", () => {
           gap.reason === "consumer_did_not_receive_output:owner_coverage_map",
       ),
     ).toEqual([]);
+    const canonicalInput = structuredClone(result.auditInput);
+    const feedback = canonicalInput[0].feedbackReads![0];
+    feedback.receipt.path = await fs.realpath(feedback.receipt.path);
+    const canonicalAudit = (await auditWorkflowHandoffs(canonicalInput)).find(
+      (entry) => entry.scenarioId === "self_repair_hands_waterflow",
+    );
+    expect(
+      canonicalAudit?.gaps.filter(
+        (gap) =>
+          gap.reason.startsWith("feedback_read_") ||
+          gap.reason === "consumer_did_not_receive_output:owner_coverage_map",
+      ),
+    ).toEqual([]);
   });
 
   it("rejects a producer map in a retargeted workspace after pinning the original root", async () => {

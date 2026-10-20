@@ -20,6 +20,7 @@ import {
 import { readSelfRepairCandidateReviewInput } from "../../src/agents/self-repair-candidate-review.js";
 import { readSelfRepairOwnerMapFeedback } from "../../src/agents/self-repair-owner-map-feedback.js";
 import { readFileWithinRoot } from "../../src/infra/fs-safe.js";
+import { isPathInside } from "../../src/infra/path-guards.js";
 import {
   LCX_ONTOLOGY_WORKFLOW_FILTER_IDS,
   LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS,
@@ -3457,12 +3458,17 @@ async function verifySelfRepairDiagnosticFeedback(
   }
   const workspaceAlias = path.resolve(future.workspaceDir);
   const workspace = await fs.realpath(workspaceAlias);
-  const safeRead = async (filePath: string) =>
-    readFileWithinRoot({
+  const safeRead = async (filePath: string) => {
+    const absolutePath = path.resolve(workspaceAlias, filePath);
+    // Both recorded spellings resolve beneath the pinned root. Do not follow
+    // the workspace alias again after it may have been retargeted.
+    const relativeRoot = isPathInside(workspace, absolutePath) ? workspace : workspaceAlias;
+    return readFileWithinRoot({
       rootDir: workspace,
-      relativePath: path.relative(workspaceAlias, path.resolve(workspaceAlias, filePath)),
+      relativePath: path.relative(relativeRoot, absolutePath),
       maxBytes: 512 * 1024,
     });
+  };
   const root = await safeRead(ref.path);
   const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
   if (
