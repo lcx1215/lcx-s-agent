@@ -8,6 +8,7 @@ import { createSandboxFsBridge } from "../sandbox/fs-bridge.js";
 import type { SandboxContext, SandboxDockerConfig } from "../sandbox/types.js";
 
 const exec = promisify(execFile);
+const NATIVE_TMPFS_OPTIONS = "rw,nosuid,nodev,size=64m,mode=1777";
 export type NativeContainer = {
   id: string;
   name: string;
@@ -60,6 +61,7 @@ type Inspect = {
     Binds?: string[];
     VolumesFrom?: string[];
     PortBindings?: Record<string, unknown>;
+    Tmpfs?: Record<string, string>;
   };
   Mounts: Array<{ Type: string; Source: string; Destination: string; RW: boolean }>;
 };
@@ -104,10 +106,29 @@ export function assertNativeContainer(
   ) {
     throw new Error("native Docker isolation configuration mismatch");
   }
-  if (inspected.Mounts.length !== 1) {
+  const temporary = h.Tmpfs ?? {};
+  if (
+    Object.keys(temporary).length !== 1 ||
+    typeof temporary["/tmp"] !== "string" ||
+    temporary["/tmp"].split(",").toSorted().join(",") !==
+      NATIVE_TMPFS_OPTIONS.split(",").toSorted().join(",")
+  ) {
+    throw new Error("native Docker temporary mount mismatch");
+  }
+  // --tmpfs is represented by HostConfig.Tmpfs; some engines also include it in Mounts.
+  const temporaryMounts = inspected.Mounts.filter(
+    (mount) =>
+      mount.Type === "tmpfs" && mount.Destination === "/tmp" && mount.Source === "" && mount.RW,
+  );
+  const taskMounts = inspected.Mounts.filter((mount) => mount.Destination === "/workspace");
+  if (
+    taskMounts.length !== 1 ||
+    temporaryMounts.length > 1 ||
+    inspected.Mounts.length !== 1 + temporaryMounts.length
+  ) {
     throw new Error("native Docker requires exactly one task mount");
   }
-  const mount = inspected.Mounts[0];
+  const mount = taskMounts[0];
   if (
     mount.Type !== "bind" ||
     mount.Source !== expected.workspaceDir ||
@@ -145,7 +166,7 @@ export const nativeDocker: NativeDocker = {
       containerPrefix: "lcx-native-",
       workdir: "/workspace",
       readOnlyRoot: true,
-      tmpfs: [],
+      tmpfs: [`/tmp:${NATIVE_TMPFS_OPTIONS}`],
       network: "none",
       user,
       capDrop: ["ALL"],
