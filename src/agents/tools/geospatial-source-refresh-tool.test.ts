@@ -39,33 +39,42 @@ describe("geospatial_source_refresh tool", () => {
     expect(times[1] - times[0]).toBeGreaterThanOrEqual(1100);
   });
 
-  it("does not dispatch or write a receipt after caller cancellation", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "geospatial-cancelled-"));
-    let fetchCalls = 0;
-    const fetchImpl: FetchImpl = async () => {
-      fetchCalls += 1;
-      return { ok: true, status: 200, text: async () => JSON.stringify({}) };
-    };
-    const controller = new AbortController();
-    controller.abort(new Error("platform cancelled"));
-    try {
-      const tool = createGeospatialSourceRefreshTool({ workspaceDir, fetchImpl });
-      await expect(
-        tool.execute(
-          "cancelled",
-          {
-            kind: "weather",
-            query: "31.2,121.5",
-            liveFetch: true,
-            writeReceipt: true,
-          },
-          controller.signal,
-        ),
-      ).rejects.toThrow("platform cancelled");
-      expect(fetchCalls).toBe(0);
-      await expect(fs.stat(path.join(workspaceDir, "memory"))).rejects.toThrow();
-    } finally {
-      await fs.rm(workspaceDir, { recursive: true, force: true });
-    }
-  });
+  it.each(["before", "during"] as const)(
+    "preserves %s caller cancellation without writing a receipt",
+    async (timing) => {
+      const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "geospatial-cancelled-"));
+      const controller = new AbortController();
+      const cancellation = new Error("platform cancelled");
+      let fetchCalls = 0;
+      const fetchImpl: FetchImpl = async () => {
+        fetchCalls += 1;
+        if (timing === "during") {
+          controller.abort(cancellation);
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+      };
+      if (timing === "before") {
+        controller.abort(cancellation);
+      }
+      try {
+        const tool = createGeospatialSourceRefreshTool({ workspaceDir, fetchImpl });
+        await expect(
+          tool.execute(
+            "cancelled",
+            {
+              kind: "weather",
+              query: "31.2,121.5",
+              liveFetch: true,
+              writeReceipt: true,
+            },
+            controller.signal,
+          ),
+        ).rejects.toBe(cancellation);
+        expect(fetchCalls).toBe(timing === "before" ? 0 : 1);
+        await expect(fs.stat(path.join(workspaceDir, "memory"))).rejects.toThrow();
+      } finally {
+        await fs.rm(workspaceDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

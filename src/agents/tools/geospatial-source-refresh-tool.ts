@@ -102,6 +102,7 @@ export function createGeospatialSourceRefreshTool(options?: {
           : undefined;
         return jsonResult({ ...receipt, receiptPath });
       } catch (error) {
+        callerSignal?.throwIfAborted();
         throw new ToolInputError((error as Error).message);
       }
     },
