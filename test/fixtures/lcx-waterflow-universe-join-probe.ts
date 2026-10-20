@@ -321,20 +321,24 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   // without spawning dozens of tiny Git processes. Each Git child retains 20s.
   const pathsToStage = [...indexedFiles, ...rootFiles];
   const pathspec = path.join(root, "architecture-stage-paths.bin");
-  preparationSignal.throwIfAborted();
-  await fs.writeFile(pathspec, pathsToStage.join("\0") + "\0", { mode: 0o600 });
-  await execute(
-    "git",
-    [
-      "-c",
-      "core.autocrlf=false",
-      "add",
-      "--force",
-      `--pathspec-from-file=${pathspec}`,
-      "--pathspec-file-nul",
-    ],
-    { cwd: repo },
-  );
+  for (let offset = 0; offset < pathsToStage.length; offset += 1_024) {
+    preparationSignal.throwIfAborted();
+    await fs.writeFile(pathspec, pathsToStage.slice(offset, offset + 1_024).join("\0") + "\0", {
+      mode: 0o600,
+    });
+    await execute(
+      "git",
+      [
+        "-c",
+        "core.autocrlf=false",
+        "add",
+        "--force",
+        `--pathspec-from-file=${pathspec}`,
+        "--pathspec-file-nul",
+      ],
+      { cwd: repo },
+    );
+  }
   await fs.rm(pathspec);
   await execute(
     "git",
@@ -688,7 +692,26 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   await vm.compileFunction(joinCode, Object.keys(joinBindings))(...Object.values(joinBindings));
   const received = directOwners[changeImpactIndex];
   const review = received.payload?.cleanupReview as Review;
-  assert.ok(review);
+  assert.ok(
+    review,
+    JSON.stringify({
+      reason: "original_cleanup_review_missing",
+      ownerId: received.id,
+      originalOwnerReceiptJson: JSON.stringify(received.runReceipt).slice(0, 8_000),
+      originalOwnerCompactJson: JSON.stringify(received.compact).slice(0, 2_000),
+      processes: processes
+        .filter((item) => item.args.some((arg) => arg.endsWith("lcx-change-impact-plan.ts")))
+        .map(({ command, args, timeoutMs, closeObserved, stdioClosed, code, signal }) => ({
+          command,
+          args: args.join(" ").slice(0, 2_000),
+          timeoutMs,
+          closeObserved,
+          stdioClosed,
+          code,
+          signal,
+        })),
+    }),
+  );
   const resultPath = path.join(root, "actual-native-join.json");
   const phaseTrace = JSON.parse(
     await fs.readFile(phase.evidence.nodes[0].scope.path, "utf8"),
