@@ -128,6 +128,40 @@ describe("EchoAPI known CI credential value redaction", () => {
     expect(output).toBe("CLI rejected supplied value [[REDACTED]]; status 401");
   });
 
+  it("redacts canonical inner URL credential forms", () => {
+    const secret = "HTTPS://SECRET.EXAMPLE:443/a/../private?sig=fixture";
+    const url = new URL("https://open.echoapi.com/ci");
+    url.searchParams.set("signature", secret);
+    expect(
+      redactEchoApiText(
+        "CLI rejected https://secret.example/private?sig=fixture status 401",
+        url.href,
+      ),
+    ).toBe("CLI rejected [REDACTED] status 401");
+  });
+
+  it.each([1, 4])("redacts recursively escaped contextual values at nesting %s", (depth) => {
+    const secret = 'fixture"secret';
+    const url = new URL("https://open.echoapi.com/ci");
+    url.searchParams.set("ci_id", secret);
+    let actual = JSON.stringify({ ci_id: secret, unrelated: secret });
+    let expected = JSON.stringify({ ci_id: "[REDACTED]", unrelated: secret });
+    for (let layer = 0; layer < depth; layer++) {
+      actual = JSON.stringify({ detail: actual });
+      expected = JSON.stringify({ detail: expected });
+    }
+    expect(redactEchoApiText(actual, url.href)).toBe(expected);
+  });
+
+  it("redacts backtick-delimited contextual values", () => {
+    expect(
+      redactEchoApiText(
+        "ci_id=`private-project`",
+        "https://open.echoapi.com/ci?ci_id=private-project",
+      ),
+    ).toBe("ci_id=`[REDACTED]`");
+  });
+
   it("treats query values literally and redacts longer overlapping values first", () => {
     const url =
       "https://open.echoapi.com/ci?secret=fixture&token=fixture-long&signature=literal%2B%5Bvalue%5D.*";
@@ -227,14 +261,14 @@ describe("EchoAPI known CI credential value redaction", () => {
     ).toBe(`${before}ci_id=[REDACTED]${after}`);
   });
 
-  it.each(["xci_id=private-project", "ci_id=private-project-extended"])(
-    "does not treat a partial field or value as the supplied identifier: %s",
-    (text) => {
-      expect(redactEchoApiText(text, "https://open.echoapi.com/ci?ci_id=private-project")).toBe(
-        text,
-      );
-    },
-  );
+  it.each([
+    "xci_id=private-project",
+    "ci_id=private-project-extended",
+    "`xci_id`=`private-project`",
+    "ci_id=`private-project-extended`",
+  ])("does not treat a partial field or value as the supplied identifier: %s", (text) => {
+    expect(redactEchoApiText(text, "https://open.echoapi.com/ci?ci_id=private-project")).toBe(text);
+  });
 
   it("redacts a field in a JSON-serialized diagnostic string", () => {
     expect(

@@ -507,8 +507,17 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
   const contextualKeys = new Set<string>();
   const addValue = (value: string, bare: boolean) => {
     if (value) {
-      for (const form of [value, JSON.stringify(value).slice(1, -1)]) {
+      let form = value;
+      while (true) {
         sensitiveValues.set(form, bare || sensitiveValues.get(form) === true);
+        const escaped = JSON.stringify(form).slice(1, -1);
+        // Escaping eventually stabilizes or grows exponentially. Never collect
+        // a form longer than the diagnostic it must match, so nesting cannot
+        // cause unbounded expansion of known values.
+        if (escaped === form || escaped.length > redacted.length) {
+          break;
+        }
+        form = escaped;
       }
     }
   };
@@ -536,14 +545,25 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
         contextualKeys.add(form);
       }
     }
-    for (const form of [
-      value,
-      encodeURIComponent(value),
-      new URLSearchParams({ v: value }).toString().slice(2),
-      raw,
-    ]) {
-      if (form !== undefined) {
-        addValue(form, bare);
+    const values = [value];
+    try {
+      const innerUrl = new URL(value);
+      if (innerUrl.protocol === "http:" || innerUrl.protocol === "https:") {
+        values.push(innerUrl.href);
+      }
+    } catch {
+      // Most query values are not URLs; retain their literal forms.
+    }
+    for (const candidate of values) {
+      for (const form of [
+        candidate,
+        encodeURIComponent(candidate),
+        new URLSearchParams({ v: candidate }).toString().slice(2),
+        raw,
+      ]) {
+        if (form !== undefined) {
+          addValue(form, bare);
+        }
       }
     }
   };
@@ -585,7 +605,7 @@ export function redactEchoApiText(value: string, sensitiveUrl?: string): string 
       // Generic URL redaction below still protects malformed input.
     }
   }
-  const quote = String.raw`(?:\\*["'])?`;
+  const quote = "(?:\\\\*[\"'`])?";
   let bare = "";
   let urlValues = "";
   let urlPlaceholder: string | undefined;
