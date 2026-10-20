@@ -56,6 +56,10 @@ export async function probeUniverseWhole(
     sourcePath,
     "scripts/operator/lcx-local-paths.ts",
     "scripts/operator/lcx-change-impact-plan.ts",
+    "scripts/operator/lcx-flow-graph.ts",
+    "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    "scripts/operator/lcx-directed-daily-research-brief.ts",
+    "scripts/operator/lcx-finance-research-checkpoint-run.ts",
     "scripts/operator/lcx-problem-cluster-radar.ts",
     "scripts/operator/lcx-external-channel-status.ts",
   ];

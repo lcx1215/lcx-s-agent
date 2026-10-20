@@ -52,7 +52,12 @@ export async function probePredictionSourceHandoff(params: {
   fault?: SourceFault;
 }) {
   const request = {
-    instrument: "offline-prediction-eighteenth",
+    instrument:
+      params.assetClass.trim().toLowerCase() === "equity"
+        ? "AAPL"
+        : params.assetClass.trim().toLowerCase() === "etf"
+          ? "SPY"
+          : "offline-prediction-eighteenth",
     assetClass: params.assetClass,
     useCase: "finance_research_run",
     asOf: "2026-07-01T12:00:00.000Z",
