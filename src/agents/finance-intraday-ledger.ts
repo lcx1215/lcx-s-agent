@@ -359,7 +359,15 @@ export async function readFinanceIntradayLedger(
 ): Promise<FinanceIntradayLedger> {
   try {
     await fs.stat(financeIntradayLedgerPath(directory));
-  } catch {
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "ENOENT"
+    ) {
+      throw error;
+    }
     return Object.freeze({ bars: Object.freeze([]), recordCount: 0, headRef: null });
   }
   const db = openDatabase(directory);
