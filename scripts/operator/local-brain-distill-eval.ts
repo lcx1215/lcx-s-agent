@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
@@ -17,6 +18,8 @@ import {
   GENERALIZATION_GENERATOR_ID,
   GENERALIZATION_GENERATOR_VERSION,
   isFeatureSignatureHeldOut,
+  isTaskFeatures,
+  replayGeneratedCase,
   type GeneralizationCaseProvenance,
 } from "./local-brain-generalization-generator.js";
 import {
@@ -3758,6 +3761,7 @@ type GeneratedCaseFileRead = {
   provenance: GeneralizationCaseProvenance;
   fileSha256: string;
   fileBytes: number;
+  provenanceVerified: true;
 };
 
 function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
@@ -3848,6 +3852,31 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
         `generated case ${id || "<unknown>"} featureSignature is not in the declared holdout split at ${filePath}:${index + 1}`,
       );
     }
+    // Verify generator-rule consistency, including features omitted from the
+    // split signature. Declared sampling seed and file origin are not authenticated.
+    if (
+      !isTaskFeatures(record.features) ||
+      typeof record.renderSeed !== "number" ||
+      !Number.isInteger(record.renderSeed) ||
+      record.renderSeed < 0 ||
+      record.renderSeed > 0xffffffff
+    ) {
+      throw new Error(`generated case ${id} has invalid replay inputs at ${filePath}:${index + 1}`);
+    }
+    const replayed = replayGeneratedCase(record.features, record.renderSeed);
+    if (
+      record.featureSignature !== replayed.featureSignature ||
+      record.userAsk !== replayed.userAsk
+    ) {
+      throw new Error(
+        `generated case ${id} does not match generator replay at ${filePath}:${index + 1}`,
+      );
+    }
+    if (!isDeepStrictEqual(target, replayed.target)) {
+      throw new Error(
+        `generated case ${id} target does not match generator replay at ${filePath}:${index + 1}`,
+      );
+    }
     if (seen.has(id) || EVAL_CASE_BY_ID.has(id)) {
       throw new Error(`duplicate or reserved generated case id ${id} at ${filePath}:${index + 1}`);
     }
@@ -3908,6 +3937,7 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
     provenance: fileProvenance,
     fileSha256: createHash("sha256").update(raw, "utf8").digest("hex"),
     fileBytes: Buffer.byteLength(raw, "utf8"),
+    provenanceVerified: true,
   };
 }
 
@@ -6127,7 +6157,9 @@ if (options.receiptPath) {
     proof: {
       subsetEval: true,
       blindRawContract: options.blind,
-      generatedHoldoutProvenanceVerified: Boolean(generatedCaseFile),
+      generatedHoldoutProvenanceVerified: generatedCaseFile?.provenanceVerified === true,
+      generatedHoldoutVerificationBasis: generatedCaseFile ? "generator_rule_replay" : null,
+      generatedHoldoutSamplingSeedVerified: false,
       caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
       caseFileProvenance: generatedCaseFile?.provenance ?? null,
       trainingSliceRef: trainingSliceIdentity?.ref ?? null,

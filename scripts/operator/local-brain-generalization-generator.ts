@@ -69,6 +69,7 @@ export type GeneratedCase = {
   userAsk: string;
   sourceSummary: string;
   features: TaskFeatures;
+  renderSeed: number;
   // Same shape the eval scorer consumes:
   requiredModules: string[];
   forbiddenModules: string[];
@@ -311,6 +312,39 @@ const ALL_ASSET_CLASSES: AssetClass[] = [
   "bond_duration",
 ];
 
+const BOOLEAN_FEATURES = [
+  "dataSupplied",
+  "learningRequest",
+  "sourceSupplied",
+  "tradeWording",
+  "portfolioContext",
+  "crossMarket",
+  "oldContextPollution",
+  "redTeam",
+  "fundamentalsDeep",
+  "eventRisk",
+  "technicalTiming",
+  "valuationModeling",
+  "abstractionTransfer",
+] as const satisfies readonly (keyof Omit<TaskFeatures, "assetClasses">)[];
+
+export function isTaskFeatures(value: unknown): value is TaskFeatures {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const features = value as Record<string, unknown>;
+  return (
+    Object.keys(features).length === BOOLEAN_FEATURES.length + 1 &&
+    BOOLEAN_FEATURES.every((key) => typeof features[key] === "boolean") &&
+    Array.isArray(features.assetClasses) &&
+    features.assetClasses.every(
+      (asset: unknown) =>
+        typeof asset === "string" && new Set<string>(ALL_ASSET_CLASSES).has(asset),
+    ) &&
+    new Set(features.assetClasses).size === features.assetClasses.length
+  );
+}
+
 const DISTINCT_MARKETS: Set<AssetClass> = new Set(["us_equity", "a_share", "index", "crypto"]);
 
 // Draw a random, internally-consistent feature vector.
@@ -386,9 +420,9 @@ function hashUnit(text: string): number {
   return (hash >>> 0) / 4294967296;
 }
 
-export const GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v1";
+export const GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v2";
 export const GENERALIZATION_GENERATOR_ID = "local-brain-generalization-harness";
-export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v1";
+export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v2-replay";
 
 export type GeneralizationCaseProvenance = {
   schemaVersion: typeof GENERALIZATION_CASE_SCHEMA_VERSION;
@@ -489,18 +523,30 @@ function renderAsk(features: TaskFeatures, rng: () => number): string {
   return ask || "重新来一遍。";
 }
 
+// Reuse the original rendering and label rules without depending on global ids.
+export function replayGeneratedCase(features: TaskFeatures, renderSeed: number) {
+  return {
+    userAsk: renderAsk(features, makeRng(renderSeed)),
+    featureSignature: featureSignature(features),
+    target: deriveLabel(features),
+  };
+}
+
 let caseCounter = 0;
 
 // Produce one fully-labeled generated case from a feature vector.
 export function generateCase(features: TaskFeatures, rng: () => number): GeneratedCase {
-  const label = deriveLabel(features);
-  const signature = featureSignature(features);
+  const renderSeed = Math.floor(rng() * 4294967296);
+  const replayed = replayGeneratedCase(features, renderSeed);
+  const label = replayed.target;
+  const signature = replayed.featureSignature;
   caseCounter += 1;
   return {
     id: `gen_${caseCounter}_${hashUnit(signature).toFixed(6).slice(2)}`,
-    userAsk: renderAsk(features, rng),
+    userAsk: replayed.userAsk,
     sourceSummary: `generated case for feature signature ${signature}`,
     features,
+    renderSeed,
     requiredModules: label.requiredModules,
     forbiddenModules: label.forbiddenModules,
     minModuleMatches: label.minModuleMatches,
