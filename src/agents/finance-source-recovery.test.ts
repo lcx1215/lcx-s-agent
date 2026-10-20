@@ -545,6 +545,24 @@ describe("finance source recovery", () => {
     },
   );
 
+  it("fills the recovery budget after skipping an overlapping retry", async () => {
+    const source = batch([
+      { ...job("parent", "timeout"), sourceAdapterIds: undefined },
+      { ...job("child", "timeout"), parentJobId: "parent", targetId: "parent" },
+      job("independent", "timeout"),
+      job("deferred", "timeout"),
+    ]);
+    const result = await runFinanceSourceRecovery(source, {
+      asOf: AS_OF,
+      live: false,
+      maxJobs: 2,
+    });
+    expect(result.selectedParentJobIds).toEqual(["parent", "independent"]);
+    expect(result.deferredParentJobIds).toEqual(["child", "deferred"]);
+    expect(result.batch).toBeUndefined();
+    expect(result.recoveryState.jobs).toEqual(source.jobs);
+  });
+
   it("keeps disjoint pinned parent and child scopes concurrently retryable", async () => {
     const original = batch([
       { ...job("pinned", "timeout"), sourceAdapterIds: ["source-a", "source-b"] },

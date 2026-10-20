@@ -296,7 +296,10 @@ export async function runFinanceSourceRecovery(
   const eligibleIds = new Set(eligible.map((target) => target.id));
   const originalJobs = new Map(plan.recoveryState.jobs.map((job) => [job.jobId, job]));
   const selected: FinanceResearchBatchTarget[] = [];
-  for (const target of eligible.slice(0, options.maxJobs)) {
+  for (const target of eligible) {
+    if (selected.length >= options.maxJobs) {
+      break;
+    }
     const original = originalJobs.get(target.id)!;
     const overlapsSelected = selected.some((prior) => {
       const priorOriginal = originalJobs.get(prior.id)!;
