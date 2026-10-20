@@ -159,12 +159,41 @@ async function installedExecutableIsUsable(executable: string): Promise<boolean>
   }
 }
 
+/** Reuse only an entrypoint recorded after the original pinned-tarball installation. */
+export async function hasVerifiedEchoApiInstallation(
+  runtimeRoot: string,
+  executable: string,
+): Promise<boolean> {
+  try {
+    const receipt: unknown = JSON.parse(
+      await readFile(path.join(runtimeRoot, "lcx-installation.json"), "utf8"),
+    );
+    if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+      return false;
+    }
+    const recorded = receipt as Record<string, unknown>;
+    return (
+      recorded.schemaVersion === "lcx_echoapi_cli_installation_v1" &&
+      recorded.package === ECHOAPI_CLI_PACKAGE &&
+      recorded.version === ECHOAPI_CLI_VERSION &&
+      recorded.tarballIntegrity === ECHOAPI_CLI_TARBALL_INTEGRITY &&
+      recorded.executableSha256 ===
+        createHash("sha256")
+          .update(await readFile(executable))
+          .digest("hex")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; version: string }> {
   const runtimeRoot = echoApiRuntimeRoot();
   const executable = echoApiExecutablePath(runtimeRoot);
   if (
     (await readInstalledVersion(runtimeRoot)) === ECHOAPI_CLI_VERSION &&
-    (await installedExecutableIsUsable(executable))
+    (await installedExecutableIsUsable(executable)) &&
+    (await hasVerifiedEchoApiInstallation(runtimeRoot, executable))
   ) {
     return { executable, version: ECHOAPI_CLI_VERSION };
   }
@@ -250,7 +279,7 @@ async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; v
   }
 
   const finalVersion = await readInstalledVersion(runtimeRoot);
-  if (finalVersion !== ECHOAPI_CLI_VERSION) {
+  if (finalVersion !== ECHOAPI_CLI_VERSION || !(await installedExecutableIsUsable(executable))) {
     throw new Error(
       `active-state EchoAPI CLI installation did not produce ${ECHOAPI_CLI_PACKAGE}@${ECHOAPI_CLI_VERSION}`,
     );
@@ -263,6 +292,10 @@ async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; v
         package: ECHOAPI_CLI_PACKAGE,
         version: ECHOAPI_CLI_VERSION,
         tarballIntegrity: ECHOAPI_CLI_TARBALL_INTEGRITY,
+        executableSha256: createHash("sha256")
+          .update(await readFile(executable))
+          .digest("hex"),
+        verificationScope: "pinned_package_install_and_entrypoint_bytes",
         installRoot: runtimeRoot,
         installPolicy: [
           "active_lcx_state_root_owner_only",

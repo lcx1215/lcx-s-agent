@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildEchoApiCliArgs,
+  ECHOAPI_CLI_PACKAGE,
+  ECHOAPI_CLI_VERSION,
+  ECHOAPI_CLI_TARBALL_INTEGRITY,
+  hasVerifiedEchoApiInstallation,
   redactEchoApiText,
   validateEchoApiCiUrl,
   verifyEchoApiReport,
@@ -11,6 +16,34 @@ import {
 } from "./echoapi-cli-runner.js";
 
 describe("EchoAPI CLI runner boundary", () => {
+  it("reuses only a pinned installation whose entrypoint still matches its receipt", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "echoapi-install-proof-"));
+    const executable = path.join(root, "echoapi");
+    const receiptPath = path.join(root, "lcx-installation.json");
+    const original = "fixture cli entrypoint";
+    const receipt = {
+      schemaVersion: "lcx_echoapi_cli_installation_v1",
+      package: ECHOAPI_CLI_PACKAGE,
+      version: ECHOAPI_CLI_VERSION,
+      tarballIntegrity: ECHOAPI_CLI_TARBALL_INTEGRITY,
+      executableSha256: createHash("sha256").update(original).digest("hex"),
+    };
+    try {
+      await writeFile(executable, original);
+      expect(await hasVerifiedEchoApiInstallation(root, executable)).toBe(false);
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, executableSha256: undefined }));
+      expect(await hasVerifiedEchoApiInstallation(root, executable)).toBe(false);
+      await writeFile(receiptPath, JSON.stringify(receipt));
+      expect(await hasVerifiedEchoApiInstallation(root, executable)).toBe(true);
+      await writeFile(executable, "changed cli with the same package version");
+      expect(await hasVerifiedEchoApiInstallation(root, executable)).toBe(false);
+      await writeFile(executable, original);
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, tarballIntegrity: "unverified" }));
+      expect(await hasVerifiedEchoApiInstallation(root, executable)).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("accepts an EchoAPI CI URL and hides its query token from the target receipt shape", () => {
     const url = validateEchoApiCiUrl(
       "https://open.echoapi.com/open/ci/automated_testing?ci_id=public&token=secret",
