@@ -116,6 +116,7 @@ export async function runCheckpointedFinanceResearch(
     executionFingerprint: `cli-research-v1:${runId}`,
   };
   const startedAt = new Date().toISOString();
+  const deadlineAtMs = Date.parse(startedAt) + budget.runTimeoutMs;
   const record = (
     status: string,
     reason?: string,
@@ -169,6 +170,9 @@ export async function runCheckpointedFinanceResearch(
       modelCheckpoint: { ...checkpoint, maxModelCalls: budget.maxModelCalls },
     });
     // A late candidate must never be persisted as an actionable portfolio plan.
+    if (!signal.aborted && Date.now() >= deadlineAtMs) {
+      controller.abort(new Error("research_run_deadline_exceeded"));
+    }
     signal.throwIfAborted();
     if (checkpointWriteError) {
       throw checkpointWriteError;

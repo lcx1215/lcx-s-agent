@@ -69,6 +69,8 @@ export type FinanceRealtimeSourceAdapter = Readonly<{
   priority: number;
   /** Provider-specific, non-trading representative used only by bounded liveness probes. */
   sampleRequest?: Pick<FinanceRealtimeSourceRequest, "instrument" | "assetClass">;
+  /** Opaque identity of the actual read endpoint, query and authorization; no raw material. */
+  accessScopeForRequest?: (request: FinanceRealtimeSourceRequest) => string;
   supports: (request: FinanceRealtimeSourceRequest) => boolean;
   collect: (
     request: FinanceRealtimeSourceRequest,

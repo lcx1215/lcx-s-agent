@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   createApiSourceGovernanceRegistry,
+  ApiCallError,
   type ApiCallReceipt,
 } from "../../src/agents/api-call-contract.ts";
 import type { FinanceDecisionMode } from "../../src/agents/finance-decision-policy.ts";
@@ -13,6 +14,7 @@ import {
   createFinanceMarketCollectionRegistry,
   resolveFinanceMarketCollectionRegistryOptionsFromEnv,
   type FinanceMarketCollectionAdapter,
+  type FinanceMarketCollectionRequest,
 } from "../../src/agents/finance-market-collection-registry.ts";
 import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
 import {
@@ -31,6 +33,7 @@ import {
   createFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   type FinanceRealtimeSourceAdapter,
+  type FinanceRealtimeSourceRequest,
 } from "../../src/agents/finance-realtime-source-registry.ts";
 import {
   financeScheduledResearchHandoffSchema,
@@ -60,6 +63,7 @@ import {
   recordFinanceResearchResult,
   type FinanceResultRecordingHost,
 } from "../../src/agents/finance-result-recording.ts";
+import { isFinanceSourceAccessScope } from "../../src/agents/finance-source-heartbeat-state.ts";
 import {
   readFinanceSourceHeartbeat,
   type FinanceSourceHeartbeatRecord,
@@ -806,8 +810,20 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
 }
 
 async function writePrivateReceipt(filePath: string, serialized: string): Promise<void> {
-  await fs.writeFile(filePath, serialized, { encoding: "utf8", mode: 0o600 });
-  await fs.chmod(filePath, 0o600);
+  const temporary = path.join(path.dirname(filePath), `.lcx-receipt-${randomUUID()}.tmp`);
+  const handle = await fs.open(temporary, "wx", 0o600);
+  try {
+    try {
+      await handle.writeFile(serialized, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    // Replace the path itself, never truncate/chmod a pre-existing link target.
+    await fs.rename(temporary, filePath);
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function probePrivateReceiptPath(filePath: string): Promise<void> {
@@ -817,7 +833,6 @@ async function probePrivateReceiptPath(filePath: string): Promise<void> {
   } finally {
     await handle.close();
   }
-  await fs.chmod(filePath, 0o600);
 }
 
 export async function preflightFinanceResearchReceiptDestination(
@@ -831,8 +846,10 @@ export async function preflightFinanceResearchReceiptDestination(
   await fs.mkdir(runDir, { recursive: true });
   await fs.mkdir(stateDir, { recursive: true });
   try {
-    const handle = await fs.open(latestPath, "r+");
-    await handle.close();
+    const stat = await fs.lstat(latestPath);
+    if (!stat.isFile() && !stat.isSymbolicLink()) {
+      throw new Error("research receipt destination is not a replaceable file");
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -877,7 +894,7 @@ export async function writeReceipt(
   // `memory/` is tracked, so a run archive dropped there becomes repository content.
   const runDir = path.join(root, "state", "finance-research-runs", asOf.slice(0, 10));
   const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
-  const datedPath = path.join(runDir, `${stamp}__finance-research-run.json`);
+  const datedPath = path.join(runDir, `${stamp}__${randomUUID()}__finance-research-run.json`);
   const latestPath = path.join(stateDir, "lcx-finance-research-run-latest.json");
   await fs.mkdir(runDir, { recursive: true });
   await fs.mkdir(stateDir, { recursive: true });
@@ -959,41 +976,92 @@ export function prioritizeFinanceResearchAdaptersByHeartbeat<
   }));
 }
 
-async function financeResearchAdaptersWithFreshHealth(params: {
+export async function financeResearchAdaptersWithFreshHealth(params: {
   includeYahooPublicSources: boolean;
   financeStateDir?: string;
   workspaceDir: string;
   observedAt: string;
+  registryOptions?: ReturnType<typeof buildFinanceResearchRegistryOptions>;
 }): Promise<{
   realtimeAdapters: FinanceRealtimeSourceAdapter[];
   collectionAdapters: FinanceMarketCollectionAdapter[];
 }> {
   const { realtimeRegistryOptions, collectionRegistryOptions } =
-    buildFinanceResearchRegistryOptions(params.includeYahooPublicSources);
+    params.registryOptions ?? buildFinanceResearchRegistryOptions(params.includeYahooPublicSources);
   const stateDirectory = resolveFinanceStateDir({
     ...(params.financeStateDir ? { directory: params.financeStateDir } : {}),
     workspaceDir: params.workspaceDir,
   }).directory;
-  let endpointRecords: Readonly<
-    Record<string, Pick<FinanceSourceHeartbeatRecord, "checkedAt" | "status">>
-  > = {};
+  let endpointRecords: Readonly<Record<string, FinanceSourceHeartbeatRecord>> = {};
   try {
     const heartbeat = await readFinanceSourceHeartbeat({ directory: stateDirectory });
     endpointRecords = heartbeat.endpointRecords ?? {};
   } catch {
     // Unavailable health history preserves the configured source priority.
   }
+  const checkAccess = (adapterId: string, scope: () => string | undefined) => {
+    const record = endpointRecords[adapterId];
+    const now = Date.now();
+    if (
+      !record ||
+      record.adapterId !== adapterId ||
+      !["degraded", "unhealthy"].includes(record.status) ||
+      !["http_error", "forbidden"].includes(record.reason) ||
+      ![401, 402, 403].includes(record.httpStatus ?? 0) ||
+      record.attempts < 1 ||
+      !isFinanceSourceAccessScope(record.accessScope)
+    ) {
+      return;
+    }
+    const checkedAt = Date.parse(record.checkedAt);
+    const nextCheckAt = Date.parse(record.nextCheckAt);
+    if (
+      !Number.isFinite(checkedAt) ||
+      !Number.isFinite(nextCheckAt) ||
+      checkedAt > now ||
+      now - checkedAt > FINANCE_SOURCE_HEALTH_MAX_AGE_MS ||
+      nextCheckAt <= now
+    ) {
+      return;
+    }
+    let fingerprint: string | undefined;
+    try {
+      fingerprint = scope();
+    } catch {
+      return;
+    }
+    if (fingerprint === record.accessScope.fingerprint) {
+      // The original collect owner records this failure without reserving or dispatching HTTP.
+      throw new ApiCallError(
+        record.httpStatus === 403 ? "forbidden" : "http_error",
+        record.httpStatus,
+        nextCheckAt - now,
+      );
+    }
+  };
   return {
     realtimeAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
       createFinanceRealtimeSourceRegistry(realtimeRegistryOptions),
       endpointRecords,
       params.observedAt,
-    ),
+    ).map((adapter) => ({
+      ...adapter,
+      collect: (request: FinanceRealtimeSourceRequest, signal: AbortSignal) => {
+        checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        return adapter.collect(request, signal);
+      },
+    })),
     collectionAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
       createFinanceMarketCollectionRegistry(collectionRegistryOptions),
       endpointRecords,
       params.observedAt,
-    ),
+    ).map((adapter) => ({
+      ...adapter,
+      collect: (request: FinanceMarketCollectionRequest, signal: AbortSignal) => {
+        checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        return adapter.collect(request, signal);
+      },
+    })),
   };
 }
 
@@ -1325,6 +1393,7 @@ export async function run(options: Options): Promise<{
         ...(options.financeStateDir ? { financeStateDir: options.financeStateDir } : {}),
         workspaceDir: WORKSPACE_DIR(),
         observedAt: new Date().toISOString(),
+        registryOptions: { realtimeRegistryOptions, collectionRegistryOptions },
       })
     : undefined;
   const batchOptions = {

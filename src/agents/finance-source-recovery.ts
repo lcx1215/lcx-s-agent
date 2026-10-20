@@ -89,7 +89,10 @@ function classify(job: RecoveryJob, nowMs: number) {
   if (
     failures.some(
       (call) =>
-        call.httpStatus === 401 || call.httpStatus === 403 || call.transportError === "forbidden",
+        call.httpStatus === 401 ||
+        call.httpStatus === 402 ||
+        call.httpStatus === 403 ||
+        call.transportError === "forbidden",
     )
   ) {
     return result("resolve_access", "access_denied");
@@ -291,7 +294,27 @@ export async function runFinanceSourceRecovery(
     return sourceAdapterIds.length ? [{ ...target, sourceAdapterIds }] : [];
   });
   const eligibleIds = new Set(eligible.map((target) => target.id));
-  const selected = eligible.slice(0, options.maxJobs);
+  const originalJobs = new Map(plan.recoveryState.jobs.map((job) => [job.jobId, job]));
+  const selected: FinanceResearchBatchTarget[] = [];
+  for (const target of eligible.slice(0, options.maxJobs)) {
+    const original = originalJobs.get(target.id)!;
+    const overlapsSelected = selected.some((prior) => {
+      const priorOriginal = originalJobs.get(prior.id)!;
+      return (
+        (original.parentJobId ?? original.jobId) ===
+          (priorOriginal.parentJobId ?? priorOriginal.jobId) &&
+        original.targetId === priorOriginal.targetId &&
+        original.kind === priorOriginal.kind &&
+        (!target.sourceAdapterIds ||
+          !prior.sourceAdapterIds ||
+          target.sourceAdapterIds.some((id) => prior.sourceAdapterIds!.includes(id)))
+      );
+    });
+    if (!overlapsSelected) {
+      selected.push(target);
+    }
+  }
+  const selectedIds = new Set(selected.map((target) => target.id));
   const batch =
     options.live && selected.length
       ? await runFinanceResearchBatch({
@@ -312,6 +335,7 @@ export async function runFinanceSourceRecovery(
           maxJobs: options.maxJobs,
         })
       : undefined;
+  const partialAttempts = new Map<string, RecoveryJob>();
   const updatedJobs = plan.recoveryState.jobs.flatMap((original): RecoveryJob[] => {
     const attempt = batch?.jobs.find((job) => job.targetId === original.jobId);
     if (!attempt) {
@@ -327,21 +351,77 @@ export async function runFinanceSourceRecovery(
       latestAttemptJobId: attempt.jobId,
       targetId: original.targetId,
     };
-    // A selected adapter's success cannot clear unselected failures in the same job.
-    return remainingSources?.length
-      ? [{ ...original, sourceAdapterIds: remainingSources }, observed]
-      : [{ ...observed, jobId: original.jobId }];
+    // An unpinned job's observed calls do not establish its complete source scope.
+    // A selected attempt cannot clear that unknown scope or its original failures.
+    const unpinnedSubset =
+      original.sourceAdapterIds === undefined && retried.sourceAdapterIds !== undefined;
+    if (unpinnedSubset || remainingSources?.length) {
+      const priorAttempt = plan.recoveryState.jobs.find((job) => job.jobId === observed.jobId);
+      if (
+        priorAttempt &&
+        JSON.stringify([
+          priorAttempt.parentJobId,
+          priorAttempt.targetId,
+          priorAttempt.kind,
+          priorAttempt.sourceAdapterIds,
+          priorAttempt.request,
+          priorAttempt.freshnessMaxMinutes,
+        ]) !==
+          JSON.stringify([
+            observed.parentJobId,
+            observed.targetId,
+            observed.kind,
+            observed.sourceAdapterIds,
+            observed.request,
+            observed.freshnessMaxMinutes,
+          ])
+      ) {
+        throw new Error("recovery attempt identity conflicts with an existing job");
+      }
+      partialAttempts.set(observed.jobId, observed);
+      return [
+        unpinnedSubset ? original : { ...original, sourceAdapterIds: remainingSources },
+        observed,
+      ];
+    }
+    if (original.sourceAdapterIds === undefined && observed.status !== "ready") {
+      return [
+        {
+          ...observed,
+          jobId: original.jobId,
+          apiCalls: [...original.apiCalls, ...observed.apiCalls],
+          missingEvidence: [...new Set([...original.missingEvidence, ...observed.missingEvidence])],
+          freshnessWarnings: [
+            ...new Set([...original.freshnessWarnings, ...observed.freshnessWarnings]),
+          ],
+          conflicts: [...new Set([...original.conflicts, ...observed.conflicts])],
+        },
+      ];
+    }
+    return [{ ...observed, jobId: original.jobId }];
+  });
+  // Request-derived child IDs are stable. A repeated subset updates that child's
+  // latest observation without duplicating recovery identities on the next resume.
+  const seenJobIds = new Set<string>();
+  const mergedJobs = updatedJobs.flatMap((job) => {
+    if (seenJobIds.has(job.jobId)) {
+      return [];
+    }
+    seenJobIds.add(job.jobId);
+    return [partialAttempts.get(job.jobId) ?? job];
   });
   return {
     ...plan,
-    recoveryState: { ...plan.recoveryState, jobs: updatedJobs },
+    recoveryState: { ...plan.recoveryState, jobs: mergedJobs },
     status: !options.live
       ? ("planned" as const)
       : batch
         ? ("executed" as const)
         : ("no_retryable_jobs" as const),
     selectedParentJobIds: selected.map((target) => target.id),
-    deferredParentJobIds: eligible.slice(options.maxJobs).map((target) => target.id),
+    deferredParentJobIds: eligible
+      .filter((target) => !selectedIds.has(target.id))
+      .map((target) => target.id),
     excludedParentJobIds: plan.targets
       .filter((target) => !eligibleIds.has(target.id))
       .map((target) => target.id),

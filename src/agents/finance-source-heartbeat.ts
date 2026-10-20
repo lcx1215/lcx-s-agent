@@ -29,6 +29,7 @@ import {
   FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
   persistFinanceSourceHeartbeat,
   readFinanceSourceHeartbeat,
+  isFinanceSourceAccessScope,
   type FinanceSourceHeartbeatReason,
   type FinanceSourceHeartbeatRecord,
   type FinanceSourceHeartbeatState,
@@ -331,6 +332,25 @@ function resultFromReceipts(
       ? Math.min(retryAfterMs, FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS)
       : 0;
   const nextCheckMs = checkedAt + Math.max(baseCheckDelayMs, boundedRetryAfterMs);
+  let accessScope: FinanceSourceHeartbeatRecord["accessScope"];
+  if (receipt?.dispatchedAt && [401, 402, 403].includes(httpStatus ?? 0)) {
+    try {
+      const fingerprint =
+        candidate.kind === "collection"
+          ? (candidate.adapter as FinanceMarketCollectionAdapter).accessScopeForRequest?.(
+              candidate.request as FinanceMarketCollectionRequest,
+            )
+          : (candidate.adapter as FinanceRealtimeSourceAdapter).accessScopeForRequest?.(
+              candidate.request as FinanceRealtimeSourceRequest,
+            );
+      const scope = { version: 1, fingerprint };
+      if (isFinanceSourceAccessScope(scope)) {
+        accessScope = scope;
+      }
+    } catch {
+      // Unknown request identity must not create a durable access denial.
+    }
+  }
   return {
     provider: candidate.provider,
     providerName: candidate.providerName,
@@ -341,6 +361,7 @@ function resultFromReceipts(
     reason,
     latencyMs,
     attempts: Math.max(0, ...receipts.map((item) => item.attempt)),
+    ...(accessScope ? { accessScope } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),
     ...(networkCode ? { networkCode } : {}),
     ...(transportError ? { transportError } : {}),

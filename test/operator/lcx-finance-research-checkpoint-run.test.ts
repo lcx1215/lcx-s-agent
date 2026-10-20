@@ -326,3 +326,16 @@ it("cancels cooperative work even when terminal checkpoint persistence fails", a
   ).rejects.toMatchObject({ code: "ENOENT" });
   expect(childStopped).toBe(true);
 });
+
+it("persists a deadline failure for a late result after suspension without accepting it", async () => {
+  const budget = await fixture();
+  const receipt = await runFinanceResearchRun(input);
+  vi.useFakeTimers();
+  await expect(
+    runCheckpointedFinanceResearch(input, budget, async () => {
+      vi.setSystemTime(Date.now() + 60_000);
+      return receipt;
+    }),
+  ).rejects.toMatchObject({ reason: "research_run_deadline_exceeded", failureClass: "deadline" });
+  expect(await status()).toMatchObject({ status: "aborted", failureClass: "deadline" });
+});

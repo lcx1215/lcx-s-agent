@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  ApiCallError,
   apiSourceErrorText,
   runApiSourceCall,
   type ApiSourceGovernanceRegistry,
@@ -16,6 +17,7 @@ import {
   type FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
 import { createDeribitPublicCollectionAdapters } from "./finance-deribit-collection.js";
+import { financeEodSessionDate } from "./finance-eod-session-date.js";
 import {
   createBinancePublicEodHistoryCollectionAdapter,
   createFredPublicIndexHistoryCollectionAdapter,
@@ -111,6 +113,8 @@ export type FinanceMarketCollectionAdapter = Readonly<{
     FinanceMarketCollectionRequest,
     "instrument" | "assetClass" | "collection" | "seriesId"
   >;
+  /** Opaque identity of the actual read endpoint, query and authorization; no raw material. */
+  accessScopeForRequest?: (request: FinanceMarketCollectionRequest) => string;
   supports: (request: FinanceMarketCollectionRequest) => boolean;
   collect: (
     request: FinanceMarketCollectionRequest,
@@ -319,7 +323,14 @@ function collectionRecordInRequestWindow(
   ) {
     return false;
   }
-  const date = new Date(sourceTimestamp).toISOString().slice(0, 10);
+  // Keep source/asOf authenticity checks independent of the daily session's local date.
+  const date =
+    request.collection === "eod_history"
+      ? financeEodSessionDate(sourceTimestamp, record.data.date, record.data.timezoneOffsetMinutes)
+      : new Date(sourceTimestamp).toISOString().slice(0, 10);
+  if (date === undefined) {
+    return false;
+  }
   return (
     (request.fromDate === undefined || date >= request.fromDate) &&
     (request.toDate === undefined || date <= request.toDate)
@@ -396,6 +407,9 @@ async function fetchJson(
   try {
     response = await fetchImpl(url, { headers });
   } catch (error) {
+    if (error instanceof ApiCallError) {
+      throw error;
+    }
     throw new FinanceMarketCollectionAdapterError(
       `source request failed: ${error instanceof Error ? error.message : String(error)}`,
     );
