@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,12 +15,14 @@ import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
+  readFinanceIntradayAccountHistory,
   type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
 import {
   buildFinanceActiveStrategyResearchEvidence,
   buildFinanceBrokerAccountResearchEvidence,
   buildFinanceNightReviewEvidence,
+  readFinanceScheduledIntradayHistory,
   summarizeFinanceNightIntradayEvidence,
   readFinanceNightReviewResearchScope,
   readFinanceActiveStrategyResearchScope,
@@ -2542,6 +2545,133 @@ it("hands original account execution history to day configuration and night rese
       night.reduce((bytes, item) => bytes + Buffer.byteLength(item.text), 0),
     ).toBeLessThanOrEqual(250_000);
   } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("resumes original hashed research history across day/night and retries a failed page", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "scheduled-feedback-continuation-"));
+  const asOf = "2026-09-22T15:00:00.000Z";
+  vi.useFakeTimers();
+  try {
+    for (let index = 0; index < 18; index++) {
+      vi.setSystemTime(new Date(Date.parse("2026-09-22T14:00:00.000Z") + index * 1000));
+      const signalId = `original-feedback-${index}`;
+      await appendFinanceIntradayDecision(directory, {
+        signalId,
+        instrument: "SPY",
+        sessionDate: "2026-09-22",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-22T13:59:00.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "a".repeat(64),
+        strategyRule: "opening_range_breakout_long_next_bar_v1",
+      });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId,
+        status: "refused",
+        reasons: ["retained original refusal"],
+        executionScope: { accountId: "account", venue: "alpaca:paper" },
+      });
+    }
+    const initial = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf,
+    });
+    const archive = path.join(directory, "state", "finance-research-runs", "2026-09-22");
+    await fs.mkdir(archive, { recursive: true });
+    const save = async (mode: "day" | "night", history: unknown, at: string, ok: boolean) => {
+      const etDate = "2026-09-22",
+        runId = randomUUID();
+      const filename = path.join(
+        archive,
+        `2026-09-22T15-30-00-000Z__${runId}__finance-research-run.json`,
+      );
+      const evidence =
+        mode === "day"
+          ? {
+              id: "finance-controller:broker-account-summary",
+              source: "finance-broker-profit-summary",
+              text: JSON.stringify({ intradayExecutionHistory: history }),
+            }
+          : {
+              id: `finance-night:execution-history:${etDate}`,
+              source: "finance-daily-execution-history",
+              text: JSON.stringify({
+                accounts: [{ accountId: "account", intradayHistory: history }],
+              }),
+            };
+      const bytes = Buffer.from(
+        JSON.stringify({
+          schemaVersion: "lcx_finance_research_run_v1",
+          boundary: "finance_research_run_research_only",
+          plan: { asOf: at },
+          batch: { committeeEvidence: [evidence] },
+        }),
+      );
+      await fs.writeFile(filename, bytes);
+      const processResult = {
+        stdout: JSON.stringify({
+          written: {
+            datedPath: filename,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+        }),
+      };
+      commitFinanceSchedulerDatabaseState(directory, "{}", [
+        {
+          runId,
+          mode,
+          etDate,
+          firedAt: at,
+          completedAt: new Date(Date.parse(at) + 60_000).toISOString(),
+          ...(mode === "day"
+            ? { researchPlanRefresh: { ok, processResult } }
+            : { nightReview: { ok, processResult, acceptance: { expectedAsOf: at } } }),
+        },
+      ]);
+      return filename;
+    };
+    await save("day", initial, asOf, false);
+    const retryAsOf = "2026-09-22T16:00:00.000Z";
+    const retry = await readFinanceScheduledIntradayHistory({
+      directory,
+      accountId: "account",
+      asOf: retryAsOf,
+      researchWorkspaceDir: directory,
+    });
+    expect(retry).toMatchObject({
+      status: "observed",
+      continuation: { status: "retrying_failed_research_page" },
+      pageCursor: "pageCursor" in initial ? initial.pageCursor : undefined,
+    });
+    const nightFile = await save("night", retry, retryAsOf, true);
+    const next = await readFinanceScheduledIntradayHistory({
+      directory,
+      accountId: "account",
+      asOf: "2026-09-22T17:00:00.000Z",
+      researchWorkspaceDir: directory,
+    });
+    expect(next).toMatchObject({
+      status: "observed",
+      historyAsOf: asOf,
+      continuation: { status: "resumed", sourceMode: "night" },
+    });
+    expect(next.entries.some((entry) => entry.signalId === "original-feedback-9")).toBe(true);
+    await fs.appendFile(nightFile, " ");
+    expect(
+      await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: "2026-09-22T18:00:00.000Z",
+        researchWorkspaceDir: directory,
+      }),
+    ).toMatchObject({ status: "unavailable", reason: "scheduled_history_continuation_unverified" });
+  } finally {
+    vi.useRealTimers();
     await fs.rm(directory, { recursive: true, force: true });
   }
 });

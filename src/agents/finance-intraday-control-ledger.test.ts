@@ -949,10 +949,30 @@ it("recovers bounded account outcomes across sessions without attributing anonym
   expect(
     await readFinanceIntradayAccountHistory(directory, {
       accountId: "selected",
-      asOf: "2026-09-22T13:00:00.000Z",
+      asOf: "2026-09-20T13:00:00.000Z",
       cursor: initialCursor,
     }),
   ).toMatchObject({ status: "unavailable" });
+  vi.setSystemTime(new Date("2026-09-21T14:00:00.000Z"));
+  await appendFinanceIntradayDecision(directory, {
+    ...input,
+    signalId: "new-after-history-cutoff",
+  });
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: "new-after-history-cutoff",
+    status: "refused",
+    reasons: ["new observation"],
+    executionScope: { accountId: "selected", venue: "alpaca:paper" },
+  });
+  const resumed = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf: "2026-09-22T13:00:00.000Z",
+    cursor: initialCursor,
+  });
+  expect(resumed.status).toBe("observed");
+  expect(resumed).toMatchObject({ historyAsOf: asOf, latestOutcomeRefreshed: true });
+  expect(resumed.entries[0].signalId).toBe("new-after-history-cutoff");
+  expect(resumed.entries.some((entry) => entry.signalId === "history-26")).toBe(true);
   const exact = await readFinanceIntradayAccountHistory(directory, {
     accountId: "selected",
     asOf,

@@ -765,6 +765,7 @@ async function runNightResearchReview(params: {
       etDate: params.attempt.etDate,
       settlement: params.settlement,
       includeResearchScope: true,
+      researchWorkspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
     });
     await writeFinanceNightReviewEvidence(evidencePath, evidence);
     const result = await runScheduledCycleProcess(params.context, "night_review", {
@@ -988,6 +989,7 @@ async function runDayResearchPreflight(params: {
       asOf: params.attempt.firedAt,
       accountId: portfolioContext.accountId,
       venue: portfolioContext.venue === "alpaca" ? "alpaca:paper" : "paper",
+      researchWorkspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
     });
     historicalFeedback = readFinanceScheduledResearchFeedback({
       directory: params.context.root.directory,

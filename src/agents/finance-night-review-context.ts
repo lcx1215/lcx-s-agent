@@ -24,6 +24,7 @@ import {
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import type { FinanceActiveStrategyResearchSource } from "./finance-research-portfolio-plan.js";
+import { readFinanceSchedulerDatabaseRuns } from "./finance-scheduler-ledger.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
 
@@ -1259,6 +1260,206 @@ function projectFinanceBrokerAccountResearchSummary(params: {
   };
 }
 
+/** Resume coverage from original immutable research receipts, never an adoption acknowledgement. */
+export async function readFinanceScheduledIntradayHistory(params: {
+  directory: string;
+  asOf: string;
+  accountId: string;
+  researchWorkspaceDir?: string;
+}) {
+  const read = (cursor?: string) =>
+    readFinanceIntradayAccountHistory(params.directory, {
+      accountId: params.accountId,
+      asOf: params.asOf,
+      ...(cursor ? { cursor } : {}),
+    });
+  if (!params.researchWorkspaceDir) {
+    return read();
+  }
+  const object = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  try {
+    const runs = Object.values(readFinanceSchedulerDatabaseRuns(params.directory) ?? {})
+      .map(object)
+      .toSorted((a, b) =>
+        (typeof b.completedAt === "string" ? b.completedAt : "").localeCompare(
+          typeof a.completedAt === "string" ? a.completedAt : "",
+        ),
+      );
+    for (const run of runs) {
+      if (
+        typeof run.completedAt !== "string" ||
+        !Number.isFinite(Date.parse(run.completedAt)) ||
+        Date.parse(run.completedAt) >= Date.parse(params.asOf)
+      ) {
+        continue;
+      }
+      const mode = run.mode;
+      const phase = object(
+        mode === "day" ? run.researchPlanRefresh : mode === "night" ? run.nightReview : undefined,
+      );
+      const process = object(phase.processResult);
+      if (
+        typeof process.stdout !== "string" ||
+        Buffer.byteLength(process.stdout, "utf8") > 2_097_152
+      ) {
+        continue;
+      }
+      if (process.outputTruncated === true) {
+        throw new Error("scheduled_history_summary_truncated");
+      }
+      const summary = object(JSON.parse(process.stdout));
+      const written = object(summary.written);
+      if (
+        typeof written.datedPath !== "string" ||
+        typeof written.sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(written.sha256)
+      ) {
+        continue;
+      }
+      const root = await fs.realpath(
+        path.join(params.researchWorkspaceDir, "state", "finance-research-runs"),
+      );
+      const filename = await fs.realpath(written.datedPath);
+      const relative = path.relative(root, filename);
+      if (
+        !/^\d{4}-\d{2}-\d{2}[/\\]\d{4}-\d{2}-\d{2}T[\d-]+Z(?:__[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?__finance-research-run\.json$/u.test(
+          relative,
+        )
+      ) {
+        throw new Error("scheduled_history_receipt_outside_archive");
+      }
+      const handle = await fs.open(filename, "r");
+      let bytes: Buffer;
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > 8_388_608) {
+          throw new Error("scheduled_history_receipt_oversize");
+        }
+        const buffer = Buffer.alloc(stat.size + 1);
+        let length = 0;
+        while (length < buffer.length) {
+          const result = await handle.read(buffer, length, buffer.length - length, null);
+          if (result.bytesRead === 0) {
+            break;
+          }
+          length += result.bytesRead;
+        }
+        bytes = buffer.subarray(0, length);
+      } finally {
+        await handle.close();
+      }
+      if (
+        bytes.length > 8_388_608 ||
+        createHash("sha256").update(bytes).digest("hex") !== written.sha256
+      ) {
+        throw new Error("scheduled_history_receipt_hash_mismatch");
+      }
+      const receipt = object(JSON.parse(bytes.toString("utf8")));
+      const plan = object(receipt.plan);
+      const expectedAsOf = mode === "day" ? run.firedAt : object(phase.acceptance).expectedAsOf;
+      if (
+        receipt.schemaVersion !== "lcx_finance_research_run_v1" ||
+        receipt.boundary !== "finance_research_run_research_only" ||
+        typeof plan.asOf !== "string" ||
+        !Number.isFinite(Date.parse(plan.asOf)) ||
+        plan.asOf !== expectedAsOf ||
+        Date.parse(plan.asOf) > Date.parse(run.completedAt)
+      ) {
+        throw new Error("scheduled_history_receipt_scope_mismatch");
+      }
+      const evidence = object(receipt.batch).committeeEvidence;
+      if (!Array.isArray(evidence)) {
+        continue;
+      }
+      const histories: Record<string, unknown>[] = [];
+      for (const raw of evidence) {
+        const item = object(raw);
+        if (typeof item.text !== "string") {
+          continue;
+        }
+        if (
+          mode === "day" &&
+          item.id === "finance-controller:broker-account-summary" &&
+          item.source === "finance-broker-profit-summary"
+        ) {
+          histories.push(object(object(JSON.parse(item.text)).intradayExecutionHistory));
+        } else if (
+          mode === "night" &&
+          typeof run.etDate === "string" &&
+          item.id === `finance-night:execution-history:${run.etDate}` &&
+          item.source === "finance-daily-execution-history"
+        ) {
+          const accounts = object(JSON.parse(item.text)).accounts;
+          if (Array.isArray(accounts)) {
+            histories.push(...accounts.map((account) => object(object(account).intradayHistory)));
+          }
+        }
+      }
+      const matching = histories.filter(
+        (history) => history.accountId === params.accountId && history.venue === "alpaca:paper",
+      );
+      if (matching.length === 0) {
+        continue;
+      }
+      if (
+        matching.length !== 1 ||
+        matching[0].status !== "observed" ||
+        matching[0].asOf !== plan.asOf
+      ) {
+        throw new Error("scheduled_history_projection_unverified");
+      }
+      const history = matching[0];
+      const accepted = phase.ok === true;
+      const cursor = accepted ? history.nextCursor : history.pageCursor;
+      if (cursor !== null && typeof cursor !== "string") {
+        return {
+          ...(await read()),
+          continuation: {
+            status: "initial_window",
+            reason: "prior_receipt_has_no_continuation",
+            sourceReceiptSha256: written.sha256,
+          },
+        };
+      }
+      const current = await read(typeof cursor === "string" ? cursor : undefined);
+      return {
+        ...current,
+        continuation: {
+          status:
+            current.status !== "observed"
+              ? "unavailable"
+              : accepted
+                ? cursor === null
+                  ? "historical_window_complete"
+                  : "resumed"
+                : "retrying_failed_research_page",
+          sourceRunId: run.runId,
+          sourceMode: mode,
+          sourceReceiptSha256: written.sha256,
+          boundary: "history_input_coverage_not_model_adoption_or_execution_authority",
+        },
+      };
+    }
+    return {
+      ...(await read()),
+      continuation: { status: "initial_window", reason: "no_prior_scoped_receipt" },
+    };
+  } catch {
+    return {
+      status: "unavailable" as const,
+      accountId: params.accountId,
+      venue: "alpaca:paper" as const,
+      asOf: params.asOf,
+      entries: [],
+      reason: "scheduled_history_continuation_unverified",
+      boundary: "history_input_coverage_not_model_adoption_or_execution_authority",
+    };
+  }
+}
+
 /** Local canonical observations only: no broker call, allocation or execution authority. */
 export async function buildFinanceBrokerAccountResearchEvidence(
   params: Parameters<typeof buildFinanceBrokerAccountResearchEvidenceSnapshot>[0],
@@ -1277,6 +1478,7 @@ async function buildFinanceBrokerAccountResearchEvidenceSnapshot(params: {
   venue?: string;
   /** Callers may retain an existing evidence identity, including the night review identity. */
   evidenceId?: string;
+  researchWorkspaceDir?: string;
 }): Promise<FinanceCommitteeEvidence> {
   if (!Number.isFinite(Date.parse(params.asOf)) || Date.parse(params.asOf) > Date.now()) {
     throw new Error("account research evidence requires a valid non-future asOf");
@@ -1347,9 +1549,11 @@ async function buildFinanceBrokerAccountResearchEvidenceSnapshot(params: {
                 accountId: params.accountId,
                 asOf: params.asOf,
               }),
-              intradayExecutionHistory: await readFinanceIntradayAccountHistory(params.directory, {
+              intradayExecutionHistory: await readFinanceScheduledIntradayHistory({
+                directory: params.directory,
                 accountId: params.accountId ?? "",
                 asOf: params.asOf,
+                researchWorkspaceDir: params.researchWorkspaceDir,
               }),
             }
           : {}),
@@ -1397,6 +1601,7 @@ export async function buildFinanceNightReviewEvidence(params: {
   settlement: FinanceNightSettlementSummary;
   /** Include a fail-closed typed scope only for scheduler night research runs. */
   includeResearchScope?: boolean;
+  researchWorkspaceDir?: string;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
   const positionRead = readFinancePositionLedger(params.directory, { asOf: params.asOf });
   const reconciliationRead = readFinanceLatestBrokerReconciliations(params.directory);
@@ -1678,9 +1883,11 @@ export async function buildFinanceNightReviewEvidence(params: {
                   .slice(0, 2)
                   .map(async (accountId) => ({
                     accountId,
-                    intradayHistory: await readFinanceIntradayAccountHistory(params.directory, {
+                    intradayHistory: await readFinanceScheduledIntradayHistory({
+                      directory: params.directory,
                       accountId,
                       asOf: params.asOf,
+                      researchWorkspaceDir: params.researchWorkspaceDir,
                     }),
                     history: readFinanceDailyDecisionHistory({
                       directory: params.directory,

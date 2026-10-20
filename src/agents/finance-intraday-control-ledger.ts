@@ -1101,13 +1101,13 @@ export async function readFinanceIntradayAccountHistory(
   try {
     const asOf = new Date(Iso.parse(params.asOf)).toISOString();
     Text.parse(params.accountId);
-    const scope = caseflowFingerprint({ accountId: params.accountId, asOf });
     const cursor =
       params.cursor === undefined
         ? undefined
         : z
             .object({
-              scope: z.literal(scope),
+              scope: z.string().regex(/^[a-f0-9]{64}$/u),
+              asOf: Iso.optional(),
               at: Iso,
               sequence: z.number().int().positive(),
             })
@@ -1117,6 +1117,22 @@ export async function readFinanceIntradayAccountHistory(
                 Buffer.from(z.string().max(512).parse(params.cursor), "base64url").toString("utf8"),
               ),
             );
+    // New cursors freeze the historical window across later natural cycles;
+    // legacy cursors remain valid only against their original host cutoff.
+    const historyAsOf = cursor?.asOf ?? asOf;
+    const scope = caseflowFingerprint({ accountId: params.accountId, asOf: historyAsOf });
+    if (Date.parse(historyAsOf) > Date.parse(asOf) || (cursor && cursor.scope !== scope)) {
+      throw new Error("intraday history cursor scope mismatch");
+    }
+    const encodeCursor = (at: string, sequence: number) =>
+      Buffer.from(
+        JSON.stringify({
+          scope,
+          asOf: historyAsOf,
+          at,
+          sequence,
+        }),
+      ).toString("base64url");
     const signalIds =
       params.signalIds === undefined
         ? undefined
@@ -1143,24 +1159,37 @@ export async function readFinanceIntradayAccountHistory(
     try {
       db.exec("BEGIN");
       verifyDecisionHead(db);
-      const rows = db
+      const historicalRows = db
         .prepare(`SELECT d.ref, d.body, d.sequence, o.body AS outcome, o.recorded_at
         FROM finance_intraday_outcomes o JOIN finance_intraday_decisions d ON d.signal_id=o.signal_id
         WHERE COALESCE(json_extract(o.body,'$.executionScope.accountId'),json_extract(o.body,'$.tradeDecisionReview.request.accountId'))=?
         AND o.recorded_at<?
         AND (? IS NULL OR o.recorded_at<? OR (o.recorded_at=? AND d.sequence<?))
         AND (? IS NULL OR d.signal_id IN (SELECT value FROM json_each(?)))
-        ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 25`)
+        ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT ?`)
         .all(
           params.accountId,
-          asOf,
+          historyAsOf,
           cursor?.at ?? null,
           cursor?.at ?? null,
           cursor?.at ?? null,
           cursor?.sequence ?? null,
           signalIds ? JSON.stringify(signalIds) : null,
           signalIds ? JSON.stringify(signalIds) : null,
+          cursor && historyAsOf !== asOf ? 24 : 25,
         );
+      const latest =
+        cursor && historyAsOf !== asOf
+          ? db
+              .prepare(`SELECT d.ref, d.body, d.sequence, o.body AS outcome, o.recorded_at
+          FROM finance_intraday_outcomes o JOIN finance_intraday_decisions d ON d.signal_id=o.signal_id
+          WHERE COALESCE(json_extract(o.body,'$.executionScope.accountId'),json_extract(o.body,'$.tradeDecisionReview.request.accountId'))=?
+          AND o.recorded_at<? ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 1`)
+              .get(params.accountId, asOf)
+          : undefined;
+      const rows = latest
+        ? [latest, ...historicalRows.filter((row) => row.ref !== latest.ref)]
+        : historicalRows;
       const entries = rows.slice(0, 24).map((row) => {
         if (
           typeof row.body !== "string" ||
@@ -1244,16 +1273,11 @@ export async function readFinanceIntradayAccountHistory(
           selected.push(entry);
         }
       }
-      // A large legitimate observation must not turn continuation into an empty
-      // terminal page. Retain its immutable refs and disclose omitted details.
-      if (
-        selected.length > 0 &&
-        Buffer.byteLength(JSON.stringify(selected[0]), "utf8") > maximumEntryBytes
-      ) {
-        const entry = selected[0];
+      // Retain immutable refs when a valid large observation exceeds context.
+      const compact = (entry: (typeof entries)[number]) => {
         const boundedIdentity = (text: string) =>
           Buffer.byteLength(text, "utf8") <= 256 ? text : "";
-        selected[0] = {
+        return {
           ...entry,
           signalId: boundedIdentity(entry.signalId),
           instrument: boundedIdentity(entry.instrument),
@@ -1268,26 +1292,46 @@ export async function readFinanceIntradayAccountHistory(
           executionSafetyFailure: null,
           detailGap: "oversize_entry_details_omitted_retain_original_decision_and_outcome_refs",
         };
-      }
+      };
+      let latestOutcomeOmitted = false;
       while (
         selected.length > 1 &&
         Buffer.byteLength(JSON.stringify(selected), "utf8") > maximumEntryBytes
       ) {
-        selected.pop();
+        if (latest && selected.length === 2 && selected[0].decisionRef === latest.ref) {
+          // Never let a repeated current observation starve the historical page.
+          selected.shift();
+          latestOutcomeOmitted = true;
+        } else {
+          selected.pop();
+        }
+      }
+      if (
+        selected.length === 1 &&
+        Buffer.byteLength(JSON.stringify(selected[0]), "utf8") > maximumEntryBytes
+      ) {
+        selected[0] = compact(selected[0]);
       }
       // Initial diversified snapshot resumes immediately after its newest row;
       // subsequent pages are chronological so diversity selection cannot skip history.
-      const anchor = cursor || signalIds ? rows[selected.length - 1] : rows[0];
-      const more = cursor ? rows.length > selected.length : rows.length > 1;
+      const anchor =
+        cursor || signalIds
+          ? rows.find((row) => row.ref === selected.at(-1)?.decisionRef)
+          : rows[0];
+      const more = cursor
+        ? rows.length > selected.length || historicalRows.length === 24
+        : rows.length > 1;
       const nextCursor =
         !signalIds && selected.length > 0 && more && anchor
-          ? Buffer.from(
-              JSON.stringify({ scope, at: anchor.recorded_at, sequence: anchor.sequence }),
-            ).toString("base64url")
+          ? encodeCursor(String(anchor.recorded_at), Number(anchor.sequence))
           : null;
       db.exec("COMMIT");
       const result = {
         nextCursor,
+        pageCursor: params.cursor ?? encodeCursor(historyAsOf, Number.MAX_SAFE_INTEGER),
+        historyAsOf,
+        latestOutcomeRefreshed: latest !== undefined && !latestOutcomeOmitted,
+        ...(latestOutcomeOmitted ? { latestOutcomeOmitted: "history_page_byte_budget" } : {}),
         ...(signalIds
           ? {
               requestedSignalCount: signalIds.length,
