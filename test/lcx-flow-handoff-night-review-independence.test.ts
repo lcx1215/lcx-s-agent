@@ -196,6 +196,13 @@ async function probe(
     await fsp.writeFile(filename, "{not json}\n");
   }
   await fsp.mkdir(path.join(directory, FINANCE_SCHEDULER_LOCK));
+  if (fault === "timeout") {
+    // This fault withholds stdout after the real owner has produced its body.
+    // Let actual private filesystem work settle before expiring the original
+    // 5ms process timer, rather than racing disk latency against that timer.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(new Date(asOf));
+  }
   transport.run = async (argv, child) => {
     const index = argv.indexOf("--controller-evidence");
     if (index >= 0) {
@@ -245,6 +252,11 @@ async function probe(
     }
     calls.push({ argv, payload: mutated });
     if (fault === "timeout") {
+      expect(transport.children).toHaveLength(1);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(5);
+      // The original process owner also waits killGraceMs + 10 after close.
+      await vi.advanceTimersByTimeAsync(10);
       return;
     }
     if (fault === "cancelled") {
