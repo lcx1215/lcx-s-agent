@@ -71,6 +71,40 @@ export function readFinanceSchedulerDatabaseRuns(
   }
 }
 
+/** Bounded original day/night history for research continuation; never an adoption index. */
+export function readFinanceSchedulerDatabaseResearchRuns(
+  directory: string,
+  limit = 16,
+): { runs: readonly { ref: string; run: unknown }[]; olderRunsMayExist: boolean } {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32) {
+    throw new Error("invalid scheduler research history limit");
+  }
+  const db = openRead(directory);
+  if (!db) {
+    return { runs: [], olderRunsMayExist: false };
+  }
+  db.exec("BEGIN");
+  try {
+    readBody(
+      db.prepare("SELECT body, digest FROM scheduler_states ORDER BY sequence DESC LIMIT 1").get(),
+    );
+    const rows = db
+      .prepare(
+        "SELECT body, digest FROM scheduler_runs WHERE mode IN ('day', 'night') ORDER BY sequence DESC LIMIT ?",
+      )
+      .all(limit + 1);
+    // Verify the sentinel too: corruption is not evidence of an older valid page.
+    const verified = rows.map((row) => {
+      const body = readBody(row);
+      return { ref: hash(body), run: JSON.parse(body) as unknown };
+    });
+    return { runs: verified.slice(0, limit), olderRunsMayExist: verified.length > limit };
+  } finally {
+    db.exec("ROLLBACK");
+    db.close();
+  }
+}
+
 /** Verified original day-run history for receipt attribution; skip large night payloads.
  * Missing pre-migration history stays missing, never inferred from current plans. */
 export function readFinanceSchedulerDatabaseDayRuns(
