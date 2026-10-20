@@ -4,6 +4,10 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  parseLinuxMountInfo,
+  findLinuxMountInfoEntryForPath,
+} from "../../src/infra/linux-mountinfo.js";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -44,7 +48,7 @@ async function canonicalPath(value: string): Promise<string | undefined> {
   while (true) {
     try {
       const resolved = await fs.realpath(candidate);
-      return path.join(resolved, ...suffix.toReversed());
+      return path.join(resolved, ...suffix);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       const parent = path.dirname(candidate);
@@ -132,7 +136,87 @@ function checkLocalVisionCloudBoundary(env: NodeJS.ProcessEnv): Check {
   };
 }
 
-export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) {
+async function observedContainerMounts(
+  stateDir: string | undefined,
+  configPath: string | undefined,
+  mountInfo?: string,
+): Promise<Check> {
+  const unobserved: Check = {
+    id: "compose_mounts",
+    status: "warn",
+    detail: "Container state/workspace mount topology is unavailable; it has not been verified.",
+  };
+  if (!stateDir || !configPath) {
+    return unobserved;
+  }
+  let text = mountInfo;
+  if (text === undefined) {
+    try {
+      text = await fs.readFile("/proc/self/mountinfo", "utf8");
+    } catch {
+      return unobserved;
+    }
+  }
+  const entries = parseLinuxMountInfo(text);
+  const state = await canonicalPath(stateDir);
+  const config = await canonicalPath(configPath);
+  const workspace = await canonicalPath(path.join(stateDir, "workspace"));
+  if (!entries.length || !state || !config || !workspace) {
+    return unobserved;
+  }
+  const stateMount = findLinuxMountInfoEntryForPath(state, entries);
+  if (
+    !stateMount ||
+    stateMount.mountPoint === "/" ||
+    ["overlay", "tmpfs", "ramfs"].includes(stateMount.fsType)
+  ) {
+    return unobserved;
+  }
+  if (!(await writableDirectory(workspace))) {
+    return {
+      id: "compose_mounts",
+      status: "fail",
+      detail: "The observed workspace is missing, not a directory, or not writable.",
+    };
+  }
+  const coordinates = (target: string) => {
+    const mount = findLinuxMountInfoEntryForPath(target, entries);
+    return mount
+      ? {
+          device: mount.device,
+          location: path.posix.resolve(mount.root, path.posix.relative(mount.mountPoint, target)),
+        }
+      : undefined;
+  };
+  const owner = coordinates(state);
+  const actualWorkspace = coordinates(workspace);
+  const actualConfig = coordinates(config);
+  if (!owner || !actualWorkspace || !actualConfig) {
+    return unobserved;
+  }
+  const matches =
+    owner &&
+    actualWorkspace &&
+    actualConfig &&
+    pathWithin(state, config) &&
+    owner.device === actualWorkspace.device &&
+    owner.device === actualConfig.device &&
+    actualWorkspace.location === path.posix.join(owner.location, "workspace") &&
+    actualConfig.location ===
+      path.posix.resolve(owner.location, path.posix.relative(state, config));
+  return {
+    id: "compose_mounts",
+    status: matches ? "pass" : "fail",
+    detail: matches
+      ? "Observed container config and workspace map to the canonical state's file and workspace child. Storage durability still requires deployment acceptance."
+      : "Observed config/workspace mounts alias or diverge from the canonical state directory.",
+  };
+}
+
+export async function buildCloudPreflight(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { mountInfo?: string } = {},
+) {
   const stateDir = absolutePath(env.OPENCLAW_STATE_DIR);
   const configPath = absolutePath(env.OPENCLAW_CONFIG_PATH);
   const checks: Check[] = [];
@@ -198,47 +282,66 @@ export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) 
     });
   }
 
-  const configDir = absolutePath(env.OPENCLAW_CONFIG_DIR);
-  const workspaceDir = absolutePath(env.OPENCLAW_WORKSPACE_DIR);
-  const workspaceIsNestedInConfig =
-    configDir !== undefined &&
-    workspaceDir !== undefined &&
-    (await pathWithinCanonical(configDir, workspaceDir));
-  const configDirOutsideState =
-    stateDir !== undefined &&
-    configDir !== undefined &&
-    !(await pathWithinCanonical(stateDir, configDir));
-  const workspaceDirOutsideState =
-    stateDir !== undefined &&
-    workspaceDir !== undefined &&
-    !(await pathWithinCanonical(stateDir, workspaceDir));
-  if (configDirOutsideState || workspaceDirOutsideState) {
+  if (env.LCX_CLOUD_MOUNT_LAYOUT === "state-workspace-child-v1") {
+    checks.push(await observedContainerMounts(stateDir, configPath, options.mountInfo));
+  } else if (env.LCX_CLOUD_MOUNT_LAYOUT) {
     checks.push({
       id: "compose_mounts",
       status: "fail",
-      detail:
-        "OPENCLAW_CONFIG_DIR and OPENCLAW_WORKSPACE_DIR must remain inside OPENCLAW_STATE_DIR; an external mount would create split-brain state.",
-    });
-  } else if (
-    configDir &&
-    workspaceDir &&
-    path.resolve(configDir) !== path.resolve(workspaceDir) &&
-    !workspaceIsNestedInConfig
-  ) {
-    checks.push({
-      id: "compose_mounts",
-      status: "warn",
-      detail:
-        "OPENCLAW_CONFIG_DIR and OPENCLAW_WORKSPACE_DIR differ; verify they are two mounts of the same canonical state volume, not two state authorities.",
+      detail: "Unknown cloud mount layout contract.",
     });
   } else {
-    checks.push({
-      id: "compose_mounts",
-      status: "pass",
-      detail: workspaceIsNestedInConfig
-        ? "Workspace mount is nested under the canonical config root."
-        : "No split config/workspace mount was detected in the runtime environment.",
-    });
+    const configDir = absolutePath(env.OPENCLAW_CONFIG_DIR);
+    const workspaceDir = absolutePath(env.OPENCLAW_WORKSPACE_DIR);
+    const workspaceIsNestedInConfig =
+      configDir !== undefined &&
+      workspaceDir !== undefined &&
+      (await pathWithinCanonical(configDir, workspaceDir));
+    const configDirOutsideState =
+      stateDir !== undefined &&
+      configDir !== undefined &&
+      !(await pathWithinCanonical(stateDir, configDir));
+    const workspaceDirOutsideState =
+      stateDir !== undefined &&
+      workspaceDir !== undefined &&
+      !(await pathWithinCanonical(stateDir, workspaceDir));
+    const configCanonical = configDir ? await canonicalPath(configDir) : undefined;
+    const workspaceCanonical = workspaceDir ? await canonicalPath(workspaceDir) : undefined;
+    const aliasesState = configCanonical !== undefined && configCanonical === workspaceCanonical;
+    if (!configDir || !workspaceDir) {
+      checks.push({
+        id: "compose_mounts",
+        status: "warn",
+        detail: "Host mount inputs are missing or incomplete; no mount topology has been verified.",
+      });
+    } else if (aliasesState || configDirOutsideState || workspaceDirOutsideState) {
+      checks.push({
+        id: "compose_mounts",
+        status: "fail",
+        detail:
+          "Config/workspace mount sources must be distinct, nested under the state root; an alias or external mount would create split-brain state.",
+      });
+    } else if (
+      configDir &&
+      workspaceDir &&
+      path.resolve(configDir) !== path.resolve(workspaceDir) &&
+      !workspaceIsNestedInConfig
+    ) {
+      checks.push({
+        id: "compose_mounts",
+        status: "warn",
+        detail:
+          "OPENCLAW_CONFIG_DIR and OPENCLAW_WORKSPACE_DIR differ; verify they are two mounts of the same canonical state volume, not two state authorities.",
+      });
+    } else {
+      checks.push({
+        id: "compose_mounts",
+        status: "pass",
+        detail: workspaceIsNestedInConfig
+          ? "Workspace mount is nested under the canonical config root."
+          : "No split config/workspace mount was detected in the runtime environment.",
+      });
+    }
   }
 
   checks.push(

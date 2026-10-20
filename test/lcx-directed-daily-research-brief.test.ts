@@ -1165,6 +1165,43 @@ describe("explicit original four-task daily batch", () => {
         "executed",
         "executed",
       ]);
+      const nvdaReads = prepared.native.prepared.sourceBodyUses.filter(
+        (entry) => entry.evidenceId === "finance-model:NVDA",
+      );
+      expect(nvdaReads.length).toBeGreaterThan(0);
+      for (const entry of nvdaReads) {
+        expect(entry.evidenceSummary).toContain("[finance-model:NVDA]");
+        expect(entry.sourceText).toContain("fixture://primary_market_data/NVDA");
+        expect(entry.sourceText).not.toContain("fixture://primary_market_data/SPY");
+      }
+      const nvdaDraft = prepared.native.prepared.committeeRequests.find(
+        (request) =>
+          request.stage === "draft" &&
+          request.evidence.some((entry) => entry.id === "finance-model:NVDA"),
+      );
+      if (!nvdaDraft) {
+        throw new Error("actual NVDA draft request not observed");
+      }
+      await expect(
+        prepared.native.prepared.scriptedOutput(
+          {
+            ...nvdaDraft,
+            evidence: nvdaDraft.evidence.map((entry) =>
+              entry.id === "finance-model:NVDA" ? { ...entry, id: "finance-model:SPY" } : entry,
+            ),
+          },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("market identity conflicts with source body");
+      await expect(
+        prepared.native.prepared.scriptedOutput(
+          {
+            ...nvdaDraft,
+            evidence: nvdaDraft.evidence.filter((entry) => entry.id !== "finance-model:NVDA"),
+          },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("lacks unique dated target source observations");
       expect(result.batchExecution.allocation.allocatedApiCalls).toBeLessThanOrEqual(
         prepared.host.maxApiCalls,
       );

@@ -14,6 +14,12 @@ import {
 } from "../src/agents/commercial-answer-reply-gate.js";
 import { getSharedCalculationLedger } from "../src/agents/finance-calculation-ledger.js";
 
+it("keeps the operator and neutral reply gate on the same canonical pipeline implementation", async () => {
+  const core = await import("../src/agents/commercial-answer-pipeline.js");
+  expect(buildPipelineResult).toBe(core.buildPipelineResult);
+  expect(planCommercialAnswerRequirements).toBe(core.planCommercialAnswerRequirements);
+});
+
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 

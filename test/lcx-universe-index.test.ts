@@ -11,8 +11,9 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
 let userHome: string;
+
 beforeAll(async () => {
-  userHome = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-universe-home-"));
+  userHome = await fs.mkdtemp(path.join(os.tmpdir(), "universe-index-test-"));
 });
 afterAll(async () => {
   await fs.rm(userHome, { recursive: true, force: true });

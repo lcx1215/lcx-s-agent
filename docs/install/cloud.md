@@ -74,17 +74,17 @@ The cloud runtime must satisfy all of these predicates:
    never through Git, Docker image layers, or committed `.env` files.
 
 The Compose profile passes the container paths explicitly. For a single VM,
-point both host mounts at the same protected directory so the host also has one
-state owner:
+mount the protected state directory and its `workspace` child, preserving one
+state owner. Never bind the state root itself as the workspace source:
 
 ```bash
 cp deploy/cloud/.env.example deploy/cloud/.env
-mkdir -p /var/lib/lcx/state
+mkdir -p /var/lib/lcx/state/workspace
 chmod 700 /var/lib/lcx/state
 # Edit deploy/cloud/.env and keep it outside source control.
-docker compose --env-file deploy/cloud/.env up -d
-docker compose --env-file deploy/cloud/.env run --rm lcx-cli doctor
-docker compose --env-file deploy/cloud/.env run --rm lcx-cli gateway probe
+docker compose --env-file deploy/cloud/.env --profile gateway up -d lcx-gateway
+docker compose --env-file deploy/cloud/.env --profile gateway run --rm lcx-cli doctor
+docker compose --env-file deploy/cloud/.env --profile gateway run --rm lcx-cli gateway probe
 ```
 
 Run the read-only cloud gate inside the gateway/CLI container:
@@ -92,6 +92,12 @@ Run the read-only cloud gate inside the gateway/CLI container:
 ```bash
 pnpm lcx:cloud:preflight --json
 ```
+
+The Compose services declare `state-workspace-child-v1`; the gate reads the
+container’s `/proc/self/mountinfo` and compares filesystem device/root coordinates
+for state, config, and workspace. Missing mount observations stay `needs_review`;
+matching environment declarations alone cannot prove the layout. This check does
+not establish backup durability or single-writer operation.
 
 It must not report `blocked`. `needs_review` is not a deployment proof; it
 means a non-fatal boundary still needs an operator decision.

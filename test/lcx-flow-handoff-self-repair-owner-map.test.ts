@@ -87,7 +87,21 @@ describe("original self-repair safe reader -> governance -> owner control map", 
         semanticTruth: "not_proven",
         sourceReview: { status: "blocked", blockers: [reasons[fault]] },
       });
-      expect(result.persistedWriter).toEqual(result.nativeWriter);
+      const snapshot = structuredClone(result.persistedWriter);
+      const completed = structuredClone(result.nativeWriter);
+      expect(snapshot.processEvidence).toMatchObject({
+        writer: { status: "writing", publication: "pending_in_snapshot" },
+      });
+      expect(completed.processEvidence).toMatchObject({
+        writer: { status: "completed", publication: "completed_after_await" },
+      });
+      // A receipt cannot include the hash of its own completed write. Compare business contents
+      // exactly while checking the publication snapshot and awaited completion separately.
+      delete (snapshot.processEvidence as Record<string, unknown>).writer;
+      delete (completed.processEvidence as Record<string, unknown>).writer;
+      delete snapshot.writtenArtifacts;
+      delete completed.writtenArtifacts;
+      expect(snapshot).toEqual(completed);
       expect(result.candidateExists).toBe(false);
       expect(result.directOwner.runReceipt).toMatchObject({
         status: "blocked",
