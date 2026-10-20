@@ -124,6 +124,19 @@ describe("finance-bar-ledger", () => {
     expect([...FINANCE_BAR_DERIVATIONS]).toEqual(["ohlcv", "point_derived"]);
   });
 
+  it("closes the database when initialization rejects a corrupt ledger", async () => {
+    const directory = await storeDirectory();
+    await fs.writeFile(financeBarLedgerPath(directory), "not a sqlite database");
+    const { DatabaseSync } = requireNodeSqlite();
+    const close = vi.spyOn(DatabaseSync.prototype, "close");
+    try {
+      await expect(appendFinanceBars(directory, ohlcvInput())).rejects.toThrow();
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
+  });
+
   it("appends a real OHLCV batch and replays it as a no-op", async () => {
     const directory = await storeDirectory();
     const first = await appendFinanceBars(directory, ohlcvInput());

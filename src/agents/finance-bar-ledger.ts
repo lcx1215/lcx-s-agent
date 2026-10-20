@@ -218,18 +218,23 @@ function openDatabase(directory: string): BarDatabase {
   chmodSync(directory, 0o700);
   const databasePath = financeBarLedgerPath(directory);
   const db = new DatabaseSync(databasePath);
-  chmodSync(databasePath, 0o600);
-  // Order matters: auto_vacuum must precede journal_mode, because switching journal_mode
-  // initialises the database file and silently freezes auto_vacuum afterwards.
-  db.exec(
-    `PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`,
-  );
-  applySqliteMigrations({
-    db,
-    ledgerTable: BAR_LEDGER_MIGRATION_LEDGER,
-    migrations: BAR_LEDGER_MIGRATIONS,
-  });
-  return db;
+  try {
+    chmodSync(databasePath, 0o600);
+    // Order matters: auto_vacuum must precede journal_mode, because switching journal_mode
+    // initialises the database file and silently freezes auto_vacuum afterwards.
+    db.exec(
+      `PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`,
+    );
+    applySqliteMigrations({
+      db,
+      ledgerTable: BAR_LEDGER_MIGRATION_LEDGER,
+      migrations: BAR_LEDGER_MIGRATIONS,
+    });
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 function openReadOnlyDatabase(directory: string): BarDatabase {
