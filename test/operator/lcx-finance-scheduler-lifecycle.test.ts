@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const script = fileURLToPath(
@@ -24,8 +24,10 @@ afterEach(async () => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
-function start(argv: string[]) {
-  const child = spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "pipe"] });
+function start(argv: string[], ipc = false) {
+  const child = spawn(process.execPath, argv, {
+    stdio: ipc ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
+  });
   children.add(child);
   const output = { stdout: "", stderr: "" };
   child.stdout.on("data", (chunk: Buffer) => {
@@ -41,7 +43,7 @@ function start(argv: string[]) {
   return { child, output, closed };
 }
 
-it("runs the real idle loop, excludes another CLI writer, and removes ownership on SIGTERM", async () => {
+it("runs the real idle loop, excludes another CLI writer, and removes ownership through the SIGTERM handler", async () => {
   // Freeze only this isolated fixture's clock before the first slot. No finance
   // cycle, provider request, model call or venue action can be due in this process.
   const fixture = `
@@ -50,13 +52,29 @@ it("runs the real idle loop, excludes another CLI writer, and removes ownership 
       constructor(...args) { super(...(args.length ? args : ['2026-09-21T10:00:00Z'])); }
       static now() { return new RealDate('2026-09-21T10:00:00Z').getTime(); }
     };
-    const {runFinanceScheduler} = await import(${JSON.stringify(script)});
+    // Windows kill(SIGTERM) terminates forcibly; IPC exercises the original
+    // handler without claiming POSIX signal delivery on that platform.
+    if (process.platform === 'win32') {
+      process.on('message', message => {
+        if (message === 'fixture-sigterm') {
+          process.disconnect();
+          process.emit('SIGTERM');
+        }
+      });
+    }
+    const {runFinanceScheduler} = await import(${JSON.stringify(pathToFileURL(script).href)});
     process.exitCode = await runFinanceScheduler(['--loop','--no-source-heartbeat','--dir',${JSON.stringify(directory)}]);
   `;
-  const owner = start(["--import", "tsx", "--input-type=module", "-e", fixture]);
-  await vi.waitFor(() => expect(owner.output.stdout).toContain("scheduler pid="), {
-    timeout: 10000,
-  });
+  const owner = start(
+    ["--import", "tsx", "--input-type=module", "-e", fixture],
+    process.platform === "win32",
+  );
+  await vi.waitFor(
+    () => expect(owner.output.stdout, owner.output.stderr).toContain("scheduler pid="),
+    {
+      timeout: 10000,
+    },
+  );
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.lock"))).toBe(true);
   await vi.waitFor(() => {
     const progress = JSON.parse(
@@ -69,7 +87,11 @@ it("runs the real idle loop, excludes another CLI writer, and removes ownership 
   const contender = start(["--import", "tsx", script, "--once", "day", "--dir", directory]);
   expect(await contender.closed).toBe(1);
   expect(contender.output.stderr).toContain("lock exists");
-  owner.child.kill("SIGTERM");
+  if (process.platform === "win32") {
+    owner.child.send("fixture-sigterm");
+  } else {
+    owner.child.kill("SIGTERM");
+  }
   expect(await owner.closed).toBe(143);
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.lock"))).toBe(false);
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.pid"))).toBe(false);

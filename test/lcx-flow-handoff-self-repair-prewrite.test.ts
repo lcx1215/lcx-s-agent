@@ -443,8 +443,18 @@ describe.skipIf(before)("same-attempt original self-repair consumers", () => {
           ).toBe(true);
         }
         if (scenario === "review_timeout") {
-          expect(result.reviewCalls.length).toBeGreaterThan(0);
-          expect(result.reviewCalls.every((entry) => entry.abortObserved)).toBe(true);
+          expect(result.reviewed?.reviewed.gaps).toContain("self_repair_review_deadline");
+          if (result.reviewCalls.length) {
+            expect(result.reviewCalls.every((entry) => entry.abortObserved)).toBe(true);
+            expect(result.reviewed?.reviewed.cleanup).toBe(
+              "local_listener_released_model_cleanup_unconfirmed",
+            );
+          } else {
+            // The same deadline also bounds source reads before model invocation.
+            expect(result.reviewed?.reviewed.cleanup).toBe(
+              "local_listener_released_read_cleanup_unconfirmed",
+            );
+          }
         } else {
           expect(result.reviewCalls).toHaveLength(0);
         }
