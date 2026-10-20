@@ -12,13 +12,52 @@ vi.mock("undici", () => {
   return { fetch: http, Agent, EnvHttpProxyAgent: Agent };
 });
 import { createFinanceAlpacaCycleController } from "./finance-alpaca-cycle-controller.js";
-import { createFinanceUncachedFetch } from "./finance-write-transport.js";
+import {
+  createFinanceUncachedFetch,
+  createFinanceWriteTransport,
+} from "./finance-write-transport.js";
 
 afterEach(() => {
   http.mockReset();
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
+
+it.each(["POST", "DELETE"] as const)(
+  "bounds %s response cleanup after the caller cancels an uncertain write",
+  async (method) => {
+    vi.useFakeTimers();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }));
+    http.mockResolvedValue(response);
+    const caller = new AbortController();
+    const pending = createFinanceWriteTransport()({
+      url: "https://paper-api.alpaca.markets/v2/orders",
+      headers: {},
+      body: "{}",
+      method,
+      signal: caller.signal,
+    });
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    caller.abort();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(settled).toBe(true);
+    await expect(pending).rejects.toMatchObject({ cleanupStatus: "unconfirmed" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+    expect(http).toHaveBeenCalledOnce();
+    expect(http.mock.calls[0][1]).toMatchObject({ method, signal: caller.signal });
+  },
+);
 
 it.each(["confirmed", "unconfirmed"] as const)(
   "cancels the resident uncached GET body: %s",

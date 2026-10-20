@@ -175,6 +175,7 @@ export function createFinanceWriteTransport(
       body: await readBoundedFinanceResponseText(response, {
         maxBytes: ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
         label: "finance write",
+        signal: request.signal,
       }),
     };
   };
