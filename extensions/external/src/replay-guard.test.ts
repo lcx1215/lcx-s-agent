@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createExternalReplayGuard } from "./replay-guard.js";
 
 describe("external replay guard", () => {
@@ -89,4 +89,30 @@ describe("external replay guard", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+  it.each(["delivery_unknown", "interrupted"] as const)(
+    "never expires or evicts unresolved %s claims",
+    async (outcome) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "external-replay-retention-"));
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(100_000);
+      const options = { stateDir, ttlMs: 10, fileMaxEntries: 1 };
+      const key = { accountId: "primary", messageId: "unresolved" };
+      try {
+        const first = createExternalReplayGuard(options);
+        const claim = await first.claimMessage(key);
+        if (outcome === "delivery_unknown") {
+          await claim!.settle(outcome);
+        }
+        vi.setSystemTime(100_100);
+        expect(await createExternalReplayGuard(options).claimMessage(key)).toBeUndefined();
+        await expect(
+          first.shouldProcessMessage({ ...key, messageId: "completed-other" }),
+        ).rejects.toThrow("unresolved capacity exhausted");
+        expect(await createExternalReplayGuard(options).claimMessage(key)).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

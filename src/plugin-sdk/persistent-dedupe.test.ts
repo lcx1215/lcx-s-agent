@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as jsonStore from "./json-store.js";
 import { createPersistentDedupe } from "./persistent-dedupe.js";
 
 const tmpRoots: string[] = [];
@@ -205,5 +206,90 @@ describe("createPersistentDedupe", () => {
     await expect(dedupe.checkAndRecord("strict", { requirePersistence: true })).rejects.toThrow();
     expect(await dedupe.checkAndRecord("legacy")).toBe(true);
     expect(await dedupe.checkAndRecord("legacy")).toBe(false);
+  });
+  it("serializes a release and a peer claim on the same real file without losing the peer", async () => {
+    const root = await makeTmpRoot();
+    const filePath = path.join(root, "dedupe.json");
+    const options = {
+      ttlMs: 10_000,
+      memoryMaxSize: 100,
+      fileMaxEntries: 1000,
+      resolveFilePath: () => filePath,
+    };
+    const first = createPersistentDedupe(options);
+    const peer = createPersistentDedupe({
+      ...options,
+      resolveFilePath: () => path.join(root, "..", path.basename(root), "dedupe.json"),
+    });
+    const now = Date.now();
+    expect(await first.checkAndRecord("release", { now, requirePersistence: true })).toBe(true);
+    let enterWrite!: () => void;
+    const writeEntered = new Promise<void>((resolve) => {
+      enterWrite = resolve;
+    });
+    let releaseWrite!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const original = jsonStore.writeJsonFileAtomically;
+    let firstWrite = true;
+    const spy = vi
+      .spyOn(jsonStore, "writeJsonFileAtomically")
+      .mockImplementation(async (...args) => {
+        if (firstWrite) {
+          firstWrite = false;
+          enterWrite();
+          await writing;
+        }
+        return original(...args);
+      });
+    try {
+      const release = first.settleClaim("release", { recordedAt: now, retryable: true });
+      await writeEntered;
+      const claim = peer.checkAndRecord("peer", { now: now + 1, requirePersistence: true });
+      setTimeout(releaseWrite, 50);
+      expect(await release).toBe(true);
+      expect(await claim).toBe(true);
+      expect(
+        await createPersistentDedupe(options).checkAndRecord("peer", { requirePersistence: true }),
+      ).toBe(false);
+    } finally {
+      releaseWrite();
+      spy.mockRestore();
+    }
+  });
+  it("migrates ambiguous numeric records conservatively and never downgrades v2 through the legacy API", async () => {
+    const root = await makeTmpRoot();
+    const filePath = path.join(root, "dedupe.json");
+    const now = Date.now();
+    const options = {
+      ttlMs: 10,
+      memoryMaxSize: 0,
+      fileMaxEntries: 3,
+      resolveFilePath: () => filePath,
+    };
+    const legacy = createPersistentDedupe(options);
+    expect(await legacy.checkAndRecord("old", { now: now - 100 })).toBe(true);
+    expect(JSON.parse(await fs.readFile(filePath, "utf8"))).toEqual({ old: now - 100 });
+    const strict = createPersistentDedupe(options);
+    expect(await strict.checkAndRecord("active", { now, requirePersistence: true })).toBe(true);
+    expect(await createPersistentDedupe(options).checkAndRecord("old", { now: now + 100 })).toBe(
+      false,
+    );
+    expect(
+      await strict.settleClaim("active", {
+        recordedAt: now,
+        retryable: false,
+        outcome: "delivery_unknown",
+      }),
+    ).toBe(true);
+    expect(await legacy.checkAndRecord("complete", { now: now + 100 })).toBe(true);
+    expect(await legacy.checkAndRecord("later", { now: now + 200 })).toBe(true);
+    const state = JSON.parse(await fs.readFile(filePath, "utf8"));
+    expect(state.schemaVersion).toBe("lcx_persistent_dedupe_v2");
+    expect(state.entries.old.status).toBe("delivery_unknown");
+    expect(state.entries.active.status).toBe("delivery_unknown");
+    expect(state.entries.complete).toBeUndefined();
+    expect(state.entries.later.status).toBe("completed");
   });
 });
