@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sendExternalMessage } from "../extensions/external/src/send.js";
-import * as commercialOwner from "../scripts/operator/lcx-commercial-answer-pipeline.js";
 import {
   auditWorkflowHandoffs,
   type WorkflowHandoffEvidence,
 } from "../scripts/operator/lcx-flow-graph.js";
+import * as commercialOwner from "../src/agents/commercial-answer-pipeline.js";
 import { createCommercialAnswerReplyGate } from "../src/agents/commercial-answer-reply-gate.js";
 import * as groundingOwner from "../src/agents/finance-answer-grounding-gate.js";
 import type { FinanceResearchRunReceipt } from "../src/agents/finance-research-runner.js";
@@ -341,9 +341,30 @@ async function run(options: ProbeOptions = {}) {
           throw new Error("actual bounded tool feedback source binding missing");
         }
         const qualityFailure = feedback.failedGates.find((gate) => gate.id === "quality");
-        const qualityFinding = feedback.qualityFeedback.find((finding) =>
-          finding.includes("closure_missing_or_invalid"),
-        );
+        const nativeQualityFeedbackReads: Array<{ pointer: string; value: string }> = [];
+        const qualityFinding = feedback.qualityFeedback
+          .map((preview, index) => {
+            const reference = feedback.qualityFeedbackRefs?.[index];
+            if (!reference?.truncated) {
+              return preview;
+            }
+            const indices = /^\/quality\/attempts\/(\d+)\/feedback\/(\d+)$/u.exec(
+              reference.pointer,
+            );
+            const value = indices
+              ? nativeReceipt?.quality?.attempts[Number(indices[1])]?.feedback[Number(indices[2])]
+              : undefined;
+            if (
+              createHash("sha256").update(raw).digest("hex") !== feedback.sourceSha256 ||
+              typeof value !== "string" ||
+              !value.startsWith(preview.replace(/ \[truncated\]$/u, ""))
+            ) {
+              throw new Error("original bounded quality feedback readback mismatch");
+            }
+            nativeQualityFeedbackReads.push({ pointer: reference.pointer, value });
+            return value;
+          })
+          .find((finding) => finding.includes("closure_missing_or_invalid"));
         const learningGap = feedback.failures
           .find((failure) => failure.moduleId === "finance_learning_memory")
           ?.missingEvidence.find((gap) => gap === "retrievable_finance_capability_card");
@@ -370,6 +391,7 @@ async function run(options: ProbeOptions = {}) {
         modelNextInput = {
           ...(modelNextInput as Record<string, unknown>),
           reviewFeedbackReadback: structuredClone(feedback),
+          nativeQualityFeedbackReads,
           nextDecision,
         };
         const diagnostic =
@@ -812,6 +834,14 @@ describe("same-attempt original finance modules to queued reply", () => {
         ).toBe(true);
         expect(sample.nextDecision?.action).toBe("stop_research_reply");
         expect(sample.nextDecision?.reason).toContain("closure_missing_or_invalid");
+        expect(sample.modelNextInput).toMatchObject({
+          nativeQualityFeedbackReads: [
+            {
+              pointer: expect.stringMatching(/^\/quality\/attempts\/\d+\/feedback\/\d+$/u),
+              value: sample.nextDecision?.reason,
+            },
+          ],
+        });
         expect(sample.nextDecision?.sourceSha256).toBe(toolDetails.receiptSha256);
         expect(sample.candidate).toContain(sample.nextDecision?.reason);
         expect(sample.candidate).not.toContain("Research hypothesis:");

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "migrationId": "finance_intraday_account_feedback_v1",
+  "authority": "src/agents/finance-intraday-control-ledger.ts",
+  "changes": {
+    "nativeOutcome": "Optional executionScope retains the execution host account and alpaca:paper venue, including preparation failures before model review.",
+    "sqliteMigration": "Version 4 adds an account/time expression index; immutable outcome and decision bodies are preserved.",
+    "consumers": "Original day account research and scheduled night research project bounded original outcomes into their existing evidence packets.",
+    "legacyCompatibility": "Legacy outcomes are eligible only with original review account identity; anonymous outcomes are not backfilled or attributed by inference."
+  },
+  "preserved": [
+    "existing ontology vocabulary and execution state transitions",
+    "one terminal placed/refused/uncertain outcome per signal",
+    "shared execution, account, funding, quote, risk and reconciliation gates",
+    "research and Quality authority over configuration proposals",
+    "unknown order and dispatch blocking"
+  ],
+  "verification": [
+    "src/agents/finance-intraday-control-ledger.test.ts",
+    "src/agents/finance-intraday-execution.test.ts",
+    "src/agents/finance-night-review-context.test.ts",
+    "src/agents/finance-research-runner.test.ts"
+  ],
+  "acceptanceBoundary": "Offline consumer causality proves wiring only; natural adoption, economic improvement and uninterrupted host operation require their own runtime evidence."
+}

@@ -193,6 +193,72 @@ describe("strategy receipt evidence boundaries", () => {
       }),
     ).toBe(false);
   });
+  it.each([
+    { from: "2019-01-01", to: "2019-12-31", ready: false },
+    { from: "2026-01-01", to: "2026-08-01", ready: false },
+    { from: undefined, to: undefined, ready: false },
+    { from: "2025-01-01", to: "2026-09-09", ready: true },
+  ])(
+    "binds source requests to the declared evaluation period $from..$to",
+    ({ from, to, ready }) => {
+      expect(
+        allMethods.sourceGroupReady(
+          {
+            AAPL: {
+              http_status: 200,
+              finished_at: "2026-09-10T12:00:00Z",
+              request: { instrument: "AAPL", from, to },
+            },
+          },
+          { fromDate: "2026-01-01", toDate: "2026-09-09" },
+        ),
+      ).toBe(ready);
+    },
+  );
+
+  it("can reuse a historical source receipt for its matching historical period", () => {
+    expect(
+      allMethods.sourceGroupReady(
+        {
+          AAPL: {
+            http_status: 200,
+            finished_at: "2020-01-01T12:00:00Z",
+            request: { instrument: "AAPL", from: "2019-01-01", to: "2019-12-31" },
+          },
+        },
+        { fromDate: "2019-01-01", toDate: "2019-12-31" },
+      ),
+    ).toBe(true);
+  });
+
+  it("uses each result's explicit sample instead of trusting fallback period labels", () => {
+    const receipts = {
+      AAPL: {
+        http_status: 200,
+        finished_at: "2020-01-01T12:00:00Z",
+        request: { instrument: "AAPL", from: "2019-01-01", to: "2019-12-31" },
+      },
+    };
+    expect(
+      allMethods.sourceGroupReadyForResult(receipts, {
+        sample: { start: "2019-01-01", end: "2019-12-31" },
+      }),
+    ).toBe(true);
+    expect(
+      allMethods.sourceGroupReadyForResult(receipts, {
+        sample: { start: "2026-01-01", end: "2026-09-09" },
+      }),
+    ).toBe(false);
+    expect(
+      allMethods.sourceGroupReadyForResult(receipts, { sourceWindow: "2019-01-01..2019-12-31" }),
+    ).toBe(false);
+    expect(
+      allMethods.sourceGroupReadyForResult(receipts, {
+        sample: { start: "2019-02-30", end: "2019-12-31" },
+      }),
+    ).toBe(false);
+  });
+
   it("does not stringify invalid source metadata into credible receipt labels", () => {
     for (const value of [{ gate_status: "ready" }, null, undefined, 200, " "]) {
       expect(() => allMethods.requiredText(value, "source.stage")).toThrow("non-empty string");
