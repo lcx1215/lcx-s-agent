@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createFinanceAlpacaCycleController } from "./finance-alpaca-cycle-controller.js";
+import {
+  clientOrderIdentity,
+  createAlpacaExecutionAdapter,
+} from "./finance-alpaca-execution-adapter.js";
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import {
@@ -478,6 +482,165 @@ it("sizes from native positions, executes twice through the shared gate and reco
   expect(f.execute).toHaveBeenCalledTimes(2);
 });
 
+it("rechecks a confirmed protected crypto claim through the original cycle without more writes", async () => {
+  const f = await fixture();
+  f.positions.splice(0);
+  f.activities.splice(1);
+  f.account.cash = "1000";
+  f.account.long_market_value = "0";
+  const nativeRead = f.read.getMockImplementation()!;
+  const read = vi.fn<FinanceUncachedFetch>(async (url, init) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v1beta3/crypto/us/latest/quotes") {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          quotes: { "BTC/USD": { bp: 100, ap: 100, t: new Date().toISOString() } },
+        }),
+      };
+    }
+    if (parsed.pathname === "/v2/assets/BTC%2FUSD") {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          symbol: "BTC/USD",
+          status: "active",
+          tradable: true,
+          class: "crypto",
+        }),
+      };
+    }
+    if (parsed.pathname.startsWith("/v2/orders/")) {
+      const order = f.orders.find((order) => parsed.pathname.endsWith("/" + order.id));
+      return { status: order ? 200 : 404, body: JSON.stringify(order ?? {}) };
+    }
+    return nativeRead(url, init);
+  });
+  const options = { ...f.options, instruments: ["BTC/USD"], allowCrypto: true, read };
+  const controller = createFinanceAlpacaCycleController(options);
+  const quote = await controller.executionQuoteProvider(
+    { instrument: "BTC/USD", assetClass: "crypto", side: "buy" },
+    AbortSignal.timeout(5000),
+  );
+  const intent: FinanceExecutionIntent = {
+    intentId: "confirmed-protected-crypto",
+    instrument: "BTC/USD",
+    side: "buy",
+    quantity: 1,
+    orderType: "market",
+    referencePrice: quote.referencePrice,
+    referencePriceAt: quote.referencePriceAt,
+    runAuthorizationId: "test-crypto-run",
+    rationale: "synthetic",
+    stopPrice: 90,
+    protectionLimitPrice: 89,
+  };
+  const budget = {
+    automation: "unattended" as const,
+    allowedInstruments: ["BTC/USD"],
+    maxOrderNotional: 200,
+    maxInstrumentNotional: 500,
+    maxOrdersPerRun: 3,
+  };
+  const postJson = vi.fn<
+    NonNullable<Parameters<typeof createAlpacaExecutionAdapter>[0]["postJson"]>
+  >(async (_url, init) => {
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    const entry = body.side === "buy";
+    const at = new Date().toISOString();
+    const order = {
+      ...body,
+      id: entry ? "cycle-crypto-entry" : "cycle-crypto-stop",
+      symbol: "BTCUSD",
+      order_class: "simple",
+      status: entry ? "filled" : "new",
+      filled_qty: entry ? "1" : "0",
+      filled_avg_price: entry ? "100" : null,
+      filled_at: entry ? at : null,
+      submitted_at: at,
+      updated_at: at,
+    };
+    f.orders.push(order);
+    if (entry) {
+      f.positions.push({
+        symbol: "BTC/USD",
+        qty: "1",
+        market_value: "100",
+        side: "long",
+        asset_class: "crypto",
+      });
+      f.account.cash = "900";
+      f.account.long_market_value = "100";
+      f.activities.push({
+        id: "cycle-crypto-fill",
+        activity_type: "FILL",
+        type: "fill",
+        side: "buy",
+        symbol: "BTCUSD",
+        qty: "1",
+        price: "100",
+        transaction_time: at,
+        order_id: order.id,
+      });
+    } else {
+      f.openOrders.push(order);
+    }
+    return { status: 200, body: JSON.stringify(order) };
+  });
+  const adapter = createAlpacaExecutionAdapter({
+    instruments: ["BTC/USD"],
+    postJson,
+    statusFetch: read,
+    fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+  });
+  const placed = await placeFinanceOrder({
+    mode: "live_execution",
+    intent,
+    budget,
+    executionAdapterId: adapter.id,
+    adapters: [adapter],
+    committedInstrumentNotional: 0,
+    ordersPlacedThisRun: 0,
+    safetyContext: controller.createSafetyContext({
+      intent,
+      budget,
+      adapterId: adapter.id,
+      venue: adapter.venue,
+    }),
+  });
+  expect(placed.status).toBe("placed");
+  expect(postJson).toHaveBeenCalledTimes(2);
+  const restart = createFinanceAlpacaCycleController(options);
+  expect((await restart.accountBookProvider(AbortSignal.timeout(5000))).positions).toEqual([
+    { instrument: "BTC/USD", quantity: 1, marketValue: 100 },
+  ]);
+  expect((await restart.accountBookProvider(AbortSignal.timeout(5000))).positions[0].quantity).toBe(
+    1,
+  );
+  expect(
+    (
+      await readFinanceExecutionSafetyClaims({
+        stateDir: f.directory,
+        accountId: f.accountId,
+        venue: "alpaca:paper",
+      })
+    ).at(-1)?.status,
+  ).toBe("confirmed");
+  expect(
+    (
+      await readFinanceAccountPositionLedger(f.directory, {
+        accountId: f.accountId,
+        venue: "alpaca:paper",
+      })
+    ).receipts,
+  ).toHaveLength(1);
+  expect(postJson).toHaveBeenCalledTimes(2);
+  expect(f.execute).not.toHaveBeenCalled();
+  f.orders.find((order) => order.id === "cycle-crypto-stop")!.status = "pending_cancel";
+  await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow();
+  expect(postJson).toHaveBeenCalledTimes(2);
+});
+
 it("does not fill an unexplained quantity gap with invented fees", async () => {
   const f = await fixture();
   f.positions[0].qty = "0.999";
@@ -522,7 +685,7 @@ it("persists a newly observed equity high across controller recreation", async (
   const restart = createFinanceAlpacaCycleController(f.options);
   await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).rejects.toMatchObject({
     message: "finance account read failed",
-    diagnostic: { stage: "safety_facts", code: "transport_cause_unavailable" },
+    diagnostic: { stage: "safety_facts" },
     cause: expect.objectContaining({ message: "incomplete account peak history" }),
   });
 });
@@ -859,15 +1022,22 @@ it("keeps a protected sell unknown pending until its original protection can be 
   ).rejects.toThrow("execution_recovery_incomplete");
 
   expect(f.execute).toHaveBeenCalledTimes(executeCalls);
+  const recoveryReads = f.read.mock.calls
+    .map(([url]) => new URL(url))
+    .filter((url) => url.pathname === "/v2/orders:by_client_order_id");
+  expect(recoveryReads).toHaveLength(1);
+  expect(recoveryReads[0].searchParams.get("client_order_id")).toBe(
+    clientOrderIdentity("paper", intent),
+  );
   expect(
-    f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
-  ).toBe(true);
-  const unresolved = await readFinanceExecutionSafetyClaims({
-    stateDir: f.directory,
-    accountId: f.accountId,
-    venue: "alpaca:paper",
-  });
-  expect(unresolved[0].status).toBe("unknown");
+    (
+      await readFinanceExecutionSafetyClaims({
+        stateDir: f.directory,
+        accountId: f.accountId,
+        venue: "alpaca:paper",
+      })
+    ).at(-1)?.status,
+  ).toBe("unknown");
 });
 
 it("uses persisted highs for the drawdown gate after a restart", async () => {
@@ -1159,13 +1329,14 @@ it.each(["failed", "inspect_only"] as const)(
         .length;
     const baseline = historyReads();
     if (mode === "failed") {
-      f.read.mockRejectedValueOnce(new Error("fixture refresh unavailable"));
+      const unavailable = new Error("fixture refresh unavailable");
+      f.read.mockRejectedValueOnce(unavailable);
       await expect(
         f.controller.inspectReconciliation(AbortSignal.timeout(5000)),
       ).rejects.toMatchObject({
         message: "finance account read failed",
-        diagnostic: { stage: "broker_reconciliation", code: "transport_cause_unavailable" },
-        cause: expect.objectContaining({ message: "fixture refresh unavailable" }),
+        diagnostic: { stage: "broker_reconciliation" },
+        cause: unavailable,
       });
     } else {
       await f.controller.inspectReconciliation(AbortSignal.timeout(5000));
@@ -1707,6 +1878,42 @@ async function protectedTerminalFixture(filledQuantity = 1) {
   );
   return { ...f, intent, stop, terminal, transport };
 }
+
+it.each([null, undefined, false, "not-a-number"])(
+  "keeps malformed durable protection unresolved in the account cycle: %j",
+  async (quantity) => {
+    const f = await protectedTerminalFixture(1);
+    const scope = { stateDir: f.directory, accountId: f.accountId, venue: "alpaca:paper" };
+    const claim = (await readFinanceExecutionSafetyClaims(scope)).at(-1)!;
+    const accountKey = createHash("sha256")
+      .update(JSON.stringify([scope.venue, scope.accountId]))
+      .digest("hex");
+    await fs.writeFile(
+      path.join(f.directory, `execution-safety-${accountKey}.jsonl`),
+      `${JSON.stringify({
+        ...claim,
+        binding: {
+          ...claim.binding,
+          protectiveOrders: [{ ...claim.binding!.protectiveOrders![0], quantity }],
+        },
+      })}\n`,
+    );
+    f.read.mockClear();
+    const controller = createFinanceAlpacaCycleController({
+      ...f.options,
+      protectedReductionRecoveryTransport: f.transport,
+    });
+    await expect(controller.inspectReconciliation(AbortSignal.timeout(5000))).rejects.toThrow(
+      "execution_recovery_incomplete",
+    );
+    expect((await readFinanceExecutionSafetyClaims(scope)).at(-1)?.status).toBe("unknown");
+    expect(
+      f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
+    ).toBe(false);
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.execute).toHaveBeenCalledTimes(1);
+  },
+);
 
 it.each([0, 1, 2])(
   "recovers a terminal protected sell with %s fills through the original protection owner",

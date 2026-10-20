@@ -75,3 +75,25 @@ it("does not silently fall back to discovery if the ownership ledger cannot be r
   });
   await expect(order.next()).rejects.toThrow("ledger conflict");
 });
+
+it("hands off at a completed operation and retains pending candidates when a cycle becomes due", async () => {
+  let due = false;
+  let pending: readonly string[] = [];
+  const visited: string[] = [];
+  for await (const symbol of financeIntradayMonitorOrder({
+    instruments: ["OWN", "DISCOVERY1", "DISCOVERY2"],
+    intervalSeconds: 300,
+    signal: new AbortController().signal,
+    now: () => 0,
+    readOwnedInstruments: async () => ["OWN"],
+    shouldYield: () => due,
+    onYield: (remaining) => {
+      pending = remaining;
+    },
+  })) {
+    visited.push(symbol);
+    due = true;
+  }
+  expect(visited).toEqual(["OWN"]);
+  expect(pending).toEqual(["DISCOVERY1", "DISCOVERY2"]);
+});

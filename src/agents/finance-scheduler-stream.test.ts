@@ -4,6 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FinanceAlpacaOrderStreamOptions } from "./finance-alpaca-order-stream.js";
 import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
+import {
+  commitFinanceSchedulerDatabaseState,
+  isFinanceSchedulerDecisionIndexCurrent,
+} from "./finance-scheduler-ledger.js";
 import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
 
 const mocks = vi.hoisted(() => ({
@@ -183,6 +187,13 @@ describe("resident Paper stream wiring", () => {
     "wakes broker readback and records %s separately from stream health",
     async (status) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-stream-wiring-"));
+      // One startup batch cannot finish this journal; a natural ready readback must resume it.
+      commitFinanceSchedulerDatabaseState(
+        root,
+        '{"lastFired":{}}',
+        Array.from({ length: 130 }, (_, i) => ({ runId: `legacy-${i}`, mode: "day" })),
+      );
+      expect(isFinanceSchedulerDecisionIndexCurrent(root)).toBe(false);
       vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
         if (String(chunk).includes("stream broker reconciliation=")) {
           setImmediate(() => process.emit("SIGTERM"));
@@ -222,6 +233,7 @@ describe("resident Paper stream wiring", () => {
       );
       expect(observation.reconciliation.lastReadbackAt).toBeTypeOf("string");
       expect(observation.reconciliation.lastReadinessStatus).toBe(status);
+      expect(isFinanceSchedulerDecisionIndexCurrent(root)).toBe(status === "reconciled");
       if (status === "reconciled") {
         expect(observation.reconciliation.lastSucceededAt).toBeTypeOf("string");
       } else {
@@ -233,13 +245,17 @@ describe("resident Paper stream wiring", () => {
   );
   it("degrades to periodic REST when stream construction fails", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-stream-fallback-"));
-    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      if (String(chunk).includes("idle broker reconciliation=reconciled")) {
+        setImmediate(() => process.emit("SIGTERM"));
+      }
+      return true;
+    });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     mocks.stream.mockImplementation(() => {
       throw new Error("unavailable");
     });
     mocks.history.mockImplementation(async () => {
-      process.emit("SIGTERM");
       return { accountId: "synthetic-account", accountReconciliation: { status: "reconciled" } };
     });
     expect(
@@ -258,7 +274,13 @@ describe("resident Paper stream wiring", () => {
       fs.readFileSync(path.join(root, "alpaca-order-stream-latest.json"), "utf8"),
     );
     expect(observation.stream.state).toBe("unavailable");
-    expect(observation.reconciliation.lastErrorCode).toBe("stream_unavailable");
+    expect(observation.reconciliation).toMatchObject({
+      lastSource: "idle",
+      lastReadinessStatus: "reconciled",
+      lastErrorCode: null,
+      lastFailure: null,
+    });
+    expect(observation.reconciliation.lastSucceededAt).toBeTypeOf("string");
     expect(mocks.cycle).not.toHaveBeenCalled();
   });
 });

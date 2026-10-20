@@ -9,6 +9,7 @@ import { syntheticSafetyContext } from "./finance-execution-safety.test-support.
 import type { FinancePortfolioPlan } from "./finance-portfolio-composition.js";
 import { readFinancePositionLedger } from "./finance-position-ledger.js";
 import { buildFinanceResearchPortfolioPlan } from "./finance-research-portfolio-plan.js";
+import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
 const mocks = vi.hoisted(() => ({ collect: vi.fn(), placeAlpaca: vi.fn() }));
 vi.mock("./finance-free-market-collection-adapters.js", () => ({
   createChinaReachableUsEodHistoryCollectionAdapter: () => ({ collect: mocks.collect }),
@@ -50,12 +51,16 @@ async function runCycle(
     withProvenance?: boolean;
     planAccountId?: string;
     withholdFast?: boolean;
+    expiresDuringReview?: boolean;
+    slowBudget?: number;
+    maxInstrumentNotional?: number;
+    positions?: () => Promise<{ instrument: string; quantity: number; marketValue: number }[]>;
   } = {},
 ) {
   mocks.collect.mockResolvedValue(bars());
   const asOf = "2026-09-22T20:00:30.000Z";
   const allocations = [
-    { strategyId: "slow", budgetFraction: 0.4 },
+    { strategyId: "slow", budgetFraction: options.slowBudget ?? 0.4 },
     { strategyId: "fast", budgetFraction: options.withholdFast ? 0 : 0.4 },
   ];
   const portfolioPlan: FinancePortfolioPlan = options.withProvenance
@@ -87,12 +92,20 @@ async function runCycle(
         allocations,
         candidates: [],
       };
+  let executionAt = Date.parse(asOf);
+  if (options.expiresDuringReview) {
+    portfolioPlan.validUntil = new Date(executionAt + 1_000).toISOString();
+  }
   return runFinanceDailyCycle({
     directory,
     instruments: ["ACME"],
     asOf,
     equity: 100_000,
-    caps: { maxOrderNotional: 10_000, maxInstrumentNotional: 20_000, maxOrdersPerRun: 2 },
+    caps: {
+      maxOrderNotional: 10_000,
+      maxInstrumentNotional: options.maxInstrumentNotional ?? 20_000,
+      maxOrdersPerRun: 2,
+    },
     runAuthorizationId: "fixture",
     portfolioPlan,
     trendStrategies: [
@@ -110,7 +123,7 @@ async function runCycle(
             observedAt: asOf,
             expiresAt: "2026-09-22T20:01:30.000Z",
             equity: 100_000,
-            positions: [],
+            positions: options.positions ? await options.positions() : [],
           }),
           executionQuotes: new Map([
             [
@@ -123,7 +136,28 @@ async function runCycle(
               },
             ],
           ]),
-          executionNow: () => Date.parse(asOf),
+          executionNow: () => executionAt,
+          ...(options.expiresDuringReview
+            ? {
+                tradeDecisionReviewer: async (request: FinanceTradeDecisionReviewRequest) => {
+                  executionAt += 2_000;
+                  return {
+                    status: "completed" as const,
+                    attempted: true,
+                    provider: "fixture",
+                    modelId: "fixture",
+                    latencyMs: 2_000,
+                    providerCallObserved: true,
+                    adapterAttested: true,
+                    decisions: request.candidates.map((candidate) => ({
+                      candidateId: candidate.candidateId,
+                      decision: "approve" as const,
+                      rationale: "Approved fixture allocation",
+                    })),
+                  };
+                },
+              }
+            : {}),
           createSafetyContext: syntheticSafetyContext,
         }
       : {}),
@@ -350,4 +384,194 @@ describe("portfolio targets reach the existing cycle drift consumer", () => {
     ]);
     expect(result.placed).toEqual([]);
   });
+});
+
+it("does not execute a portfolio that expired during completed review", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "portfolio-expired-review-"));
+  dirs.push(directory);
+  mocks.placeAlpaca.mockImplementation(async (request: FinanceAlpacaRunRequest) => ({
+    ok: true,
+    receipt: fixtureVenueReceipt(request),
+  }));
+  const report = await runCycle(directory, "budget_weighted", {
+    place: true,
+    expiresDuringReview: true,
+  });
+  expect(report.tradeDecisionReview.status).toBe("completed");
+  expect(mocks.placeAlpaca).not.toHaveBeenCalled();
+  expect(report.refusals.join()).toContain("portfolio plan no longer valid at execution");
+});
+
+it.each([1, 0.5])(
+  "converges from a first fill fraction of %s using actual account readback",
+  async (firstFillFraction) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "portfolio-convergence-"));
+    dirs.push(directory);
+    const requested: number[] = [];
+    mocks.placeAlpaca.mockImplementation(async (request: FinanceAlpacaRunRequest) => {
+      const notional = request.targetWeightAuthorization!.maxOrderNotional;
+      requested.push(notional);
+      const base = fixtureVenueReceipt(request);
+      const id = `fixture:convergence:${requested.length}`;
+      return {
+        ok: true,
+        receipt: {
+          ...base,
+          receiptId: id,
+          intentId: id,
+          quantity: notional / request.market.referencePrice,
+          notional,
+          fill: {
+            ...base.fill,
+            filledQuantity:
+              (notional / request.market.referencePrice) *
+              (requested.length === 1 ? firstFillFraction : 1),
+            venueRef: id,
+            terminalOrderIdentity: { orderId: id, terminal: true },
+          },
+        },
+        notes: [],
+      };
+    });
+    const positions = async () => {
+      const ledger = await readFinancePositionLedger(directory);
+      const quantity = ledger.receipts.reduce(
+        (total, receipt) => total + (receipt.side === "buy" ? 1 : -1) * receipt.fill.filledQuantity,
+        0,
+      );
+      return quantity > 0 ? [{ instrument: "ACME", quantity, marketValue: quantity * 200 }] : [];
+    };
+    const reports = [];
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      reports.push(
+        await runCycle(directory, "budget_weighted", {
+          place: true,
+          positions,
+          maxInstrumentNotional: 40_000,
+        }),
+      );
+    }
+    const fourthOrder = firstFillFraction === 1 ? 5_000 : 10_000;
+    expect(requested).toEqual([10_000, 10_000, 10_000, fourthOrder]);
+    const firstWeight = 0.1 * firstFillFraction;
+    expect(reports.map((report) => report.drift[0].current)).toEqual([
+      0,
+      firstWeight,
+      Number((firstWeight + 0.1).toFixed(2)),
+      Number((firstWeight + 0.2).toFixed(2)),
+      0.35,
+    ]);
+    expect(reports[0].placed[0].notional).toBe(10_000 * firstFillFraction);
+    const firstReceipt = (await readFinancePositionLedger(directory)).receipts[0];
+    expect(firstReceipt.fill.filledQuantity).toBe(firstReceipt.quantity * firstFillFraction);
+    expect(reports[4].drift[0]).toMatchObject({ action: "none", notional: 0 });
+    expect(reports[4].placed).toEqual([]);
+    expect(reports[4].tradeDecisionReview.status).toBe("not_needed");
+    expect((await readFinancePositionLedger(directory)).receipts).toHaveLength(4);
+
+    // A subsequent allocation changes the destination; old fills stay in the
+    // readback and are reduced, rather than being forgotten or bought again.
+    const reduced = await runCycle(directory, "budget_weighted", {
+      place: true,
+      positions,
+      slowBudget: 0.2,
+      maxInstrumentNotional: 40_000,
+    });
+    expect(reduced.drift[0]).toMatchObject({
+      action: "sell",
+      current: 0.35,
+      target: 0.2,
+      notional: 10_000,
+    });
+    const settled = await runCycle(directory, "budget_weighted", {
+      place: true,
+      positions,
+      slowBudget: 0.2,
+      maxInstrumentNotional: 40_000,
+    });
+    expect(settled.drift[0]).toMatchObject({
+      action: "none",
+      current: 0.25,
+      target: 0.2,
+      notional: 0,
+    });
+    expect(settled.portfolio?.unallocatedCashWeight).toBeCloseTo(0.8);
+    expect(settled.tradeDecisionReview.status).toBe("not_needed");
+    expect(requested).toEqual([10_000, 10_000, 10_000, fourthOrder, 10_000]);
+    const restored = await runCycle(directory, "budget_weighted", {
+      place: true,
+      positions,
+      slowBudget: 0.4,
+      maxInstrumentNotional: 40_000,
+    });
+    expect(restored.drift[0]).toMatchObject({
+      action: "buy",
+      current: 0.25,
+      target: 0.4,
+      notional: 10_000,
+    });
+    const restoredReadback = await runCycle(directory, "budget_weighted", {
+      place: true,
+      positions,
+      slowBudget: 0.4,
+      maxInstrumentNotional: 40_000,
+    });
+    expect(restoredReadback.drift[0]).toMatchObject({
+      action: "none",
+      current: 0.35,
+      target: 0.4,
+      notional: 0,
+    });
+    expect(restoredReadback.placed).toEqual([]);
+    expect(requested).toEqual([10_000, 10_000, 10_000, fourthOrder, 10_000, 10_000]);
+
+    expect((await readFinancePositionLedger(directory)).receipts).toHaveLength(6);
+  },
+);
+
+it("uses remaining instrument exposure for a positive allocation before review and execution", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "portfolio-headroom-"));
+  dirs.push(directory);
+  mocks.placeAlpaca.mockImplementation(async (request: FinanceAlpacaRunRequest) => ({
+    ok: true,
+    receipt: fixtureVenueReceipt(request),
+  }));
+  const report = await runCycle(directory, "budget_weighted", {
+    place: true,
+    positions: async () => [{ instrument: "ACME", quantity: 90, marketValue: 18000 }],
+  });
+  expect(report.drift[0]).toMatchObject({
+    action: "buy",
+    current: 0.18,
+    target: 0.4,
+    notional: 2000,
+  });
+  expect(report.tradeDecisionReview.candidateInputs?.[0].notional).toBe(2000);
+  expect(mocks.placeAlpaca.mock.calls[0]?.[0]).toMatchObject({
+    committedInstrumentNotional: 18000,
+    targetWeightAuthorization: { maxOrderNotional: 2000 },
+  });
+  const { compileFinanceAlpacaOrderIntent } =
+    await vi.importActual<typeof import("./finance-alpaca-run.js")>("./finance-alpaca-run.js");
+  const compiled = compileFinanceAlpacaOrderIntent(mocks.placeAlpaca.mock.calls[0][0]);
+  expect(compiled.ok).toBe(true);
+  if (!compiled.ok) {
+    throw new Error(compiled.refusals.join("; "));
+  }
+  expect(compiled.intent.quantity * compiled.intent.referencePrice).toBe(2000);
+});
+
+it("keeps an unmet target explicit at the cap without repeatedly requesting another buy", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "portfolio-at-cap-"));
+  dirs.push(directory);
+  const report = await runCycle(directory, "budget_weighted", {
+    place: true,
+    positions: async () => [{ instrument: "ACME", quantity: 100, marketValue: 20000 }],
+  });
+  expect(report.drift[0]).toMatchObject({ action: "none", current: 0.2, target: 0.4, notional: 0 });
+  expect(report.refusals).toContain(
+    "ACME: instrument exposure at declared cap; target remains unmet",
+  );
+  expect(report.tradeDecisionReview.status).toBe("not_needed");
+  expect(mocks.placeAlpaca).not.toHaveBeenCalled();
 });

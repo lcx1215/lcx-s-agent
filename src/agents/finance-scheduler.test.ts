@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,7 @@ import {
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
 import { readFinancePaperPromotions } from "./finance-paper-promotion.js";
+import { financePortfolioPlanSchema } from "./finance-portfolio-composition.js";
 import {
   financeResearchPortfolioContextSchema,
   type FinanceResearchPortfolioContext,
@@ -125,21 +127,54 @@ describe("durable scheduler claims on the unified lifecycle", () => {
   );
   it("runs the trading cycle after an accepted research plan", async () => {
     const contextPath = writeResearchContext();
-    mocks.run.mockResolvedValueOnce({
-      exitCode: 0,
-      status: "succeeded",
-      ok: true,
-      stdout: JSON.stringify({
-        status: "candidate",
-        plan: { asOf: "2026-09-22T19:30:00.000Z" },
-        gates: ["source", "committee", "quality", "module_execution"].map((id) => ({
-          id,
-          passed: true,
-        })),
-        portfolioPlanWritten: path.join(root, "research-portfolio-plan-latest.json"),
-      }),
-      stderr: "",
-      outputTruncated: false,
+    const planPath = path.join(root, "research-portfolio-plan-latest.json");
+    const plan = financePortfolioPlanSchema.parse({
+      asOf: "2026-09-22T19:30:00.000Z",
+      validUntil: "2026-09-22T20:30:00.000Z",
+      venue: "alpaca",
+      accountId: "fixture-account",
+      conflictPolicy: "block",
+      allocations: [{ strategyId: "fixture-strategy", budgetFraction: 0.4 }],
+      candidates: [],
+    });
+    const bytes = JSON.stringify(plan);
+    fs.writeFileSync(planPath, bytes);
+    const writeReceipt = {
+      path: planPath,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      asOf: plan.asOf,
+      accountId: plan.accountId,
+      venue: plan.venue,
+    };
+    mocks.run.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
+      const handoffPath = argv[argv.indexOf("--controller-handoff") + 1];
+      const handoffBytes = fs.readFileSync(handoffPath);
+      const controllerHandoff = {
+        ...JSON.parse(handoffBytes.toString("utf8")),
+        producer: {
+          path: handoffPath,
+          sha256: createHash("sha256").update(handoffBytes).digest("hex"),
+          bytes: handoffBytes.length,
+        },
+      };
+      return {
+        exitCode: 0,
+        status: "succeeded",
+        ok: true,
+        stdout: JSON.stringify({
+          status: "candidate",
+          controllerHandoff,
+          plan: { asOf: "2026-09-22T19:30:00.000Z" },
+          gates: ["source", "committee", "quality", "module_execution"].map((id) => ({
+            id,
+            passed: true,
+          })),
+          portfolioPlanWritten: planPath,
+          portfolioPlanWrite: writeReceipt,
+        }),
+        stderr: "",
+        outputTruncated: false,
+      };
     });
     expect(
       await runFinanceScheduler([
@@ -160,6 +195,13 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     expect(JSON.parse(fs.readFileSync(frozenContextPath, "utf8"))).toEqual(researchContext);
     const executionArgs: readonly string[] = mocks.run.mock.calls[1][0].argv;
     expect(executionArgs).toContain(path.join(root, "research-portfolio-plan-latest.json"));
+    expect(executionArgs[executionArgs.indexOf("--portfolio-plan-sha256") + 1]).toBe(
+      writeReceipt.sha256,
+    );
+    expect(executionArgs[executionArgs.indexOf("--portfolio-plan-account") + 1]).toBe(
+      plan.accountId,
+    );
+    expect(executionArgs[executionArgs.indexOf("--portfolio-plan-as-of") + 1]).toBe(plan.asOf);
     expect(readFinanceSchedulerState(root).lastSucceeded.day).toBe("2026-09-22");
   });
   it.each([

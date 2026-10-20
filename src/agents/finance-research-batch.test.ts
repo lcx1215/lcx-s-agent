@@ -227,3 +227,62 @@ describe("research price provenance", () => {
     expect(rows.at(-1)?.sourceUrlOrArtifact).toBeUndefined();
   });
 });
+
+it("shares one verified ledger snapshot across default fallback instruments", async () => {
+  const ledger = await import("./finance-bar-ledger.js");
+  const collections = await import("./finance-market-collection-registry.js");
+  const capabilities = await import("./finance-registered-capability-adapters.js");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "batch-bar-snapshot-"));
+  scopeDirectories.push(directory);
+  for (const [instrument, close] of [
+    ["SPY", 100],
+    ["QQQ", 200],
+  ] as const) {
+    await ledger.appendFinanceBars(directory, {
+      instrument,
+      derivation: "ohlcv",
+      observedAt: "2026-09-10T00:00:00Z",
+      provenance: { origin: "fixture" },
+      bars: [{ date: "2026-09-09", open: close, high: close, low: close, close }],
+    });
+  }
+  const read = vi.spyOn(ledger, "readFinanceBarLedger");
+  vi.spyOn(collections, "createFinanceMarketCollectionRegistry").mockReturnValue([]);
+  vi.spyOn(capabilities, "createRegisteredCapabilityAdapters").mockReturnValue([]);
+  try {
+    const result = await runResearchBatch({
+      directory,
+      instruments: ["SPY", "QQQ"],
+      env: {},
+      warn: () => {},
+      macroFor: async () => [],
+      newsFor: async () => ({ sourceId: "fixture", items: [] }),
+    });
+    expect(result.recorded.map((row) => [row.instrument, row.lastPrice, row.priceSource])).toEqual([
+      ["SPY", 100, "bar_ledger"],
+      ["QQQ", 200, "bar_ledger"],
+    ]);
+    expect(read).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledWith(directory, { instruments: ["SPY", "QQQ"] });
+    await ledger.appendFinanceBars(directory, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      observedAt: "2026-09-11T00:00:00Z",
+      provenance: { origin: "fixture" },
+      bars: [{ date: "2026-09-10", open: 101, high: 101, low: 101, close: 101 }],
+    });
+    const next = await runResearchBatch({
+      directory,
+      recordPath: path.join(directory, "next-batch.jsonl"),
+      instruments: ["SPY", "QQQ"],
+      env: {},
+      warn: () => {},
+      macroFor: async () => [],
+      newsFor: async () => ({ sourceId: "fixture", items: [] }),
+    });
+    expect(next.recorded.map((row) => row.lastPrice)).toEqual([101, 200]);
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.restoreAllMocks();
+  }
+});

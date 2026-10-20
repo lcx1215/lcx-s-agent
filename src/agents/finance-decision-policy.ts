@@ -92,6 +92,47 @@ export type FinanceDecisionCandidateContext = Readonly<{
   supportingAnalysis?: Readonly<Record<string, unknown>>;
 }>;
 
+/** Parse input shape only. Reference support and invalidation remain policy decisions. */
+export function parseFinanceDecisionCandidateContext(
+  value: unknown,
+): FinanceDecisionCandidateContext {
+  const object = (value: unknown, label: string): Record<string, unknown> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`Candidate context ${label} must be an object`);
+    }
+    return value as Record<string, unknown>;
+  };
+  const context = object(value, "root");
+  if (!Array.isArray(context.evidence) || !Array.isArray(context.claims)) {
+    throw new Error("Candidate context evidence and claims must be arrays");
+  }
+  const evidence = context.evidence.map((value: unknown) => {
+    const row = object(value, "evidence entry");
+    if (typeof row.id !== "string" || typeof row.text !== "string") {
+      throw new Error("Candidate context evidence entries require string id and text");
+    }
+    return { id: row.id, text: row.text };
+  });
+  const claims = context.claims.map((value: unknown) => {
+    const row = object(value, "claim entry");
+    if (
+      (row.status !== "supported" && row.status !== "uncertain") ||
+      !Array.isArray(row.evidenceIds) ||
+      row.evidenceIds.some((id: unknown) => typeof id !== "string")
+    ) {
+      throw new Error(
+        "Candidate context claims require supported/uncertain status and string evidenceIds",
+      );
+    }
+    return { status: row.status, evidenceIds: row.evidenceIds as string[] } as const;
+  });
+  const supportingAnalysis =
+    context.supportingAnalysis === undefined
+      ? undefined
+      : object(context.supportingAnalysis, "supportingAnalysis");
+  return { evidence, claims, ...(supportingAnalysis === undefined ? {} : { supportingAnalysis }) };
+}
+
 export type FinanceDecisionPolicyResult = Readonly<{
   mode: FinanceDecisionMode;
   allowed: boolean;

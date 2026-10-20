@@ -75,7 +75,11 @@ import {
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
 import { captureFinancePaperEconomicWindow } from "../../src/agents/finance-paper-economic-window.js";
-import { FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME } from "../../src/agents/finance-portfolio-composition.js";
+import {
+  FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME,
+  financePortfolioPlanSchema,
+  validateFinancePortfolioPlan,
+} from "../../src/agents/finance-portfolio-composition.js";
 import { readFinancePositionRecords } from "../../src/agents/finance-position-ledger.js";
 import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance-research-evidence.js";
 import {
@@ -886,7 +890,7 @@ export function readFinanceScheduledResearchFeedback(params: {
       !relative ||
       relative.startsWith(`..${path.sep}`) ||
       path.isAbsolute(relative) ||
-      !/^\d{4}-\d{2}-\d{2}[/\\]\d{4}-\d{2}-\d{2}T[\d-]+Z__finance-research-run\.json$/u.test(
+      !/^\d{4}-\d{2}-\d{2}[/\\]\d{4}-\d{2}-\d{2}T[\d-]+Z(?:__[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?__finance-research-run\.json$/u.test(
         relative,
       )
     ) {
@@ -1288,6 +1292,7 @@ type CycleContext = {
   observeAccountReconciliation?: (observation: AccountReconciliationObservation) => void;
   sourceHeartbeatInFlight?: boolean;
   lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
+  pendingIntradayInstruments?: readonly string[];
   progressPhase?: "idle" | "cycle";
   progressCycleStage?: FinanceSchedulerCycleStage;
   progressObservedAt?: string;
@@ -1686,13 +1691,30 @@ export async function recoverFinanceUniverseIfNeeded(
       ) {
         throw new Error("latest universe recovery attempt receipt is invalid");
       }
-      // An interrupted child requires reconciliation; a failed selection is not a
-      // license for a per-minute retry storm. Reuse the existing durable attempt log.
-      if (
-        last.status === "started" ||
-        Date.parse(last.attemptedAt) > Date.parse(now) ||
+      // Unknown children still require reconciliation. A terminal failure may
+      // recover on the same data session after a durable one-hour cooldown:
+      // completed-session identity can remain unchanged all weekend and must not
+      // suppress recovery when a network outage ends before Monday's close.
+      if (last.status === "started" || Date.parse(last.attemptedAt) > Date.parse(now)) {
+        return undefined;
+      }
+      if (last.status === "failed") {
+        if (
+          typeof last.completedAt !== "string" ||
+          !Number.isFinite(Date.parse(last.completedAt)) ||
+          Date.parse(last.completedAt) < Date.parse(last.attemptedAt) ||
+          !["succeeded", "failed", "timed_out", "cancelled", "spawn_error"].includes(
+            String(last.processStatus),
+          )
+        ) {
+          throw new Error("terminal universe failure cannot be verified");
+        }
+        if (Date.parse(now) - Date.parse(last.completedAt) < 60 * 60_000) {
+          return undefined;
+        }
+      } else if (
         latestCompletedWeekdaySessionDate(last.attemptedAt) ===
-          latestCompletedWeekdaySessionDate(now)
+        latestCompletedWeekdaySessionDate(now)
       ) {
         return undefined;
       }
@@ -1905,11 +1927,12 @@ async function runScheduledCycleProcess(
   // alive while it waits, with at most one trading tick in flight. Before handing
   // off to any next stage (especially daily execution), join that tick completely.
   let tradingTick: Promise<void> | undefined;
+  let handoffRequested = false;
   const timer = setInterval(() => {
     if (tradingTick || context.signal.aborted) {
       return;
     }
-    tradingTick = runTradingTick(context)
+    tradingTick = runTradingTick(context, () => handoffRequested)
       .catch((error: unknown) => {
         process.stderr.write(
           `intraday tick during ${stage} failed: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -1923,6 +1946,8 @@ async function runScheduledCycleProcess(
     return await runFinanceCycleProcess(options);
   } finally {
     clearInterval(timer);
+    // Join the current operation before execution, not unstarted discovery work.
+    handoffRequested = true;
     await tradingTick;
   }
 }
@@ -2232,20 +2257,6 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
       return undefined;
     }
   })();
-  const researchAbstention = (() => {
-    if (
-      !researchPayload ||
-      researchPayload.portfolioPlanWritten !== undefined ||
-      researchPayload.portfolioPlan !== undefined
-    ) {
-      return undefined;
-    }
-    try {
-      return financeResearchPortfolioAbstentionSchema.parse(researchPayload.portfolioAbstention);
-    } catch {
-      return undefined;
-    }
-  })();
   const planWrite = researchPayload?.portfolioPlanWrite;
   const producerPlanBound =
     planWrite?.path === portfolioPlanPath &&
@@ -2255,6 +2266,39 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     research?.portfolioScope !== undefined &&
     planWrite.accountId === research.portfolioScope.accountId &&
     planWrite.venue === research.portfolioScope.venue;
+  const researchAbstention = (() => {
+    if (
+      !researchPayload ||
+      !producerPlanBound ||
+      researchPayload.portfolioPlanWritten !== portfolioPlanPath ||
+      researchPayload.portfolioPlan !== undefined
+    ) {
+      return undefined;
+    }
+    try {
+      const abstention = financeResearchPortfolioAbstentionSchema.parse(
+        researchPayload.portfolioAbstention,
+      );
+      const bytes = fs.readFileSync(portfolioPlanPath);
+      if (createHash("sha256").update(bytes).digest("hex") !== planWrite?.sha256) {
+        return undefined;
+      }
+      const plan = financePortfolioPlanSchema.parse(JSON.parse(bytes.toString("utf8")));
+      validateFinancePortfolioPlan(plan, attempt.firedAt, research.portfolioScope?.venue ?? "");
+      if (
+        plan.asOf !== attempt.firedAt ||
+        plan.accountId !== research.portfolioScope?.accountId ||
+        plan.venue !== research.portfolioScope?.venue ||
+        plan.candidates.length !== 0 ||
+        plan.allocations.some((allocation) => allocation.budgetFraction !== 0)
+      ) {
+        return undefined;
+      }
+      return abstention;
+    } catch {
+      return undefined;
+    }
+  })();
   const researchAccepted =
     research === undefined ||
     (researchPayload !== undefined &&
@@ -2374,8 +2418,10 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             ok: researchAccepted || researchAbstention !== undefined,
             status: research.status,
             exitCode: research.exitCode,
-            planPath: researchAccepted ? portfolioPlanPath : null,
-            ...(researchAccepted && planWrite ? { portfolioPlanWrite: planWrite } : {}),
+            planPath: researchAccepted || researchAbstention ? portfolioPlanPath : null,
+            ...((researchAccepted || researchAbstention) && planWrite
+              ? { portfolioPlanWrite: planWrite }
+              : {}),
             ...(research.controllerEvidenceStatus
               ? { controllerEvidenceStatus: research.controllerEvidenceStatus }
               : {}),
@@ -2512,6 +2558,20 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
           );
           continue;
         }
+        if ("decision" in result && "outcome" in result && result.outcome) {
+          const artifactEvidence = await recordFinanceIntradayResult({
+            workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+            directory: context.root.directory,
+            accountId: exitController.accountId,
+            venue: "alpaca:paper",
+            decision: result.decision,
+            outcome: result.outcome,
+            signal: context.signal,
+          });
+          if (artifactEvidence.status === "unavailable") {
+            process.stderr.write(`finance result recording gap: ${artifactEvidence.reason}\n`);
+          }
+        }
         if (
           (result.status === "decision_recorded" ||
             result.status === "decision_pending_execution") &&
@@ -2528,7 +2588,7 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
             },
             signal: context.signal,
           });
-          if (execution.status !== "already_terminal") {
+          {
             const artifactEvidence = await recordFinanceIntradayResult({
               workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
               directory: context.root.directory,
@@ -2812,6 +2872,15 @@ async function maintainAfterSuccessfulReconciliation(context: CycleContext, read
   // so failed maintenance cannot become a hot loop on frequent stream events.
   context.lastHistoricalMaintenanceAtMs = now;
   try {
+    // The scheduler already owns its process lock and the account lane here.
+    // Resume one bounded journal projection batch, without scheduling a model run.
+    initializeFinanceSchedulerDatabase(context.root.directory);
+  } catch {
+    process.stderr.write(
+      "scheduler decision history maintenance unavailable; history remains unverified\n",
+    );
+  }
+  try {
     await runHistoricalMaintenanceAfterReconciliation(context);
   } catch {
     context.historicalMaintenance = {
@@ -2885,8 +2954,8 @@ async function runHistoricalMaintenanceAfterReconciliation(context: CycleContext
   };
 }
 
-async function runTradingTick(context: CycleContext): Promise<void> {
-  const work = () => runTradingTickOnAccountLane(context);
+async function runTradingTick(context: CycleContext, shouldYield?: () => boolean): Promise<void> {
+  const work = () => runTradingTickOnAccountLane(context, shouldYield);
   return context.reconciliationWake ? context.reconciliationWake.run(work) : work();
 }
 
@@ -2926,10 +2995,14 @@ export async function* financeIntradayMonitorOrder(options: {
   onBarChange?: () => Promise<void>;
   signal: AbortSignal;
   now?: () => number;
+  /** Yield only between completed operations; the caller retains the queue. */
+  shouldYield?: () => boolean;
+  onYield?: (pending: readonly string[]) => void;
 }): AsyncGenerator<string> {
   const allowed = new Set(options.instruments);
   let pending = [...allowed];
   let observedBar: number | undefined;
+  let dispatched = 0;
   const now = options.now ?? Date.now;
   while (pending.length && !options.signal.aborted) {
     const bar = Math.floor(now() / (options.intervalSeconds * 1_000));
@@ -2950,14 +3023,24 @@ export async function* financeIntradayMonitorOrder(options: {
       pending = [...new Set([...owned.filter((symbol) => allowed.has(symbol)), ...pending])];
       observedBar = bar;
     }
+    // Keep one initial operation for owned-position monitoring. A due phase or
+    // finished research child can then reclaim scheduling without aborting a trade.
+    if (dispatched > 0 && options.shouldYield?.()) {
+      options.onYield?.([...pending]);
+      return;
+    }
     const instrument = pending.shift();
     if (instrument !== undefined) {
+      dispatched++;
       yield instrument;
     }
   }
 }
 
-async function runTradingTickOnAccountLane(context: CycleContext): Promise<void> {
+async function runTradingTickOnAccountLane(
+  context: CycleContext,
+  shouldYield?: () => boolean,
+): Promise<void> {
   await refreshActiveIntradayBinding(context);
   await reconcileIdleAccountIfDue(context);
   await runFinanceRetiredIntradayExitTick(context);
@@ -2968,8 +3051,18 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
       (left, right) =>
         Number(executionInstruments.has(right)) - Number(executionInstruments.has(left)),
     );
+    // Resume deferred discovery before starting a new sweep; the generator still
+    // places current owned positions first and the refreshed universe remains binding.
+    const remaining =
+      context.pendingIntradayInstruments?.filter((symbol) => instruments.includes(symbol)) ?? [];
+    let yielded = false;
     const monitorOrder = financeIntradayMonitorOrder({
-      instruments,
+      instruments: [...new Set([...remaining, ...instruments])],
+      shouldYield,
+      onYield: (pending) => {
+        yielded = true;
+        context.pendingIntradayInstruments = pending;
+      },
       intervalSeconds: context.options.intraday.intervalSeconds,
       signal: context.signal,
       onBarChange: () => runFinanceRetiredIntradayExitTick(context),
@@ -3017,6 +3110,25 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
             : {}),
           signal: context.signal,
         });
+        if (
+          context.intradayController &&
+          "decision" in result &&
+          "outcome" in result &&
+          result.outcome
+        ) {
+          const artifactEvidence = await recordFinanceIntradayResult({
+            workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+            directory: context.root.directory,
+            accountId: context.intradayController.accountId,
+            venue: "alpaca:paper",
+            decision: result.decision,
+            outcome: result.outcome,
+            signal: context.signal,
+          });
+          if (artifactEvidence.status === "unavailable") {
+            process.stderr.write(`finance result recording gap: ${artifactEvidence.reason}\n`);
+          }
+        }
         monitorReturned = true;
         observedAt = new Date().toISOString();
         progressCandidate = buildIntradayLastTickCandidate(
@@ -3066,7 +3178,7 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
               ),
               signal: context.signal,
             });
-            if (execution.status !== "already_terminal") {
+            {
               const artifactEvidence = await recordFinanceIntradayResult({
                 workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
                 directory: context.root.directory,
@@ -3143,12 +3255,26 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
         }
       }
     }
+    if (!yielded) {
+      context.pendingIntradayInstruments = undefined;
+    }
   }
 }
 
+function scheduledCycleDue(context: CycleContext): boolean {
+  const clock = financeEtClock(new Date());
+  const state = readFinanceSchedulerState(context.root.directory);
+  return DEFAULT_FINANCE_CYCLE_SLOTS.some(
+    (slot) =>
+      isFinanceCycleSlotDue(slot, clock, state.lastFired) ||
+      (slot.mode === "day" &&
+        Boolean(context.options.researchPlan) &&
+        financeResearchPreflightRetryDue(state, new Date())),
+  );
+}
+
 async function tick(context: CycleContext): Promise<void> {
-  await runTradingTick(context);
-  await recoverFinanceUniverseIfNeeded(context);
+  await runTradingTick(context, () => scheduledCycleDue(context));
   for (const slot of DEFAULT_FINANCE_CYCLE_SLOTS) {
     if (context.signal.aborted) {
       break;
@@ -3165,6 +3291,8 @@ async function tick(context: CycleContext): Promise<void> {
       await fire(context, slot.mode);
     }
   }
+  // Recovery has its existing bounded child and must not delay an already-due phase.
+  await recoverFinanceUniverseIfNeeded(context);
   // Diagnostic provider probes must not hold the resident scheduling loop open. A
   // degraded source may take several bounded timeout batches, but that work is independent
   // of the next scheduler tick and trading decision.

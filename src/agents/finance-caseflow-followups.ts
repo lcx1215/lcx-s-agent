@@ -3,6 +3,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { CronJob, CronJobCreate } from "../cron/types.js";
+import { validateScheduleTimestamp } from "../cron/validate-timestamp.js";
 import { readFinanceCaseRun, caseflowFingerprint } from "./finance-caseflow.js";
 import { openFinanceRunCheckpoints } from "./finance-run-checkpoints.js";
 
@@ -48,6 +49,19 @@ export async function bindFinanceCaseFollowups(params: {
     }
     let job: CronJob | undefined = matches[0];
     if (!job && params.register) {
+      const scheduleValidation = validateScheduleTimestamp(desired.schedule);
+      if (!scheduleValidation.ok) {
+        bindings.push({
+          months: followup.months,
+          dueAt: followup.dueAt,
+          status:
+            Date.parse(followup.dueAt) < Date.now()
+              ? ("overdue_unbound" as const)
+              : ("binding_schedule_invalid" as const),
+          reason: scheduleValidation.message,
+        });
+        continue;
+      }
       const checkpoint = openFinanceRunCheckpoints(
         {
           path: path.join(params.directory, "followup-checkpoints.sqlite"),

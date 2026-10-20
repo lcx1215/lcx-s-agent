@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { backfillOwnerArtifacts } from "../memory/artifact-owner-backfill.js";
 import { ArtifactStore } from "../memory/artifact-store.js";
 import type { FinanceIntradayDecisionRecord } from "./finance-intraday-control-ledger.js";
 import { runFinanceResearchRun } from "./finance-research-runner.js";
@@ -10,6 +11,7 @@ import {
   recordFinanceIntradayResult,
   recordFinanceResearchResult,
 } from "./finance-result-recording.js";
+import { createFinanceTradeResultRecallCapability } from "./finance-trade-result-recall.js";
 
 vi.mock("../config/config.js", () => ({
   loadConfig: () => {
@@ -55,6 +57,49 @@ const decision: FinanceIntradayDecisionRecord = {
 };
 
 describe("trusted finance result recording", () => {
+  it("recovers a failed index registration from the original immutable output", async () => {
+    const host = await fixture();
+    const registration = vi
+      .spyOn(ArtifactStore.prototype, "register")
+      .mockRejectedValueOnce(new Error("fixture transient index failure"));
+    const first = await recordFinanceIntradayResult({
+      ...host,
+      directory: host.workspaceDir,
+      accountId: "paper-a",
+      venue: "alpaca:paper",
+      decision,
+      outcome: {
+        signalId: decision.input.signalId,
+        status: "refused",
+        reasons: ["original reason"],
+      },
+    });
+    registration.mockRestore();
+    expect(first.status).toBe("unavailable");
+    const original = await fs.readFile(path.join(host.workspaceDir, first.relativePath!));
+    const recovered = await backfillOwnerArtifacts({
+      config: host.host.config,
+      agentId: "main",
+      workspaceDir: host.workspaceDir,
+      limit: 10,
+      deadlineMs: Date.now() + 5000,
+    });
+    expect(recovered.registered).toBe(1);
+    expect(await fs.readFile(path.join(host.workspaceDir, first.relativePath!))).toEqual(original);
+    const store = ArtifactStore.open({
+      dbPath: host.dbPath,
+      workspaceDir: host.workspaceDir,
+      readOnly: true,
+    });
+    try {
+      const found = store.search({ query: "SPY buy", owner: "finance_intraday_execution" });
+      expect(found.artifacts).toHaveLength(1);
+      expect(found.artifacts[0]).toMatchObject({ id: first.id, sha256: first.sha256 });
+    } finally {
+      store.close();
+    }
+  });
+
   it.each(["refused", "uncertain", "placed"] as const)(
     "preserves %s outcome, exact source SHA and terminal retry idempotency",
     async (status) => {
@@ -84,6 +129,46 @@ describe("trusted finance result recording", () => {
         venue: "alpaca:paper",
         decision,
         outcome,
+      });
+      const recall = createFinanceTradeResultRecallCapability({
+        config: host.host.config,
+        workspaceDir: host.workspaceDir,
+      });
+      expect(
+        await recall.execute(
+          {
+            moduleId: "portfolio_risk_gates",
+            accountId: "paper-a",
+            venue: "alpaca:paper",
+            asOf: new Date(Date.now() + 1000).toISOString(),
+            question: "What happened to the prior order?",
+            candidate: {
+              candidateId: "next-signal",
+              instrument: "SPY",
+              side: "buy",
+              strategyRule: decision.input.strategyRule,
+              signalReason: "opening_range_breakout",
+              signalReferencePrice: 500,
+              signalReferencePriceAt: decision.input.referencePriceAt,
+              datasetHeadRef: decision.input.datasetHeadRef,
+              intradayOwnedQuantity: 0,
+              brokerPositionQuantity: 0,
+              executionQuote: {
+                referencePrice: 500,
+                referencePriceAt: decision.input.referencePriceAt,
+                sourceUrlOrArtifact: "fixture",
+                ageMs: 0,
+                maxAgeMs: 30000,
+              },
+            },
+          },
+          new AbortController().signal,
+        ),
+      ).toMatchObject({
+        ok: true,
+        sourceArtifactId: first.id,
+        sourceSha256: first.sha256,
+        recordedResult: { outcome: status, reasons: ["original reason"] },
       });
       const store = ArtifactStore.open({
         dbPath: host.dbPath,

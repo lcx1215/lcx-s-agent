@@ -531,6 +531,21 @@ describe("a number written in a different notation is the same number", () => {
 
   const sameNumber = [
     {
+      label: "leading-zero price 000480.00 / 480",
+      evidence: "As of 2026-09-06 NVDA price is $000480.00.",
+      answer: "NVDA current price is $480.",
+    },
+    {
+      label: "leading-zero negative change -0003.00% / -3%",
+      evidence: "As of 2026-09-06 NVDA change is -0003.00%.",
+      answer: "NVDA current change is -3%.",
+    },
+    {
+      label: "leading-zero fraction 000.500 / 0.5",
+      evidence: "As of 2026-09-06 NVDA price is $000.500.",
+      answer: "NVDA current price is $0.5.",
+    },
+    {
       label: "evidence 480.00 美元 / answer 480 美元",
       evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480.00 美元。",
       answer: "NVDA 当前价格是 480 美元。",
@@ -564,6 +579,11 @@ describe("a number written in a different notation is the same number", () => {
    * value, a different unit, and a real difference in the last decimal all have to stay flagged.
    */
   const differentNumber = [
+    {
+      label: "leading-zero integer retains precision beyond JS safe integers",
+      evidence: "As of 2026-09-06 NVDA market cap is $0009007199254740992.",
+      answer: "NVDA current market cap is $9007199254740993.",
+    },
     {
       label: "evidence 480 美元 / answer 999 美元",
       evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
@@ -711,4 +731,147 @@ describe("the harness does not demand a citation for a number the reader supplie
       await safetyReasonFor(task, "NVDA 当前价格是 999 美元。", "NVDA 当前价格是 999 美元。"),
     ).toContain("current-data numbers without matching cited evidence");
   });
+});
+
+describe("answer statement entity binding", () => {
+  it("keeps independently supported asset statements and grouped monetary digits", async () => {
+    const answer = "AAPL current price is $1,200, QQQ current price is $100.";
+    expect(
+      await safetyReasonWithEvidence(
+        `As of 2026-09-06, ${answer}`,
+        "请根据最新证据判断 AAPL 和 QQQ 当前股价。",
+        answer,
+        answer,
+      ),
+    ).toBe("");
+  });
+
+  it.each(["AAPL 当前价格为 100 美元。", "QQQ 当前价格为 100 美元。AAPL 当前价格为 100 美元。"])(
+    "does not use a QQQ-only supported claim to ground %s",
+    async (answer) => {
+      expect(
+        await safetyReasonWithEvidence(
+          "截至 2026-09-06，QQQ 当前价格为 100 美元。",
+          "请根据最新证据判断 AAPL 和 QQQ 当前股价。",
+          answer,
+          "QQQ 当前价格为 100 美元。",
+        ),
+      ).toContain("current-data numbers without matching cited evidence");
+    },
+  );
+});
+
+it("grounds separately cited values in a conjoined multi-asset answer", async () => {
+  const answer = "AAPL current price is $100 and QQQ current price is $200.";
+  const original = invoker(answer);
+  const result = await runQualityHarness({
+    request: {
+      task: "请根据最新证据判断 AAPL 和 QQQ 当前股价。",
+      evidence: [
+        { id: "apple", text: "截至 2026-09-06，AAPL 当前价格为 100 美元。", source: "fixture" },
+        { id: "qqq", text: "截至 2026-09-06，QQQ 当前价格为 200 美元。", source: "fixture" },
+      ],
+    },
+    maxAttempts: 1,
+    modelInvoker: async (raw) => {
+      const current = raw as QualityHarnessModelRequest;
+      if (current.stage !== "format" && current.stage !== "draft") {
+        return original(raw);
+      }
+      return {
+        kind: "artifact",
+        artifact: {
+          answer,
+          claims: [
+            {
+              id: "apple",
+              text: "AAPL current price is $100.",
+              status: "supported",
+              evidenceIds: ["apple"],
+            },
+            {
+              id: "qqq",
+              text: "QQQ current price is $200.",
+              status: "supported",
+              evidenceIds: ["qqq"],
+            },
+          ],
+        },
+      };
+    },
+    createRunId: () => "finance-safety-conjoined",
+  });
+  expect(
+    result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety")?.passed,
+  ).toBe(true);
+});
+
+it("does not drop an unsupported subject from a shared-price subject list", async () => {
+  expect(
+    await safetyReasonWithEvidence(
+      "截至 2026-09-06，QQQ 当前价格为 100 美元。",
+      "请根据最新证据判断 AAPL 和 QQQ 当前股价。",
+      "AAPL and QQQ current price is $100.",
+      "QQQ current price is $100.",
+    ),
+  ).toContain("current-data numbers without matching cited evidence");
+});
+
+it.each(["AAPL, QQQ, and NVDA are each $100.", "AAPL，QQQ 和 NVDA 当前价格均为 100 美元。"])(
+  "retains every subject in the comma-separated list: %s",
+  async (answer) => {
+    expect(
+      await safetyReasonWithEvidence(
+        "截至 2026-09-06，NVDA 当前价格为 100 美元。",
+        "请根据最新证据判断 AAPL、QQQ、NVDA 当前股价。",
+        answer,
+        "NVDA current price is $100.",
+      ),
+    ).toContain("current-data numbers without matching cited evidence");
+  },
+);
+
+it("separates a complete price clause from a following joint subject list", async () => {
+  const stocks = [
+    { id: "AAPL", price: 100 },
+    { id: "QQQ", price: 200 },
+    { id: "NVDA", price: 200 },
+  ];
+  const answer = "AAPL is $100, QQQ, and NVDA are each $200.";
+  const result = await runQualityHarness({
+    request: {
+      task: "请根据最新证据判断 AAPL、QQQ、NVDA 当前股价。",
+      evidence: stocks.map(({ id, price }) => ({
+        id,
+        text: `截至 2026-09-06，${id} 当前价格为 ${price} 美元。`,
+        source: "fixture",
+      })),
+    },
+    maxAttempts: 1,
+    modelInvoker: async (raw) => {
+      const current = raw as QualityHarnessModelRequest;
+      if (current.stage === "intake") {
+        return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+      }
+      if (current.stage === "draft" || current.stage === "format") {
+        return {
+          kind: "artifact",
+          artifact: {
+            answer,
+            claims: stocks.map(({ id, price }) => ({
+              id,
+              text: `${id} is $${price}.`,
+              status: "supported",
+              evidenceIds: [id],
+            })),
+          },
+        };
+      }
+      return passReview();
+    },
+    createRunId: () => "finance-safety-joint-comma",
+  });
+  expect(
+    result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety")?.passed,
+  ).toBe(true);
 });

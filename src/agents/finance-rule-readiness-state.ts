@@ -117,12 +117,14 @@ export async function readFinanceRuleReadinessState(params: {
     if (barDatabasePresent) {
       const ledger = await readFinanceBarLedger(params.directory, { asOf: params.asOf });
       barRecordCount = ledger.recordCount;
-      instrumentCount = new Set(ledger.bars.map((bar) => bar.instrument)).size;
-      newestMarketDate =
-        ledger.bars
-          .map((bar) => bar.date)
-          .toSorted()
-          .at(-1) ?? null;
+      const instruments = new Set<string>();
+      for (const bar of ledger.bars) {
+        instruments.add(bar.instrument);
+        if (newestMarketDate === null || bar.date > newestMarketDate) {
+          newestMarketDate = bar.date;
+        }
+      }
+      instrumentCount = instruments.size;
       barConflicts = ledger.divergentDates.flatMap((conflict) => {
         const separator = conflict.lastIndexOf("@");
         return separator < 1

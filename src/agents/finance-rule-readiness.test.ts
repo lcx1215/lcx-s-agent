@@ -626,3 +626,30 @@ describe("an empty required adversity set does not satisfy readiness", () => {
     expect(readiness.rules[0]?.ready).toBe(false);
   });
 });
+
+it("preserves per-rule results across shared instruments, duplicate scope and unrelated evidence", () => {
+  const rules = [
+    rule({ instruments: ["AAA", "AAA"] }),
+    rule({ ruleId: "other", instruments: ["BBB", "AAA"] }),
+  ];
+  const bars = [
+    bar("2026-08-02", { open: 100, high: 110, low: 90, close: 101 }),
+    bar("2026-08-03", { open: 101, high: 120, low: 95, close: 102 }),
+    bar("2026-08-02", { open: 10, high: 11, low: 9, close: 10 }, "BBB"),
+    bar("2026-08-03", { open: 10, high: 12, low: 8, close: 11 }, "BBB"),
+    bar("2026-08-03", { open: 1000, high: 2000, low: 1, close: 1 }, "UNRELATED"),
+  ];
+  const marks = [mark("AAA", 101, "2026-08-02T00:00:00Z"), mark("UNRELATED", 1, AS_OF)];
+  const combined = buildFinanceRuleReadiness({ rules, bars, marks, asOf: AS_OF });
+  for (const [index, item] of rules.entries()) {
+    const isolated = buildFinanceRuleReadiness({
+      rules: [item],
+      asOf: AS_OF,
+      bars: bars.filter((entry) => item.instruments.includes(entry.instrument)),
+      marks: marks.filter((entry) => item.instruments.includes(entry.instrument)),
+    });
+    expect(combined.rules[index]).toEqual(isolated.rules[0]);
+  }
+  expect(combined.barCount).toBe(5);
+  expect(combined.markCount).toBe(2);
+});

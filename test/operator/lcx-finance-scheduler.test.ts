@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { writeResearchCapitalDecision } from "../../scripts/operator/lcx-finance-research-run.js";
 import {
   parseArgs as parseFinanceResearchCliArgs,
   run as runFinanceResearchCli,
@@ -429,15 +430,21 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
   const priorSnapshot = { generatedAt: "2026-09-21T22:00:00.000Z", selected: ["SPY", "OLD"] };
   const refreshedSnapshot = { generatedAt: "2026-09-22T22:00:00.000Z", selected: ["SPY", "NEW"] };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse
-    .mockReturnValueOnce(priorSnapshot)
-    .mockImplementationOnce(() => {
+  // Snapshot visibility changes when its producer writes, never on the Nth read.
+  mocks.readUniverse.mockImplementation(() =>
+    JSON.parse(
+      fs.readFileSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), "utf8"),
+    ),
+  );
+  mocks.runCycle.mockImplementation(async ({ argv }) => {
+    if (argv.some((arg: string) => arg.includes("lcx-finance-universe-select.ts"))) {
       writeUniverseSnapshot(refreshedSnapshot);
-      return refreshedSnapshot;
-    })
-    .mockReturnValue(refreshedSnapshot);
-  mocks.runCycle
-    .mockResolvedValueOnce({
+      return {
+        ...success,
+        stdout: JSON.stringify({ snapshotPersisted: true, ...refreshedSnapshot }),
+      };
+    }
+    return {
       ...success,
       stdout: JSON.stringify({
         ok: true,
@@ -446,15 +453,8 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
         declined: [],
         issues: [],
       }),
-    })
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        snapshotPersisted: true,
-        generatedAt: refreshedSnapshot.generatedAt,
-        selected: refreshedSnapshot.selected,
-      }),
-    });
+    };
+  });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay
     .mockImplementationOnce(async () => {})
@@ -488,7 +488,6 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
 
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
-    "OLD",
     "SPY",
     "NEW",
   ]);
@@ -1245,6 +1244,9 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
         directory,
         accountId: "paper-account",
         artifactRecallOptions: { config: {}, agentId: "main", workspaceDir: knowledgeWorkspace },
+        marketCollectionTool: expect.objectContaining({
+          name: "finance_market_collection_refresh",
+        }),
         instruments: ["SPY"],
         financialCapabilities: [
           expect.objectContaining({
@@ -1272,6 +1274,9 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
         directory,
         accountId: "paper-account",
         artifactRecallOptions: { config: {}, agentId: "main", workspaceDir: knowledgeWorkspace },
+        marketCollectionTool: expect.objectContaining({
+          name: "finance_market_collection_refresh",
+        }),
         instruments: ["SPY"],
         financialCapabilities: [
           expect.objectContaining({
@@ -1391,7 +1396,7 @@ it("monitors only symbols from the validated dynamic universe, never a static ti
       "--no-source-heartbeat",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalled();
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "AAA",
     "BBB",
@@ -1482,7 +1487,7 @@ it("has no intraday candidates when the dynamic universe receipt is missing or s
       "--no-source-heartbeat",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalled();
   expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
 });
 
@@ -1555,15 +1560,21 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     selected: ["SPY", "NEW"],
   };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse
-    .mockReturnValueOnce(priorSnapshot)
-    .mockImplementationOnce(() => {
+  // Snapshot visibility changes when its producer writes, never on the Nth read.
+  mocks.readUniverse.mockImplementation(() =>
+    JSON.parse(
+      fs.readFileSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), "utf8"),
+    ),
+  );
+  mocks.runCycle.mockImplementation(async ({ argv }) => {
+    if (argv.some((arg: string) => arg.includes("lcx-finance-universe-select.ts"))) {
       writeUniverseSnapshot(refreshedSnapshot);
-      return refreshedSnapshot;
-    })
-    .mockReturnValue(refreshedSnapshot);
-  mocks.runCycle
-    .mockResolvedValueOnce({
+      return {
+        ...success,
+        stdout: JSON.stringify({ snapshotPersisted: true, ...refreshedSnapshot }),
+      };
+    }
+    return {
       ...success,
       stdout: JSON.stringify({
         ok: true,
@@ -1572,15 +1583,8 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
         declined: [],
         issues: [],
       }),
-    })
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        snapshotPersisted: true,
-        generatedAt: "2026-09-22T22:00:00.000Z",
-        selected: ["SPY", "NEW"],
-      }),
-    });
+    };
+  });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   let progressAtStop: Record<string, unknown> | undefined;
   mocks.delay
@@ -1620,15 +1624,14 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     ]),
   ).resolves.toBe(143);
 
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(4);
+  expect(mocks.readUniverse).toHaveBeenCalled();
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
-    "OLD",
     "SPY",
     "NEW",
   ]);
   const firstScope = mocks.runIntradayMonitorTick.mock.calls[0]?.[0].scope;
-  const refreshedScope = mocks.runIntradayMonitorTick.mock.calls[2]?.[0].scope;
+  const refreshedScope = mocks.runIntradayMonitorTick.mock.calls[1]?.[0].scope;
   expect(firstScope).toMatchObject({
     kind: "system_universe",
     selectedInstruments: ["SPY", "OLD"],
@@ -1664,24 +1667,25 @@ it("recovers a long-lived monitor after startup without a universe and a success
     lastSucceeded: {},
     lastStatus: {},
   });
-  mocks.readUniverse
-    .mockImplementationOnce(() => {
-      throw new Error("no startup snapshot");
-    })
-    .mockImplementationOnce(() => {
-      const snapshot = {
-        generatedAt: "2026-09-22T22:00:00.000Z",
-        selected: ["SPY", "RECOVERED"],
+  const refreshedSnapshot = {
+    generatedAt: "2026-09-22T22:00:00.000Z",
+    selected: ["SPY", "RECOVERED"],
+  };
+  // Snapshot visibility changes when its producer writes, never on the Nth read.
+  mocks.readUniverse.mockImplementation(() =>
+    JSON.parse(
+      fs.readFileSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), "utf8"),
+    ),
+  );
+  mocks.runCycle.mockImplementation(async ({ argv }) => {
+    if (argv.some((arg: string) => arg.includes("lcx-finance-universe-select.ts"))) {
+      writeUniverseSnapshot(refreshedSnapshot);
+      return {
+        ...success,
+        stdout: JSON.stringify({ snapshotPersisted: true, ...refreshedSnapshot }),
       };
-      writeUniverseSnapshot(snapshot);
-      return snapshot;
-    })
-    .mockReturnValue({
-      generatedAt: "2026-09-22T22:00:00.000Z",
-      selected: ["SPY", "RECOVERED"],
-    });
-  mocks.runCycle
-    .mockResolvedValueOnce({
+    }
+    return {
       ...success,
       stdout: JSON.stringify({
         ok: true,
@@ -1690,15 +1694,8 @@ it("recovers a long-lived monitor after startup without a universe and a success
         declined: [],
         issues: [],
       }),
-    })
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        snapshotPersisted: true,
-        generatedAt: "2026-09-22T22:00:00.000Z",
-        selected: ["SPY", "RECOVERED"],
-      }),
-    });
+    };
+  });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay
     .mockImplementationOnce(async () => {})
@@ -1716,10 +1713,8 @@ it("recovers a long-lived monitor after startup without a universe and a success
     ]),
   ).resolves.toBe(143);
 
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(4);
+  expect(mocks.readUniverse).toHaveBeenCalled();
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
-    "SPY",
-    "RECOVERED",
     "SPY",
     "RECOVERED",
   ]);
@@ -1743,26 +1738,32 @@ it("clears a previously bound universe when the night selector fails", async () 
     selected: ["SPY", "STALE"],
   };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse.mockReturnValueOnce(priorSnapshot);
-  mocks.runCycle
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        ok: true,
-        scoredFiled: { appended: 0, skipped: 0 },
-        pending: [],
-        declined: [],
-        issues: [],
-      }),
-    })
-    .mockResolvedValueOnce({
-      ...success,
-      ok: false,
-      exitCode: 1,
-      status: "failed",
-      stdout: "",
-      stderr: "selector failed",
-    });
+  mocks.readUniverse.mockImplementation(() =>
+    JSON.parse(
+      fs.readFileSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), "utf8"),
+    ),
+  );
+  mocks.runCycle.mockImplementation(async ({ argv }) =>
+    argv.some((arg: string) => arg.includes("lcx-finance-universe-select.ts"))
+      ? {
+          ...success,
+          ok: false,
+          exitCode: 1,
+          status: "failed",
+          stdout: "",
+          stderr: "selector failed",
+        }
+      : {
+          ...success,
+          stdout: JSON.stringify({
+            ok: true,
+            scoredFiled: { appended: 0, skipped: 0 },
+            pending: [],
+            declined: [],
+            issues: [],
+          }),
+        },
+  );
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   let progressAtStop: Record<string, unknown> | undefined;
   mocks.delay
@@ -1789,9 +1790,8 @@ it("clears a previously bound universe when the night selector fails", async () 
     "SPY",
     "STALE",
     "SPY",
-    "STALE",
   ]);
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(3);
+  expect(mocks.readUniverse).toHaveBeenCalled();
   expect(progressAtStop).toMatchObject({
     placementEnabled: false,
     universeStatus: "unavailable",
@@ -1882,7 +1882,6 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
     "SPY",
     "PRIOR",
     "SPY",
-    "PRIOR",
   ]);
   expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
     false,
@@ -1978,7 +1977,6 @@ it("does not run selector when the started receipt append fails", async () => {
     "SPY",
     "PRIOR",
     "SPY",
-    "PRIOR",
   ]);
   expect(fs.readFileSync(canonicalPath, "utf8").trim()).toBe(JSON.stringify(priorSnapshot));
   expect(canonicalRenameAttempts).toEqual([]);
@@ -2040,7 +2038,6 @@ it("rejects the old snapshot when rename and failed receipt writes fail after st
     "SPY",
     "OLD",
     "SPY",
-    "OLD",
   ]);
   const latestReceipt = fs
     .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
@@ -2127,7 +2124,6 @@ it("does not re-arm a same-millisecond failed snapshot receipt, then recovers on
     "SPY",
     "RECOVERED",
     "SPY",
-    "RECOVERED",
   ]);
   const receipts = fs
     .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
@@ -3994,7 +3990,23 @@ it.each([false, true])(
   async (cancel) => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     vi.setSystemTime(new Date("2026-09-21T19:30:00Z"));
-    await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+    await activateIntradayRule(
+      {
+        measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
+        paperExecutionEligibility: "paper_execution_eligible",
+        paperUniverseScope: "fresh_us_equity_selection_v1",
+      },
+      FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+      directory,
+      FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+    );
+    const snapshot = { generatedAt: new Date().toISOString(), selected: ["SPY", "QQQ"] };
+    seedSelectedUniverse(snapshot);
+    mocks.readUniverse.mockImplementation(() =>
+      JSON.parse(
+        fs.readFileSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), "utf8"),
+      ),
+    );
     const policy = path.join(directory, "policy.json");
     const context = path.join(directory, "context.json");
     fs.writeFileSync(policy, "{}");
@@ -4038,7 +4050,6 @@ it.each([false, true])(
       directory,
       "--no-source-heartbeat",
       "--intraday-monitor",
-      "--intraday-active-rule",
       "--intraday-place",
       "--place",
       "--venue",
@@ -4074,6 +4085,10 @@ it.each([false, true])(
       await entered;
       await vi.advanceTimersByTimeAsync(180_000);
       expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
+      expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+        "SPY",
+        "QQQ",
+      ]);
       expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(1);
       expect(mocks.runCycle).toHaveBeenCalledTimes(1);
       if (cancel) {
@@ -4101,6 +4116,9 @@ it.each([false, true])(
       expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(1);
       finishIntraday();
       await expect(running).resolves.toBe(143);
+      // SPY remains queued after the in-flight QQQ operation closes: do not start
+      // another discretionary review after research has requested execution handoff.
+      expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
       expect(mocks.runCycle).toHaveBeenCalledTimes(cancel ? 1 : 2);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -4257,6 +4275,11 @@ it("automatically wakes the single preflight retry after backoff in the resident
 
 it.each([
   "valid",
+  "unpublished",
+  "nonzero",
+  "tampered",
+  "wrong_account",
+  "expired",
   "failed_gate",
   "failed_source",
   "failed_committee",
@@ -4309,10 +4332,50 @@ it.each([
     ...(variant === "mixed_plan" ? { portfolioPlanWritten: oldPlan } : {}),
     ...(variant === "inline_plan" ? { portfolioPlan: { allocations: [] } } : {}),
   };
-  mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => ({
-    ...success,
-    stdout: JSON.stringify({ ...payload, controllerHandoff: dispatchedControllerHandoff(argv) }),
-  }));
+  mocks.runCycle.mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
+    const portfolioPlanWrite = [
+      "valid",
+      "nonzero",
+      "tampered",
+      "wrong_account",
+      "expired",
+    ].includes(variant)
+      ? await writeResearchCapitalDecision(oldPlan, {
+          asOf: at,
+          context: JSON.parse(fs.readFileSync(context, "utf8")),
+          researchReceiptId: "quality:withhold",
+          abstention: payload.portfolioAbstention,
+        })
+      : undefined;
+    if (portfolioPlanWrite && variant !== "valid") {
+      const plan = JSON.parse(fs.readFileSync(oldPlan, "utf8"));
+      if (variant === "nonzero") {
+        plan.allocations[0].budgetFraction = 0.5;
+      }
+      if (variant === "wrong_account") {
+        plan.accountId = "foreign-account";
+      }
+      if (variant === "expired") {
+        plan.validUntil = "2026-09-28T00:00:00.000Z";
+      }
+      const bytes = JSON.stringify(plan);
+      fs.writeFileSync(oldPlan, bytes);
+      if (variant !== "tampered") {
+        // Retain matching bytes so native account/budget/time validation is exercised.
+        Object.assign(portfolioPlanWrite, {
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        });
+      }
+    }
+    return {
+      ...success,
+      stdout: JSON.stringify({
+        ...payload,
+        ...(portfolioPlanWrite ? { portfolioPlanWritten: oldPlan, portfolioPlanWrite } : {}),
+        controllerHandoff: dispatchedControllerHandoff(argv),
+      }),
+    };
+  });
   await expect(
     runFinanceScheduler([
       "--once",
@@ -4333,82 +4396,102 @@ it.each([
       outcome: "not_run",
       blockReason: variant === "valid" ? "research_no_allocation" : "research_plan_not_accepted",
     },
-    researchPlanRefresh: { ok: variant === "valid", planPath: null },
+    researchPlanRefresh: {
+      ok: variant === "valid",
+      planPath: variant === "valid" ? oldPlan : null,
+    },
   });
-  expect(fs.readFileSync(oldPlan, "utf8")).toBe("old-plan-must-not-be-executed");
+  if (variant === "valid") {
+    expect(
+      JSON.parse(fs.readFileSync(oldPlan, "utf8")).allocations.every(
+        (a: { budgetFraction: number }) => a.budgetFraction === 0,
+      ),
+    ).toBe(true);
+  } else if (!["nonzero", "tampered", "wrong_account", "expired"].includes(variant)) {
+    expect(fs.readFileSync(oldPlan, "utf8")).toBe("old-plan-must-not-be-executed");
+  }
   expect(financeResearchPreflightRetryDue(state, new Date("2026-09-29T19:45:00.000Z"))).toBe(
     variant !== "valid",
   );
 });
 
-it("consumes the indexed latest day archive under the writer host root, including a legitimate 5MB receipt", () => {
-  const workspace = path.join(directory, "workspace");
-  vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
-  const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-03");
-  fs.mkdirSync(archive, { recursive: true });
-  const filename = path.join(archive, "2026-10-03T01-00-00-000Z__finance-research-run.json");
-  const scope = {
-    accountId: "account-a",
-    venue: "alpaca",
-    activeStrategyIds: ["trend"],
-    requiredInstruments: ["SPY"],
-  };
-  const sourceAt = "2026-10-03T01:00:00.000Z";
-  const receipt = {
-    plan: { asOf: sourceAt, ask: "profit objective", portfolioContext: scope },
-    moduleExecution: { nodes: [], replanFeedback: { status: "completed", nextAction: "none" } },
-    gates: [{ id: "quality", passed: false, reason: "fees_unknown" }],
-    padding: "x".repeat(5_000_000),
-  };
-  const bytes = JSON.stringify(receipt) + "\n";
-  fs.writeFileSync(filename, bytes);
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const day = {
-    runId: "day-feedback",
-    mode: "day",
-    firedAt: sourceAt,
-    researchPlanRefresh: {
-      processResult: { stdout: JSON.stringify({ written: { datedPath: filename, sha256 } }) },
-    },
-  };
-  commitFinanceSchedulerDatabaseState(directory, "{}", [
-    day,
-    { runId: "night-later", mode: "night", firedAt: "2026-10-03T22:00:00Z" },
-  ]);
-  const request = {
-    directory,
-    asOf: "2026-10-04T01:00:00Z",
-    ask: "profit objective",
-    portfolioContext: scope,
-    signal: new AbortController().signal,
-  };
-  expect(readFinanceScheduledResearchFeedback(request)).toMatchObject({
-    status: "present",
-    replanStatus: "completed",
-    nextAction: "none",
-    failedGates: [{ id: "quality", reason: "fees_unknown" }],
-    sourceSha256: sha256,
-  });
-  expect(
-    readFinanceScheduledResearchFeedback({
-      ...request,
-      portfolioContext: { ...scope, accountId: "account-b" },
-    }),
-  ).toMatchObject({ status: "omitted", reason: "prior_receipt_task_or_portfolio_scope_mismatch" });
-  expect(
-    readFinanceScheduledResearchFeedback({ ...request, asOf: "2026-10-10T00:00:00Z" }),
-  ).toMatchObject({ status: "omitted", reason: "prior_receipt_time_mismatch_or_stale" });
-  fs.appendFileSync(filename, " ");
-  expect(readFinanceScheduledResearchFeedback(request)).toMatchObject({
-    status: "omitted",
-    reason: "prior_receipt_hash_mismatch",
-  });
-  const abort = new AbortController();
-  abort.abort();
-  expect(() =>
-    readFinanceScheduledResearchFeedback({ ...request, signal: abort.signal }),
-  ).toThrow();
-});
+it.each(["", "__12345678-1234-4567-8123-123456789abc"])(
+  "consumes the indexed latest day archive under the writer host root, including a legitimate 5MB receipt %s",
+  (suffix) => {
+    const workspace = path.join(directory, "workspace");
+    vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
+    const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-03");
+    fs.mkdirSync(archive, { recursive: true });
+    const filename = path.join(
+      archive,
+      `2026-10-03T01-00-00-000Z${suffix}__finance-research-run.json`,
+    );
+    const scope = {
+      accountId: "account-a",
+      venue: "alpaca",
+      activeStrategyIds: ["trend"],
+      requiredInstruments: ["SPY"],
+    };
+    const sourceAt = "2026-10-03T01:00:00.000Z";
+    const receipt = {
+      plan: { asOf: sourceAt, ask: "profit objective", portfolioContext: scope },
+      moduleExecution: { nodes: [], replanFeedback: { status: "completed", nextAction: "none" } },
+      gates: [{ id: "quality", passed: false, reason: "fees_unknown" }],
+      padding: "x".repeat(5_000_000),
+    };
+    const bytes = JSON.stringify(receipt) + "\n";
+    fs.writeFileSync(filename, bytes);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const day = {
+      runId: "day-feedback",
+      mode: "day",
+      firedAt: sourceAt,
+      researchPlanRefresh: {
+        processResult: { stdout: JSON.stringify({ written: { datedPath: filename, sha256 } }) },
+      },
+    };
+    commitFinanceSchedulerDatabaseState(directory, "{}", [
+      day,
+      { runId: "night-later", mode: "night", firedAt: "2026-10-03T22:00:00Z" },
+    ]);
+    const request = {
+      directory,
+      asOf: "2026-10-04T01:00:00Z",
+      ask: "profit objective",
+      portfolioContext: scope,
+      signal: new AbortController().signal,
+    };
+    expect(readFinanceScheduledResearchFeedback(request)).toMatchObject({
+      status: "present",
+      replanStatus: "completed",
+      nextAction: "none",
+      failedGates: [{ id: "quality", reason: "fees_unknown" }],
+      sourceSha256: sha256,
+    });
+    expect(
+      readFinanceScheduledResearchFeedback({
+        ...request,
+        portfolioContext: { ...scope, accountId: "account-b" },
+      }),
+    ).toMatchObject({
+      status: "omitted",
+      reason: "prior_receipt_task_or_portfolio_scope_mismatch",
+    });
+    expect(
+      readFinanceScheduledResearchFeedback({ ...request, asOf: "2026-10-10T00:00:00Z" }),
+    ).toMatchObject({ status: "omitted", reason: "prior_receipt_time_mismatch_or_stale" });
+    fs.appendFileSync(filename, " ");
+    expect(readFinanceScheduledResearchFeedback(request)).toMatchObject({
+      status: "omitted",
+      reason: "prior_receipt_hash_mismatch",
+    });
+    const abort = new AbortController();
+    abort.abort();
+    expect(() =>
+      readFinanceScheduledResearchFeedback({ ...request, signal: abort.signal }),
+    ).toThrow();
+  },
+);
 
 it.each(["absent", "present"] as const)(
   "passes original prior Quality failure through the actual next scheduled feedback file without trading (%s history)",
@@ -5770,5 +5853,113 @@ it("loads a newly identified method's native parameters into the original reside
       feed: "sip",
     }),
   ).rejects.toThrow("incompatible");
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});
+
+it.each([3, 100])(
+  "dispatches a due cycle between slow monitor operations and resumes deferred discovery (%s candidates)",
+  async (candidateCount) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T19:29:00.000Z"));
+    await activateIntradayRule();
+    const snapshot = {
+      generatedAt: "2026-09-22T19:00:00.000Z",
+      selected: [
+        "SPY",
+        ...Array.from({ length: candidateCount - 1 }, (_, index) => `SYMBOL${index}`),
+      ],
+    };
+    seedSelectedUniverse(snapshot);
+    mocks.readUniverse.mockImplementation(() =>
+      JSON.parse(
+        fs.readFileSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), "utf8"),
+      ),
+    );
+    const events: string[] = [];
+    mocks.runIntradayMonitorTick.mockImplementation(async ({ instrument }) => {
+      events.push(`monitor:${instrument}`);
+      if (events.length === 1) {
+        vi.setSystemTime(new Date("2026-09-22T19:30:01.000Z"));
+      }
+      return { status: "no_signal" };
+    });
+    mocks.runCycle.mockImplementation(async () => {
+      events.push("cycle");
+      return success;
+    });
+    mocks.delay
+      .mockImplementationOnce(async () => {})
+      .mockImplementationOnce(async () => {
+        emitSchedulerSignal("SIGTERM");
+      });
+    await expect(
+      runFinanceScheduler([
+        "--loop",
+        "--dir",
+        directory,
+        "--intraday-monitor",
+        "--no-source-heartbeat",
+      ]),
+    ).resolves.toBe(143);
+    expect(events.slice(0, 2)).toEqual(["monitor:SPY", "cycle"]);
+    expect(events.slice(2, 4)).toEqual(["monitor:SYMBOL0", "monitor:SYMBOL1"]);
+    expect(mocks.runCycle).toHaveBeenCalledOnce();
+    expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  },
+);
+
+it("recovers terminal universe failures before the completed session changes without a retry storm", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  // Friday's close remains the latest completed session at Monday's open.
+  vi.setSystemTime(new Date("2026-09-21T13:30:00.000Z"));
+  mocks.readUniverse.mockImplementation(() => {
+    throw new Error("snapshot unavailable");
+  });
+  fs.mkdirSync(path.join(directory, FINANCE_SCHEDULER_LOCK));
+  const filename = path.join(directory, "finance-universe-selection-runs.jsonl");
+  fs.appendFileSync(
+    filename,
+    JSON.stringify({
+      schemaVersion: "lcx_finance_universe_selection_attempt_v1",
+      runId: "friday-outage",
+      attemptedAt: "2026-09-18T21:00:00.000Z",
+      completedAt: "2026-09-18T21:01:00.000Z",
+      status: "failed",
+      processStatus: "failed",
+      exitCode: 1,
+    }) + "\n",
+  );
+  const context = {
+    root: { directory, source: "explicit" as const },
+    options: parseFinanceSchedulerArgs(["--loop", "--intraday-monitor", "--dir", directory]),
+    signal: new AbortController().signal,
+  };
+  mocks.runCycle.mockResolvedValueOnce({
+    ...success,
+    ok: false,
+    status: "failed",
+    exitCode: 1,
+    stdout: "",
+  });
+  expect(await recoverFinanceUniverseIfNeeded(context)).toMatchObject({ status: "failed" });
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  // Recreating the in-memory context must retain the original durable cooldown.
+  vi.setSystemTime(new Date("2026-09-21T14:29:59.000Z"));
+  expect(await recoverFinanceUniverseIfNeeded({ ...context })).toBeUndefined();
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
+  mocks.runCycle.mockImplementationOnce(async () => {
+    const snapshot = { generatedAt: new Date().toISOString(), selected: ["SPY"] };
+    writeUniverseSnapshot(snapshot);
+    mocks.readUniverse.mockReturnValue(snapshot);
+    return { ...success, stdout: JSON.stringify({ snapshotPersisted: true, ...snapshot }) };
+  });
+  expect(await recoverFinanceUniverseIfNeeded(context)).toMatchObject({
+    status: "selected",
+    selectedCount: 1,
+  });
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(await recoverFinanceUniverseIfNeeded({ ...context })).toBeUndefined();
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
   expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
 });

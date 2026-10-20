@@ -58,7 +58,7 @@ describe("platform-independent finance workflow tool", () => {
     let native: Awaited<ReturnType<typeof probeOriginalCaseflow>> | undefined;
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () => {
       if (native) {
-        throw new Error("Another research call is not justified by a Quality closure gap");
+        throw new Error("Another research call is not justified by a Quality contradiction");
       }
       native = await probeOriginalCaseflow({
         directory: root,
@@ -143,7 +143,7 @@ describe("platform-independent finance workflow tool", () => {
     });
     expect(Buffer.byteLength(JSON.stringify(feedback))).toBeLessThanOrEqual(2048);
     const gaps = feedback.qualityFeedback as string[];
-    const concrete = gaps.find((gap) => gap.includes("closure_missing_or_invalid"));
+    const concrete = gaps.find((gap) => gap.includes("offline_quality_contradiction"));
     expect(concrete).toBeDefined();
     const refs = feedback.qualityFeedbackRefs as { pointer: string; truncated: boolean }[];
     const stored = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
@@ -169,15 +169,17 @@ describe("platform-independent finance workflow tool", () => {
     expect(text.text.indexOf('"reviewFeedback"')).toBeLessThan(
       text.text.indexOf('"moduleCatalog"'),
     );
-    // Explicit offline consumer: a closure problem does not justify another research module call.
+    // Consume the native critical finding; repeated closure bookkeeping may be truncated.
     const nextDecision = {
       action: concrete ? "stop" : "diagnostic_unobserved",
       reason: concrete,
-      requiredRepair: "Repair the original Quality finding closure evidence before adoption.",
+      requiredRepair: "Resolve the original Quality contradiction before adoption.",
       sourceSha256: returned.reviewFeedback.sourceSha256,
     };
     expect(nextDecision.action).toBe("stop");
-    expect(nextDecision.reason).toContain("closure_missing_or_invalid");
+    expect(nextDecision.reason).toBe(
+      "offline_quality_contradiction: supplied evidence does not justify the draft",
+    );
     expect(nextDecision.sourceSha256).toBe(receiptSha256);
     expect(executeResearch).toHaveBeenCalledTimes(1);
     expect(network).not.toHaveBeenCalled();
