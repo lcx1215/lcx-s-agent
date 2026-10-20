@@ -53,6 +53,11 @@ describe("same-attempt original live research CLI -> scheduler -> original day c
         JSON.stringify({
           gates: result.cliOutput?.receipt.gates,
           gaps: result.cliOutput?.receipt.missingEvidence,
+          cliFailure: result.cliFailure?.slice(0, 2_000),
+          cliFailureCause: result.cliFailureCause?.slice(0, 2_000),
+          preparationPhase: result.preparationPhase,
+          sourceCalls: JSON.stringify(result.sourceCalls).slice(0, 3_000),
+          scheduler: JSON.stringify(result.result.nativeScheduler).slice(0, 3_000),
         }),
       ).toBe("candidate");
       expect(result.actualRunnerInputs).toHaveLength(1);
@@ -113,6 +118,7 @@ describe("same-attempt original live research CLI -> scheduler -> original day c
     "missing_evidence",
     "cross_account",
     "missing_source",
+    "source_timeout",
     "quality_failure",
     "run_timeout",
   ] as const)("retains original %s failure without day dispatch", async (fault) => {

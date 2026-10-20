@@ -30,8 +30,36 @@ const repoRoot = path.resolve(import.meta.dirname, "../..");
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
 /** Execute only the original join/recapture statement and its pure helpers; never import governance. */
-export async function probeOriginalCleanupGovernance(root: string, fault?: CleanupReviewFault) {
-  const fixture = await buildCleanupReviewProbe(root, fault, undefined, true);
+export async function probeOriginalCleanupGovernance(
+  root: string,
+  fault?: CleanupReviewFault,
+  signal?: AbortSignal,
+) {
+  const stages: { id: string; durationMs: number; status: string }[] = [];
+  const stage = async <T>(id: string, work: () => Promise<T>): Promise<T> => {
+    const started = performance.now();
+    try {
+      signal?.throwIfAborted();
+      const result = await work();
+      signal?.throwIfAborted();
+      stages.push({ id, durationMs: Math.round(performance.now() - started), status: "completed" });
+      return result;
+    } catch (error) {
+      stages.push({
+        id,
+        durationMs: Math.round(performance.now() - started),
+        status: signal?.aborted ? "aborted" : "failed",
+      });
+      // AbortSignal.timeout throws a DOMException with a read-only message.
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\nprivate_cleanup_stages=${JSON.stringify(stages)}`,
+        { cause: error },
+      );
+    }
+  };
+  const fixture = await stage("prepare_original_sources", () =>
+    buildCleanupReviewProbe(root, fault, undefined, true),
+  );
   const source = await fs.readFile(
     path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"),
     "utf8",
@@ -120,27 +148,37 @@ export async function probeOriginalCleanupGovernance(root: string, fault?: Clean
     run: Record<string, unknown>,
     payload: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>;
-  const response = await execute(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      "scripts/operator/lcx-change-impact-plan.ts",
-      "--json",
-      "--files",
-      "src/agents/central-harness/cleanup-review-handoff.ts",
-    ],
-    { cwd: repoRoot, timeout: 10_000, maxBuffer: 1024 * 1024 },
-  );
+  const response = await stage("original_change_impact_cli", async () => {
+    const pending = execute(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/lcx-change-impact-plan.ts",
+        "--json",
+        "--files",
+        "src/agents/central-harness/cleanup-review-handoff.ts",
+      ],
+      { cwd: repoRoot, timeout: 10_000, maxBuffer: 1024 * 1024, signal },
+    );
+    const closed = new Promise<void>((resolve) => pending.child.once("close", () => resolve()));
+    try {
+      return await pending;
+    } finally {
+      await closed;
+    }
+  });
   const payload = JSON.parse(response.stdout) as Record<string, unknown>;
-  const sourceRun = await capture(
-    makeRun(commands[0], payload, {
-      commandText: "offline original change-impact CLI",
-      exitCode: 0,
-      parentRunId: fixture.host.parentRunId,
-      snapshot: fixture.governance.snapshot,
-    }),
-    payload,
+  const sourceRun = await stage("capture_original_source", () =>
+    capture(
+      makeRun(commands[0], payload, {
+        commandText: "offline original change-impact CLI",
+        exitCode: 0,
+        parentRunId: fixture.host.parentRunId,
+        snapshot: fixture.governance.snapshot,
+      }),
+      payload,
+    ),
   );
   const directOwners = [
     ...fixture.governance.ownerCommands.map((row) => ({
@@ -156,7 +194,14 @@ export async function probeOriginalCleanupGovernance(root: string, fault?: Clean
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.None,
   });
-  await vm.compileFunction(joinCode, Object.keys(context))(...Object.values(context));
+  await stage(
+    "original_join_and_recapture",
+    () =>
+      vm.compileFunction(
+        joinCode,
+        Object.keys(context),
+      )(...Object.values(context)) as Promise<unknown>,
+  );
   const received = directOwners[directOwners.length - 1] as typeof sourceRun;
   const receivedPayload = received.payload as Record<string, unknown>;
   const review = receivedPayload.cleanupReview as {
@@ -239,6 +284,7 @@ export async function probeOriginalCleanupGovernance(root: string, fault?: Clean
   )!;
   return {
     fixture,
+    stages,
     originalSourceSha256: hash(source),
     sourceRun,
     received,

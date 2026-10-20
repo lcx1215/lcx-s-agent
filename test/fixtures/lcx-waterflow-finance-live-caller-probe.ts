@@ -481,8 +481,10 @@ export async function probeOriginalFinanceLiveCaller(params: {
         items[0].text = JSON.stringify(payload);
         await fs.writeFile(options.controllerEvidencePath!, JSON.stringify(items) + "\n");
       }
-      options.sourceTimeoutMs = 30;
-      options.totalTimeoutMs = 2_000;
+      // Only the deliberate source fault uses a fault-injection deadline. Normal
+      // handoff cases reserve source IO within the unchanged 10s whole-run budget.
+      options.sourceTimeoutMs = params.fault === "source_timeout" ? 30 : 3_000;
+      options.totalTimeoutMs = params.fault === "source_timeout" ? 2_000 : 6_000;
       options.runTimeoutMs = params.fault === "run_timeout" ? 2_000 : 10_000;
       try {
         const nativeProducer = await probeOriginalFinanceModuleMain({
