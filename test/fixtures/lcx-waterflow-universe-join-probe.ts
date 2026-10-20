@@ -91,7 +91,7 @@ export async function readUniverseSnapshotSources(
       indexed.push({ file, mode: "100644", objectId: "" });
     }
   }
-  return { indexed, sourceAreas };
+  return { indexed, sourceAreas, rootNames };
 }
 
 /** Native private owners and original join. Missing source is deliberately never replaced by a pass. */
@@ -305,7 +305,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   }
   // Import exact Git objects directly; untracked sources enter the same private
   // dirty-blob path as modified tracked files. The host index stays read-only.
-  const { indexed, sourceAreas } = await readUniverseSnapshotSources(
+  const { indexed, sourceAreas, rootNames } = await readUniverseSnapshotSources(
     sourceRoot,
     async (args) => (await execute("git", args, { cwd: sourceRoot })).stdout,
   );
