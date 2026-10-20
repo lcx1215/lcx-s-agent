@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiCallError } from "./api-call-contract.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { readFinanceFundamentalSnapshot } from "./finance-fundamental-store.js";
@@ -55,6 +55,42 @@ function adapter(
 }
 
 describe("finance provider heartbeat", () => {
+  it("pins a requested route before deduplicating its provider", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-pin-"));
+    roots.push(root);
+    const collect = vi.fn<FinanceRealtimeSourceAdapter["collect"]>(async (request) =>
+      observation(request),
+    );
+    const adapters = [adapter("rotate_a", collect), adapter("rotate_b", collect)];
+    const options = {
+      directory: root,
+      realtimeAdapters: adapters,
+      collectionAdapters: [],
+      adapterId: "rotate_b",
+    };
+    expect(planFinanceSourceHeartbeat(options).candidates.map((c) => c.adapterId)).toEqual([
+      "rotate_b",
+    ]);
+    const result = await runFinanceSourceHeartbeat({ ...options, force: true });
+    expect(result.state.records.rotate.adapterId).toBe("rotate_b");
+    expect(collect).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an unknown adapter before probing or creating state", async () => {
+    const collect = vi.fn<FinanceRealtimeSourceAdapter["collect"]>(async (request) =>
+      observation(request),
+    );
+    const options = {
+      realtimeAdapters: [adapter("rotate_a", collect)],
+      collectionAdapters: [],
+      adapterId: "unknown_route",
+      env: {},
+    };
+    expect(() => planFinanceSourceHeartbeat(options)).toThrow("unknown heartbeat adapter");
+    await expect(runFinanceSourceHeartbeat(options)).rejects.toThrow("unknown heartbeat adapter");
+    expect(collect).not.toHaveBeenCalled();
+  });
+
   it("rotates routes across runs without resetting each endpoint failure history", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-rotate-"));
     roots.push(root);
