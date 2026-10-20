@@ -127,7 +127,10 @@ export async function readSelfRepairCandidateReviewInput(options: {
       receipt.hands.patchCandidateBuilder.candidate,
     ],
   ] as const) {
-    const relativePath = path.relative(path.resolve(options.workspaceDir), path.resolve(filePath));
+    const relativePath = path
+      .relative(path.resolve(options.workspaceDir), path.resolve(filePath))
+      .split(path.sep)
+      .join("/");
     if (!new RegExp(`^memory/self-repair/${role}/[^/]+\\.(md|json)$`, "u").test(relativePath)) {
       throw new Error("self_repair_review_candidate_path_invalid");
     }

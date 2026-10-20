@@ -44,7 +44,7 @@ export function installServeLocalCron(params: {
     // Cron jobs with wakeMode="next-heartbeat" enqueue a wake request. The
     // Gateway normally owns the consumer, so daemon-free serve must own one too.
     try {
-      heartbeatRunner = startHeartbeatRunner({ cfg });
+      heartbeatRunner = startHeartbeatRunner({ cfg, mode: "wake-only" });
     } catch {
       // Heartbeats are optional for serve. Keep cron and agent requests alive,
       // but make the missing consumer explicit instead of claiming it works.

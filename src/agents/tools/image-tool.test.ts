@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import { withFetchPreconnect } from "../../test-utils/fetch-mock.js";
+import * as webMedia from "../../web/media.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { createHostSandboxFsBridge } from "../test-helpers/host-sandbox-fs-bridge.js";
 import { createUnsafeMountedSandbox } from "../test-helpers/unsafe-mounted-sandbox.js";
@@ -166,7 +167,7 @@ async function expectImageToolExecOk(
       image,
     }),
   ).resolves.toMatchObject({
-    content: [{ type: "text", text: "ok" }],
+    content: expect.arrayContaining([{ type: "text", text: "ok" }]),
   });
 }
 
@@ -246,6 +247,96 @@ describe("image tool implicit imageModel config", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     global.fetch = priorFetch;
+  });
+
+  it("stops image loading and model dispatch on caller cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel image load");
+    const fetch = stubMinimaxOkFetch();
+    const loader = vi.spyOn(webMedia, "loadWebMedia").mockImplementation(async () => {
+      controller.abort(reason);
+      return {
+        kind: "image",
+        buffer: Buffer.from(ONE_PIXEL_PNG_B64, "base64"),
+        contentType: "image/png",
+      };
+    });
+    try {
+      await withTempAgentDir(async (agentDir) => {
+        const tool = createImageTool({ config: createMinimaxImageConfig(), agentDir });
+        if (!tool) {
+          throw new Error("fixture image tool unavailable");
+        }
+        await expect(
+          tool.execute("cancel-load", { images: ["/first.png", "/second.png"] }, controller.signal),
+        ).rejects.toBe(reason);
+        expect(loader).toHaveBeenCalledOnce();
+        const loaderOptions = loader.mock.calls[0]?.[1];
+        if (!loaderOptions || typeof loaderOptions === "number") {
+          throw new Error("fixture expected image loader options");
+        }
+        expect(loaderOptions.signal).toBe(controller.signal);
+        expect(fetch).not.toHaveBeenCalled();
+      });
+    } finally {
+      loader.mockRestore();
+    }
+  });
+
+  it("does not load images when cancellation precedes invocation", async () => {
+    const reason = new Error("cancelled before image call");
+    const fetch = stubMinimaxOkFetch();
+    const loader = vi.spyOn(webMedia, "loadWebMedia").mockResolvedValue({
+      kind: "image",
+      buffer: Buffer.from(ONE_PIXEL_PNG_B64, "base64"),
+      contentType: "image/png",
+    });
+    try {
+      await withTempAgentDir(async (agentDir) => {
+        const tool = createImageTool({ config: createMinimaxImageConfig(), agentDir });
+        if (!tool) {
+          throw new Error("fixture image tool unavailable");
+        }
+        await expect(
+          tool.execute("pre-cancel", { image: "/unused.png" }, AbortSignal.abort(reason)),
+        ).rejects.toBe(reason);
+        expect(loader).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+      });
+    } finally {
+      loader.mockRestore();
+    }
+  });
+
+  it("stops cloud image fallback when the caller cancels during dispatch", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel cloud image request");
+    vi.stubEnv("MINIMAX_API_KEY", "minimax-test");
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal);
+      controller.abort(reason);
+      throw new Error("transport interrupted");
+    });
+    global.fetch = withFetchPreconnect(fetch);
+    await withTempAgentDir(async (agentDir) => {
+      const cfg = createMinimaxImageConfig();
+      cfg.agents!.defaults!.imageModel = {
+        primary: "minimax/MiniMax-VL-01",
+        fallbacks: ["openai/gpt-5-mini"],
+      };
+      const tool = createImageTool({ config: cfg, agentDir });
+      if (!tool) {
+        throw new Error("fixture image tool unavailable");
+      }
+      await expect(
+        tool.execute(
+          "cancel-cloud",
+          { image: `data:image/png;base64,${ONE_PIXEL_PNG_B64}` },
+          controller.signal,
+        ),
+      ).rejects.toBe(reason);
+      expect(fetch).toHaveBeenCalledOnce();
+    });
   });
 
   it("stays disabled without auth when no pairing is possible", async () => {

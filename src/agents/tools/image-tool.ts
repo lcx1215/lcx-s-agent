@@ -232,14 +232,20 @@ async function runImagePrompt(params: {
 }> {
   const effectiveCfg = applyImageModelConfigDefaults(params.cfg, params.imageModelConfig);
 
+  params.signal?.throwIfAborted();
   await ensureOpenClawModelsJson(effectiveCfg, params.agentDir);
+  params.signal?.throwIfAborted();
   const authStorage = discoverAuthStorage(params.agentDir);
   const modelRegistry = discoverModels(authStorage, params.agentDir);
 
   const result = await runWithImageModelFallback({
     cfg: effectiveCfg,
     modelOverride: params.modelOverride,
+    onError: () => {
+      params.signal?.throwIfAborted();
+    },
     run: async (provider, modelId) => {
+      params.signal?.throwIfAborted();
       if (isLocalVisionModelRef(`${provider}/${modelId}`)) {
         const localResult = await runLocalVisionVlm({
           images: params.images,
@@ -247,6 +253,7 @@ async function runImagePrompt(params: {
           modelId,
           signal: params.signal,
         });
+        params.signal?.throwIfAborted();
         return {
           text: localResult.text,
           provider: "mlx-vlm",
@@ -264,6 +271,7 @@ async function runImagePrompt(params: {
         authStorage,
       });
 
+      params.signal?.throwIfAborted();
       // MiniMax VLM only supports a single image; use the first one.
       if (model.provider === "minimax") {
         const first = params.images[0];
@@ -273,7 +281,9 @@ async function runImagePrompt(params: {
           prompt: params.prompt,
           imageDataUrl,
           modelBaseUrl: model.baseUrl,
+          signal: params.signal,
         });
+        params.signal?.throwIfAborted();
         return { text, provider: model.provider, model: model.id };
       }
 
@@ -281,7 +291,9 @@ async function runImagePrompt(params: {
       const message = await complete(model, context, {
         apiKey,
         maxTokens: resolveImageToolMaxTokens(model.maxTokens),
+        signal: params.signal,
       });
+      params.signal?.throwIfAborted();
       const text = coerceImageAssistantText({
         message,
         provider: model.provider,
@@ -355,6 +367,7 @@ export function createImageTool(options?: {
       maxImages: Type.Optional(Type.Number()),
     }),
     execute: async (_toolCallId, args, signal) => {
+      signal?.throwIfAborted();
       const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
 
       // MARK: - Normalize image + images input and dedupe while preserving order
@@ -426,6 +439,7 @@ export function createImageTool(options?: {
       }> = [];
 
       for (const imageRawInput of imageInputs) {
+        signal?.throwIfAborted();
         const trimmed = imageRawInput.trim();
         const imageRaw = trimmed.startsWith("@") ? trimmed.slice(1).trim() : trimmed;
         if (!imageRaw) {
@@ -490,13 +504,16 @@ export function createImageTool(options?: {
           : sandboxConfig
             ? await loadWebMedia(resolvedPath ?? resolvedImage, {
                 maxBytes,
+                signal,
                 sandboxValidated: true,
                 readFile: createSandboxBridgeReadFile({ sandbox: sandboxConfig }),
               })
             : await loadWebMedia(resolvedPath ?? resolvedImage, {
                 maxBytes,
                 localRoots,
+                signal,
               });
+        signal?.throwIfAborted();
         if (media.kind !== "image") {
           throw new Error(`Unsupported media type: ${media.kind}`);
         }
@@ -517,6 +534,7 @@ export function createImageTool(options?: {
       }
 
       // MARK: - Run image prompt with all loaded images
+      signal?.throwIfAborted();
       const result = await runImagePrompt({
         cfg: options?.config,
         agentDir,
@@ -527,6 +545,7 @@ export function createImageTool(options?: {
         signal,
       });
 
+      signal?.throwIfAborted();
       const imageDetails =
         loadedImages.length === 1
           ? {

@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
 import { QUALITY_HARNESS_STAGES } from "../src/agents/quality-harness.js";
+import { readSelfRepairCandidateReviewInput } from "../src/agents/self-repair-candidate-review.js";
 import {
   probeOriginalSelfRepairContentReview,
   type SelfRepairContentReviewFault,
@@ -90,6 +93,59 @@ describe("actual self-repair candidate content -> original quality owner -> boun
       semanticTruth: "not_proven",
     });
   });
+
+  it("checks the original candidate path guard with native Windows semantics", async () => {
+    const source = await fs.readFile(
+      new URL("../src/agents/self-repair-candidate-review.ts", import.meta.url),
+      "utf8",
+    );
+    const first = source.indexOf("const relativePath =");
+    const last = source.indexOf("const text = await read(relativePath)", first);
+    expect(first).toBeGreaterThan(0);
+    expect(last).toBeGreaterThan(first);
+    const originalGuard = source.slice(first, last);
+    const workspaceDir = String.raw`C:\work\lcx`;
+    const role = "correction-downrank";
+    const evaluate = (filePath: string) =>
+      vm.runInNewContext(`${originalGuard}; relativePath`, {
+        path: path.win32,
+        options: { workspaceDir },
+        filePath,
+        role,
+      }) as string;
+    expect(evaluate(path.win32.join(workspaceDir, "memory", "self-repair", role, "a.md"))).toBe(
+      "memory/self-repair/correction-downrank/a.md",
+    );
+    expect(() => evaluate(String.raw`C:\outside\a.md`)).toThrow(
+      "self_repair_review_candidate_path_invalid",
+    );
+    expect(() =>
+      evaluate(path.win32.join(workspaceDir, "memory", "self-repair", role, "nested", "a.md")),
+    ).toThrow("self_repair_review_candidate_path_invalid");
+  });
+
+  it.skipIf(path.sep === "\\")(
+    "rejects a POSIX literal backslash candidate without redirecting its declared path",
+    async () => {
+      const result = await probe("literal-backslash-path");
+      const workspaceDir = path.dirname(path.dirname(result.produced.sourcePath));
+      const receipt = JSON.parse(result.produced.receiptBytes) as typeof result.produced.writer;
+      receipt.hands.memoryCleaner.path = path.join(
+        workspaceDir,
+        `memory\\self-repair\\correction-downrank\\${path.basename(result.produced.writer.hands.memoryCleaner.path)}`,
+      );
+      const body = JSON.stringify(receipt) + "\n";
+      const relativePath = "state/literal-backslash-receipt.json";
+      await fs.writeFile(path.join(workspaceDir, relativePath), body);
+      await expect(
+        readSelfRepairCandidateReviewInput({
+          workspaceDir,
+          receipt: { path: relativePath, sha256: createHash("sha256").update(body).digest("hex") },
+          scope: result.produced.scope,
+        }),
+      ).rejects.toThrow("self_repair_review_candidate_path_invalid");
+    },
+  );
 
   it.each(["source_missing", "source_hash", "receipt_hash", "body_mismatch", "scope"] as const)(
     "rejects actual %s input before model review",

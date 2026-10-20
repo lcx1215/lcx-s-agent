@@ -18,7 +18,7 @@ import {
 } from "../auto-reply/heartbeat.js";
 import { getReplyFromConfig } from "../auto-reply/reply.js";
 import { HEARTBEAT_TOKEN } from "../auto-reply/tokens.js";
-import type { ReplyPayload } from "../auto-reply/types.js";
+import type { GetReplyOptions, ReplyPayload } from "../auto-reply/types.js";
 import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { ChannelHeartbeatDeps } from "../channels/plugins/types.js";
 import { parseDurationMs } from "../cli/parse-duration.js";
@@ -594,6 +594,8 @@ export async function runHeartbeatOnce(opts: {
   sessionKey?: string;
   heartbeat?: HeartbeatConfig;
   reason?: string;
+  /** Entry-owned restriction; an internal wake must not inherit configured channel delivery. */
+  delivery?: "configured" | "none";
   deps?: HeartbeatDeps;
 }): Promise<HeartbeatRunResult> {
   const cfg = opts.cfg ?? loadConfig();
@@ -637,7 +639,11 @@ export async function runHeartbeatOnce(opts: {
   }
   const { entry, sessionKey, storePath } = preflight.session;
   const previousUpdatedAt = entry?.updatedAt;
-  const delivery = resolveHeartbeatDeliveryTarget({ cfg, entry, heartbeat });
+  const delivery = resolveHeartbeatDeliveryTarget({
+    cfg,
+    entry,
+    heartbeat: opts.delivery === "none" ? { ...heartbeat, target: "none" } : heartbeat,
+  });
   const heartbeatAccountId = heartbeat?.accountId?.trim();
   if (delivery.reason === "unknown-account") {
     log.warn("heartbeat: unknown accountId", {
@@ -745,14 +751,13 @@ export async function runHeartbeatOnce(opts: {
     const suppressToolErrorWarnings = heartbeat?.suppressToolErrorWarnings === true;
     const bootstrapContextMode: "lightweight" | undefined =
       heartbeat?.lightContext === true ? "lightweight" : undefined;
-    const replyOpts = heartbeatModelOverride
-      ? {
-          isHeartbeat: true,
-          heartbeatModelOverride,
-          suppressToolErrorWarnings,
-          bootstrapContextMode,
-        }
-      : { isHeartbeat: true, suppressToolErrorWarnings, bootstrapContextMode };
+    const replyOpts: GetReplyOptions = {
+      isHeartbeat: true,
+      ...(heartbeatModelOverride ? { heartbeatModelOverride } : {}),
+      suppressToolErrorWarnings,
+      bootstrapContextMode,
+      ...(opts.delivery === "none" ? { disableMessageTool: true } : {}),
+    };
     const replyResult = await getReplyFromConfig(ctx, replyOpts, cfg);
     const replyPayload = resolveHeartbeatReplyPayload(replyResult);
     const includeReasoning = heartbeat?.includeReasoning === true;
@@ -988,9 +993,12 @@ export function startHeartbeatRunner(opts: {
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   runOnce?: typeof runHeartbeatOnce;
+  /** Wake consumers reuse the original runner without interval or channel-send authority. */
+  mode?: "scheduled" | "wake-only";
 }): HeartbeatRunner {
   const runtime = opts.runtime ?? defaultRuntime;
   const runOnce = opts.runOnce ?? runHeartbeatOnce;
+  const wakeOnly = opts.mode === "wake-only";
   const state = {
     cfg: opts.cfg ?? loadConfig(),
     runtime,
@@ -1016,7 +1024,7 @@ export function startHeartbeatRunner(opts: {
   };
 
   const scheduleNext = () => {
-    if (state.stopped) {
+    if (state.stopped || wakeOnly) {
       return;
     }
     if (state.timer) {
@@ -1112,12 +1120,16 @@ export function startHeartbeatRunner(opts: {
     }
 
     const reason = params?.reason;
+    if (wakeOnly && reason === "interval") {
+      return { status: "skipped", reason: "interval-disabled" };
+    }
     const requestedAgentId = params?.agentId ? normalizeAgentId(params.agentId) : undefined;
     const requestedSessionKey = params?.sessionKey?.trim() || undefined;
     const isInterval = reason === "interval";
     const startedAt = Date.now();
     const now = startedAt;
     let ran = false;
+    let failureReason: string | undefined;
 
     if (requestedSessionKey || requestedAgentId) {
       const targetAgentId = requestedAgentId ?? resolveAgentIdFromSessionKey(requestedSessionKey);
@@ -1133,6 +1145,7 @@ export function startHeartbeatRunner(opts: {
           heartbeat: targetAgent.heartbeat,
           reason,
           sessionKey: requestedSessionKey,
+          ...(wakeOnly ? { delivery: "none" as const } : {}),
           deps: { runtime: state.runtime },
         });
         if (res.status !== "skipped" || res.reason !== "disabled") {
@@ -1151,7 +1164,8 @@ export function startHeartbeatRunner(opts: {
       }
     }
 
-    for (const agent of state.agents.values()) {
+    const agents = [...state.agents.values()];
+    for (const [index, agent] of agents.entries()) {
       if (isInterval && now < agent.nextDueMs) {
         continue;
       }
@@ -1163,6 +1177,7 @@ export function startHeartbeatRunner(opts: {
           agentId: agent.agentId,
           heartbeat: agent.heartbeat,
           reason,
+          ...(wakeOnly ? { delivery: "none" as const } : {}),
           deps: { runtime: state.runtime },
         });
       } catch (err) {
@@ -1170,23 +1185,42 @@ export function startHeartbeatRunner(opts: {
         // advance the timer and call scheduleNext so heartbeats keep firing.
         const errMsg = formatErrorMessage(err);
         log.error(`heartbeat runner: runOnce threw unexpectedly: ${errMsg}`, { error: errMsg });
+        failureReason ??= errMsg;
         advanceAgentSchedule(agent, now);
         continue;
       }
       if (res.status === "skipped" && res.reason === "requests-in-flight") {
         advanceAgentSchedule(agent, now);
         scheduleNext();
+        if (!isInterval && (ran || failureReason !== undefined)) {
+          // The original wake has already executed a prefix. Keep only unfinished
+          // targets in the original wake queue so a busy retry cannot replay it.
+          for (const pendingAgent of agents.slice(index)) {
+            requestHeartbeatNow({ reason, agentId: pendingAgent.agentId, coalesceMs: 1_000 });
+          }
+        }
+        if (failureReason !== undefined) {
+          return { status: "failed", reason: failureReason };
+        }
+        if (!isInterval && ran) {
+          return { status: "ran", durationMs: Date.now() - startedAt };
+        }
         return res;
       }
       if (res.status !== "skipped" || res.reason !== "disabled") {
         advanceAgentSchedule(agent, now);
       }
-      if (res.status === "ran") {
+      if (res.status === "failed") {
+        failureReason ??= res.reason;
+      } else if (res.status === "ran") {
         ran = true;
       }
     }
 
     scheduleNext();
+    if (failureReason !== undefined) {
+      return { status: "failed", reason: failureReason };
+    }
     if (ran) {
       return { status: "ran", durationMs: Date.now() - startedAt };
     }

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createOpenClawCodingTools } from "../../agents/pi-tools.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionStore, saveSessionStore } from "../../config/sessions.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
@@ -184,6 +185,31 @@ describe("runReplyAgent onAgentRunStart", () => {
       typingMode: "instant",
     });
   }
+
+  it.each([undefined, false, true])(
+    "applies the single-run message-tool restriction at actual tool construction (disabled=%s)",
+    async (disableMessageTool) => {
+      let toolNames: string[] = [];
+      runEmbeddedPiAgentMock.mockImplementationOnce(
+        async (
+          params: Parameters<typeof import("../../agents/pi-embedded.js").runEmbeddedPiAgent>[0],
+        ) => {
+          // Build the real tool surface without executing tools or a model transport.
+          toolNames = createOpenClawCodingTools({
+            config: params.config,
+            workspaceDir: os.tmpdir(),
+            messageProvider: params.messageProvider,
+            disableMessageTool: params.disableMessageTool,
+          }).map((tool) => tool.name);
+          return { payloads: [], meta: {} };
+        },
+      );
+      await createRun({ opts: { isHeartbeat: true, disableMessageTool } });
+      expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(1);
+      expect(toolNames).toContain("read");
+      expect(toolNames.includes("message")).toBe(disableMessageTool !== true);
+    },
+  );
 
   it.each(["anthropic", "claude-cli"] as const)(
     "commercial planning advisory reaches the actual %s model callback before generation",
