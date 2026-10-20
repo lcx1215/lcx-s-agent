@@ -7,9 +7,8 @@ import {
 import { readFinanceBrokerHistory } from "./finance-alpaca-history-sync.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { financeBrokerHistoryCoverage } from "./finance-history-sync-coverage.js";
 import { readFinancePositionRecords } from "./finance-position-ledger.js";
-
-type Fact = Readonly<{ stream: string; fact: Record<string, unknown> }>;
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
@@ -97,6 +96,8 @@ export type FinanceBrokerHistoryReconciliation = Readonly<{
   positionsReconciled: boolean;
   /** True when fills and filled-order coverage are complete, even if a fee needs later allocation. */
   positionBaselineUsable: boolean;
+  /** Sealed historical coverage, never a freshness claim about current broker holdings. */
+  historyCoverage?: Readonly<{ from: string; through: string; accountCreatedAt: string }>;
   feesInterpreted: boolean;
   brokerFillCount: number;
   brokerFeeCount: number;
@@ -223,10 +224,17 @@ function parseFee(fact: Record<string, unknown>): FinanceBrokerFeeObservation {
   const description = text(fact.description)?.toLowerCase() ?? "";
   const rawQuantity = number(fact.qty);
   const nonUsdCryptoFee =
-    activityType === "CFEE" && description.includes("non usd") && rawQuantity !== undefined;
+    activityType === "CFEE" &&
+    (description.includes("non usd") || (rawQuantity !== undefined && rawQuantity !== 0));
+  if (
+    (fact.qty !== undefined && rawQuantity === undefined) ||
+    (nonUsdCryptoFee && rawQuantity === undefined)
+  ) {
+    throw new Error("fee asset quantity unavailable");
+  }
   const rawAmount = number(fact.net_amount);
   const amount = nonUsdCryptoFee
-    ? Math.abs(rawQuantity)
+    ? Math.abs(rawQuantity!)
     : rawAmount === undefined
       ? undefined
       : Math.abs(rawAmount);
@@ -275,14 +283,6 @@ function receiptOrderIds(receipts: readonly FinanceExecutionReceipt[]): Set<stri
   );
 }
 
-function syncWasComplete(facts: readonly Fact[]): boolean {
-  const receipts = facts
-    .filter(({ stream }) => stream === "sync_receipt")
-    .map(({ fact }) => fact)
-    .filter((fact) => fact.status === "raw_history_synced");
-  return receipts.length > 0;
-}
-
 /**
  * Reconcile verified account-scoped Alpaca activities without turning them into execution
  * receipts. The projection is deliberately separate from the receipt chain: old fills have no
@@ -293,7 +293,7 @@ export async function reconcileFinanceBrokerHistory(
   accountId: string,
   /** Reuse only a matching observation from this caller's current read; never cache across runs. */
   observedHistory?: Awaited<ReturnType<typeof readFinanceBrokerHistory>>,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; requiredThrough?: string } = {},
 ): Promise<FinanceBrokerHistoryReconciliation> {
   options.signal?.throwIfAborted();
   if (
@@ -322,6 +322,7 @@ export async function reconcileFinanceBrokerHistory(
   const orders = raw.facts.filter(({ stream }) => stream === "orders");
   const fills: FinanceBrokerFillObservation[] = [];
   const fees: FinanceBrokerFeeObservation[] = [];
+  const feeCoverageTimes: string[] = [];
   let invalidFillCount = 0;
   let invalidFeeCount = 0;
   let invalidCorporateActionCount = 0;
@@ -335,7 +336,14 @@ export async function reconcileFinanceBrokerHistory(
       if (activityType === "FILL") {
         fills.push(parseFill(fact));
       } else if (activityType === "FEE" || activityType === "CFEE") {
-        fees.push(parseFee(fact));
+        const fee = parseFee(fact);
+        fees.push(fee);
+        // A native business date cannot prove occurrence before an intraday cutoff.
+        feeCoverageTimes.push(
+          fact.transaction_time === undefined && fact.created_at === undefined
+            ? `${String(fact.date)}T23:59:59.999Z`
+            : fee.occurredAt,
+        );
       } else if (activityType === "MA") {
         mergers.observe(fact, caseflowFingerprint(fact));
       }
@@ -570,7 +578,23 @@ export async function reconcileFinanceBrokerHistory(
   const orderAllocatedFeeCount = fees.filter(
     (fee) => fee.orderId !== undefined && appliedFeeIds.has(fee.activityId),
   ).length;
-  const complete = syncWasComplete(raw.facts);
+  const historyCoverage = financeBrokerHistoryCoverage(
+    raw.latestSyncReceipt,
+    accountId,
+    [
+      ...fills.map((fill) => fill.occurredAt),
+      ...feeCoverageTimes,
+      ...mergerEvents.map((event) => event.occurredAt ?? `${event.businessDate}T23:59:59.999Z`),
+      ...scopedReceipts.map((receipt) => receipt.fill.filledAt),
+    ],
+    options.requiredThrough,
+  );
+  const complete = historyCoverage !== undefined;
+  warnings.push(
+    historyCoverage
+      ? `Historical position coverage ends at ${historyCoverage.through}; current broker holdings require a fresh account reconciliation`
+      : "history_not_complete_from_account_inception_through_required_cutoff",
+  );
   const historyStatus =
     raw.observationCount === 0
       ? "missing"
@@ -585,6 +609,7 @@ export async function reconcileFinanceBrokerHistory(
   const positionsReconciled = historyStatus === "reconciled";
   const positionBaselineUsable =
     complete &&
+    invalidFeeCount === 0 &&
     invalidFillCount === 0 &&
     invalidCorporateActionCount === 0 &&
     ordersMissingFillActivityCount === 0;
@@ -609,6 +634,7 @@ export async function reconcileFinanceBrokerHistory(
     historyStatus,
     positionsReconciled,
     positionBaselineUsable,
+    ...(historyCoverage ? { historyCoverage: Object.freeze(historyCoverage) } : {}),
     feesInterpreted,
     brokerFillCount: fills.length,
     brokerFeeCount: fees.length,

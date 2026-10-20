@@ -1,9 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { reconcileFinanceBrokerHistory } from "./finance-alpaca-history-reconciliation.js";
 import {
   readFinanceBrokerHistory,
   syncConfiguredAlpacaPaperHistory,
@@ -40,7 +41,7 @@ function reply(value: unknown) {
 }
 describe("Alpaca raw history sync", () => {
   it.each(["late_response", "read_rejection"] as const)(
-    "stops cancelled history without writing a late page or sync receipt: %s",
+    "stops cancelled history without writing a late page or completed sync receipt: %s",
     async (mode) => {
       const controller = new AbortController();
       const cancelled = new Error("synthetic history cancellation");
@@ -61,15 +62,14 @@ describe("Alpaca raw history sync", () => {
         cancelled,
       );
       expect(requests).toEqual(["/v2/account", "/v2/orders"]);
-      expect(
-        (
-          await readFinanceBrokerHistoryRecords(
-            options.directory,
-            options.accountId,
-            "alpaca:paper",
-          )
-        ).records,
-      ).toEqual([]);
+      const history = await readFinanceBrokerHistoryRecords(
+        options.directory,
+        options.accountId,
+        "alpaca:paper",
+      );
+      expect(history.records).toHaveLength(1);
+      expect(history.records[0]?.body.query).toMatch(/^sync_receipt:/u);
+      expect(history.records[0]?.body.payload[0]?.status).toBe("incomplete");
     },
   );
 
@@ -98,12 +98,220 @@ describe("Alpaca raw history sync", () => {
       options.accountId,
       "alpaca:paper",
     );
-    expect(history.records).toHaveLength(1);
-    expect(history.records[0]?.body.payload).toEqual([
+    expect(history.records).toHaveLength(2);
+    expect(history.records[0]?.body.payload[0]?.status).toBe("incomplete");
+    expect(history.records[1]?.body.payload).toEqual([
       { id: "saved", submitted_at: "2025-01-02T00:00:00Z" },
     ]);
-    expect(history.records[0]?.body.query).toMatch(/^orders:/u);
+    expect(history.records[1]?.body.query).toMatch(/^orders:/u);
   });
+  it("retains narrow research facts but requires broker-observed inception for the baseline", async () => {
+    const options = await setup(async (raw) => {
+      const pathname = new URL(raw).pathname;
+      return reply(
+        pathname === "/v2/account"
+          ? { id: "synthetic-account", created_at: "2020-01-01T00:00:00Z" }
+          : pathname.endsWith("orders")
+            ? [
+                {
+                  id: "order",
+                  status: "filled",
+                  filled_qty: "1",
+                  submitted_at: "2025-01-02T15:00:00Z",
+                },
+              ]
+            : [
+                {
+                  id: "fill",
+                  activity_type: "FILL",
+                  type: "fill",
+                  order_id: "order",
+                  symbol: "SPY",
+                  side: "buy",
+                  qty: "1",
+                  price: "100",
+                  transaction_time: "2025-01-02T15:00:00Z",
+                },
+              ],
+      );
+    });
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+    const raw = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(raw.latestSyncReceipt?.accountCreatedAt).toBe("2020-01-01T00:00:00.000Z");
+    const narrow = await reconcileFinanceBrokerHistory(options.directory, options.accountId, raw);
+    expect(narrow.positionBaselineUsable).toBe(false);
+    expect(narrow.fills).toHaveLength(1);
+    await syncAlpacaPaperHistory({ ...options, after: "2020-01-01T00:00:00Z" });
+    expect(
+      (await reconcileFinanceBrokerHistory(options.directory, options.accountId))
+        .positionBaselineUsable,
+    ).toBe(true);
+  });
+
+  it("ignores abandoned legacy JSON locks and releases the OS lock after exceptions", async () => {
+    const options = await setup(async (raw) =>
+      reply(new URL(raw).pathname === "/v2/account" ? { id: "synthetic-account" } : []),
+    );
+    await fs.writeFile(path.join(options.directory, "alpaca-history-sync.lock"), "{partial");
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+    await expect(
+      syncAlpacaPaperHistory({
+        ...options,
+        read: async () => {
+          throw new Error("synthetic failure");
+        },
+      }),
+    ).rejects.toThrow("synthetic failure");
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+  });
+
+  it("excludes a separate live process and recovers automatically after it is killed", async () => {
+    const options = await setup(async (raw) =>
+      reply(new URL(raw).pathname === "/v2/account" ? { id: "synthetic-account" } : []),
+    );
+    const source = pathToFileURL(
+      path.resolve(import.meta.dirname, "finance-alpaca-history-sync.ts"),
+    ).href;
+    const code = `const {syncAlpacaPaperHistory}=await import(${JSON.stringify(source)}); await syncAlpacaPaperHistory({ directory:${JSON.stringify(options.directory)}, accountId:"synthetic-account", after:"2025-01-01T00:00:00Z", until:"2025-02-01T00:00:00Z", credentials:{keyId:"fake",secretKey:"fake"}, read:async(url)=>{if(new URL(url).pathname==="/v2/account")return{status:200,body:JSON.stringify({id:"synthetic-account"})}; process.stdout.write("LOCKED\\n"); await new Promise(()=>{setInterval(()=>{},1000)}); }});`;
+    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("synthetic child did not acquire lock")),
+          15000,
+        );
+        child.stdout.on("data", (chunk) => {
+          if (String(chunk).includes("LOCKED")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.once("exit", () => {
+          clearTimeout(timer);
+          reject(new Error("synthetic child exited before lock proof"));
+        });
+      });
+      await fs.utimes(
+        path.join(options.directory, "alpaca-history-sync.sqlite"),
+        new Date(0),
+        new Date(0),
+      );
+      expect(
+        (await readFinanceBrokerHistory(options.directory, options.accountId)).latestSyncReceipt
+          ?.status,
+      ).toBe("incomplete");
+      let calls = 0;
+      await expect(
+        syncAlpacaPaperHistory({
+          ...options,
+          read: async () => {
+            calls++;
+            return reply([]);
+          },
+        }),
+      ).rejects.toThrow(/locked|busy/);
+      expect(calls).toBe(0);
+    } finally {
+      child.kill("SIGKILL");
+      await exited;
+    }
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+  });
+
+  it("rejects overlapping syncs through directory aliases before a second transport runs", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pause = true;
+    const options = await setup(async (raw) => {
+      if (new URL(raw).pathname === "/v2/account") {
+        return reply({ id: "synthetic-account" });
+      }
+      if (pause) {
+        pause = false;
+        entered();
+        await waiting;
+      }
+      return reply([]);
+    });
+    const first = syncAlpacaPaperHistory(options);
+    await started;
+    let unexpectedReads = 0;
+    try {
+      await expect(
+        syncAlpacaPaperHistory({
+          ...options,
+          directory: path.join(options.directory, "."),
+          read: async () => {
+            unexpectedReads++;
+            return reply([]);
+          },
+        }),
+      ).rejects.toThrow("history sync already in progress");
+      expect(unexpectedReads).toBe(0);
+    } finally {
+      release();
+    }
+    expect((await first).status).toBe("raw_history_synced");
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+  });
+
+  it("tracks same-window attempts and invalidates completion before cancelled pages", async () => {
+    let fail = false;
+    let cancel: AbortController | undefined;
+    const options = await setup(async (raw) => {
+      const pathname = new URL(raw).pathname;
+      if (pathname === "/v2/account") {
+        return reply({ id: "synthetic-account" });
+      }
+      if (fail) {
+        throw new Error("synthetic incomplete page");
+      }
+      if (pathname.endsWith("activities") && cancel) {
+        cancel.abort();
+        cancel.signal.throwIfAborted();
+      }
+      return reply(
+        pathname.endsWith("orders") ? [{ id: "saved", submitted_at: "2025-01-02T00:00:00Z" }] : [],
+      );
+    });
+    const ids = new Set<string>();
+    for (const incomplete of [false, true, false, true]) {
+      fail = incomplete;
+      const result = await syncAlpacaPaperHistory(options);
+      ids.add(result.syncId);
+      const read = await readFinanceBrokerHistory(options.directory, options.accountId, {
+        streams: [],
+      });
+      expect(read.facts).toEqual([]);
+      expect(read.latestSyncReceipt).toMatchObject({
+        syncId: result.syncId,
+        status: incomplete ? "incomplete" : "raw_history_synced",
+      });
+    }
+    expect(ids.size).toBe(4);
+    fail = false;
+    await syncAlpacaPaperHistory(options);
+    cancel = new AbortController();
+    await expect(syncAlpacaPaperHistory({ ...options, signal: cancel.signal })).rejects.toThrow();
+    expect(
+      (await readFinanceBrokerHistory(options.directory, options.accountId)).latestSyncReceipt
+        ?.status,
+    ).toBe("incomplete");
+  });
+
   it("retains only requested streams while reporting all unique observations and stale revisions", async () => {
     const { directory, accountId } = await setup(async () => reply([]));
     const append = (query: string, payload: Record<string, unknown>[]) =>
@@ -178,9 +386,12 @@ describe("Alpaca raw history sync", () => {
     expect(orders.find(({ fact }) => fact.id === "stop-0")?.fact.status).toBe("held");
     expect((await readFinancePositionRecords(options.directory)).receipts).toHaveLength(0);
     await syncAlpacaPaperHistory(options);
-    expect((await readFinanceBrokerHistory(options.directory, options.accountId)).facts).toEqual(
-      history.facts,
+    const retried = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(retried.facts.filter(({ stream }) => stream !== "sync_receipt")).toEqual(
+      history.facts.filter(({ stream }) => stream !== "sync_receipt"),
     );
+    expect(retried.latestSyncReceipt?.status).toBe("raw_history_synced");
+    expect(retried.latestSyncReceipt?.syncId).not.toBe(history.latestSyncReceipt?.syncId);
   });
 
   it.each([{ legs: [null] }, { legs: [{ type: "stop" }] }, { legs: "invalid" }])(
@@ -368,7 +579,7 @@ describe("Alpaca raw history sync", () => {
       const target = path.resolve(sourceDir, relative.replace(/\.js$/, ".ts"));
       return `from "${pathToFileURL(target).href}"`;
     });
-    const legacyPath = path.join(options.directory, "legacy-ledger.ts");
+    const legacyPath = path.join(options.directory, "legacy-ledger.mts");
     await fs.writeFile(legacyPath, relocated);
     // Bare package resolution still comes from the existing installation, no install.
     await fs.symlink(
@@ -500,7 +711,11 @@ describe("Alpaca raw history sync", () => {
   it("does not write for another account; malformed endpoint data is incomplete", async () => {
     const wrong = await setup(async () => reply({ id: "other" }));
     await expect(syncAlpacaPaperHistory(wrong)).rejects.toThrow("identity mismatch");
-    expect(await fs.readdir(wrong.directory)).toEqual([]);
+    // The coordination database contains no broker observations.
+    expect(
+      (await readFinanceBrokerHistoryRecords(wrong.directory, wrong.accountId, "alpaca:paper"))
+        .records,
+    ).toEqual([]);
     const malformed = await setup(async (url) =>
       url.endsWith("/account") ? reply({ id: "synthetic-account" }) : reply({ unsupported: true }),
     );

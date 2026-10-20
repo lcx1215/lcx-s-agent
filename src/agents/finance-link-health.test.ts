@@ -366,7 +366,16 @@ it("uses a reconciled broker-history baseline while keeping receipt coverage exp
     venue: "alpaca:paper",
     query: "sync_receipt:window",
     cursor: "",
-    payload: [{ status: "raw_history_synced" }],
+    payload: [
+      {
+        accountId: "account-a",
+        venue: "alpaca:paper",
+        status: "raw_history_synced",
+        accountCreatedAt: "2025-01-01T00:00:00Z",
+        after: "2025-01-01T00:00:00Z",
+        until: "2026-09-21T00:00:00Z",
+      },
+    ],
   });
   const report = await readFinanceLinkHealth({
     directory: dir,

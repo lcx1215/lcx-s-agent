@@ -12,6 +12,14 @@ import {
 import { createFinancePositionLedgerReadTool } from "./tools/finance-position-ledger-read-tool.js";
 
 const directories: string[] = [];
+const completeReceipt = (accountId: string) => ({
+  accountId,
+  venue: "alpaca:paper",
+  status: "raw_history_synced",
+  accountCreatedAt: "2025-01-01T00:00:00Z",
+  after: "2025-01-01T00:00:00Z",
+  until: "2025-02-01T00:00:00Z",
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -40,6 +48,107 @@ describe("Alpaca broker history reconciliation", () => {
       reconcileFinanceBrokerHistory(directory, accountId, { ...raw, streamScope: ["orders"] }),
     ).rejects.toThrow("requires orders, activities and sync receipts");
   });
+  it("never lets an older complete receipt rescue the latest incomplete or malformed attempt", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "broker-latest-sync-"));
+    directories.push(directory);
+    const accountId = "selected";
+    const append = (query: string, payload: Record<string, unknown>[]) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload,
+      });
+    await append("activities:window", [
+      {
+        id: "fill",
+        activity_type: "FILL",
+        type: "fill",
+        order_id: "order",
+        symbol: "SPY",
+        side: "buy",
+        qty: "1",
+        price: "100",
+        transaction_time: "2025-01-02T15:00:00Z",
+      },
+    ]);
+    await append("sync_receipt:old-window", [completeReceipt(accountId)]);
+    expect((await reconcileFinanceBrokerHistory(directory, accountId)).historyStatus).toBe(
+      "reconciled",
+    );
+    for (const [query, payload] of [
+      ["sync_receipt:new-window", [{ status: "incomplete" }]],
+      ["sync_receipt:malformed", [{}]],
+      ["sync_receipt:empty", []],
+      ["sync_receipt:ambiguous", [{ status: "raw_history_synced" }, { status: "incomplete" }]],
+    ] as const) {
+      await append(query, [...payload]);
+      const read = await readFinanceBrokerHistory(directory, accountId);
+      expect((await reconcileFinanceBrokerHistory(directory, accountId, read)).historyStatus).toBe(
+        "incomplete",
+      );
+    }
+    const read = await readFinanceBrokerHistory(directory, accountId);
+    expect(
+      (
+        await reconcileFinanceBrokerHistory(directory, accountId, {
+          ...read,
+          latestSyncReceipt: null,
+        })
+      ).historyStatus,
+    ).toBe("incomplete");
+  });
+
+  it("does not assign a date-only asset fee to an unproven intraday cutoff", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "broker-fee-cutoff-"));
+    directories.push(directory);
+    const accountId = "fee-cutoff";
+    const append = (query: string, payload: Record<string, unknown>[]) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload,
+      });
+    await append("activities:window", [
+      {
+        id: "buy",
+        activity_type: "FILL",
+        type: "fill",
+        order_id: "order",
+        symbol: "BTCUSD",
+        side: "buy",
+        qty: "1",
+        price: "100",
+        transaction_time: "2025-01-02T15:00:00Z",
+      },
+      {
+        id: "fee",
+        activity_type: "CFEE",
+        symbol: "BTCUSD",
+        asset: "BTC",
+        net_amount: "-0.001",
+        date: "2025-01-03",
+      },
+    ]);
+    await append("sync_receipt:noon", [
+      { ...completeReceipt(accountId), until: "2025-01-03T12:00:00Z" },
+    ]);
+    const held = await reconcileFinanceBrokerHistory(directory, accountId);
+    expect(held.positionBaselineUsable).toBe(false);
+    expect(held.fees).toHaveLength(1);
+    await append("sync_receipt:full-day", [
+      { ...completeReceipt(accountId), until: "2025-01-04T00:00:00Z" },
+    ]);
+    expect((await reconcileFinanceBrokerHistory(directory, accountId)).positionBaselineUsable).toBe(
+      true,
+    );
+  });
+
   it("projects old fills and fees without manufacturing execution receipts", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-history-reconcile-"));
     directories.push(directory);
@@ -120,7 +229,7 @@ describe("Alpaca broker history reconciliation", () => {
       venue: "alpaca:paper",
       query: "sync_receipt:window",
       cursor: "",
-      payload: [{ status: "raw_history_synced" }],
+      payload: [completeReceipt(accountId)],
     });
     await appendFinanceExecutionReceipt(directory, {
       schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
@@ -224,7 +333,7 @@ describe("Alpaca broker history reconciliation", () => {
       venue: "alpaca:paper",
       query: "sync_receipt:window",
       cursor: "",
-      payload: [{ status: "raw_history_synced" }],
+      payload: [completeReceipt("synthetic-account")],
     });
 
     const result = await reconcileFinanceBrokerHistory(directory, "synthetic-account");
@@ -284,7 +393,7 @@ describe("Alpaca broker history reconciliation", () => {
       venue: "alpaca:paper",
       query: "sync_receipt:window",
       cursor: "",
-      payload: [{ status: "raw_history_synced" }],
+      payload: [completeReceipt(accountId)],
     });
 
     const result = await reconcileFinanceBrokerHistory(directory, accountId);
@@ -339,7 +448,7 @@ describe("Alpaca broker history reconciliation", () => {
       venue: "alpaca:paper",
       query: "sync_receipt:window",
       cursor: "",
-      payload: [{ status: "raw_history_synced" }],
+      payload: [completeReceipt(accountId)],
     });
 
     const result = await reconcileFinanceBrokerHistory(directory, accountId);
@@ -422,7 +531,7 @@ describe("cash merger reaches original account book and result consumer", () => 
           ],
         ],
         ["activities:window", activities],
-        ["sync_receipt:window", [{ status: "raw_history_synced" }]],
+        ["sync_receipt:window", [completeReceipt(accountId)]],
       ] as const) {
         await appendFinanceBrokerHistory(directory, {
           kind: "broker_history",
