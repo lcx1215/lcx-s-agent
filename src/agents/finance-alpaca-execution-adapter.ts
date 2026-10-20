@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { brokerSymbol } from "./finance-broker-reconciliation.js";
 /**
  * Alpaca venue execution adapter.
  *
@@ -227,47 +228,44 @@ export function clientOrderIdentity(
     .slice(0, 40)}`;
 }
 
-function validateRecoveredOrder(
-  found: AlpacaOrderResponse,
-  intent: FinanceExecutionIntent,
-  clientOrderId: string,
-  timeInForce?: string,
-): void {
-  if (
-    found.client_order_id !== clientOrderId ||
-    found.symbol !== normalizeInstrument(intent.instrument) ||
-    found.side !== intent.side ||
-    Number(found.qty) !== intent.quantity ||
-    found.type !== intent.orderType ||
-    typeof found.time_in_force !== "string" ||
-    !["day", "gtc", "ioc", "fok"].includes(found.time_in_force) ||
-    (timeInForce !== undefined && found.time_in_force !== timeInForce) ||
-    (intent.side === "buy" &&
-      !normalizeInstrument(intent.instrument).includes("/") &&
-      intent.stopPrice !== undefined &&
-      (found.order_class !== "oto" ||
-        !Array.isArray(found.legs) ||
-        !found.legs.some(
-          (leg: unknown) =>
-            typeof leg === "object" &&
-            leg !== null &&
-            "stop_price" in leg &&
-            asFiniteNumber(leg.stop_price) === intent.stopPrice,
-        ))) ||
-    (intent.orderType === "limit" && Number(found.limit_price) !== intent.limitPrice) ||
-    typeof found.id !== "string" ||
-    !found.id
-  ) {
-    throw new Error("reconciled order does not match authorized intent");
+function matchesOrderInstrument(value: unknown, instrument: string): boolean {
+  const expected = normalizeInstrument(instrument);
+  if (!expected.includes("/")) {
+    return value === expected;
+  }
+  try {
+    return brokerSymbol(value) === expected;
+  } catch {
+    return false;
   }
 }
 
-function cryptoProtectionClientIdentity(
+function cryptoProtectionIdentity(
   mode: "paper" | "live",
   intent: FinanceExecutionIntent,
-  entryOrderId: string,
-): string {
-  return `lcx-${createHash("sha256")
+  entryFill: FinanceExecutionFill,
+) {
+  const entryOrderId = entryFill.terminalOrderIdentity?.orderId;
+  const { stopPrice, protectionLimitPrice } = intent;
+  if (
+    !normalizeInstrument(intent.instrument).includes("/") ||
+    intent.side !== "buy" ||
+    !entryOrderId ||
+    !Number.isFinite(entryFill.filledQuantity) ||
+    entryFill.filledQuantity <= 0 ||
+    stopPrice === undefined ||
+    !Number.isFinite(stopPrice) ||
+    stopPrice <= 0 ||
+    protectionLimitPrice === undefined ||
+    !Number.isFinite(protectionLimitPrice) ||
+    protectionLimitPrice <= 0 ||
+    protectionLimitPrice > stopPrice
+  ) {
+    throw new Error("crypto protection requires a confirmed entry and complete stop-limit intent");
+  }
+  // Preserve existing venue identity across restarts. Prices and filled size belong to
+  // the exact matcher below; changing them must never adopt an old incompatible stop.
+  const clientOrderId = `lcx-${createHash("sha256")
     .update(
       JSON.stringify([
         mode,
@@ -279,28 +277,122 @@ function cryptoProtectionClientIdentity(
     )
     .digest("hex")
     .slice(0, 40)}`;
+  return {
+    entryOrderId,
+    clientOrderId,
+    symbol: normalizeInstrument(intent.instrument),
+    quantity: entryFill.filledQuantity,
+    stopPrice,
+    limitPrice: protectionLimitPrice,
+  };
 }
 
 function matchesCryptoProtection(
   candidate: AlpacaOrderResponse,
-  intent: FinanceExecutionIntent,
-  clientOrderId: string,
-  quantity: number,
+  expected: ReturnType<typeof cryptoProtectionIdentity>,
 ): boolean {
   return (
-    Number.isFinite(intent.stopPrice) &&
-    Number.isFinite(intent.protectionLimitPrice) &&
-    candidate.client_order_id === clientOrderId &&
-    candidate.symbol === normalizeInstrument(intent.instrument) &&
+    candidate.client_order_id === expected.clientOrderId &&
+    matchesOrderInstrument(candidate.symbol, expected.symbol) &&
     candidate.side === "sell" &&
-    asFiniteNumber(candidate.qty) === quantity &&
+    asFiniteNumber(candidate.qty) === expected.quantity &&
     candidate.type === "stop_limit" &&
     candidate.time_in_force === "gtc" &&
-    asFiniteNumber(candidate.stop_price) === intent.stopPrice &&
-    asFiniteNumber(candidate.limit_price) === intent.protectionLimitPrice &&
+    asFiniteNumber(candidate.stop_price) === expected.stopPrice &&
+    asFiniteNumber(candidate.limit_price) === expected.limitPrice &&
     typeof candidate.id === "string" &&
-    candidate.id.length > 0
+    !!candidate.id.trim() &&
+    candidate.id !== expected.entryOrderId
   );
+}
+
+function cryptoProtectionEvidence(
+  candidate: AlpacaOrderResponse,
+  expected: ReturnType<typeof cryptoProtectionIdentity>,
+  mode: "paper" | "live",
+  requireObservedState: boolean,
+): FinanceExecutionProtection {
+  if (!matchesCryptoProtection(candidate, expected)) {
+    throw new Error("reconciled protective order does not match authorized intent");
+  }
+  const orderId = String(candidate.id);
+  const status = typeof candidate.status === "string" ? candidate.status : "";
+  if (requireObservedState) {
+    const filled = asFiniteNumber(candidate.filled_qty);
+    if (
+      candidate.order_class !== "simple" ||
+      filled === undefined ||
+      filled < 0 ||
+      filled > expected.quantity ||
+      (status === "new"
+        ? filled !== 0
+        : status === "partially_filled"
+          ? filled <= 0 || filled >= expected.quantity
+          : status === "filled"
+            ? filled !== expected.quantity
+            : true) ||
+      (filled > 0 && (asFiniteNumber(candidate.filled_avg_price) ?? 0) <= 0)
+    ) {
+      throw new Error("protective order state is not confirmed");
+    }
+    if (status === "filled") {
+      terminalFill(candidate, orderId, `alpaca:${mode}:${orderId}`, expected.quantity);
+    }
+  } else if (
+    !["new", "accepted", "pending_new", "partially_filled", "filled", "calculated"].includes(status)
+  ) {
+    throw new Error(`protective order returned unsupported status ${status || "missing"}`);
+  }
+  return Object.freeze({
+    orderId,
+    clientOrderId: expected.clientOrderId,
+    side: "sell",
+    orderType: "stop_limit",
+    quantity: expected.quantity,
+    timeInForce: "gtc",
+    stopPrice: expected.stopPrice,
+    limitPrice: expected.limitPrice,
+    status,
+    venueRef: `alpaca:${mode}:${orderId}`,
+  });
+}
+
+function validateRecoveredOrder(
+  found: AlpacaOrderResponse,
+  intent: FinanceExecutionIntent,
+  clientOrderId: string,
+  timeInForce?: string,
+): void {
+  if (
+    found.client_order_id !== clientOrderId ||
+    !matchesOrderInstrument(found.symbol, intent.instrument) ||
+    found.side !== intent.side ||
+    Number(found.qty) !== intent.quantity ||
+    found.type !== intent.orderType ||
+    typeof found.time_in_force !== "string" ||
+    !["day", "gtc", "ioc", "fok"].includes(found.time_in_force) ||
+    (normalizeInstrument(intent.instrument).includes("/") &&
+      !["gtc", "ioc"].includes(found.time_in_force)) ||
+    (timeInForce !== undefined && found.time_in_force !== timeInForce) ||
+    (intent.side === "buy" &&
+      intent.stopPrice !== undefined &&
+      (normalizeInstrument(intent.instrument).includes("/")
+        ? found.order_class !== "simple"
+        : found.order_class !== "oto" ||
+          !Array.isArray(found.legs) ||
+          !found.legs.some(
+            (leg: unknown) =>
+              typeof leg === "object" &&
+              leg !== null &&
+              "stop_price" in leg &&
+              asFiniteNumber(leg.stop_price) === intent.stopPrice,
+          ))) ||
+    (intent.orderType === "limit" && Number(found.limit_price) !== intent.limitPrice) ||
+    typeof found.id !== "string" ||
+    !found.id
+  ) {
+    throw new Error("reconciled order does not match authorized intent");
+  }
 }
 
 /** Read-only restart recovery; 404 and nonterminal states never authorize resubmission. */
@@ -361,41 +453,27 @@ export async function readAlpacaPaperTerminalOrder(options: {
   ) {
     return fill;
   }
-  const protectionClientOrderId = cryptoProtectionClientIdentity("paper", intent, orderId);
-  const protectionResponse = await bounded(
-    () =>
-      options.read(
-        `${PAPER_HOST}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(protectionClientOrderId)}`,
-        { headers, signal },
-      ),
-    signal,
-  );
-  if (protectionResponse.status !== 200) {
-    throw new Error("paper reconciliation crypto protection unavailable");
+  const protection = cryptoProtectionIdentity("paper", intent, fill);
+  let protectionOrderId: string | undefined;
+  try {
+    const response = await bounded(
+      () =>
+        options.read(
+          `${PAPER_HOST}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(protection.clientOrderId)}`,
+          { headers, signal },
+        ),
+      signal,
+    );
+    if (response.status !== 200) {
+      throw new Error("protective order recovery unavailable");
+    }
+    const candidate = JSON.parse(response.body) as AlpacaOrderResponse;
+    protectionOrderId = typeof candidate.id === "string" ? candidate.id : undefined;
+    const protectionOrder = cryptoProtectionEvidence(candidate, protection, "paper", true);
+    return Object.freeze({ ...fill, protectionOrder });
+  } catch (error) {
+    throw new AlpacaProtectionUncertainError(protection.clientOrderId, protectionOrderId, error);
   }
-  const protection = JSON.parse(protectionResponse.body) as AlpacaOrderResponse;
-  const status = typeof protection.status === "string" ? protection.status : "";
-  if (
-    !matchesCryptoProtection(protection, intent, protectionClientOrderId, fill.filledQuantity) ||
-    !["new", "partially_filled", "filled", "calculated"].includes(status)
-  ) {
-    throw new Error("paper reconciliation crypto protection identity or state mismatch");
-  }
-  return Object.freeze({
-    ...fill,
-    protectionOrder: Object.freeze({
-      orderId: protection.id as string,
-      clientOrderId: protectionClientOrderId,
-      side: "sell" as const,
-      orderType: "stop_limit" as const,
-      quantity: fill.filledQuantity,
-      timeInForce: "gtc" as const,
-      stopPrice: intent.stopPrice,
-      limitPrice: intent.protectionLimitPrice!,
-      status,
-      venueRef: `alpaca:paper:${protection.id as string}`,
-    }),
-  });
 }
 
 export async function restoreAlpacaPaperProtection(options: {
@@ -1030,15 +1108,8 @@ export function createAlpacaExecutionAdapter(
           ) {
             throw new Error("crypto protection was requested without a complete stop-limit intent");
           }
-          const entryOrderId = entryFill.terminalOrderIdentity?.orderId;
-          if (!entryOrderId || entryFill.filledQuantity <= 0) {
-            throw new Error("crypto protection requires a positive confirmed entry fill");
-          }
-          const protectionClientOrderId = cryptoProtectionClientIdentity(
-            mode,
-            intent,
-            entryOrderId,
-          );
+          const protection = cryptoProtectionIdentity(mode, intent, entryFill);
+          const protectionClientOrderId = protection.clientOrderId;
           const protectionBody: Record<string, unknown> = {
             client_order_id: protectionClientOrderId,
             symbol,
@@ -1052,12 +1123,7 @@ export function createAlpacaExecutionAdapter(
           let knownProtectionOrderId: string | undefined;
 
           const matchesProtectionIntent = (candidate: AlpacaOrderResponse): boolean =>
-            matchesCryptoProtection(
-              candidate,
-              intent,
-              protectionClientOrderId,
-              entryFill.filledQuantity,
-            );
+            matchesCryptoProtection(candidate, protection);
 
           const recoverProtection = async (cause: unknown): Promise<AlpacaOrderResponse> => {
             try {
@@ -1128,33 +1194,7 @@ export function createAlpacaExecutionAdapter(
             }
             const orderId = String(payload.id);
             knownProtectionOrderId = orderId;
-            const status = typeof payload.status === "string" ? payload.status : "";
-            if (
-              ![
-                "new",
-                "accepted",
-                "pending_new",
-                "partially_filled",
-                "filled",
-                "calculated",
-              ].includes(status)
-            ) {
-              throw new Error(
-                `protective order returned unsupported status ${status || "missing"}`,
-              );
-            }
-            return Object.freeze({
-              orderId,
-              clientOrderId: protectionClientOrderId,
-              side: "sell" as const,
-              orderType: "stop_limit" as const,
-              quantity: entryFill.filledQuantity,
-              timeInForce: "gtc" as const,
-              stopPrice: intent.stopPrice,
-              limitPrice: intent.protectionLimitPrice,
-              status,
-              venueRef: `alpaca:${mode}:${orderId}`,
-            });
+            return cryptoProtectionEvidence(payload, protection, mode, false);
           } catch (error) {
             if (error instanceof AlpacaProtectionUncertainError) {
               throw error;

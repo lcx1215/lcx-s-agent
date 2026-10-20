@@ -1,15 +1,21 @@
-import { expect, it, vi } from "vitest";
-import { clientOrderIdentity } from "./finance-alpaca-execution-adapter.js";
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as alpacaRun from "./finance-alpaca-run.js";
-import * as credentials from "./finance-credential-env.js";
+import * as credentialEnv from "./finance-credential-env.js";
 import * as executionRecovery from "./finance-execution-recovery.js";
-import type { FinanceExecutionSafetyClaim } from "./finance-execution-safety.js";
+import {
+  readFinanceExecutionSafetyClaims,
+  type FinanceExecutionSafetyClaim,
+} from "./finance-execution-safety.js";
 import {
   matchesFinanceResearchRecoveryProtection,
   recoverFinanceResearchHistory,
   runFinanceResearchExecutionBridge,
 } from "./finance-research-execution-bridge.js";
-import * as transport from "./finance-write-transport.js";
+import * as writeTransport from "./finance-write-transport.js";
 
 const stopLimitProtection = {
   id: "protection-1",
@@ -233,37 +239,54 @@ it("uses controller exact quantity in both the research mandate and placement co
   }
 });
 
-it.each([1, 2])(
-  "default history recovery never acquires write authority (filled quantity %s)",
-  async (filledQuantity) => {
+describe("default recovery write authority", () => {
+  const directories: string[] = [];
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await Promise.all(
+      directories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+    );
+  });
+
+  async function pendingReduction(options: { closed?: boolean; expired?: boolean } = {}) {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "research-recovery-authority-"));
+    directories.push(directory);
+    const accountId = `fixture-${path.basename(directory)}`;
+    const at = new Date(Date.now() - 2_000).toISOString();
+    const filledAt = new Date(Date.now() - 1_000).toISOString();
+    const expiresAt = new Date(Date.now() + (options.expired ? -1_000 : 60_000)).toISOString();
     const intent = {
-      intentId: "old-reduction",
+      intentId: "old-protected-reduction",
+      runAuthorizationId: "old-controller-run",
       instrument: "TSLA",
       side: "sell" as const,
+      quantity: options.closed ? 2 : 1,
       orderType: "market" as const,
-      quantity: 2,
       referencePrice: 100,
-      referencePriceAt: "2026-09-20T00:00:00Z",
-      runAuthorizationId: "expired-run",
-      rationale: "fixture",
+      referencePriceAt: at,
+      rationale: "offline pending recovery fixture",
     };
+    const digest = (value: unknown) =>
+      createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const clientId = `lcx-${digest(["paper", intent.runAuthorizationId, intent.intentId]).slice(0, 40)}`;
     const budget = {
-      automation: "attended" as const,
+      automation: "unattended" as const,
       allowedInstruments: ["TSLA"],
-      maxOrderNotional: 1000,
-      maxInstrumentNotional: 2000,
-      maxOrdersPerRun: 5,
+      maxOrderNotional: 1_000,
+      maxInstrumentNotional: 5_000,
+      maxOrdersPerRun: 8,
     };
     const claim: FinanceExecutionSafetyClaim = {
-      id: "claim",
-      run: "expired-run",
-      instrument: "TSLA",
-      notional: 200,
-      snapshotId: "old",
-      at: intent.referencePriceAt,
+      id: digest([accountId, "alpaca:paper", intent.runAuthorizationId, intent.intentId]),
+      run: intent.runAuthorizationId,
+      instrument: intent.instrument,
+      notional: intent.quantity * intent.referencePrice,
+      snapshotId: "prior-controller-snapshot",
+      at,
       status: "unknown",
+      adapterKind: "venue",
       binding: {
-        accountId: "account",
+        accountId,
         adapterId: "alpaca-venue",
         venue: "alpaca:paper",
         intent,
@@ -271,150 +294,233 @@ it.each([1, 2])(
         positionQuantity: 2,
         protectiveOrders: [{ id: "old-stop", quantity: 2, stopPrice: 90 }],
         policy: {
-          planId: "old",
+          planId: "old-plan",
           revision: "1",
           riskModel: "fully_funded_unhedged_spot",
           authorizedSide: "sell",
           authorizedQuantity: 2,
-          expiresAt: "2026-09-20T00:00:00Z",
+          expiresAt,
           maxPortfolioDrawdownFraction: 0.2,
-          maxGrossExposure: 2000,
-          maxAccountAgeMs: 60000,
-          maxQuoteAgeMs: 60000,
-          maxInstrumentEvidenceAgeMs: 60000,
+          maxGrossExposure: 5_000,
+          maxAccountAgeMs: 60_000,
+          maxQuoteAgeMs: 60_000,
+          maxInstrumentEvidenceAgeMs: 60_000,
         },
       },
     };
-    const read = vi.fn(async (url: string) => {
-      const pathname = new URL(url).pathname;
-      const value =
-        pathname === "/v2/account"
-          ? { id: "account" }
-          : pathname.includes("orders:by_client_order_id")
-            ? {
-                client_order_id: clientOrderIdentity("paper", intent),
-                symbol: "TSLA",
-                side: "sell",
-                type: "market",
-                qty: "2",
-                time_in_force: "gtc",
-                id: "sell",
-                status: filledQuantity === 2 ? "filled" : "canceled",
-                filled_qty: String(filledQuantity),
-                filled_avg_price: "100",
-                filled_at: "2026-09-20T00:00:00Z",
-              }
-            : pathname === "/v2/orders/old-stop"
-              ? {
-                  id: "old-stop",
-                  symbol: "TSLA",
-                  side: "sell",
-                  type: "stop",
-                  time_in_force: "gtc",
-                  status: "canceled",
-                  qty: "2",
-                  filled_qty: "0",
-                  stop_price: "90",
-                }
-              : pathname.startsWith("/v2/positions/")
-                ? { symbol: "TSLA", side: "long", qty: String(2 - filledQuantity) }
-                : pathname === "/v2/orders"
-                  ? []
-                  : null;
-      if (value === null) {
-        throw new Error(`unexpected read: ${pathname}`);
+    await fs.writeFile(
+      path.join(directory, `execution-safety-${digest(["alpaca:paper", accountId])}.jsonl`),
+      `${JSON.stringify(claim)}\n`,
+    );
+    const terminal: Record<string, unknown> = {
+      id: "terminal-sell",
+      client_order_id: clientId,
+      symbol: "TSLA",
+      side: "sell",
+      qty: String(intent.quantity),
+      type: "market",
+      time_in_force: "day",
+      status: "filled",
+      filled_qty: String(intent.quantity),
+      filled_avg_price: "100",
+      submitted_at: at,
+      filled_at: filledAt,
+      updated_at: filledAt,
+    };
+    const oldStop: Record<string, unknown> = {
+      id: "old-stop",
+      symbol: "TSLA",
+      side: "sell",
+      type: "stop",
+      time_in_force: "gtc",
+      status: "canceled",
+      qty: "2",
+      filled_qty: "0",
+      stop_price: "90",
+    };
+    const read = vi.fn<writeTransport.FinanceUncachedFetch>(async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/v2/account") {
+        return { status: 200, body: JSON.stringify({ id: accountId }) };
       }
-      return { status: 200, body: JSON.stringify(value) };
+      if (parsed.pathname === "/v2/orders:by_client_order_id") {
+        return parsed.searchParams.get("client_order_id") === clientId
+          ? { status: 200, body: JSON.stringify(terminal) }
+          : { status: 404, body: "{}" };
+      }
+      if (parsed.pathname === "/v2/orders/old-stop") {
+        return { status: 200, body: JSON.stringify(oldStop) };
+      }
+      if (parsed.pathname === "/v2/positions/TSLA") {
+        return options.closed
+          ? { status: 404, body: "{}" }
+          : { status: 200, body: JSON.stringify({ symbol: "TSLA", side: "long", qty: "1" }) };
+      }
+      if (parsed.pathname === "/v2/orders") {
+        return { status: 200, body: "[]" };
+      }
+      throw new Error(`unexpected offline recovery read: ${parsed.pathname}`);
     });
-    const env = vi.spyOn(credentials, "resolveFinanceCredentialEnv").mockReturnValue({
-      ALPACA_API_KEY_ID: "PKFIXTURE_ONLY",
-      ALPACA_API_SECRET_KEY: "FIXTURE_ONLY",
+    const post = vi.fn<writeTransport.FinanceWriteTransport>(async (request) => ({
+      status: 200,
+      body: JSON.stringify({
+        ...JSON.parse(request.body),
+        id: "unexpected-restored-stop",
+        status: "new",
+        filled_qty: "0",
+      }),
+    }));
+    vi.spyOn(credentialEnv, "resolveFinanceCredentialEnv").mockReturnValue({
+      ALPACA_API_KEY_ID: "PK_OFFLINE_ONLY",
+      ALPACA_API_SECRET_KEY: "offline-only-secret",
     });
-    const readFactory = vi.spyOn(transport, "createFinanceUncachedFetch").mockReturnValue(read);
-    const write = vi.fn(async () => {
-      throw new Error("unexpected write");
-    });
-    const writeFactory = vi.spyOn(transport, "createFinanceWriteTransport").mockReturnValue(write);
-    const recover = vi
-      .spyOn(executionRecovery, "recoverConfirmedFinanceExecutions")
-      .mockImplementation(async (options) => {
-        const result = {
-          replayed: [] as string[],
-          alreadyRecorded: [],
-          pendingReconciliation: [] as string[],
-          legacyUnsupported: [],
-          noFill: [],
-          failures: [] as { claimId: string; reason: string }[],
-        };
-        try {
-          const fill = await options.resolvePending!(claim, new AbortController().signal);
-          if (fill) {
-            result.replayed.push(claim.id);
-          } else {
-            result.pendingReconciliation.push(claim.id);
-          }
-        } catch {
-          result.failures.push({
-            claimId: claim.id,
-            reason: "pending_execution_resolution_unavailable",
-          });
-        }
-        return result;
-      });
-    try {
-      const result = await recoverFinanceResearchHistory({
-        mode: "shadow",
-        stateDirectory: "offline-fixture",
-        recovery: {
-          safetyStateDir: "offline-fixture",
-          accountId: "account",
-          venue: "alpaca:paper",
-        },
-        execution: {
-          instruments: ["AAPL"],
-          market: { referencePrice: 100, referencePriceAt: intent.referencePriceAt },
-          equity: 10000,
-          budget: { ...budget, allowedInstruments: ["AAPL"] },
-          runAuthorizationId: "new-run",
-        },
-      });
-      expect(result.ok).toBe(filledQuantity === 2);
-      expect(read).toHaveBeenCalled();
-      expect(writeFactory).not.toHaveBeenCalled();
-      expect(write).not.toHaveBeenCalled();
-    } finally {
-      recover.mockRestore();
-      env.mockRestore();
-      readFactory.mockRestore();
-      writeFactory.mockRestore();
-    }
-  },
-);
-
-it("preserves the explicitly supplied controller recovery owner", async () => {
-  const resolvePending = vi.fn(async () => undefined);
-  const recover = vi
-    .spyOn(executionRecovery, "recoverConfirmedFinanceExecutions")
-    .mockResolvedValue({
-      replayed: [],
-      alreadyRecorded: [],
-      pendingReconciliation: [],
-      legacyUnsupported: [],
-      noFill: [],
-      failures: [],
-    });
-  try {
-    await recoverFinanceResearchHistory({
-      stateDirectory: "offline-fixture",
-      recovery: {
-        safetyStateDir: "offline-fixture",
-        accountId: "account",
-        venue: "alpaca:paper",
-        resolvePending,
+    vi.spyOn(writeTransport, "createFinanceUncachedFetch").mockReturnValue(read);
+    const writeFactory = vi
+      .spyOn(writeTransport, "createFinanceWriteTransport")
+      .mockReturnValue(post);
+    const createSafetyContext = vi.fn(() => ({ kind: "controller_execution_safety" as const }));
+    const control = {
+      mode: "alpaca_paper" as const,
+      stateDirectory: directory,
+      recovery: { safetyStateDir: directory, accountId, venue: "alpaca:paper" },
+      execution: {
+        market: { referencePrice: 100, referencePriceAt: at },
+        equity: 10_000,
+        runAuthorizationId: "current-controller-run",
+        budget: { ...budget, allowedInstruments: ["AAPL"] },
+        instruments: ["AAPL"],
+        createSafetyContext,
       },
-    });
-    expect(recover).toHaveBeenCalledWith(expect.objectContaining({ resolvePending }));
-  } finally {
-    recover.mockRestore();
+    };
+    const claims = () =>
+      readFinanceExecutionSafetyClaims({
+        stateDir: directory,
+        accountId,
+        venue: "alpaca:paper",
+      });
+    const rewriteClaim = (value: unknown) =>
+      fs.writeFile(
+        path.join(directory, `execution-safety-${digest(["alpaca:paper", accountId])}.jsonl`),
+        `${JSON.stringify(value)}\n`,
+      );
+    return {
+      control,
+      claim,
+      claims,
+      rewriteClaim,
+      terminal,
+      oldStop,
+      read,
+      post,
+      writeFactory,
+      createSafetyContext,
+    };
   }
+
+  it.each(["outside_current_scope", "expired_policy", "no_execution"])(
+    "retains an unprotected partial claim without acquiring writes: %s",
+    async (mode) => {
+      const f = await pendingReduction({ expired: mode === "expired_policy" });
+      const control = mode === "no_execution" ? { ...f.control, execution: undefined } : f.control;
+      if (mode === "expired_policy") {
+        control.execution!.instruments = ["TSLA"];
+        control.execution!.budget.allowedInstruments = ["TSLA"];
+      }
+      const result = await recoverFinanceResearchHistory(control);
+      expect(f.post).not.toHaveBeenCalled();
+      expect(f.writeFactory).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      expect(result.recovery?.pendingReconciliation).toEqual([f.claim.id]);
+      expect((await f.claims()).at(-1)?.status).toBe("unknown");
+      expect(f.createSafetyContext).not.toHaveBeenCalled();
+    },
+  );
+
+  it("confirms a fully closed old position using only reads, even outside the new scope", async () => {
+    const f = await pendingReduction({ closed: true, expired: true });
+    expect(await recoverFinanceResearchHistory(f.control)).toMatchObject({ ok: true });
+    expect((await f.claims()).at(-1)?.status).toBe("confirmed");
+    const again = await recoverFinanceResearchHistory(f.control);
+    expect(again).toMatchObject({ ok: true, recovery: { alreadyRecorded: [f.claim.id] } });
+    expect(f.post).not.toHaveBeenCalled();
+    expect(f.writeFactory).not.toHaveBeenCalled();
+  });
+
+  it.each([{ qty: "3" }, { filled_qty: true }, { stop_price: "91" }, { status: "new" }])(
+    "retains a closed claim when its old protection is not verified: %j",
+    async (patch) => {
+      const f = await pendingReduction({ closed: true });
+      Object.assign(f.oldStop, patch);
+      expect((await recoverFinanceResearchHistory(f.control)).ok).toBe(false);
+      expect((await f.claims()).at(-1)?.status).toBe("unknown");
+      expect(f.post).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, undefined, false, "not-a-number"])(
+    "keeps a malformed durable protection quantity unknown: %j",
+    async (quantity) => {
+      const f = await pendingReduction({ closed: true });
+      await f.rewriteClaim({
+        ...f.claim,
+        binding: {
+          ...f.claim.binding,
+          protectiveOrders: [{ ...f.claim.binding!.protectiveOrders![0], quantity }],
+        },
+      });
+      expect((await recoverFinanceResearchHistory(f.control)).ok).toBe(false);
+      expect((await f.claims()).at(-1)?.status).toBe("unknown");
+      expect(f.read).not.toHaveBeenCalled();
+      expect(f.post).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { positionQuantity: undefined },
+    { positionQuantity: null },
+    { positionQuantity: "2" },
+    { positionQuantity: -1 },
+    { protectiveOrders: null },
+    { protectiveOrders: {} },
+    { protectiveOrders: [null] },
+    { protectiveOrders: [{ id: "old-stop", quantity: 3, stopPrice: 90 }] },
+    { protectiveOrders: [{ id: "old-stop", quantity: 2, stopPrice: null }] },
+    { protectiveOrders: [{ id: "old-stop", quantity: 2, stopPrice: 90, orderType: null }] },
+    {
+      protectiveOrders: [{ id: "old-stop", quantity: 2, stopPrice: 90, orderType: "stop_limit" }],
+    },
+    {
+      protectiveOrders: [
+        { id: "old-stop", quantity: 1, stopPrice: 90 },
+        { id: "old-stop", quantity: 1, stopPrice: 90 },
+      ],
+    },
+  ])("blocks malformed protection bindings before any supplied resolver: %j", async (patch) => {
+    const f = await pendingReduction();
+    await f.rewriteClaim({ ...f.claim, binding: { ...f.claim.binding, ...patch } });
+    const resolvePending = vi.fn(async () => undefined);
+    const result = await recoverFinanceResearchHistory({
+      ...f.control,
+      recovery: { ...f.control.recovery, resolvePending },
+    });
+    expect(result.ok).toBe(false);
+    expect((await f.claims()).at(-1)?.status).toBe("unknown");
+    expect(resolvePending).not.toHaveBeenCalled();
+    expect(f.read).not.toHaveBeenCalled();
+    expect(f.post).not.toHaveBeenCalled();
+  });
+
+  it("preserves read-only recovery of a legacy unprotected terminal sell", async () => {
+    const f = await pendingReduction({ closed: true });
+    const {
+      protectiveOrders: _protection,
+      positionQuantity: _position,
+      ...binding
+    } = f.claim.binding!;
+    await f.rewriteClaim({ ...f.claim, binding });
+    expect((await recoverFinanceResearchHistory(f.control)).ok).toBe(true);
+    expect((await f.claims()).at(-1)?.status).toBe("confirmed");
+    expect(f.read).toHaveBeenCalledTimes(2);
+    expect(f.writeFactory).not.toHaveBeenCalled();
+  });
 });

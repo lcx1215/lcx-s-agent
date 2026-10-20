@@ -271,7 +271,12 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
     resolvePending:
       control.recovery.resolvePending ??
       (async (claim, signal) => {
-        if (!claim.binding || claim.binding.venue !== "alpaca:paper") {
+        if (
+          !claim.binding ||
+          claim.binding.accountId !== control.recovery?.accountId ||
+          claim.binding.venue !== "alpaca:paper" ||
+          claim.binding.adapterId !== "alpaca-venue"
+        ) {
           return undefined;
         }
         const { resolveFinanceCredentialEnv } = await import("./finance-credential-env.js");
@@ -296,11 +301,11 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
             intent.quantity >
               originalQuantity - protection.reduce((sum, order) => sum + order.quantity, 0))
         ) {
-          if (protection.length !== 1 || originalQuantity === undefined) {
+          if (originalQuantity === undefined || protection.length !== 1) {
             return undefined;
           }
-          // Default history recovery has read authority only. Current controller-scoped
-          // restoration belongs to its explicitly supplied resolvePending implementation.
+          // Research history has read authority only. Protection restoration
+          // remains with the controller's explicitly supplied recovery resolver.
           return recoverAlpacaPaperProtectedReduction({
             accountId: claim.binding.accountId,
             intent,
@@ -310,8 +315,8 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
             read,
             signal,
             allowProtectionRestore: false,
-            postJson: async () => {
-              throw new Error("history recovery has no protection write authority");
+            postJson: () => {
+              throw new Error("research history recovery write authority unavailable");
             },
           });
         }

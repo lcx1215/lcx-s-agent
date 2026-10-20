@@ -450,19 +450,82 @@ export type FinanceExecutionSafetyClaim = {
   receipt?: FinanceExecutionReceipt;
   receiptIdentityVersion?: "account-v1";
 };
-async function readJournal(file: string): Promise<FinanceExecutionSafetyClaim[]> {
-  let raw: string;
-  try {
-    raw = await fs.readFile(file, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+/** Stream one fixed append-only prefix; retain latest claims, including every unresolved id.
+ * Bound the I/O buffer and each record, not the lifetime length of the account journal. */
+async function readJournal(
+  file: string,
+  signal?: AbortSignal,
+): Promise<FinanceExecutionSafetyClaim[]> {
+  signal?.throwIfAborted();
+  const handle = await fs.open(file, "r").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return undefined;
     }
     throw error;
+  });
+  if (!handle) {
+    return [];
   }
-  return parseJournal(raw);
+  try {
+    const snapshotSize = (await handle.stat()).size;
+    const buffer = Buffer.alloc(64 * 1024);
+    const latest = new Map<string, FinanceExecutionSafetyClaim>();
+    const maxRecordBytes = 16 * 1024 * 1024;
+    let offset = 0;
+    let recordBytes = 0;
+    let fragments: Buffer[] = [];
+    while (offset < snapshotSize) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, snapshotSize - offset),
+        offset,
+      );
+      if (bytesRead === 0) {
+        throw new Error("incomplete execution safety journal snapshot");
+      }
+      offset += bytesRead;
+      const chunk = buffer.subarray(0, bytesRead);
+      let cursor = 0;
+      while (cursor < chunk.length) {
+        signal?.throwIfAborted();
+        const newline = chunk.indexOf(10, cursor);
+        const end = newline < 0 ? chunk.length : newline;
+        const fragment = chunk.subarray(cursor, end);
+        recordBytes += fragment.length;
+        if (recordBytes > maxRecordBytes) {
+          throw new Error("execution safety journal record too large");
+        }
+        if (newline < 0) {
+          // The reusable I/O buffer must not mutate a pending UTF-8 record.
+          fragments.push(Buffer.from(fragment));
+        } else {
+          const encoded = fragments.length
+            ? Buffer.concat([...fragments, fragment], recordBytes)
+            : fragment;
+          // Decode only complete record bytes, including multibyte characters
+          // split across I/O chunks. Never repeatedly concatenate a long line.
+          parseJournal(encoded.toString("utf8"), latest);
+          fragments = [];
+          recordBytes = 0;
+        }
+        cursor = end + 1;
+      }
+    }
+    signal?.throwIfAborted();
+    if (recordBytes !== 0) {
+      throw new Error("incomplete execution safety journal snapshot");
+    }
+    return [...latest.values()];
+  } finally {
+    await handle.close();
+  }
 }
-function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
+function parseJournal(
+  raw: string,
+  prior = new Map<string, FinanceExecutionSafetyClaim>(),
+): FinanceExecutionSafetyClaim[] {
   const rows = raw
     .split("\n")
     .filter(Boolean)
@@ -532,7 +595,6 @@ function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
       }
       return value;
     });
-  const prior = new Map<string, FinanceExecutionSafetyClaim>();
   for (const row of rows) {
     if (row.status === "operator_retired") {
       const previous = prior.get(row.id);
@@ -549,6 +611,8 @@ function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
         throw new Error("invalid execution safety journal");
       }
     }
+    // Ordering follows the last durable append, including across streamed chunks.
+    prior.delete(row.id);
     prior.set(row.id, row);
   }
   return rows;
@@ -729,7 +793,7 @@ export async function withFinanceExecutionSafety(params: {
       signal.throwIfAborted();
       failureStage = "journal";
       failureOperation = "read_execution_journal";
-      const journal = await readJournal(key);
+      const journal = await readJournal(key, signal);
       const latest = new Map(journal.map((claim) => [claim.id, claim]));
       if (
         [...latest.values()].some(
@@ -1163,7 +1227,7 @@ export async function withFinanceExecutionSafety(params: {
   }
 }
 
-/** Read one append-only snapshot. A concurrent partial append makes parsing fail closed.
+/** Read one append-only snapshot. A partial record at its captured boundary fails closed.
  * This never edits claims or grants reconciliation authority. */
 export async function readFinanceExecutionSafetyClaims(params: {
   stateDir: string;
@@ -1177,46 +1241,7 @@ export async function readFinanceExecutionSafetyClaims(params: {
     root,
     `execution-safety-${digest([params.venue, params.accountId])}.jsonl`,
   );
-  const handle = await fs.open(file, "r").catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  });
-  if (!handle) {
-    return [];
-  }
-  try {
-    const max = 16 * 1024 * 1024;
-    const buffer = Buffer.alloc(max + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      params.signal?.throwIfAborted();
-      const read = await handle.read(buffer, size, buffer.length - size, size);
-      if (read.bytesRead === 0) {
-        break;
-      }
-      size += read.bytesRead;
-    }
-    params.signal?.throwIfAborted();
-    if (size > max) {
-      throw new Error("execution safety journal too large for bounded recovery");
-    }
-    const raw = buffer.subarray(0, size).toString("utf8");
-    if (raw && !raw.endsWith("\n")) {
-      throw new Error("incomplete execution safety journal snapshot");
-    }
-    const values = parseJournal(raw);
-    const latest = new Map<string, FinanceExecutionSafetyClaim>();
-    for (const claim of values) {
-      // Delete before setting so order reflects each id's last durable append, not its first reserve.
-      latest.delete(claim.id);
-      latest.set(claim.id, claim);
-    }
-    return [...latest.values()];
-  } finally {
-    await handle.close();
-  }
+  return readJournal(file, params.signal);
 }
 
 /**
@@ -1358,6 +1383,53 @@ export async function retireFinancePaperExecutionClaim(params: {
   }
 }
 
+/** Durable JSON must be checked before any resolver can infer unreserved size. */
+function validRecoveryProtection(binding: NonNullable<FinanceExecutionSafetyClaim["binding"]>) {
+  const { protectiveOrders, positionQuantity } = binding;
+  if (
+    positionQuantity !== undefined &&
+    (!Number.isFinite(positionQuantity) || positionQuantity < 0)
+  ) {
+    return false;
+  }
+  if (protectiveOrders === undefined) {
+    return true;
+  }
+  if (!Array.isArray(protectiveOrders)) {
+    return false;
+  }
+  if (!protectiveOrders.length) {
+    return true;
+  }
+  if (positionQuantity === undefined || positionQuantity <= 0) {
+    return false;
+  }
+  if (
+    !protectiveOrders.every((order) => {
+      if (!order || typeof order !== "object") {
+        return false;
+      }
+      const type = order.orderType === undefined ? "stop" : order.orderType;
+      return (
+        text(order.id) &&
+        positive(order.quantity) &&
+        positive(order.stopPrice) &&
+        (type === "stop"
+          ? order.limitPrice === undefined
+          : type === "stop_limit" &&
+            positive(order.limitPrice) &&
+            order.limitPrice <= order.stopPrice)
+      );
+    })
+  ) {
+    return false;
+  }
+  return (
+    new Set(protectiveOrders.map((order) => order.id)).size === protectiveOrders.length &&
+    protectiveOrders.reduce((sum, order) => sum + order.quantity, 0) <= positionQuantity
+  );
+}
+
 /** Controller-only broker reconciliation under the same lock as order dispatch.
  * No callback result means unresolved, never permission to resend the order. */
 export async function reconcileFinanceExecutionClaims(params: {
@@ -1415,6 +1487,7 @@ export async function reconcileFinanceExecutionClaims(params: {
           !binding ||
           binding.accountId !== params.accountId ||
           binding.venue !== params.venue ||
+          !validRecoveryProtection(binding) ||
           claim.id !==
             digest([
               binding.accountId,

@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { AlpacaOrderUncertainError } from "./finance-alpaca-execution-adapter.js";
+import {
+  AlpacaOrderUncertainError,
+  clientOrderIdentity,
+} from "./finance-alpaca-execution-adapter.js";
 import {
   buildFinanceExecutionReceipt,
   createPaperExecutionAdapter,
@@ -1116,6 +1119,31 @@ it("includes existing holdings in instrument limits even in a new run", async ()
     ).refusalReasons,
   ).toContain("execution_safety_durable_budget_exceeded");
 });
+it.each([2, 3])(
+  "executes only the remaining held-position headroom (%i shares)",
+  async (quantity) => {
+    const f = await fixture();
+    const intent = { ...f.input.intent, quantity };
+    const facts = { ...f.facts, positionQuantity: 18 };
+    const input = { ...f.input, intent, readFacts: async () => facts };
+    const result = await placeFinanceOrder({
+      ...f.request,
+      intent,
+      committedInstrumentNotional: 0,
+      safetyContext: createFinanceExecutionSafetyContext(input),
+    });
+    if (quantity === 2) {
+      expect(result.receipt?.fill).toMatchObject({ filledQuantity: 2, fillPrice: 100 });
+      expect(result.refusalReasons).toEqual([]);
+      const claims = await readFinanceExecutionSafetyClaims(input);
+      expect(claims.some((claim) => claim.status === "confirmed")).toBe(true);
+    } else {
+      expect(result.receipt).toBeUndefined();
+      expect(result.refusalReasons).toContain("execution_safety_durable_budget_exceeded");
+      expect(await readFinanceExecutionSafetyClaims(input)).toEqual([]);
+    }
+  },
+);
 it("binds actual adapter identity and execute reference before an await", async () => {
   const f = await fixture();
   let release!: () => void;
@@ -1702,3 +1730,209 @@ it.each(["transport", "cancelled"])(
     expect(JSON.stringify({ claims, outcome })).not.toContain("private");
   },
 );
+
+it("reads a growing recovery journal beyond 16 MiB without losing an old unresolved claim", async () => {
+  const f = await fixture();
+  await placeFinanceOrder({
+    ...f.request,
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  });
+  const journalName = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const journalPath = path.join(f.input.stateDir, journalName);
+  const terminal = JSON.parse((await fs.readFile(journalPath, "utf8")).trim().split("\n").at(-1)!);
+  const pending = {
+    id: "old-unresolved",
+    run: "old-run",
+    instrument: "SPY",
+    notional: 100,
+    snapshotId: "old-snapshot",
+    at: terminal.at,
+    status: "unknown",
+  };
+  const line = JSON.stringify(terminal) + "\n";
+  const copies = Math.ceil((17 * 1024 * 1024) / Buffer.byteLength(line));
+  await fs.writeFile(journalPath, JSON.stringify(pending) + "\n" + line.repeat(copies));
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.input.stateDir,
+    accountId: f.input.accountId,
+    venue: f.input.venue,
+  });
+  expect(claims.map((claim) => claim.id)).toEqual([pending.id, terminal.id]);
+  expect(claims[0].status).toBe("unknown");
+  expect(claims[1].receipt).toEqual(terminal.receipt);
+  const execute = vi.fn(f.adapter.execute);
+  const next = await placeFinanceOrder({
+    ...f.request,
+    adapters: [{ ...f.adapter, execute }],
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  });
+  expect(next.refusalReasons).toContain("execution_safety_account_requires_reconciliation");
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it("validates retirement against earlier state across recovery read chunks", async () => {
+  const f = await fixture();
+  const pending = await seedAlpacaPendingClaim(f);
+  const args = retirementParams(pending);
+  await retireFinancePaperExecutionClaim(args);
+  const rows = (await fs.readFile(pending.journalPath, "utf8")).trim().split("\n");
+  const marker = rows.pop()!;
+  await fs.writeFile(pending.journalPath, rows.join("\n") + "\n".repeat(70000) + marker + "\n");
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: args.stateDir,
+    accountId: args.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims.at(-1)?.status).toBe("operator_retired");
+  await fs.writeFile(pending.journalPath, "\n".repeat(70000) + marker + "\n");
+  await expect(
+    readFinanceExecutionSafetyClaims({
+      stateDir: args.stateDir,
+      accountId: args.accountId,
+      venue: "alpaca:paper",
+    }),
+  ).rejects.toThrow("invalid execution safety journal");
+});
+
+it.each(["unicode", "oversized", "partial"] as const)(
+  "preserves bounded record and snapshot semantics (%s)",
+  async (mode) => {
+    const f = await fixture();
+    const pending = await seedAlpacaPendingClaim(f);
+    const base = JSON.parse(pending.raw.trim().split("\n").at(-1)!);
+    const claim = {
+      ...base,
+      snapshotId: mode === "oversized" ? "x".repeat(16 * 1024 * 1024) : "连续状态".repeat(20000),
+    };
+    await fs.writeFile(
+      pending.journalPath,
+      JSON.stringify(claim) + (mode === "partial" ? "" : "\n"),
+    );
+    const read = readFinanceExecutionSafetyClaims({
+      stateDir: pending.input.stateDir,
+      accountId: pending.input.accountId,
+      venue: pending.input.venue,
+    });
+    if (mode === "unicode") {
+      expect((await read)[0].snapshotId).toBe(claim.snapshotId);
+    } else {
+      await expect(read).rejects.toThrow(
+        mode === "partial"
+          ? "incomplete execution safety journal snapshot"
+          : "execution safety journal record too large",
+      );
+    }
+  },
+);
+
+it.each(["append", "truncate"] as const)(
+  "keeps the captured recovery prefix stable during %s",
+  async (mode) => {
+    const f = await fixture();
+    const pending = await seedAlpacaPendingClaim(f);
+    const open = fs.open.bind(fs);
+    const spy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (
+        typeof args[0] === "string" &&
+        path.basename(args[0]) === path.basename(pending.journalPath) &&
+        args[1] === "r"
+      ) {
+        const snapshot = await handle.stat();
+        vi.spyOn(handle, "stat").mockImplementationOnce(async () => {
+          if (mode === "append") {
+            await fs.appendFile(pending.journalPath, '{"incomplete":');
+          } else {
+            await fs.truncate(pending.journalPath, 0);
+          }
+          return snapshot;
+        });
+      }
+      return handle;
+    });
+    try {
+      const read = readFinanceExecutionSafetyClaims({
+        stateDir: pending.input.stateDir,
+        accountId: pending.input.accountId,
+        venue: pending.input.venue,
+      });
+      if (mode === "append") {
+        expect((await read).at(-1)?.id).toBe(pending.claim.id);
+      } else {
+        await expect(read).rejects.toThrow("incomplete execution safety journal snapshot");
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    if (mode === "append") {
+      await expect(
+        readFinanceExecutionSafetyClaims({
+          stateDir: pending.input.stateDir,
+          accountId: pending.input.accountId,
+          venue: pending.input.venue,
+        }),
+      ).rejects.toThrow("incomplete execution safety journal snapshot");
+    }
+  },
+);
+
+it("distinguishes daily continuation from retry while consuming prior fills at the locked gate", async () => {
+  const f = await fixture();
+  let held = f.facts.positionQuantity;
+  const brokerIds = new Set<string>();
+  const attempt = async (day: string, reconciled = true) => {
+    const intent = {
+      ...f.request.intent,
+      intentId: "intent:daily_cycle:2026-08-31:SPY",
+      runAuthorizationId: `daily-cycle:${day}`,
+      targetWeightAuthorization: {
+        targetWeight: 0.1,
+        driftBandFraction: 0.02,
+        maxOrderNotional: 100,
+      },
+    };
+    brokerIds.add(clientOrderIdentity("paper", intent));
+    const claims = await readFinanceExecutionSafetyClaims({
+      stateDir: f.input.stateDir,
+      accountId: f.input.accountId,
+      venue: f.input.venue,
+    });
+    const safetyContext = createFinanceExecutionSafetyContext({
+      ...f.input,
+      intent,
+      readFacts: async () => ({
+        ...f.facts,
+        reconciledThroughClaimId: reconciled ? claims.at(-1)?.id : undefined,
+        snapshotId: `snapshot:${day}:${held}`,
+        observedAt: new Date().toISOString(),
+        positionQuantity: held,
+        account: {
+          ...f.facts.account,
+          grossExposure: held * 100,
+          availableCash: 10_500 - held * 100,
+        },
+      }),
+    });
+    const result = await placeFinanceOrder({ ...f.request, intent, safetyContext });
+    if (result.status === "placed") {
+      held += result.receipt!.fill.filledQuantity;
+    }
+    return result;
+  };
+  expect((await attempt("2026-09-21")).status).toBe("placed");
+  expect((await attempt("2026-09-21")).refusalReasons).toContain(
+    "execution_safety_intent_already_claimed",
+  );
+  expect((await attempt("2026-09-22", false)).refusalReasons).toContain(
+    "execution_safety_snapshot_precedes_last_claim",
+  );
+  const next = await attempt("2026-09-22");
+  expect(next.status, JSON.stringify(next)).toBe("placed");
+  expect((await attempt("2026-09-23")).status).toBe("placed");
+  expect(held).toBe(8);
+  expect((await attempt("2026-09-24")).refusalReasons).toContain(
+    "execution_safety_target_weight_drift_no_longer_authorizes_side",
+  );
+  expect(held).toBe(8);
+  expect(brokerIds.size).toBe(4);
+});

@@ -11,7 +11,6 @@ beforeEach(() => {
 });
 import {
   createAlpacaExecutionAdapter,
-  clientOrderIdentity,
   readAlpacaPaperTerminalOrder,
   AlpacaOrderUncertainError,
   AlpacaOrderRejectedError,
@@ -715,6 +714,293 @@ it.each(["BTC/USD", "ETH/USD"])(
   },
 );
 
+async function protectedCryptoFixture(instrument = "BTC/USD") {
+  stubCredentials(PAPER);
+  const intent = { ...baseIntent, instrument, stopPrice: 90, protectionLimitPrice: 89 };
+  const orders = new Map<string, Record<string, unknown>>();
+  const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(
+    async (_url, init) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      if (orders.has(String(body.client_order_id))) {
+        return { status: 422, body: JSON.stringify({ message: "client_order_id must be unique" }) };
+      }
+      const entry = body.side === "buy";
+      const order = {
+        ...body,
+        id: entry ? "crypto-entry" : "crypto-stop",
+        order_class: "simple",
+        status: entry ? "filled" : "new",
+        filled_qty: entry ? "1" : "0",
+        filled_avg_price: entry ? "100" : null,
+        filled_at: entry ? "2026-09-20T00:00:00Z" : null,
+        updated_at: "2026-09-20T00:00:00Z",
+      };
+      orders.set(String(body.client_order_id), order);
+      return { status: 200, body: JSON.stringify(order) };
+    },
+  );
+  const read = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["statusFetch"]>>(async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v2/account") {
+      return { status: 200, body: JSON.stringify({ id: "account" }) };
+    }
+    const order =
+      parsed.pathname === "/v2/orders:by_client_order_id"
+        ? orders.get(parsed.searchParams.get("client_order_id")!)
+        : [...orders.values()].find((order) => parsed.pathname.endsWith("/" + order.id));
+    return { status: order ? 200 : 404, body: JSON.stringify(order ?? {}) };
+  });
+  const adapter = () =>
+    createAlpacaExecutionAdapter({
+      instruments: [instrument],
+      postJson,
+      statusFetch: read,
+      fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+    });
+  const reconcile = () =>
+    readAlpacaPaperTerminalOrder({
+      accountId: "account",
+      intent,
+      credentials: { keyId: PAPER, secret: SECRET },
+      read,
+      signal: AbortSignal.timeout(1000),
+    });
+  return { intent, orders, postJson, read, adapter, reconcile };
+}
+
+it.each(["BTC/USD", "ETH/USD"])(
+  "rechecks a protected crypto fill read-only and preserves both original venue identities: %s",
+  async (instrument) => {
+    const f = await protectedCryptoFixture(instrument);
+    const filled = await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+    f.postJson.mockClear();
+    f.read.mockClear();
+    const recovered = await f.reconcile();
+    expect(recovered).toEqual(filled);
+    expect((await f.reconcile())?.protectionOrder?.orderId).toBe("crypto-stop");
+    expect(f.postJson).not.toHaveBeenCalled();
+    expect(f.read.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/v2/account",
+      "/v2/orders:by_client_order_id",
+      "/v2/orders:by_client_order_id",
+      "/v2/account",
+      "/v2/orders:by_client_order_id",
+      "/v2/orders:by_client_order_id",
+    ]);
+  },
+);
+
+it.each(["entry", "protection"])(
+  "recovers a protected crypto %s POST response without another entry or protection order",
+  async (lost) => {
+    const f = await protectedCryptoFixture();
+    const original = f.postJson.getMockImplementation()!;
+    f.postJson.mockImplementation(async (url, init) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      const response = await original(url, init);
+      if ((lost === "entry") === (body.side === "buy")) {
+        throw new Error("lost response");
+      }
+      return response;
+    });
+    const fill = await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+    expect(fill.protectionOrder?.orderId).toBe("crypto-stop");
+    expect(f.orders.size).toBe(2);
+    expect(f.postJson).toHaveBeenCalledTimes(2);
+    const posts = f.postJson.mock.calls.length;
+    expect(await f.reconcile()).toEqual(fill);
+    expect(f.postJson).toHaveBeenCalledTimes(posts);
+  },
+);
+
+it.each([
+  { client_order_id: "another-protection" },
+  { symbol: "ETHUSD" },
+  { side: "buy" },
+  { qty: "2" },
+  { type: "stop" },
+  { time_in_force: "day" },
+  { stop_price: "91" },
+  { limit_price: "88" },
+  { id: "crypto-entry" },
+  { order_class: "oto" },
+  { status: "pending_new" },
+  { status: "unknown" },
+  { status: "canceled" },
+  { status: "expired" },
+  { status: "rejected" },
+  { filled_qty: undefined },
+  { filled_qty: "NaN" },
+  { status: "filled", filled_qty: "0" },
+  { status: "filled", filled_qty: "2" },
+  { status: "filled", filled_qty: "1", filled_avg_price: null },
+])(
+  "keeps crypto protection drift or uncertain state unresolved with zero writes: %j",
+  async (drift) => {
+    const f = await protectedCryptoFixture();
+    await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+    const stop = [...f.orders.values()].find((order) => order.id === "crypto-stop")!;
+    Object.assign(stop, drift);
+    f.postJson.mockClear();
+    await expect(f.reconcile()).rejects.toMatchObject({ code: "alpaca_protection_uncertain" });
+    expect(f.postJson).not.toHaveBeenCalled();
+  },
+);
+
+it("does not repost a missing crypto protection and rejects account and entry identity drift", async () => {
+  const f = await protectedCryptoFixture();
+  await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+  f.postJson.mockClear();
+  const stopKey = [...f.orders.entries()].find(([, order]) => order.id === "crypto-stop")![0];
+  f.orders.delete(stopKey);
+  await expect(f.reconcile()).rejects.toMatchObject({ code: "alpaca_protection_uncertain" });
+  expect(f.postJson).not.toHaveBeenCalled();
+  const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation((url, init) =>
+    url.endsWith("/account")
+      ? Promise.resolve({ status: 200, body: JSON.stringify({ id: "other-account" }) })
+      : original(url, init),
+  );
+  await expect(f.reconcile()).rejects.toThrow("account mismatch");
+  f.read.mockImplementation(original);
+  const entry = [...f.orders.values()].find((order) => order.id === "crypto-entry")!;
+  entry.client_order_id = "different-intent";
+  await expect(f.reconcile()).rejects.toThrow("does not match authorized intent");
+  expect(f.postJson).not.toHaveBeenCalled();
+});
+
+it.each([
+  { symbol: "ETH/USD" },
+  { side: "sell" },
+  { qty: "2" },
+  { type: "limit" },
+  { time_in_force: "day" },
+  { order_class: "oto" },
+  { order_class: undefined },
+])(
+  "refuses a mismatched protected crypto entry before looking up or writing a stop: %j",
+  async (drift) => {
+    const f = await protectedCryptoFixture();
+    await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+    Object.assign([...f.orders.values()].find((order) => order.id === "crypto-entry")!, drift);
+    f.postJson.mockClear();
+    f.read.mockClear();
+    await expect(f.reconcile()).rejects.toThrow("does not match authorized intent");
+    expect(f.read).toHaveBeenCalledTimes(2);
+    expect(f.postJson).not.toHaveBeenCalled();
+  },
+);
+
+it("normalizes broker crypto symbols through the existing canonical owner without widening stock OTO", async () => {
+  const f = await protectedCryptoFixture();
+  await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+  for (const order of f.orders.values()) {
+    order.symbol = "BTCUSD";
+  }
+  f.postJson.mockClear();
+  expect((await f.reconcile())?.protectionOrder?.orderId).toBe("crypto-stop");
+  const stock = { ...f.intent, instrument: "AAPL" };
+  await expect(
+    readAlpacaPaperTerminalOrder({
+      accountId: "account",
+      intent: stock,
+      credentials: { keyId: PAPER, secret: SECRET },
+      read: async (url) =>
+        url.endsWith("/account")
+          ? { status: 200, body: JSON.stringify({ id: "account" }) }
+          : {
+              status: 200,
+              body: JSON.stringify({
+                ...[...f.orders.values()].find((order) => order.id === "crypto-entry"),
+                symbol: "AAPL",
+                order_class: "simple",
+                legs: [{ stop_price: "90" }],
+              }),
+            },
+      signal: AbortSignal.timeout(1000),
+    }),
+  ).rejects.toThrow("does not match authorized intent");
+  expect(f.postJson).not.toHaveBeenCalled();
+});
+
+it("reuses both original crypto orders after adapter recreation", async () => {
+  const f = await protectedCryptoFixture();
+  const first = await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+  const restarted = await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+  expect(restarted).toEqual(first);
+  expect(f.orders.size).toBe(2);
+  expect(f.postJson.mock.calls.map(([, init]) => JSON.parse(init.body).client_order_id)).toEqual([
+    ...f.orders.keys(),
+    ...f.orders.keys(),
+  ]);
+});
+
+it("keeps an unavailable crypto protection read unresolved without a new POST", async () => {
+  const f = await protectedCryptoFixture();
+  await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+  const original = f.read.getMockImplementation()!;
+  const stopKey = [...f.orders.entries()].find(([, order]) => order.id === "crypto-stop")![0];
+  f.read.mockImplementation((url, init) =>
+    url.includes(encodeURIComponent(stopKey))
+      ? Promise.resolve({ status: 503, body: "{}" })
+      : original(url, init),
+  );
+  f.postJson.mockClear();
+  await expect(f.reconcile()).rejects.toMatchObject({ code: "alpaca_protection_uncertain" });
+  expect(f.postJson).not.toHaveBeenCalled();
+});
+
+it.each(["new", "partially_filled", "filled"])(
+  "retains the observed crypto protection status without inventing or reposting an exit: %s",
+  async (status) => {
+    const f = await protectedCryptoFixture();
+    await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+    const stop = [...f.orders.values()].find((order) => order.id === "crypto-stop")!;
+    Object.assign(stop, {
+      status,
+      filled_qty: status === "new" ? "0" : status === "filled" ? "1" : "0.25",
+      filled_avg_price: status === "new" ? null : "89",
+      filled_at: "2026-09-20T00:00:01Z",
+    });
+    f.postJson.mockClear();
+    const recovered = await f.reconcile();
+    expect(recovered?.filledQuantity).toBe(1);
+    expect(recovered?.protectionOrder).toMatchObject({
+      orderId: "crypto-stop",
+      quantity: 1,
+      status,
+    });
+    expect(f.postJson).not.toHaveBeenCalled();
+  },
+);
+
+it.each([0, 0.4])(
+  "recovers the actual terminal crypto entry fill of %s with protection only for positive fills",
+  async (quantity) => {
+    const f = await protectedCryptoFixture();
+    await f.adapter().execute(f.intent, AbortSignal.timeout(1000));
+    const entry = [...f.orders.values()].find((order) => order.id === "crypto-entry")!;
+    Object.assign(entry, {
+      status: "canceled",
+      filled_qty: String(quantity),
+      filled_avg_price: quantity ? "100" : null,
+    });
+    const stopKey = [...f.orders.entries()].find(([, order]) => order.id === "crypto-stop")![0];
+    if (quantity) {
+      f.orders.get(stopKey)!.qty = String(quantity);
+    } else {
+      f.orders.delete(stopKey);
+    }
+    f.postJson.mockClear();
+    f.read.mockClear();
+    const recovered = await f.reconcile();
+    expect(recovered?.filledQuantity).toBe(quantity);
+    expect(recovered?.protectionOrder?.quantity).toBe(quantity || undefined);
+    expect(f.read).toHaveBeenCalledTimes(quantity ? 3 : 2);
+    expect(f.postJson).not.toHaveBeenCalled();
+  },
+);
+
 it.each(["BTC/USD", "ETH/USD"])(
   "refuses a crypto protected entry without an explicit protection limit for %s",
   async (instrument) => {
@@ -1328,177 +1614,3 @@ it.each([{ qty: true }, { stop_price: true }, { filled_qty: false }])(
     ).rejects.toThrow("remaining protection identity or state mismatch");
   },
 );
-
-describe("protected crypto recovery", () => {
-  function fixture(instrument = "BTC/USD") {
-    const intent = { ...baseIntent, instrument, stopPrice: 90, protectionLimitPrice: 89 };
-    const entry = {
-      id: "crypto-entry",
-      client_order_id: clientOrderIdentity("paper", intent),
-      symbol: instrument,
-      side: "buy",
-      type: "market",
-      qty: "1",
-      order_class: "simple",
-      time_in_force: "gtc",
-      status: "filled",
-      filled_qty: "1",
-      filled_avg_price: "100",
-      filled_at: "2026-09-20T00:00:00Z",
-    };
-    const protection: Record<string, unknown> = {
-      id: "crypto-protection",
-      symbol: instrument,
-      side: "sell",
-      type: "stop_limit",
-      qty: "1",
-      time_in_force: "gtc",
-      status: "new",
-      stop_price: "90",
-      limit_price: "89",
-    };
-    const read = vi.fn(async (url: string) => {
-      if (url.endsWith("/v2/account")) {
-        return { status: 200, body: JSON.stringify({ id: "account" }) };
-      }
-      const id = new URL(url).searchParams.get("client_order_id");
-      return {
-        status: 200,
-        body: JSON.stringify(
-          id === entry.client_order_id ? entry : { client_order_id: id, ...protection },
-        ),
-      };
-    });
-    const recover = () =>
-      readAlpacaPaperTerminalOrder({
-        accountId: "account",
-        intent,
-        credentials: { keyId: PAPER, secret: SECRET },
-        read,
-        signal: new AbortController().signal,
-      });
-    return { intent, entry, protection, read, recover };
-  }
-
-  it.each(["BTC/USD", "ETH/USD"])(
-    "recovers %s entry and protection response loss without duplicate orders",
-    async (instrument) => {
-      const f = fixture(instrument);
-      const orders = new Map<string, Record<string, unknown>>();
-      const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(
-        async (_url, init) => {
-          const body = JSON.parse(init.body) as Record<string, unknown>;
-          const id = String(body.client_order_id);
-          if (orders.has(id)) {
-            return {
-              status: 422,
-              body: JSON.stringify({ message: "client_order_id must be unique" }),
-            };
-          }
-          orders.set(
-            id,
-            body.type === "stop_limit" ? { ...body, ...f.protection } : { ...body, ...f.entry },
-          );
-          throw new Error("submission response lost");
-        },
-      );
-      const read = vi.fn(async (url: string) => {
-        if (url.endsWith("/v2/account")) {
-          return { status: 200, body: JSON.stringify({ id: "account" }) };
-        }
-        const id = new URL(url).searchParams.get("client_order_id");
-        const order = id
-          ? orders.get(id)
-          : [...orders.values()].find((order) => url.endsWith(String(order.id)));
-        return { status: order ? 200 : 404, body: JSON.stringify(order ?? {}) };
-      });
-      const adapter = createAlpacaExecutionAdapter({
-        instruments: [instrument],
-        postJson,
-        statusFetch: read,
-        fillPoll: { timeoutMs: 1000, intervalMs: 0 },
-      });
-      const first = await adapter.execute(f.intent, new AbortController().signal);
-      const second = await adapter.execute(f.intent, new AbortController().signal);
-      expect(orders.size).toBe(2);
-      expect(second).toEqual(first);
-      const restored = await readAlpacaPaperTerminalOrder({
-        accountId: "account",
-        intent: f.intent,
-        credentials: { keyId: PAPER, secret: SECRET },
-        read,
-        signal: new AbortController().signal,
-      });
-      expect(restored).toEqual(first);
-      expect(postJson).toHaveBeenCalledTimes(4);
-    },
-  );
-
-  it.each([
-    { symbol: "ETH/USD" },
-    { side: "buy" },
-    { qty: "2" },
-    { type: "stop" },
-    { time_in_force: "day" },
-    { stop_price: "91" },
-    { limit_price: "88" },
-    { client_order_id: "other" },
-    { id: "" },
-    { status: "canceled" },
-    { status: "accepted" },
-    { status: "pending_new" },
-  ])("blocks read-only restart with mismatched or unconfirmed protection: %j", async (patch) => {
-    const f = fixture();
-    Object.assign(f.protection, patch);
-    await expect(f.recover()).rejects.toThrow("crypto protection identity or state mismatch");
-  });
-
-  it("keeps missing protection unresolved using reads only", async () => {
-    const f = fixture();
-    f.read.mockImplementation(async (url) =>
-      url.endsWith("/v2/account")
-        ? { status: 200, body: JSON.stringify({ id: "account" }) }
-        : new URL(url).searchParams.get("client_order_id") === f.entry.client_order_id
-          ? { status: 200, body: JSON.stringify(f.entry) }
-          : { status: 404, body: "{}" },
-    );
-    await expect(f.recover()).rejects.toThrow("crypto protection unavailable");
-    expect(f.read).toHaveBeenCalledTimes(3);
-  });
-
-  it("recovers only the actual protected quantity of a partially filled terminal entry", async () => {
-    const f = fixture();
-    Object.assign(f.entry, { status: "canceled", filled_qty: "0.4" });
-    f.protection.qty = "0.4";
-    await expect(f.recover()).resolves.toMatchObject({
-      filledQuantity: 0.4,
-      protectionOrder: { quantity: 0.4 },
-    });
-    f.protection.qty = "1";
-    await expect(f.recover()).rejects.toThrow("crypto protection identity or state mismatch");
-  });
-
-  it.each(["canceled", "new"])(
-    "does not require protection for an entry with no terminal fill (%s)",
-    async (status) => {
-      const f = fixture();
-      Object.assign(f.entry, { status, filled_qty: "0" });
-      const result = await f.recover();
-      if (status === "new") {
-        expect(result).toBeUndefined();
-      } else {
-        expect(result).toMatchObject({ filledQuantity: 0 });
-        expect(result?.protectionOrder).toBeUndefined();
-      }
-      expect(f.read).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it("keeps equity OTO validation while allowing protected crypto simple entries", async () => {
-    const f = fixture("AAPL");
-    await expect(f.recover()).rejects.toThrow("does not match authorized intent");
-    Object.assign(f.entry, { order_class: "oto", legs: [{ stop_price: "90" }] });
-    await expect(f.recover()).resolves.toMatchObject({ filledQuantity: 1 });
-    expect(f.read).toHaveBeenCalledTimes(4);
-  });
-});
