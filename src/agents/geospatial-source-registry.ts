@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   apiSourceErrorText,
+  createApiRateLimiter,
   runApiSourceCall,
   type ApiSourceGovernanceRegistry,
   type ApiCallReceipt,
@@ -309,8 +310,10 @@ export function createOpenMeteoGeocodingAdapter(
 export function createNominatimGeocodingAdapter(
   options: { fetchImpl?: FetchImpl; minIntervalMs?: number } = {},
 ): GeospatialSourceAdapter {
-  let lastRequestAt = 0;
-  const minIntervalMs = options.minIntervalMs ?? 1_100;
+  const rateLimiter = createApiRateLimiter({
+    minIntervalMs: options.minIntervalMs ?? 1_100,
+    maxConcurrent: 1,
+  });
   return {
     id: "nominatim_osm_geocoding",
     providerName: "nominatim-openstreetmap",
@@ -318,15 +321,10 @@ export function createNominatimGeocodingAdapter(
     sourceFamily: "geospatial_reference",
     priority: 15,
     supports: (request) => request.kind === "geocode",
-    collect: async (request) => {
-      const waitMs = Math.max(0, minIntervalMs - (Date.now() - lastRequestAt));
-      if (waitMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-      }
-      lastRequestAt = Date.now();
+    collect: async (request, signal) => {
       const sourceUrlOrArtifact = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(request.query)}&format=jsonv2&limit=1&addressdetails=1`;
       const payload = (await fetchJson(
-        resolveFinanceFetch(options.fetchImpl),
+        resolveFinanceFetch(options.fetchImpl, { additionalRateLimiter: rateLimiter, signal }),
         sourceUrlOrArtifact,
         { "User-Agent": "LCX Agent research-only geocoder/1.0" },
       )) as Array<{
@@ -455,14 +453,14 @@ export function createOpenMeteoWeatherAdapter(
   };
 }
 
-function timestampFromMilliseconds(value: unknown, fallback: string): string {
+function timestampFromMilliseconds(value: unknown): string | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
-    const timestamp = new Date(value).toISOString();
-    if (Number.isFinite(Date.parse(timestamp))) {
-      return timestamp;
+    const timestamp = new Date(value);
+    if (Number.isFinite(timestamp.getTime())) {
+      return timestamp.toISOString();
     }
   }
-  return fallback;
+  return undefined;
 }
 
 export function createUsGSEarthquakeAdapter(
@@ -490,10 +488,29 @@ export function createUsGSEarthquakeAdapter(
           properties?: { mag?: number; time?: number; title?: string };
         }>;
       };
-      const features = payload.features ?? [];
-      const generatedAt = timestampFromMilliseconds(payload.metadata?.generated, request.asOf);
+      const observedAt = new Date().toISOString();
+      const features = payload.features;
+      if (
+        !Array.isArray(features) ||
+        !features.every(
+          (feature) =>
+            feature !== null &&
+            typeof feature === "object" &&
+            !Array.isArray(feature) &&
+            feature.properties !== null &&
+            typeof feature.properties === "object" &&
+            !Array.isArray(feature.properties),
+        )
+      ) {
+        throw new GeospatialSourceError("USGS returned no valid feature collection");
+      }
+      const generatedAt = timestampFromMilliseconds(payload.metadata?.generated);
+      const snapshotTimestamp = generatedAt ?? observedAt;
+      const timestampDefinition = generatedAt
+        ? ""
+        : "; feed generation timestamp unavailable; timestamp is retrieval time";
       const latest = features
-        .filter((feature) => typeof feature.properties?.time === "number")
+        .filter((feature) => timestampFromMilliseconds(feature.properties?.time) !== undefined)
         .toSorted((left, right) => (right.properties?.time ?? 0) - (left.properties?.time ?? 0))[0];
       const magnitudes = features
         .map((feature) => feature.properties?.mag)
@@ -505,8 +522,8 @@ export function createUsGSEarthquakeAdapter(
         {
           name: "earthquake_count",
           value: features.length,
-          sourceTimestamp: generatedAt,
-          fieldDefinition: `USGS count of earthquake features in the ${window} feed`,
+          sourceTimestamp: snapshotTimestamp,
+          fieldDefinition: `USGS count of earthquake features in the ${window} feed${timestampDefinition}`,
           sourceUrlOrArtifact,
         },
       ];
@@ -514,8 +531,8 @@ export function createUsGSEarthquakeAdapter(
         fields.push({
           name: "max_magnitude",
           value: Math.max(...magnitudes),
-          sourceTimestamp: generatedAt,
-          fieldDefinition: `USGS maximum reported magnitude in the ${window} feed`,
+          sourceTimestamp: snapshotTimestamp,
+          fieldDefinition: `USGS maximum reported magnitude in the ${window} feed${timestampDefinition}`,
           sourceUrlOrArtifact,
         });
       }
@@ -523,7 +540,7 @@ export function createUsGSEarthquakeAdapter(
         fields.push({
           name: "latest_event_title",
           value: latest.properties.title,
-          sourceTimestamp: timestampFromMilliseconds(latest.properties.time, generatedAt),
+          sourceTimestamp: timestampFromMilliseconds(latest.properties.time) ?? snapshotTimestamp,
           fieldDefinition: "USGS latest event title in the selected feed",
           sourceUrlOrArtifact,
         });
@@ -532,7 +549,7 @@ export function createUsGSEarthquakeAdapter(
         providerName: "usgs-earthquake-feed",
         providerRole: "official_reference",
         sourceFamily: "seismic_event_feed",
-        observedAt: request.asOf,
+        observedAt,
         timezone: "UTC",
         fields,
       };

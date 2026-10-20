@@ -83,6 +83,7 @@ describe("research_web_autopilot tool", () => {
         url,
         status: 200,
         text: "healthy evidence",
+        finalUrl: url,
         fetchedAt: "2026-09-07T14:00:00Z",
       });
     });
@@ -171,6 +172,7 @@ describe("research_web_autopilot tool", () => {
         status: 200,
         fetchedAt: "2026-09-07T14:00:00.000Z",
         text: "opened public source",
+        finalUrl: url,
       });
     });
     const tool = createResearchWebAutopilotTool({
@@ -204,7 +206,11 @@ describe("research_web_autopilot tool", () => {
         }),
       ),
       fetchTool: stubTool("web_fetch", async () =>
-        jsonResult({ status: 200, text: "unrelated evidence" }),
+        jsonResult({
+          status: 200,
+          finalUrl: "https://investor.attacker.example/filing",
+          text: "unrelated evidence",
+        }),
       ),
     });
     const result = await tool.execute("web-primary-binding", {
@@ -217,6 +223,61 @@ describe("research_web_autopilot tool", () => {
         status: "needs_review",
         crossCheck: expect.objectContaining({ hasPrimary: false }),
         missingEvidence: ["primary_or_official_reference"],
+      }),
+    );
+  });
+
+  it.each([
+    "https://investor.apple.attacker.com/report",
+    "https://ir.apple.attacker.com/report",
+    "https://apple.investors.attacker.com/report",
+    "https://apple.annualreports.attacker.com/report",
+  ])("keeps a query-matching investor-shaped host review-only: %s", async (url) => {
+    const tool = createResearchWebAutopilotTool({
+      searchTool: stubTool("web_search", async () => jsonResult({ results: [{ url }] })),
+      fetchTool: stubTool("web_fetch", async () =>
+        jsonResult({ status: 200, finalUrl: url, text: "Opened report content" }),
+      ),
+    });
+    const result = await tool.execute("issuer-suffix", {
+      query: "Apple latest filing",
+      requirePrimary: true,
+      openTop: 1,
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        status: "needs_review",
+        crossCheck: expect.objectContaining({ hasPrimary: false }),
+        openedDocuments: [
+          expect.objectContaining({
+            finalUrl: url,
+            text: "Opened report content",
+            isLikelyPrimary: false,
+          }),
+        ],
+        missingEvidence: ["primary_or_official_reference"],
+      }),
+    );
+  });
+
+  it("retains an unverified issuer lead without requiring it to satisfy the primary-source gate", async () => {
+    const url = "https://investor.apple.com/report";
+    const tool = createResearchWebAutopilotTool({
+      searchTool: stubTool("web_search", async () => jsonResult({ results: [{ url }] })),
+      fetchTool: stubTool("web_fetch", async () =>
+        jsonResult({ status: 200, finalUrl: url, text: "Issuer lead" }),
+      ),
+    });
+    const result = await tool.execute("issuer-lead", {
+      query: "Apple latest filing",
+      requirePrimary: false,
+      openTop: 1,
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        status: "ready",
+        crossCheck: expect.objectContaining({ hasPrimary: false }),
+        openedDocuments: [expect.objectContaining({ text: "Issuer lead" })],
       }),
     );
   });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -77,7 +78,7 @@ function safeReceiptStem(value: string): string {
       .replace(/[^a-z0-9._-]+/gu, "-")
       .replace(/-+/gu, "-")
       .replace(/^-|-$/gu, "") || "research-data"
-  );
+  ).slice(0, 80);
 }
 
 async function writeAutopilotReceipt(
@@ -85,16 +86,31 @@ async function writeAutopilotReceipt(
   intent: string,
   target: string,
   payload: unknown,
+  signal?: AbortSignal,
 ): Promise<string> {
   const now = new Date().toISOString();
   const relativePath = path.join(
     "memory",
     "research-data-autopilot",
-    `${now.slice(0, 10)}-${safeReceiptStem(intent)}-${safeReceiptStem(target)}-${now.replace(/[:.]/gu, "-")}.json`,
+    `${now.slice(0, 10)}-${safeReceiptStem(intent)}-${safeReceiptStem(target)}-${now.replace(/[:.]/gu, "-")}-${randomUUID()}.json`,
   );
   const absolutePath = path.join(workspaceDir, relativePath);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  signal?.throwIfAborted();
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true, mode: 0o700 });
+  signal?.throwIfAborted();
+  const temporary = `${absolutePath}.tmp`;
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+      signal,
+    });
+    signal?.throwIfAborted();
+    await fs.rename(temporary, absolutePath);
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
   return relativePath;
 }
 
@@ -127,6 +143,7 @@ export function createResearchDataAutopilotTool(options?: {
       "Use source_health to inspect configured routes, recent call evidence, shared provider quotas, next eligible times, cooldowns, process-local response reuse and unknown ceilings without network access. Cached reads are not new source-health verification. Autonomously route a read-only research request across all canonical finance, crypto, public macro, SEC, news, geospatial, weather, and seismic adapters. The agent does not choose provider URLs: registries select every supporting source, retain failures, cross-check results, and never touch trading, broker, wallet, or order authority.",
     parameters: ResearchDataAutopilotSchema,
     execute: async (_toolCallId, args, signal) => {
+      signal?.throwIfAborted();
       const params = args as {
         intent: ResearchDataAutopilotIntent;
         target: string;
@@ -242,10 +259,12 @@ export function createResearchDataAutopilotTool(options?: {
         };
         const receiptPath =
           (params.writeReceipt ?? (liveFetch && !isGeospatialIntent(intent)))
-            ? await writeAutopilotReceipt(workspaceDir, intent, target, result)
+            ? await writeAutopilotReceipt(workspaceDir, intent, target, result, signal)
             : undefined;
+        signal?.throwIfAborted();
         return jsonResult({ ...result, receiptPath });
       } catch (error) {
+        signal?.throwIfAborted();
         if (error instanceof ToolInputError) {
           throw error;
         }

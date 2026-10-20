@@ -20,6 +20,43 @@ const response = (status = 200, retryAfter?: string) => ({
 afterEach(() => vi.useRealTimers());
 
 describe("API call governance", () => {
+  it("releases the caller permit when an additional limiter wait is cancelled", async () => {
+    const primary = createApiRateLimiter({ minIntervalMs: 0, maxConcurrent: 1 });
+    const additional = createApiRateLimiter({ minIntervalMs: 0, maxConcurrent: 1 });
+    const held = await additional.acquire();
+    let reachedAdditional = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      reachedAdditional = resolve;
+    });
+    try {
+      const fetch = vi.fn<ApiFetch>().mockResolvedValue(response());
+      const controller = new AbortController();
+      const pending = governApiFetch(fetch, {
+        rateLimiter: primary,
+        additionalRateLimiter: {
+          acquire: (signal) => {
+            reachedAdditional();
+            return additional.acquire(signal);
+          },
+        },
+        signal: controller.signal,
+      })("https://example.test/queued").then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await waiting;
+      controller.abort();
+      expect(await pending).toMatchObject({ kind: "cancelled" });
+      expect(fetch).not.toHaveBeenCalled();
+      await expect(
+        governApiFetch(fetch, { rateLimiter: primary })("https://example.test/next"),
+      ).resolves.toMatchObject({ status: 200 });
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      held.release();
+    }
+  });
+
   it("does not claim HTTP dispatch or spend the caller budget when quota preparation rejects", async () => {
     const receipts: ApiCallReceipt[] = [];
     const fetch = Object.assign(

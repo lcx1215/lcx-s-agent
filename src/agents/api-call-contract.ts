@@ -89,6 +89,8 @@ export type ApiTransportOptions = {
   idempotencyKey?: string;
   circuitBreaker?: ApiCircuitBreaker;
   rateLimiter?: ApiRateLimiter;
+  /** Adapter minimum applied in addition to the caller-owned source limiter. */
+  additionalRateLimiter?: ApiRateLimiter;
   onReceipt?: (receipt: ApiCallReceipt) => void;
   /** Synchronous reservation immediately before each actual HTTP attempt. */
   beforeHttpDispatch?: () => void;
@@ -638,9 +640,17 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                   let response: ApiFetchResponse;
                   let body: string;
                   let permit: ApiRateLimiterPermit | undefined;
+                  let additionalPermit: ApiRateLimiterPermit | undefined;
                   try {
                     permit = await scope.rateLimiter?.acquire(attemptSignal);
-                    details.throttleWaitMs = permit?.waitMs ?? 0;
+                    if (
+                      scope.additionalRateLimiter &&
+                      scope.additionalRateLimiter !== scope.rateLimiter
+                    ) {
+                      additionalPermit = await scope.additionalRateLimiter.acquire(attemptSignal);
+                    }
+                    details.throttleWaitMs =
+                      (permit?.waitMs ?? 0) + (additionalPermit?.waitMs ?? 0);
                     assertApiCallActive(attemptSignal);
                     const dispatchInit = {
                       ...init,
@@ -725,6 +735,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                       safeNetworkCode(error),
                     );
                   } finally {
+                    additionalPermit?.release();
                     permit?.release();
                   }
                   if (!response.ok) {

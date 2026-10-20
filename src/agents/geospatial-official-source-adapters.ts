@@ -200,7 +200,7 @@ export function createNwsCurrentWeatherAdapter(
       ) {
         fields.push(
           field(
-            "pressure_msl",
+            "barometric_pressure",
             parseFiniteNumber(properties.barometricPressure.value, "NWS pressure") / 100,
             "hPa",
             sourceTimestamp,
