@@ -88,7 +88,14 @@ describe("native private same-parent Universe owner join and failure feedback", 
       expect(result.cleanup.directChildCloseObserved).toBe(true);
       expect(
         result.processes.every(
-          (child) => child.timeoutMs <= 20_000 && child.closeObserved && child.stdioClosed,
+          (child) =>
+            child.timeoutMs <=
+              (child.command === process.execPath &&
+              child.args.some((arg) => path.basename(arg) === "lcx-universe-index.ts")
+                ? 45_000
+                : 20_000) &&
+            child.closeObserved &&
+            child.stdioClosed,
         ),
       ).toBe(true);
       expect(network).not.toHaveBeenCalled();

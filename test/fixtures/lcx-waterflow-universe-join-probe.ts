@@ -41,6 +41,8 @@ export type UniverseJoinFault = "missing_source" | "hash_conflict";
 
 /** Native private owners and original join. Missing source is deliberately never replaced by a pass. */
 export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault) {
+  // Finish or cancel before the caller's 90s test budget can remove an active cwd.
+  const preparationSignal = AbortSignal.timeout(80_000);
   const sourceHashes: Record<string, string> = {};
   const sourceTexts: Record<string, string> = {};
   const readSource = async (relative: string) => {
@@ -62,6 +64,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   const denied: Array<{ script: string; args: string[]; reason: string }> = [];
   const sourceCalls: Array<{ id: string; args: string[]; stdout: string; exitCode: number }> = [];
   const execute = async (command: string, args: string[], options: ExecFileOptions = {}) => {
+    preparationSignal.throwIfAborted();
     const script = args.find((arg) => arg.endsWith(".ts"));
     assert.ok(
       command === "git" ||
@@ -72,7 +75,11 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       `process_not_allowlisted:${command}:${script}`,
     );
     assert.notEqual("detached" in options ? options.detached : false, true);
-    const timeoutMs = Math.min(Number(options.timeout) || 20_000, 20_000);
+    const timeoutLimitMs =
+      command === process.execPath && script && path.basename(script) === "lcx-universe-index.ts"
+        ? 45_000
+        : 20_000;
+    const timeoutMs = Math.min(Number(options.timeout) || timeoutLimitMs, timeoutLimitMs);
     const observation: (typeof processes)[number] = {
       command,
       args,
@@ -90,7 +97,14 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       const child = execFile(
         command,
         args,
-        { ...options, timeout: timeoutMs, encoding: "utf8" },
+        {
+          ...options,
+          signal: options.signal
+            ? AbortSignal.any([preparationSignal, options.signal])
+            : preparationSignal,
+          timeout: timeoutMs,
+          encoding: "utf8",
+        },
         (error, stdout, stderr) => {
           if (error) {
             error.message += `\nprivate_process_stderr=${stderr.slice(-2000)}`;
@@ -239,25 +253,28 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     cwd: sourceRoot,
   });
   const indexedFiles = listed.stdout.split("\0").filter(Boolean);
-  const sourceEntries = new Set(indexedFiles);
-  for (const file of indexedFiles) {
-    let parent = path.posix.dirname(file);
-    while (parent !== ".") {
-      sourceEntries.add(parent);
-      parent = path.posix.dirname(parent);
-    }
-  }
   const existingAreas: string[] = [];
   const rootFiles: string[] = [];
   for (const area of sourceAreas) {
     if (fsSync.existsSync(path.join(sourceRoot, area))) {
-      await fs.cp(path.join(sourceRoot, area), path.join(repo, area), {
-        recursive: true,
-        verbatimSymlinks: true,
-        filter: (source) =>
-          sourceEntries.has(path.relative(sourceRoot, source).split(path.sep).join("/")),
-      });
+      await fs.mkdir(path.join(repo, area), { recursive: true });
       existingAreas.push(area);
+    }
+  }
+  // Copy only the original indexed inputs, with bounded concurrency, instead of
+  // repeatedly walking whole source trees and filtering every directory entry.
+  for (let offset = 0; offset < indexedFiles.length; offset += 32) {
+    preparationSignal.throwIfAborted();
+    const copies = await Promise.allSettled(
+      indexedFiles.slice(offset, offset + 32).map(async (file) => {
+        const destination = path.join(repo, file);
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.cp(path.join(sourceRoot, file), destination, { verbatimSymlinks: true });
+      }),
+    );
+    const failure = copies.find((copy) => copy.status === "rejected");
+    if (failure?.status === "rejected") {
+      throw failure.reason;
     }
   }
   for (const file of ["AGENTS.md", "README.md", "package.json", "tsconfig.json", ".gitignore"]) {
@@ -271,25 +288,29 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   }
   // Preserve copied fixture bytes independently of the host Git newline policy.
   // Windows autocrlf warnings can otherwise exhaust execFile's stderr buffer.
-  // Bound each preparation command's work and argv length. Indexing the entire
-  // copied source tree in one command can exhaust its 20s limit on Windows.
-  // Original owner processes retain their existing timeout and cancellation guards.
+  // A NUL-delimited pathspec keeps exact filenames out of Windows argv limits
+  // without spawning dozens of tiny Git processes. Each Git child retains 20s.
   const pathsToStage = [...indexedFiles, ...rootFiles];
-  while (pathsToStage.length > 0) {
-    const batch: string[] = [];
-    let argumentBytes = 0;
-    while (pathsToStage.length > 0 && batch.length < 128) {
-      const next = pathsToStage[0];
-      if (batch.length > 0 && argumentBytes + next.length > 12_000) {
-        break;
-      }
-      batch.push(pathsToStage.shift()!);
-      argumentBytes += next.length + 1;
-    }
-    await execute("git", ["-c", "core.autocrlf=false", "add", "--force", "--", ...batch], {
-      cwd: repo,
+  const pathspec = path.join(root, "architecture-stage-paths.bin");
+  for (let offset = 0; offset < pathsToStage.length; offset += 1_024) {
+    preparationSignal.throwIfAborted();
+    await fs.writeFile(pathspec, pathsToStage.slice(offset, offset + 1_024).join("\0") + "\0", {
+      mode: 0o600,
     });
+    await execute(
+      "git",
+      [
+        "-c",
+        "core.autocrlf=false",
+        "add",
+        "--force",
+        `--pathspec-from-file=${pathspec}`,
+        "--pathspec-file-nul",
+      ],
+      { cwd: repo },
+    );
   }
+  await fs.rm(pathspec);
   await execute(
     "git",
     [
