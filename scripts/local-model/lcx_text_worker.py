@@ -3,6 +3,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import math
 import os
 import sys
 import tempfile
@@ -31,6 +32,9 @@ for line in sys.stdin:
         request_id = request["id"]
         prompt = request["prompt"]
         tokens = request["maxTokens"]
+        memory_mb = request.get("memoryBudgetMb", 3072)
+        if isinstance(memory_mb, bool) or not isinstance(memory_mb, (int, float)) or not math.isfinite(memory_mb) or memory_mb <= 0:
+            raise ValueError("input_limit")
         if not isinstance(prompt, str) or len(prompt) > 16000:
             raise ValueError("input_limit")
         if not isinstance(tokens, int) or not 1 <= tokens <= 512:
@@ -45,7 +49,7 @@ for line in sys.stdin:
                 from mlx_lm import generate, load
                 from mlx_lm.sample_utils import make_sampler
                 mx.set_cache_limit(128 * 1024 * 1024)
-                mx.set_memory_limit(3 * 1024 * 1024 * 1024)
+                mx.set_memory_limit(int(min(3072, memory_mb) * 1024 * 1024))
                 if model is None:
                     reply({"id": request_id, "event": "loading", "weightsLoaded": False})
                     model, tokenizer = load(args.model)

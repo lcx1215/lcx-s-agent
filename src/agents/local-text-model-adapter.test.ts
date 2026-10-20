@@ -1,13 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { killProcessTree } from "../process/kill-tree.js";
 import {
   buildLocalRoleShadowPrompt,
   createLocalQualityHarnessAdapter,
+  createLocalTextModelAdapter,
   buildQualityHarnessModelPrompt,
   buildQualityHarnessModelPromptWithCoverage,
   parseLocalModelJson,
   parseLocalBaseModelJson,
   resolveLocalTextModelRuntimeConfig,
 } from "./local-text-model-adapter.js";
+import { LogicalAgentPool, runLogicalAgentPlan } from "./logical-agent-pool.js";
 
 describe("local text model adapter contract", () => {
   it("keeps nested draft claims and more than eight evidence IDs visible to reviewers", () => {
@@ -1002,5 +1008,161 @@ it("keeps the ninth ordinary stage with six evidence batches instead of dropping
   expect(Object.keys(dependencyOutputs)).toHaveLength(20);
   for (const name of Object.keys(dependencyOutputs)) {
     expect(prompt).toContain(`must-retain-${name}`);
+  }
+});
+
+// Real subprocesses exercise the original adapter/pool boundary; no MLX import or model weights.
+it.each([false, true])(
+  "applies the pool caller budget to a local Python tree (oversized=%s)",
+  async (oversized) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "lcx-local-memory-"));
+    const executable = path.join(root, "dummy-python");
+    const pids = path.join(root, "pids");
+    const script = `#!/usr/bin/env python3
+import json, os, subprocess, sys, time
+assert 'mx.set_memory_limit(41943040)' in sys.argv[2]
+p = subprocess.Popen([sys.executable, '-c', 'import time; allocation=bytearray(${oversized ? 48 : 1}*1024*1024); allocation[::4096]=bytes([1])*(len(allocation)//4096); time.sleep(2)'])
+with open(${JSON.stringify(pids)}, 'w') as f: f.write(str(os.getpid())+' '+str(p.pid))
+time.sleep(0.5)
+p.wait()
+print(json.dumps({'ok': True}))
+`;
+    try {
+      await writeFile(executable, script, { mode: 0o700 });
+      const runtime = resolveLocalTextModelRuntimeConfig({
+        adapterPath: "",
+        baseModel: true,
+        pythonPath: executable,
+        memoryBudgetMb: 128,
+        timeoutMs: 5000,
+      });
+      const adapter = createLocalTextModelAdapter(runtime, {
+        idPrefix: "dummy-memory",
+        capabilities: ["dummy"],
+        buildPrompt: () => "no model invocation",
+      });
+      const pool = new LogicalAgentPool({
+        memoryBudgetMb: 40,
+        taskTimeoutMs: 6000,
+        modelRouting: {
+          revision: "dummy-memory",
+          adapters: [adapter],
+          defaultPolicy: {
+            primary: adapter.id,
+            requiredCapabilities: ["dummy"],
+            maxInputBytes: 1024,
+            timeoutMs: 5000,
+          },
+        },
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [{ id: "rss", agentId: "data_cleaning", input: {} }],
+        executor: async ({ modelSlot, signal }) => ({
+          output: await modelSlot.invoke({}, signal),
+          sideEffects: [],
+        }),
+      });
+      const [parentPid, childPid] = (await readFile(pids, "utf8")).split(" ").map(Number);
+      // The child normally handles SIGTERM; allow the existing group-kill grace timer to finish.
+      if (oversized) {
+        expect(result.status).toBe("failed");
+        expect(result.tasks[0]?.error).toContain("memory_budget_exceeded");
+        expect(result.pool.activeModelInvocations).toBe(0);
+        await vi.waitFor(() => expect(() => process.kill(childPid, 0)).toThrow());
+      } else {
+        expect(result.status, JSON.stringify(result.tasks)).toBe("completed");
+        expect(result.tasks[0]?.modelCalls?.[0]?.memory).toMatchObject({
+          mode: "sampled_process_tree_rss",
+          budgetBytes: 40 * 1024 * 1024,
+          peakBytes: expect.any(Number),
+          samples: expect.any(Number),
+        });
+      }
+      expect(() => process.kill(parentPid, 0)).toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it("keeps local cancellation owned until its real process cleanup finishes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "lcx-local-cancel-"));
+  const executable = path.join(root, "dummy-python");
+  const marker = path.join(root, "pid");
+  const abort = new AbortController();
+  let pid: number | undefined;
+  let pending: ReturnType<typeof runLogicalAgentPlan> | undefined;
+  try {
+    await writeFile(
+      executable,
+      `#!/usr/bin/env python3
+import os, signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(${JSON.stringify(marker)}, 'w') as f: f.write(str(os.getpid()))
+time.sleep(10)
+`,
+      { mode: 0o700 },
+    );
+    const adapter = createLocalTextModelAdapter(
+      resolveLocalTextModelRuntimeConfig({
+        adapterPath: "",
+        baseModel: true,
+        pythonPath: executable,
+        timeoutMs: 5000,
+      }),
+      { idPrefix: "cancel-dummy", capabilities: ["dummy"], buildPrompt: () => "dummy" },
+    );
+    const pool = new LogicalAgentPool({
+      memoryBudgetMb: 128,
+      taskTimeoutMs: 6000,
+      modelRouting: {
+        revision: "cancel-dummy",
+        adapters: [adapter],
+        defaultPolicy: {
+          primary: adapter.id,
+          requiredCapabilities: ["dummy"],
+          maxInputBytes: 1024,
+          timeoutMs: 5000,
+        },
+      },
+    });
+    pending = runLogicalAgentPlan({
+      pool,
+      signal: abort.signal,
+      tasks: [{ id: "cancel", agentId: "data_cleaning", input: {} }],
+      executor: async ({ modelSlot, signal }) => ({
+        output: await modelSlot.invoke({}, signal),
+        sideEffects: [],
+      }),
+    });
+    await vi.waitFor(
+      async () => {
+        pid = Number(await readFile(marker, "utf8"));
+      },
+      { timeout: 3000 },
+    );
+    abort.abort();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(pool.status.activeModelInvocations).toBe(1);
+    expect(pool.status.activeRuns).toBe(1);
+    // Caller cancellation can return an explicit unknown-cleanup receipt, while both slots stay owned.
+    const result = await pending;
+    expect(result.tasks[0]?.error).toContain("cleanup_unconfirmed");
+    await vi.waitFor(
+      () => {
+        expect(pool.status.activeModelInvocations).toBe(0);
+        expect(pool.status.activeRuns).toBe(0);
+      },
+      { timeout: 1500 },
+    );
+    expect(() => process.kill(pid!, 0)).toThrow();
+  } finally {
+    abort.abort();
+    if (pid) {
+      killProcessTree(pid, { graceMs: 25 });
+    }
+    await pending;
+    await rm(root, { recursive: true, force: true });
   }
 });

@@ -1278,7 +1278,7 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("exceeded memory budget");
-    expect(result.pool.memoryBudgetEnforcement).toBe("measured_invocation_delta");
+    expect(result.pool.memoryBudgetEnforcement).toBe("node_invocation_delta");
     expect(result.pool.activeModelInvocations).toBe(0);
   });
 

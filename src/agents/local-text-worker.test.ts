@@ -86,6 +86,11 @@ runpy.run_path(worker_path, run_name='__main__')`;
   it("reads an absent host worker without assembling one", () => {
     expect(readLocalTextWorkerSnapshot()).toBeUndefined();
   });
+  it("does not retain busy state after a synchronous spawn failure", async () => {
+    const w = new LocalTextWorker("\0", []);
+    await expect(w.invoke("dummy", 10, 2000, new AbortController().signal)).rejects.toThrow();
+    expect(w.snapshot()).toMatchObject({ pid: null, busy: false });
+  });
   it("distinguishes protocol readiness from loaded weights and inference evidence", async () => {
     const w = worker();
     expect(w.snapshot()).toMatchObject({ pid: null, protocolReady: false, weightsLoaded: false });
@@ -270,4 +275,28 @@ runpy.run_path(worker_path, run_name='__main__')`;
     await w.stop();
     expect(w.snapshot().lastFailure?.code).toBe("local_worker_timeout");
   });
+});
+
+it("checks already-resident Python memory before dispatching another request", async () => {
+  const script = `import json, sys
+allocation = bytearray(16 * 1024 * 1024)
+allocation[::4096] = bytes([1]) * (len(allocation) // 4096)
+print(json.dumps({'ready': True, 'weightsLoaded': True}), flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({'id': request['id'], 'text': '{}', 'weightsLoaded': True}), flush=True)
+`;
+  const w = new LocalTextWorker("python3", ["-u", "-c", script]);
+  workers.push(w);
+  const first = await w.invoke("first", 10, 2000, new AbortController().signal, 64);
+  expect(first.memory).toMatchObject({
+    mode: "sampled_process_tree_rss",
+    budgetBytes: 64 * 1024 * 1024,
+  });
+  expect(first.memory.peakBytes).toBeGreaterThan(16 * 1024 * 1024);
+  await expect(w.invoke("second", 10, 2000, new AbortController().signal, 4)).rejects.toThrow(
+    "memory_budget_exceeded",
+  );
+  expect(w.snapshot().pid).toBeNull();
+  expect(w.snapshot().lastInferenceSucceededAt).toBeNull();
 });

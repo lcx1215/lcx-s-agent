@@ -1,14 +1,21 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import {
+  guardChildMemory,
+  ChildMemoryBudgetError,
+  waitForChildMemoryRelease,
+} from "../process/child-memory-budget.js";
+import { killProcessTree } from "../process/kill-tree.js";
 import { buildLocalModelProcessEnv } from "./local-model-process-env.js";
 import {
   parseLocalBaseModelJson,
+  localTextMemoryBudgetMb,
   type LocalTextModelRuntimeConfig,
 } from "./local-text-model-adapter.js";
-import type {
-  LogicalAgentModelAdapter,
-  ModelCallObservation,
+import {
+  type LogicalAgentModelAdapter,
+  type ModelCallObservation,
 } from "./logical-agent-model-router.js";
 
 export type LocalTextWorkerSnapshot = {
@@ -25,6 +32,8 @@ export type LocalTextWorkerSnapshot = {
 /** A single resident process owned by the host service; requests are never replayed. */
 export class LocalTextWorker {
   private child?: ChildProcessWithoutNullStreams;
+  private closed?: Promise<void>;
+  private invocationActive = false;
   private pending?: {
     id: string;
     resolve: (value: { text: string; pid: number }) => void;
@@ -56,7 +65,7 @@ export class LocalTextWorker {
       protocolReady: this.protocolReady,
       weightsLoaded: this.weightsLoaded,
       loading: this.loading,
-      busy: this.pending !== undefined,
+      busy: this.invocationActive,
       lastInferenceSucceededAt: this.lastInferenceSucceededAt,
       lastFailure: this.lastFailure ? { ...this.lastFailure } : null,
       inferenceEvidence: this.lastInferenceSucceededAt
@@ -89,9 +98,11 @@ export class LocalTextWorker {
     }
     const child = spawn(this.command, [...this.args], {
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       env: buildLocalModelProcessEnv(process.env, { HF_HUB_OFFLINE: "1", PYTHONUNBUFFERED: "1" }),
     });
     this.child = child;
+    this.closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
     let processFailure: Error | undefined;
     let buffered = "";
     child.stderr.resume();
@@ -99,7 +110,7 @@ export class LocalTextWorker {
     child.stdout.on("data", (chunk: string) => {
       buffered += chunk;
       if (buffered.length > 2_000_000) {
-        void this.kill(new Error("local_worker_output_limit"));
+        this.requestKill(new Error("local_worker_output_limit"));
         return;
       }
       let newline: number;
@@ -150,7 +161,7 @@ export class LocalTextWorker {
             }
           }
         } catch {
-          void this.kill(new Error("local_worker_protocol_invalid"));
+          this.requestKill(new Error("local_worker_protocol_invalid"));
         }
       }
     });
@@ -163,7 +174,7 @@ export class LocalTextWorker {
       if (this.child === child) {
         // A live process with a broken input pipe cannot serve another request.
         this.resetProcessState();
-        void this.kill(new Error("local_worker_input_failed"));
+        this.requestKill(new Error("local_worker_input_failed"));
       }
     });
     child.once("close", () => {
@@ -223,17 +234,26 @@ export class LocalTextWorker {
       return Promise.resolve();
     }
     this.setReferenced(true);
-    this.stopping = new Promise<void>((resolve) => {
-      const force = setTimeout(() => child.kill("SIGKILL"), 750);
-      child.once("close", () => {
-        clearTimeout(force);
-        resolve();
-      });
+    if (child.pid) {
+      killProcessTree(child.pid, { graceMs: 750 });
+    } else {
       child.kill("SIGTERM");
-    }).finally(() => {
-      this.stopping = undefined;
-    });
+    }
+    const closed = this.closed;
+    this.stopping = waitForChildMemoryRelease(child)
+      .finally(() => closed)
+      .catch((failure: unknown) => {
+        this.recordFailure(new Error("local_worker_process_cleanup_failed"));
+        throw failure;
+      })
+      .finally(() => {
+        this.stopping = undefined;
+      });
     return this.stopping;
+  }
+
+  private requestKill(error: Error): void {
+    void this.kill(error).catch(() => undefined);
   }
 
   async stop(): Promise<void> {
@@ -245,36 +265,80 @@ export class LocalTextWorker {
     await this.kill(new Error("local_worker_stopped"));
   }
 
-  async invoke(prompt: string, maxTokens: number, timeoutMs: number, signal: AbortSignal) {
+  async invoke(
+    prompt: string,
+    maxTokens: number,
+    timeoutMs: number,
+    signal: AbortSignal,
+    memoryBudgetMb = 3072,
+  ) {
     signal.throwIfAborted();
-    if (this.pending || this.stopping) {
+    const budgetMb = localTextMemoryBudgetMb({ memoryBudgetMb });
+    if (this.invocationActive || this.stopping) {
       throw new Error("local_worker_busy");
     }
     const child = this.ensureProcess();
+    this.invocationActive = true;
     this.setReferenced(true);
     const id = randomUUID();
+    let terminalFailure: Error | undefined;
     const onAbort = () => {
-      void this.kill(new Error("local_worker_cancelled"));
+      terminalFailure ??= new Error("local_worker_cancelled");
+      this.requestKill(terminalFailure);
     };
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reply = new Promise<{ text: string; pid: number }>((resolve, reject) => {
+      this.pending = { id, resolve, reject };
+    });
+    // Preflight can reject before the reply is awaited; retain the original rejection.
+    void reply.catch(() => undefined);
+    const guard = guardChildMemory(child, {
+      budgetMb,
+      includeProcessGroup: process.platform !== "win32",
+      onError: (error) => {
+        terminalFailure ??= new Error(`local_worker_${error.code}`);
+        this.requestKill(terminalFailure);
+      },
+    });
+    signal.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => {
+      terminalFailure ??= new Error("local_worker_timeout");
+      this.requestKill(terminalFailure);
+    }, timeoutMs);
     try {
-      return await new Promise<{ text: string; pid: number }>((resolve, reject) => {
-        this.pending = { id, resolve, reject };
-        signal.addEventListener("abort", onAbort, { once: true });
-        timer = setTimeout(() => {
-          void this.kill(new Error("local_worker_timeout"));
-        }, timeoutMs);
-        if (signal.aborted) {
-          onAbort();
-          return;
-        }
-        child.stdin.write(`${JSON.stringify({ id, prompt, maxTokens })}\n`);
-      });
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
+      // Measure the full resident process, including already-loaded weights, before another request.
+      await guard.ready;
+      signal.throwIfAborted();
+      child.stdin.write(`${JSON.stringify({ id, prompt, maxTokens, memoryBudgetMb: budgetMb })}\n`);
+      const result = await reply;
+      const memory = await guard.stop();
+      return { ...result, memory };
+    } catch (error) {
+      let failure =
+        terminalFailure ??
+        (error instanceof ChildMemoryBudgetError
+          ? new Error(`local_worker_${error.code}`)
+          : error instanceof Error
+            ? error
+            : new Error("local_worker_inference_failed"));
+      try {
+        await guard.stop();
+      } catch (observationError) {
+        failure =
+          terminalFailure ??
+          (observationError instanceof ChildMemoryBudgetError
+            ? new Error(`local_worker_${observationError.code}`)
+            : new Error("local_worker_memory_observation_unavailable"));
       }
+      // A valid protocol-level inference failure can reuse loaded weights, as before.
+      if (failure.message !== "local_worker_inference_failed") {
+        await this.kill(failure).catch(() => undefined);
+      }
+      throw failure;
+    } finally {
+      clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
+      await guard.stop().catch(() => undefined);
+      this.invocationActive = false;
     }
   }
 }
@@ -317,17 +381,30 @@ export function createResidentLocalTextAdapter(
     provider: "mlx-local",
     modelId: runtime.modelId,
     mode: "adapter",
+    cancellationSettlement: "owned_process",
     capabilities: options.capabilities,
     requiredTools: [],
     requiredSideEffects: ["local_compute"],
     roleScope: ["data_cleaning"],
     invoke: async (request, signal) => {
-      const result = await localTextWorker(runtime).invoke(
-        options.buildPrompt(request.payload),
-        Math.min(512, runtime.maxTokens),
-        Math.min(15_000, runtime.timeoutMs),
-        signal,
-      );
+      const result = await localTextWorker(runtime)
+        .invoke(
+          options.buildPrompt(request.payload),
+          Math.min(512, runtime.maxTokens),
+          Math.min(15_000, runtime.timeoutMs),
+          signal,
+          localTextMemoryBudgetMb(runtime, request.memoryBudgetMb),
+        )
+        .catch((error: unknown) => {
+          const code = error instanceof Error ? error.message : "";
+          if (code === "local_worker_memory_budget_exceeded") {
+            throw new ChildMemoryBudgetError("memory_budget_exceeded");
+          }
+          if (code === "local_worker_memory_observation_unavailable") {
+            throw new ChildMemoryBudgetError("memory_observation_unavailable");
+          }
+          throw error;
+        });
       let normalized = false;
       try {
         JSON.parse(result.text);
@@ -340,6 +417,7 @@ export function createResidentLocalTextAdapter(
         modelId: runtime.modelId,
         transportRequestId: `resident_mlx:${result.pid}:${request.callId}`,
         kind: "model_inference",
+        memory: result.memory,
         ...(normalized ? { outputNormalization: "json_extraction" as const } : {}),
       });
       return parseLocalBaseModelJson(result.text);

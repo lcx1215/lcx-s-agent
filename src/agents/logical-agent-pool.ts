@@ -298,9 +298,9 @@ export type LocalModelPoolConfig = Readonly<{
   modelId: string;
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
-  /** Requested per-invocation delta; the enforcement mode is reported below. */
+  /** Node invocation delta; the same caller limit is forwarded to local process adapters. */
   memoryBudgetMb: number;
-  memoryBudgetEnforcement: "measured_invocation_delta";
+  memoryBudgetEnforcement: "node_invocation_delta";
   taskTimeoutMs: number;
 }>;
 
@@ -328,7 +328,7 @@ export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = Object.freeze({
   maxLoadedModels: 1,
   maxConcurrency: 1,
   memoryBudgetMb: 3072,
-  memoryBudgetEnforcement: "measured_invocation_delta",
+  memoryBudgetEnforcement: "node_invocation_delta",
   taskTimeoutMs: 30_000,
 });
 
@@ -396,7 +396,7 @@ export type LogicalAgentPoolStatus = {
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
-  memoryBudgetEnforcement: "measured_invocation_delta";
+  memoryBudgetEnforcement: "node_invocation_delta";
   taskTimeoutMs: number;
   queuedRuns: number;
   activeRuns: number;
@@ -482,7 +482,7 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
     maxLoadedModels: 1,
     maxConcurrency,
     memoryBudgetMb,
-    memoryBudgetEnforcement: "measured_invocation_delta",
+    memoryBudgetEnforcement: "node_invocation_delta",
     taskTimeoutMs,
   });
 }
@@ -854,6 +854,7 @@ export class LogicalAgentPool<TInput, TResult> {
                 capabilities,
                 signal: controller.signal,
                 deadlineAtMs,
+                memoryBudgetMb: this.#config.memoryBudgetMb,
                 isDeadlineAbort: isTaskTimeoutError,
                 dispatch: (invoke, dispatchSignal) => this.#invokeModel(invoke, dispatchSignal),
                 record: (receipt) => receipts.push(receipt),
