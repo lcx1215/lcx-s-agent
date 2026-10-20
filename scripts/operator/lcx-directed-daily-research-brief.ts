@@ -624,6 +624,26 @@ export async function readDirectedLearningUsageReceipt(options: {
 }
 
 /** Read existing native runs only. This caller has no research/model execution route. */
+function directedSourceJobGaps(
+  jobs: readonly {
+    status: string;
+    freshnessWarnings: readonly string[];
+    conflicts: readonly string[];
+    missingEvidence: readonly string[];
+  }[],
+): string[] {
+  return jobs.flatMap((job, index) =>
+    job.status !== "ready" ||
+    job.freshnessWarnings.length ||
+    job.conflicts.length ||
+    job.missingEvidence.length
+      ? [
+          `case_source_job:${index}:${job.status}:${[...job.freshnessWarnings, ...job.conflicts, ...job.missingEvidence].join(",")}`,
+        ]
+      : [],
+  );
+}
+
 export async function readDirectedDailyCases(options: {
   date?: string;
   bindingsFile: string;
@@ -935,18 +955,7 @@ export async function readDirectedDailyCases(options: {
         ) {
           section.gaps.push("case_evidence_snapshot_conflict");
         }
-        for (const [index, job] of batch.jobs.entries()) {
-          if (
-            job.status !== "ready" ||
-            job.freshnessWarnings.length ||
-            job.conflicts.length ||
-            job.missingEvidence.length
-          ) {
-            section.gaps.push(
-              `case_source_job:${index}:${job.status}:${[...job.freshnessWarnings, ...job.conflicts, ...job.missingEvidence].join(",")}`,
-            );
-          }
-        }
+        section.gaps.push(...directedSourceJobGaps(batch.jobs));
       }
       if (snapshot.status !== "candidate" || run.packet.status !== "candidate") {
         section.gaps.push(`case_status:${snapshot.status}/${run.packet.status}`);
@@ -3010,18 +3019,17 @@ export async function executeDirectedDailyResearchTask(options: {
             ? error.message
             : "directed_research_failed";
     controller.abort(new Error("directed_research_failure_cleanup"));
+    const failureGaps = [
+      ...(watchlistGaps.length ? watchlistGaps : [gap]),
+      ...directedSourceJobGaps(researchReceipt?.batch?.jobs ?? []),
+    ];
     const readback = finishDirectedCaseRead(
       brief,
       DAILY_RESEARCH_TASKS.map((task) => ({
         taskId: task.id,
         status: "held",
         contentAcceptance: "not_observed",
-        gaps:
-          task.id === options.taskId
-            ? watchlistGaps.length
-              ? watchlistGaps
-              : [gap]
-            : ["task_case_not_observed"],
+        gaps: task.id === options.taskId ? failureGaps : ["task_case_not_observed"],
       })),
       undefined,
       "failed",
@@ -3060,7 +3068,7 @@ export async function executeDirectedDailyResearchTask(options: {
             : adapterAvailable
               ? "supplied_original_adapter"
               : "unavailable_no_source_fetch",
-        gaps: watchlistGaps.length ? watchlistGaps : [gap],
+        gaps: failureGaps,
         deadlineMs: timeoutMs,
         cleanup: "local_listener_released_upstream_cleanup_unconfirmed",
         notObserved: [

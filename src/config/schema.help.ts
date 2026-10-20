@@ -114,7 +114,7 @@ export const FIELD_HELP: Record<string, string> = {
   "gateway.tls.enabled":
     "Enables TLS termination at the gateway listener so clients connect over HTTPS/WSS directly. Required for every direct non-loopback bind, including LAN, custom, tailnet, and auto when it resolves beyond loopback.",
   "gateway.tls.autoGenerate":
-    "Auto-generates a self-signed TLS certificate/key pair when explicit files are not configured (requires openssl on PATH). Its SAN covers localhost, the machine hostname, and currently assigned local interface IPs; trust it only in clients you control, and provide a trusted certificate matching custom or production DNS names.",
+    "Enable to auto-generate a self-signed TLS certificate/key pair when explicit files are not configured (requires openssl on PATH). Its SAN covers localhost, the machine hostname, and currently assigned local interface IPs; trust it only in clients you control, and provide a trusted certificate matching custom or production DNS names.",
   "gateway.tls.certPath":
     "Filesystem path to the TLS certificate file used by the gateway when TLS is enabled. Use managed certificate paths and keep renewal automation aligned with this location.",
   "gateway.tls.keyPath":

@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { closeFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
+import { closeFinancePositionLedger } from "../src/agents/finance-position-ledger.js";
 import {
   probeOriginalFinanceLiveCaller,
   type LiveCallerFault,
@@ -12,6 +14,9 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
+    const book = path.join(root, "current-research", "finance-book");
+    closeFinanceBarLedger(book);
+    closeFinancePositionLedger(book);
     await fs.rm(root, { recursive: true, force: true });
   }
 });

@@ -30,6 +30,7 @@ const directories: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const directory of directories.splice(0)) {
+    ledger.closeFinancePositionLedger(directory);
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

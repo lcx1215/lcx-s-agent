@@ -22,7 +22,7 @@ afterEach(async () => {
 async function setup(missingIndex?: number, lastClose = 104) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-intraday-waterflow-"));
   roots.push(directory);
-  const prices = [100, 101, 100, 102, 103, lastClose];
+  const prices = [100, 101, 100, 102, 103, ...Array.from({ length: 73 }, () => lastClose)];
   const bars = prices
     .map((close, index) => {
       const open = index ? prices[index - 1] : close;
@@ -39,7 +39,7 @@ async function setup(missingIndex?: number, lastClose = 104) {
   await appendFinanceIntradayBars(directory, {
     instrument: "SPY",
     intervalSeconds: 300,
-    observedAt: "2026-01-05T16:00:00.000Z",
+    observedAt: "2026-01-05T22:00:00.000Z",
     provenance: { origin: "offline_fixture", feed: "iex" },
     bars,
   });
@@ -49,7 +49,7 @@ async function setup(missingIndex?: number, lastClose = 104) {
     "--from",
     "2026-01-05T14:30:00.000Z",
     "--to",
-    "2026-01-05T15:00:00.000Z",
+    "2026-01-05T21:00:00.000Z",
     "--capital",
     "10000",
     "--max-allocation",
@@ -80,7 +80,7 @@ describe("original intraday ledger -> replay input and native block", () => {
     expect(trade.entryReferencePrice).toBe(ledger.bars[4].open);
     expect(trade.costFraction).toBeCloseTo(0.001, 12);
     expect(result.receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(
-      104 / ledger.bars[3].open - 1 - trade.costFraction,
+      (104 / ledger.bars[0].open - 1 - trade.costFraction) * 0.5,
       12,
     );
     expect(result.receipt.executionAuthority).toBe("none");

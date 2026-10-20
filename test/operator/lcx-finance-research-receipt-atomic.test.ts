@@ -33,7 +33,9 @@ it("replaces the latest symlink without writing or chmodding its target", async 
   expect(await fs.readFile(target, "utf8")).toBe("unrelated sentinel");
   expect((await fs.stat(target)).mode).toBe(before.mode);
   expect((await fs.lstat(latest)).isFile()).toBe(true);
-  expect((await fs.stat(latest)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await fs.stat(latest)).mode & 0o777).toBe(0o600);
+  }
   expect(JSON.parse(await fs.readFile(latest, "utf8"))).toEqual(
     JSON.parse(await fs.readFile(written.datedPath, "utf8")),
   );

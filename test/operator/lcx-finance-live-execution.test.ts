@@ -22,6 +22,7 @@ import {
 } from "../../src/agents/finance-execution-adapter.ts";
 import * as executionAdapters from "../../src/agents/finance-execution-adapter.ts";
 import { syntheticSafetyContext } from "../../src/agents/finance-execution-safety.test-support.js";
+import { closeFinancePositionLedger } from "../../src/agents/finance-position-ledger.js";
 import { financePositionLedgerPath } from "../../src/agents/finance-state-dir.ts";
 import { createFinancePositionLedgerReadTool } from "../../src/agents/tools/finance-position-ledger-read-tool.ts";
 
@@ -44,7 +45,10 @@ async function storeDirectory(): Promise<string> {
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(
-    directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    directories.splice(0).map((dir) => {
+      closeFinancePositionLedger(dir);
+      return fs.rm(dir, { recursive: true, force: true });
+    }),
   );
 });
 

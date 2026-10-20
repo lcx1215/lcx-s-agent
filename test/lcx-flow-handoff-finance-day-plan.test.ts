@@ -2,10 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
+import { closeFinanceBarLedger, readFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
 import { runFinanceDailyCycle } from "../src/agents/finance-daily-cycle.js";
 import { bindFinanceDailyStrategy } from "../src/agents/finance-daily-strategy.js";
 import { financePortfolioPlanSchema } from "../src/agents/finance-portfolio-composition.js";
+import { closeFinancePositionLedger } from "../src/agents/finance-position-ledger.js";
 import { privateDayHistory } from "./fixtures/lcx-waterflow-finance-day-plan-probe.js";
 import { probeOriginalFinanceModuleMain } from "./fixtures/lcx-waterflow-finance-module-main-probe.js";
 import { probeOriginalFinanceSchedulerPlan } from "./fixtures/lcx-waterflow-finance-scheduler-plan-probe.js";
@@ -32,6 +33,8 @@ vi.mock("../src/agents/finance-free-market-collection-adapters.js", async (impor
 const roots: string[] = [];
 afterEach(async () => {
   for (const dir of roots.splice(0)) {
+    closeFinanceBarLedger(path.join(dir, "finance-book"));
+    closeFinancePositionLedger(path.join(dir, "finance-book"));
     await fs.rm(dir, { recursive: true, force: true });
   }
   vi.unstubAllGlobals();

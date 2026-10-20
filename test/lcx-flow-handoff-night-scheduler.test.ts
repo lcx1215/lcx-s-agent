@@ -136,6 +136,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  barLedger.closeFinanceBarLedger(path.join(directory, "default-book"));
+  barLedger.closeFinanceBarLedger(path.join(directory, "workspace", "state", "finance"));
   if (!process.env.LCX_NIGHT_SCHEDULER_PROOF_DIR) {
     await fs.rm(directory, { recursive: true, force: true });
   }
