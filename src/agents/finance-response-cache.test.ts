@@ -123,6 +123,8 @@ describe("finance response reuse before HTTP quota", () => {
     '{"Information":"daily quota"}',
     '{"error":"bad request"}',
     '{"status":"error"}',
+    '{"ret_code":-12102,"ret_msg":"expired"}',
+    '{"ret_code":-12011,"ret_msg":"频率限制"}',
     "<!doctype html>captcha",
     "{invalid",
   ])("never reuses errors or access pages: %s", async (body) => {

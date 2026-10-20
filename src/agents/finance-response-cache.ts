@@ -42,7 +42,11 @@ function cacheable(body: string): boolean {
         ) {
           return false;
         }
-        if (record.status === "error" || (record.retCode !== undefined && record.retCode !== 0)) {
+        if (
+          record.status === "error" ||
+          (record.retCode !== undefined && record.retCode !== 0) ||
+          (record.ret_code !== undefined && record.ret_code !== 0)
+        ) {
           return false;
         }
         if (record.chart && typeof record.chart === "object" && "error" in record.chart) {

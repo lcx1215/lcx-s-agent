@@ -96,6 +96,15 @@ export const FINANCE_SOURCE_QUOTA_POLICIES: readonly FinanceQuotaPolicy[] = [
     "observed_and_documented",
     "https://finnhub.io/docs/api",
   ),
+  // Futunn documents this as an IP-wide limit; all data routes share one budget.
+  policy(
+    "futunn",
+    ["webapi.futunn.com"],
+    [{ limit: 100, durationMs: minute }],
+    601,
+    "documented",
+    "https://open.futunn.com/api/overview/rate-limit",
+  ),
   {
     ...policy(
       "alpaca",
@@ -310,10 +319,11 @@ export function classifyFinanceQuotaBody(body: string): FinanceQuotaBodyLimit | 
     parsed.message,
     parsed.msg,
     parsed.retMsg,
+    parsed.ret_msg,
   ]);
-  const code = parsed.code ?? parsed.retCode ?? parsed.response_code;
+  const code = parsed.code ?? parsed.retCode ?? parsed.ret_code ?? parsed.response_code;
   const limited =
-    ["50011", "10006", "-1003", "400.002"].includes(String(code)) ||
+    ["50011", "10006", "-1003", "400.002", "-12011"].includes(String(code)) ||
     /(?:rate.?limit|limit (?:reach|exceed)|too many requests|requests too frequent|call frequency|api (?:call|request|credit).{0,50}(?:limit|exceed)|daily (?:limit|quota)|maximum number of daily requests|daily.{0,60}(?:threshold|exceed)|threshold.{0,80}(?:daily|reach|exceed))/iu.test(
       text,
     );

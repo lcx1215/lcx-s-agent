@@ -13,6 +13,7 @@ import {
 } from "./api-call-contract.js";
 import {
   classifyFinanceQuotaBody,
+  FINANCE_SOURCE_QUOTA_POLICIES,
   type FinanceQuotaPolicy,
 } from "./finance-source-quota-policy.js";
 import { createFinanceQuotaGuard } from "./finance-source-quota.js";
@@ -227,6 +228,24 @@ describe("shared finance provider quotas", () => {
     await expect(fetch("https://example.test/quote")).rejects.toMatchObject({
       kind: "budget_exhausted",
     });
+    expect(native).toHaveBeenCalledTimes(1);
+  });
+  it("shares a Futunn HTTP 200 rate-limit cooldown across its data endpoints", async () => {
+    const fixture = await setup();
+    const guard = createFinanceQuotaGuard({
+      stateDir: fixture.stateDir,
+      policies: FINANCE_SOURCE_QUOTA_POLICIES.map((entry) => ({ ...entry, minIntervalMs: 0 })),
+    });
+    const native = vi.fn<ApiFetch>(async () =>
+      response(200, JSON.stringify({ ret_code: -12011, ret_msg: "频率限制", data: null })),
+    );
+    const fetch = governApiFetch(guard.wrap(native), { retry: { attempts: 1 } });
+    await expect(
+      fetch("https://webapi.futunn.com/api/v1.0/quote/US.AAPL/history-kline?end=2026-10-16"),
+    ).rejects.toMatchObject({ kind: "rate_limited", httpStatus: 200 });
+    await expect(
+      fetch("https://webapi.futunn.com/api/v1.0/quote/US.AAPL/financials/statements"),
+    ).rejects.toMatchObject({ kind: "budget_exhausted" });
     expect(native).toHaveBeenCalledTimes(1);
   });
   it("does not reset an unreadable ledger and silently grant a fresh quota", async () => {
