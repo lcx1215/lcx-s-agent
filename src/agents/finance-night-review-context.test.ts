@@ -2555,6 +2555,12 @@ it("hands original account execution history to day configuration and night rese
       preferredAccountStatus: "included",
     });
     expect(history.accounts).toHaveLength(2);
+    const performance = JSON.parse(
+      night.find((item) => item.id === "finance-night:broker-profit:2026-09-22")!.text,
+    );
+    expect(
+      performance.accountPerformance.map((item: { accountId: string }) => item.accountId),
+    ).toEqual(["selected", "newer-two"]);
     expect(history.accounts[0]).toEqual({
       accountId: "selected",
       history: day.executionHistory,

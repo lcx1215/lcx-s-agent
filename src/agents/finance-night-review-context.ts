@@ -1820,16 +1820,21 @@ export async function buildFinanceNightReviewEvidence(params: {
     )
     .slice(-100)
     .map(compactReceipt);
+  const historyAccounts = [
+    ...new Set(
+      brokerReconciliations.records
+        .filter((record) => record.venue === "alpaca:paper")
+        .map((record) => record.accountId),
+    ),
+  ].toSorted(
+    (left, right) =>
+      Number(right === params.preferredAccountId) - Number(left === params.preferredAccountId),
+  );
   const accountPerformance = await Promise.all(
-    [
-      ...new Set(
-        brokerReconciliations.records
-          .filter((r) => r.venue === "alpaca:paper")
-          .map((r) => r.accountId),
-      ),
-    ]
-      .slice(0, 2)
-      .map((accountId) => readFinancePaperEconomicWindow(params.directory, accountId, params.asOf)),
+    historyAccounts.slice(0, 2).map(async (accountId) => ({
+      ...(await readFinancePaperEconomicWindow(params.directory, accountId, params.asOf)),
+      accountId,
+    })),
   );
   const brokerSummary: FinanceCommitteeEvidence = {
     id: `finance-night:broker-profit:${params.etDate}`,
@@ -1844,16 +1849,6 @@ export async function buildFinanceNightReviewEvidence(params: {
       }),
     ),
   };
-  const historyAccounts = [
-    ...new Set(
-      brokerReconciliations.records
-        .filter((record) => record.venue === "alpaca:paper")
-        .map((record) => record.accountId),
-    ),
-  ].toSorted(
-    (left, right) =>
-      Number(right === params.preferredAccountId) - Number(left === params.preferredAccountId),
-  );
   const evidence = Object.freeze([
     Object.freeze({
       id: `finance-night:settlement:${params.etDate}`,
