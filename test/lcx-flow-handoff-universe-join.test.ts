@@ -28,6 +28,13 @@ describe("native private same-parent Universe owner join and failure feedback", 
         roots.push(root);
       }
       const result = await probeUniverseJoin(root, fault);
+      expect(result.snapshotImport).toMatchObject({
+        mode: "read_only_host_objects_private_index_and_dirty_blobs",
+        hostIndexUnchanged: true,
+        dirtyProof: { path: "test/changed.test.ts" },
+      });
+      expect(result.snapshotImport.indexedPaths).toBeGreaterThan(1_000);
+      expect(result.snapshotImport.dirtyPaths).toBeGreaterThan(0);
       expect(result.before).toHaveLength(5);
       expect(result.callerInputs).toHaveLength(5);
       for (const owner of result.before) {
@@ -103,6 +110,8 @@ describe("native private same-parent Universe owner join and failure feedback", 
         path.join(root, "native-guards.json"),
         JSON.stringify(
           {
+            snapshotImport: result.snapshotImport,
+            timing: result.timing,
             fetchCallCount: network.mock.calls.length,
             actualProcessCount: result.processes.length,
             deniedOriginalChildRequests: result.denied,

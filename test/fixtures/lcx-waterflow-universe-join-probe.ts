@@ -67,7 +67,12 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   }> = [];
   const denied: Array<{ script: string; args: string[]; reason: string }> = [];
   const sourceCalls: Array<{ id: string; args: string[]; stdout: string; exitCode: number }> = [];
-  const execute = async (command: string, args: string[], options: ExecFileOptions = {}) => {
+  const execute = async (
+    command: string,
+    args: string[],
+    options: ExecFileOptions = {},
+    input?: string,
+  ) => {
     processSignal.throwIfAborted();
     const script = args.find((arg) => arg.endsWith(".ts"));
     assert.ok(
@@ -117,6 +122,9 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
           }
         },
       );
+      if (input !== undefined) {
+        child.stdin?.end(input);
+      }
       observation.pid = child.pid;
       child.once("close", (code, signal) => {
         observation.closeObserved = true;
@@ -250,96 +258,205 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     "skills",
     "extensions/external",
   ];
-  // Copy original indexed source, not ignored dependency trees or private fixture outputs.
-  const listed = await execute("git", ["ls-files", "--stage", "-z", "--", ...sourceAreas], {
-    cwd: sourceRoot,
-  });
+  // Import exact Git objects directly instead of matching 8k paths repeatedly
+  // through git add. The private index/refs and dirty objects remain independent;
+  // the host object database is only a read-only alternate.
+  const rootNames = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", ".gitignore"];
+  const listed = await execute(
+    "git",
+    ["ls-files", "--stage", "-z", "--", ...sourceAreas, ...rootNames],
+    {
+      cwd: sourceRoot,
+    },
+  );
   const indexed = listed.stdout
     .split("\0")
     .filter(Boolean)
     .map((entry) => {
       const separator = entry.indexOf("\t");
       assert.ok(separator > 0, "indexed_source_metadata_missing");
-      const [mode, , stage] = entry.slice(0, separator).split(" ");
+      const [mode, objectId, stage] = entry.slice(0, separator).split(" ");
       assert.equal(stage, "0", "conflicted_source_cannot_form_private_snapshot");
-      return { file: entry.slice(separator + 1), symlink: mode === "120000" };
+      assert.match(objectId, /^[a-f0-9]{40}$/u);
+      return { file: entry.slice(separator + 1), mode, objectId };
     });
-  const indexedFiles = indexed.map((entry) => entry.file);
-  const existingAreas: string[] = [];
-  const rootFiles: string[] = [];
-  for (const area of sourceAreas) {
-    if (fsSync.existsSync(path.join(sourceRoot, area))) {
-      await fs.mkdir(path.join(repo, area), { recursive: true });
-      existingAreas.push(area);
+  for (const file of rootNames) {
+    if (
+      !indexed.some((entry) => entry.file === file) &&
+      fsSync.existsSync(path.join(sourceRoot, file))
+    ) {
+      indexed.push({ file, mode: "100644", objectId: "" });
     }
   }
-  // Indexed regular files need only a byte copy, not a recursive cp per path.
-  // Create each parent once; preserve actual symlinks without sharing writable inodes.
-  const parents = [...new Set(indexedFiles.map((file) => path.dirname(path.join(repo, file))))];
+  const gitPath = async (relative: string) =>
+    path.resolve(
+      sourceRoot,
+      (
+        await execute("git", ["rev-parse", "--git-path", relative], { cwd: sourceRoot })
+      ).stdout.trim(),
+    );
+  const hostIndexPath = await gitPath("index");
+  const hostIndexBefore = sha(await fs.readFile(hostIndexPath));
+  const hostObjects = await gitPath("objects");
+  const alternateInfo = path.join(repo, ".git/objects/info");
+  await fs.mkdir(alternateInfo, { recursive: true });
+  await fs.writeFile(
+    path.join(alternateInfo, "alternates"),
+    hostObjects.split(path.sep).join("/") + "\n",
+  );
+  const existingAreas = sourceAreas.filter((area) =>
+    fsSync.existsSync(path.join(sourceRoot, area)),
+  );
+  const parents = [...new Set(indexed.map(({ file }) => path.dirname(path.join(repo, file))))];
   for (let offset = 0; offset < parents.length; offset += 32) {
     preparationSignal.throwIfAborted();
-    const created = await Promise.allSettled(
+    await Promise.all(
       parents
         .slice(offset, offset + 32)
         .map((directory) => fs.mkdir(directory, { recursive: true })),
     );
-    const failure = created.find((result) => result.status === "rejected");
-    if (failure?.status === "rejected") {
-      throw failure.reason;
-    }
   }
+  const imported: Array<{
+    file: string;
+    mode: string;
+    objectId: string;
+    sha256?: string;
+    dirtyPath?: string;
+  }> = [];
   for (let offset = 0; offset < indexed.length; offset += 32) {
     preparationSignal.throwIfAborted();
     const copies = await Promise.allSettled(
-      indexed.slice(offset, offset + 32).map(async ({ file, symlink }) => {
-        const source = path.join(sourceRoot, file);
-        const destination = path.join(repo, file);
-        if (symlink && (await fs.lstat(source)).isSymbolicLink()) {
+      indexed.slice(offset, offset + 32).map(async (entry) => {
+        const source = path.join(sourceRoot, entry.file);
+        const destination = path.join(repo, entry.file);
+        const stat = await fs.lstat(source).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") {
+            return null;
+          }
+          throw error;
+        });
+        if (!stat) {
+          await fs.rm(destination, { force: true });
+          return { file: entry.file, mode: "0", objectId: "0".repeat(40) };
+        }
+        const symlink = stat.isSymbolicLink();
+        const bytes = symlink ? Buffer.from(await fs.readlink(source)) : await fs.readFile(source);
+        const mode = symlink
+          ? "120000"
+          : process.platform === "win32"
+            ? entry.mode
+            : stat.mode & 0o111
+              ? "100755"
+              : "100644";
+        if (symlink) {
           await fs.cp(source, destination, { verbatimSymlinks: true });
         } else {
-          await fs.copyFile(source, destination);
+          await fs.writeFile(destination, bytes, { mode: stat.mode & 0o777 });
+          if (process.platform !== "win32") {
+            await fs.chmod(destination, stat.mode & 0o777);
+          }
         }
+        const objectId = createHash("sha1")
+          .update(`blob ${bytes.length}\0`)
+          .update(bytes)
+          .digest("hex");
+        let dirtyPath: string | undefined;
+        if (objectId !== entry.objectId) {
+          // hash-object follows symlinks, so provide their literal target bytes as
+          // a private regular input. Regular files use their already copied bytes.
+          dirtyPath = destination;
+          if (mode === "120000") {
+            dirtyPath = path.join(root, `symlink-blob-${objectId}`);
+            await fs.writeFile(dirtyPath, bytes);
+          }
+        }
+        if (rootNames.includes(entry.file)) {
+          copiedArchitecture.push({ path: entry.file, sha256: sha(bytes) });
+          existingAreas.push(entry.file);
+        }
+        return { file: entry.file, mode, objectId, sha256: sha(bytes), dirtyPath };
       }),
     );
-    const failure = copies.find((copy) => copy.status === "rejected");
-    if (failure?.status === "rejected") {
-      throw failure.reason;
+    for (const copy of copies) {
+      if (copy.status === "rejected") {
+        throw copy.reason;
+      }
+      imported.push(copy.value);
     }
   }
-  for (const file of ["AGENTS.md", "README.md", "package.json", "tsconfig.json", ".gitignore"]) {
-    if (fsSync.existsSync(path.join(sourceRoot, file))) {
-      const bytes = await fs.readFile(path.join(sourceRoot, file));
-      await fs.writeFile(path.join(repo, file), bytes);
-      copiedArchitecture.push({ path: file, sha256: sha(bytes) });
-      rootFiles.push(file);
-      existingAreas.push(file);
-    }
-  }
-  // Preserve copied fixture bytes independently of the host Git newline policy.
-  // Windows autocrlf warnings can otherwise exhaust execFile's stderr buffer.
-  // A NUL-delimited pathspec keeps exact filenames out of Windows argv limits
-  // without spawning dozens of tiny Git processes. Each Git child retains 20s.
-  const pathsToStage = [...indexedFiles, ...rootFiles];
-  const pathspec = path.join(root, "architecture-stage-paths.bin");
-  for (let offset = 0; offset < pathsToStage.length; offset += 1_024) {
-    preparationSignal.throwIfAborted();
-    await fs.writeFile(pathspec, pathsToStage.slice(offset, offset + 1_024).join("\0") + "\0", {
-      mode: 0o600,
-    });
-    await execute(
+  // The original phase already made this private file dirty against its own
+  // baseline. Include its current bytes in the architecture freeze as before;
+  // this also exercises dirty-object import when the host checkout is clean.
+  const fixtureDirtyFile = "test/changed.test.ts";
+  assert.ok(!imported.some((entry) => entry.file === fixtureDirtyFile));
+  const fixtureDirtyPath = path.join(repo, fixtureDirtyFile);
+  const fixtureDirtyBytes = await fs.readFile(fixtureDirtyPath);
+  imported.push({
+    file: fixtureDirtyFile,
+    mode: "100644",
+    objectId: createHash("sha1")
+      .update(`blob ${fixtureDirtyBytes.length}\0`)
+      .update(fixtureDirtyBytes)
+      .digest("hex"),
+    sha256: sha(fixtureDirtyBytes),
+    dirtyPath: fixtureDirtyPath,
+  });
+  await execute("git", ["config", "--local", "core.autocrlf", "false"], { cwd: repo });
+  const dirty = imported.filter((entry) => entry.dirtyPath);
+  // --stdin-paths uses Git's C-quoted lines (not shell quoting). Octal UTF-8
+  // escapes also preserve filenames containing tabs, newlines or non-ASCII.
+  const quoteGitPath = (file: string) =>
+    '"' +
+    [...Buffer.from(file.split(path.sep).join("/"))]
+      .map((byte) =>
+        byte === 34 || byte === 92 || byte < 32 || byte >= 127
+          ? `\\${byte.toString(8).padStart(3, "0")}`
+          : String.fromCharCode(byte),
+      )
+      .join("") +
+    '"';
+  if (dirty.length > 0) {
+    const written = await execute(
       "git",
-      [
-        "-c",
-        "core.autocrlf=false",
-        "add",
-        "--force",
-        `--pathspec-from-file=${pathspec}`,
-        "--pathspec-file-nul",
-      ],
+      ["hash-object", "-w", "--no-filters", "--stdin-paths"],
       { cwd: repo },
+      dirty.map((entry) => quoteGitPath(entry.dirtyPath!)).join("\n") + "\n",
+    );
+    assert.deepEqual(
+      written.stdout.trim().split(/\r?\n/u),
+      dirty.map((entry) => entry.objectId),
+      "dirty_blob_bytes_changed",
     );
   }
-  await fs.rm(pathspec);
+  await execute(
+    "git",
+    ["update-index", "-z", "--index-info"],
+    { cwd: repo },
+    imported.map((entry) => `${entry.mode} ${entry.objectId}\t${entry.file}\0`).join(""),
+  );
+  const dirtyProof = dirty.find((entry) => entry.file === fixtureDirtyFile);
+  assert.ok(dirtyProof, "fixture_source_edit_must_survive_private_snapshot");
+  const privateIndex = await execute("git", ["ls-files", "--stage", "--", dirtyProof.file], {
+    cwd: repo,
+  });
+  assert.ok(privateIndex.stdout.includes(`${dirtyProof.mode} ${dirtyProof.objectId} 0\t`));
+  const privateBytes = await execute("git", ["cat-file", "blob", dirtyProof.objectId], {
+    cwd: repo,
+  });
+  assert.equal(
+    sha(privateBytes.stdout),
+    dirtyProof.sha256,
+    "private_dirty_blob_does_not_match_worktree",
+  );
+  const snapshotImport = {
+    mode: "read_only_host_objects_private_index_and_dirty_blobs",
+    indexedPaths: imported.length,
+    dirtyPaths: dirty.length,
+    deletedPaths: imported.filter((entry) => entry.mode === "0").length,
+    dirtyProof: { path: dirtyProof.file, sha256: dirtyProof.sha256, objectId: dirtyProof.objectId },
+    hostIndexUnchanged: sha(await fs.readFile(hostIndexPath)) === hostIndexBefore,
+  };
+  assert.equal(snapshotImport.hostIndexUnchanged, true, "host_index_changed_during_private_import");
   await execute(
     "git",
     [
@@ -737,6 +854,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     nativeModules,
     skillInputs,
     copiedArchitecture,
+    snapshotImport,
     copiedArchitectureAreas: existingAreas,
     phaseTrace,
     phaseCallTiming:
