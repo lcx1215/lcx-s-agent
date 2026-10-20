@@ -282,7 +282,7 @@ async function probe(
     Date,
     process: {
       pid: process.pid,
-      env: {},
+      env: { OPENCLAW_WORKSPACE_DIR: path.join(directory, "workspace") },
       stdout: { write: () => true },
       stderr: { write: () => true },
     },

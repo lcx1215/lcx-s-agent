@@ -104,7 +104,7 @@ export async function probeOriginalResearchInput(params: {
     createHash,
     Buffer,
     financeScheduledResearchHandoffSchema,
-    process: { env: {} },
+    process: { env: { OPENCLAW_WORKSPACE_DIR: workspace } },
     URL,
     REPO_ROOT: repo,
     RESEARCH_SCRIPT: path.join(repo, "scripts/operator/lcx-finance-research-run.ts"),
