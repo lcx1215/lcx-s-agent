@@ -531,10 +531,12 @@ async function preservesMigrationSource(
     return result;
   };
   try {
-    // Config's existing owner parses JSON5 and rewrites JSON with version stamps.
+    // Config and cron owners parse JSON5 before rewriting JSON; only config
+    // applies the version-stamp exception below.
     // Other user configuration, session IDs, credentials and array items must
     // survive; this is not permission for an arbitrary merge/delete patch.
-    const parse: (raw: string) => unknown = writer === "config" ? JSON5.parse : JSON.parse;
+    const parse: (raw: string) => unknown =
+      writer === "config" || writer === "cron" ? JSON5.parse : JSON.parse;
     const source = parse(sourceRaw);
     const next = parse(nextRaw);
     return writer === "config"

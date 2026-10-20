@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createLcxIdentityCronStoreMigration,
+  readCronStoreForIdentityMigration,
+  writeCronStoreForIdentityMigration,
+} from "../cron/identity-migration.js";
+import {
   createLcxIdentityMigrationTarget,
   createLcxIdentityWriterPathContract,
   LCX_IDENTITY_WRITER_NAMES,
@@ -289,6 +294,17 @@ describe("LCX identity migration writer contract", () => {
             text: "new message",
           });
           receipts.push(receipt);
+          continue;
+        }
+        if (writer === "cron") {
+          await writeRaw(
+            path.join(root, ".openclaw", "cron", "jobs.json"),
+            "{version: 1, jobs: [{id: 'keep-scheduled-job'},], // original cron JSON5\n}",
+          );
+          const migration = createLcxIdentityCronStoreMigration({ migrationPlan: plan });
+          expect(migration.readStorePath).not.toBe(migration.writeStorePath);
+          const store = await readCronStoreForIdentityMigration(migration);
+          receipts.push(await writeCronStoreForIdentityMigration(migration, store));
           continue;
         }
         receipts.push(await writeLcxIdentityWriterRawWithReceipt(pathContract, raw));
