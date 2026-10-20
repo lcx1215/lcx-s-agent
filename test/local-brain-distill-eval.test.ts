@@ -1176,6 +1176,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         labelDisclosure: false,
         responsePrefill: null,
         modelSelfStartMode: "unassisted",
+        modelSelfStartedJson: true,
       });
       expect(payload.summary).toMatchObject({
         promotionReady: true,
@@ -1208,6 +1209,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-blind-parse-"));
     const fakePython = path.join(tempDir, "python");
     const argLog = path.join(tempDir, "python-args.jsonl");
+    const receiptPath = path.join(tempDir, "receipt.json");
     writeFileSync(
       fakePython,
       [
@@ -1232,6 +1234,8 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
           fakePython,
           "--neutral",
           "--no-response-prefill",
+          "--receipt",
+          receiptPath,
           "--case-id",
           "portfolio_mixed_q_t_nvda",
           "--summary-only",
@@ -1261,7 +1265,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         evaluationMode: "blind_raw_contract",
         responsePrefill: null,
         modelSelfStartMode: "unassisted",
-        modelSelfStartedJson: true,
+        modelSelfStartedJson: false,
       });
       expect(payload.summary).toMatchObject({
         failedCaseIds: ["portfolio_mixed_q_t_nvda"],
@@ -1269,6 +1273,13 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         parseRecoveredCaseIds: [],
         parseRetryCaseIds: [],
         promotionReady: false,
+      });
+      const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+        proof: { modelSelfStartMode: string | null; modelSelfStartedJson: boolean | null };
+      };
+      expect(receipt.proof).toMatchObject({
+        modelSelfStartMode: "unassisted",
+        modelSelfStartedJson: false,
       });
       const records = readFileSync(argLog, "utf8")
         .trim()

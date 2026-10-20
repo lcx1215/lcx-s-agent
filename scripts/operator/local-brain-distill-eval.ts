@@ -5977,6 +5977,18 @@ const failedCaseDiagnostics = failedCases.map((entry) => ({
   boundaryOk: entry.acceptance.boundaryOk,
   oldContextRejected: entry.acceptance.oldContextRejected,
 }));
+// Invocation mode alone cannot prove a generation outcome. Require a complete
+// observed case set whose first unassisted responses all passed strict JSON parsing.
+const modelSelfStartedJson = options.blind
+  ? !options.responsePrefill &&
+    !options.contractOnly &&
+    caseResults.length > 0 &&
+    caseResults.length === evalCases.length &&
+    caseResults.every((entry) => entry.initialGenerationStatus === "valid_json") &&
+    parseRecoveredCases.length === 0 &&
+    parseRetryCases.length === 0 &&
+    timeoutRetryCases.length === 0
+  : null;
 const result = {
   ok: failedCases.length === 0,
   boundary: "local_auxiliary_thought_flow_only",
@@ -5997,9 +6009,7 @@ const result = {
       ? "structural_prefill"
       : "unassisted"
     : null,
-  // This is invocation configuration, not an outcome. Per-case initialGenerationStatus
-  // and strict raw parsing decide whether the model actually produced JSON.
-  modelSelfStartedJson: options.blind ? !options.responsePrefill : null,
+  modelSelfStartedJson,
   caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
   caseFile: options.caseFile ?? null,
   caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
