@@ -282,7 +282,7 @@ describe("original daily brief consumes existing original case runs", () => {
     const section = result.packetCandidateSections[3];
     expect(run.readback.packet.adopted).toBe(true);
     expect(section.status).toBe("held");
-    expect(section.gaps).toContain("learning_application_receipt_not_observed");
+    expect(section.gaps).toContain("learning_application_receipt_pin_not_observed");
     expect(result.researchPacketStatus).toBe("held");
     await save("risk-application-not-observed", { run, result });
   });
