@@ -838,6 +838,11 @@ function open(directory: string, writer = false): Database {
   }
 }
 
+/** Upgrade the original writer's ledger without fabricating a decision or outcome. */
+export function initializeFinanceIntradayControlLedger(directory: string): void {
+  open(directory, true);
+}
+
 function decodeDecision(row: {
   ref?: unknown;
   body?: unknown;

@@ -11,6 +11,7 @@ import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js"
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
+  initializeFinanceIntradayControlLedger,
   readFinanceIntradayExecutionCoverage,
   readFinanceIntradayAccountHistory,
   readFinanceIntradayDecisions,
@@ -1202,16 +1203,23 @@ it("does not initialize cursor authentication during old-ledger history reads", 
     });
     expect(observed.entries.map((entry) => entry.signalId)).toEqual([input.signalId]);
     expect(db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
-    await appendFinanceIntradayDecision(directory, { ...input, signalId: "new-writer-upgrade" });
+    const retainedDecisions = db.prepare("SELECT * FROM finance_intraday_decisions").all();
+    const retainedOutcomes = db.prepare("SELECT * FROM finance_intraday_outcomes").all();
+    initializeFinanceIntradayControlLedger(directory);
+    const cursorIdentity = db.prepare("SELECT * FROM finance_intraday_cursor_auth").all();
+    initializeFinanceIntradayControlLedger(directory);
+    expect(db.prepare("SELECT * FROM finance_intraday_cursor_auth").all()).toEqual(cursorIdentity);
+    expect(db.prepare("SELECT * FROM finance_intraday_decisions").all()).toEqual(retainedDecisions);
+    expect(db.prepare("SELECT * FROM finance_intraday_outcomes").all()).toEqual(retainedOutcomes);
     expect(
       db.prepare("SELECT count(*) AS count FROM finance_intraday_cursor_auth").get()?.count,
     ).toBe(1);
-    expect(
-      await readFinanceIntradayAccountHistory(directory, {
-        accountId: "account",
-        asOf: "2026-10-21T15:00:00.000Z",
-      }),
-    ).toMatchObject({ status: "observed" });
+    const upgraded = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-10-21T15:00:00.000Z",
+    });
+    expect(upgraded).toMatchObject({ status: "observed", pageCursor: expect.any(String) });
+    expect(upgraded.entries.map((entry) => entry.signalId)).toEqual([input.signalId]);
   } finally {
     db.close();
   }

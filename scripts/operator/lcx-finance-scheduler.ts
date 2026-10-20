@@ -50,6 +50,7 @@ import {
 import { FINANCE_RISK_BUDGET_ANY_INSTRUMENT } from "../../src/agents/finance-execution-adapter.js";
 import { FinanceExecutionSafetyFactsError } from "../../src/agents/finance-execution-safety.js";
 import { runFinanceHistoricalPositionMaintenance } from "../../src/agents/finance-historical-position-maintenance.js";
+import { initializeFinanceIntradayControlLedger } from "../../src/agents/finance-intraday-control-ledger.js";
 import { executeFinanceIntradayDecision } from "../../src/agents/finance-intraday-execution.js";
 import { readFinanceIntradayLedger } from "../../src/agents/finance-intraday-ledger.js";
 import {
@@ -3541,6 +3542,10 @@ export async function runFinanceScheduler(
   try {
     release = acquireFinanceSchedulerLock(root.directory);
     initializeFinanceSchedulerDatabase(root.directory);
+    if (runtimeOptions.intraday) {
+      // The writer may start outside market hours, before its first outcome is recorded.
+      initializeFinanceIntradayControlLedger(root.directory);
+    }
     const intradayController = createIntradayControllerForOptions(root.directory, runtimeOptions);
     const resolveMarketSession =
       runtimeOptions.intraday &&
