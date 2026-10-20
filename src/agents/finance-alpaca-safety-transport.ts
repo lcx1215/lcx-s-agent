@@ -37,7 +37,7 @@ export function safeTransportFailureCode(error: unknown): string {
 export class FinanceUncachedReadError extends Error {
   readonly cleanupStatus?: "confirmed" | "unconfirmed";
   readonly diagnostic: Readonly<{
-    endpoint: string;
+    endpoint: "account" | "positions" | "activities" | "orders" | "other";
     phase: "request" | "body";
     code: string;
     elapsedMs: number;
