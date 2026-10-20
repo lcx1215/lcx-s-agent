@@ -20,6 +20,7 @@ import type { ResponseUsageMode, SessionInfo, SessionScope } from "./tui-types.j
 
 export type GatewayConnectionOptions = {
   url?: string;
+  tlsFingerprint?: string;
   token?: string;
   password?: string;
 };
@@ -124,6 +125,7 @@ export class GatewayChatClient {
       url: resolved.url,
       token: resolved.token,
       password: resolved.password,
+      tlsFingerprint: opts.tlsFingerprint,
       clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
       clientDisplayName: "openclaw-tui",
       clientVersion: VERSION,
