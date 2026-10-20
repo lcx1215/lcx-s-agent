@@ -5,7 +5,7 @@ import { createDedupeCache } from "../infra/dedupe.js";
 import { resolveProcessScopedMap } from "../shared/process-scoped-map.js";
 import type { FileLockOptions } from "./file-lock.js";
 import { withFileLock } from "./file-lock.js";
-import { readJsonFileWithFallback, writeJsonFileAtomically } from "./json-store.js";
+import { writeJsonFileAtomically } from "./json-store.js";
 
 export const PERSISTENT_DEDUPE_SCHEMA_VERSION = "lcx_persistent_dedupe_v2" as const;
 type ClaimEntry = {
@@ -148,6 +148,18 @@ export function assertPersistentDedupeStatePreserved(
   next: PersistentDedupeState,
 ): void {
   if (!isVersioned(previous)) {
+    const nextEntries = entriesOf(next);
+    for (const [key, timestamp] of Object.entries(previous)) {
+      const entry = nextEntries[key];
+      if (
+        entry === undefined ||
+        (typeof entry === "number"
+          ? entry !== timestamp
+          : entry.recordedAt !== timestamp || entry.status !== "delivery_unknown")
+      ) {
+        throw new ProtectedDedupeStateError("legacy persistent dedupe claim removal refused");
+      }
+    }
     return;
   }
   if (!isVersioned(next)) {
@@ -200,18 +212,21 @@ function pruneData(data: DedupeEntries, now: number, ttlMs: number, maxEntries: 
 }
 
 async function readDedupeState(filePath: string, strict: boolean): Promise<PersistentDedupeState> {
-  if (!strict) {
-    return parsePersistentDedupeState(
-      (await readJsonFileWithFallback<unknown>(filePath, {})).value,
-    );
-  }
   try {
-    return parsePersistentDedupeState(JSON.parse(await fs.readFile(filePath, "utf8")), true);
+    const value: unknown = JSON.parse(await fs.readFile(filePath, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new ProtectedDedupeStateError("invalid existing persistent dedupe state");
+    }
+    return parsePersistentDedupeState(value, strict);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return Object.create(null) as Record<string, number>;
     }
-    throw error;
+    // A failed read cannot prove that existing state was an unprotected legacy map.
+    // Preserve its bytes and refuse compatibility admission as well as strict claims.
+    throw new ProtectedDedupeStateError("persistent dedupe state could not be safely read", {
+      cause: error,
+    });
   }
 }
 
@@ -275,6 +290,7 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
 
     const filePath = options.resolveFilePath(namespace);
     let protectedState = false;
+    let legacyFallbackConfirmed = false;
     try {
       const duplicate = await withPersistentDedupeStateLock(
         filePath,
@@ -285,6 +301,7 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
             state = upgradeClaims(state);
           }
           protectedState = isVersioned(state);
+          legacyFallbackConfirmed = !protectedState;
           if (migrated) {
             await writeJsonFileAtomically(canonical, state);
           }
@@ -327,6 +344,22 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
         memory.delete(scopedKey);
         releasableClaims.delete(scopedKey);
         throw error;
+      }
+      if (!legacyFallbackConfirmed) {
+        try {
+          await fs.stat(filePath);
+        } catch (stateError) {
+          const code = (stateError as NodeJS.ErrnoException).code;
+          legacyFallbackConfirmed = code === "ENOENT" || code === "ENOTDIR";
+        }
+        if (!legacyFallbackConfirmed) {
+          memory.delete(scopedKey);
+          releasableClaims.delete(scopedKey);
+          throw new ProtectedDedupeStateError(
+            "persistent dedupe fallback refused without verified legacy or absent state",
+            { cause: error },
+          );
+        }
       }
       memory.check(scopedKey, now);
       return true;

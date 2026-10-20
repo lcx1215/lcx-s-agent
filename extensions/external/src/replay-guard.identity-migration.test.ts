@@ -40,8 +40,13 @@ describe("external replay identity migration writer", () => {
       "message-1": 100,
       "message-2": 200,
     });
+    await expect(
+      writeExternalReplayStateForIdentityMigration(migration, { "message-2": 200 }),
+    ).rejects.toThrow("legacy persistent dedupe claim removal refused");
     const second = await writeExternalReplayStateForIdentityMigration(migration, {
+      "message-1": 100,
       "message-2": 200,
+      "message-3": 300,
     });
     const canonicalPath = path.join(root, ".lcx", "external", "replay-dedupe", "primary.json");
     expect(JSON.parse(await readFile(`${canonicalPath}.bak`, "utf8"))).toEqual({

@@ -20,6 +20,78 @@ afterEach(async () => {
 });
 
 describe("createPersistentDedupe", () => {
+  it("blocks compatibility admission when existing protected state cannot be locked", async () => {
+    const root = await makeTmpRoot();
+    const filePath = path.join(root, "dedupe.json");
+    const options = {
+      ttlMs: 10_000,
+      memoryMaxSize: 100,
+      fileMaxEntries: 100,
+      resolveFilePath: () => filePath,
+      lockOptions: {
+        retries: { retries: 0, factor: 1, minTimeout: 1, maxTimeout: 1, randomize: false },
+      },
+    };
+    const strict = createPersistentDedupe(options);
+    const now = Date.now();
+    await strict.checkAndRecord("unknown", { now, requirePersistence: true });
+    await strict.settleClaim("unknown", {
+      recordedAt: now,
+      retryable: false,
+      outcome: "delivery_unknown",
+    });
+    const before = await fs.readFile(filePath, "utf8");
+    await fs.writeFile(
+      `${filePath}.lock`,
+      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+    );
+    const compatibility = createPersistentDedupe(options);
+    await expect(compatibility.checkAndRecord("unknown")).rejects.toThrow();
+    await expect(compatibility.checkAndRecord("not-dispatched")).rejects.toThrow();
+    expect(await fs.readFile(filePath, "utf8")).toBe(before);
+    await fs.unlink(`${filePath}.lock`);
+    expect(await compatibility.checkAndRecord("not-dispatched")).toBe(true);
+  });
+  it.each(["malformed", "unreadable"] as const)(
+    "never overwrites %s protected state through a compatibility caller",
+    async (fault) => {
+      const root = await makeTmpRoot();
+      const filePath = path.join(root, "dedupe.json");
+      const options = {
+        ttlMs: 10_000,
+        memoryMaxSize: 0,
+        fileMaxEntries: 100,
+        resolveFilePath: () => filePath,
+      };
+      await createPersistentDedupe(options).checkAndRecord("unknown", { requirePersistence: true });
+      if (fault === "malformed") {
+        await fs.writeFile(filePath, '{"schemaVersion":"lcx_persistent_dedupe_v2",');
+      }
+      const before = await fs.readFile(filePath, "utf8");
+      const canonicalPath = await fs.realpath(filePath);
+      const original = fs.readFile;
+      let readFailures = 0;
+      const spy =
+        fault === "unreadable"
+          ? vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+              if (args[0] === filePath || args[0] === canonicalPath) {
+                readFailures++;
+                throw Object.assign(new Error("offline unreadable replay file"), {
+                  code: "EACCES",
+                });
+              }
+              return original(...args);
+            })
+          : undefined;
+      try {
+        await expect(createPersistentDedupe(options).checkAndRecord("new")).rejects.toThrow();
+      } finally {
+        spy?.mockRestore();
+      }
+      expect(readFailures).toBe(fault === "unreadable" ? 1 : 0);
+      expect(await fs.readFile(filePath, "utf8")).toBe(before);
+    },
+  );
   it("deduplicates keys and persists across instances", async () => {
     const root = await makeTmpRoot();
     const resolveFilePath = (namespace: string) => path.join(root, `${namespace}.json`);
