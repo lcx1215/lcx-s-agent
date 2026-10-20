@@ -125,6 +125,56 @@ async function fixture() {
   return { input, request, facts, adapter };
 }
 
+it.each([
+  { platform: "win32" as const, fileSyncFails: false, placed: true },
+  { platform: "win32" as const, fileSyncFails: true, placed: false },
+  { platform: "darwin" as const, fileSyncFails: false, placed: false },
+])(
+  "requires durable reservation with directory-open restrictions: $platform/$fileSyncFails",
+  async ({ platform, fileSyncFails, placed }) => {
+    const f = await fixture();
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    const open = fs.open.bind(fs);
+    let synced = false;
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      if (args[1] === "r" && !String(args[0]).endsWith(".jsonl")) {
+        throw Object.assign(new Error("directory open unsupported"), { code: "EPERM" });
+      }
+      const handle = await open(...args);
+      if (args[1] === "a") {
+        const sync = handle.sync.bind(handle);
+        vi.spyOn(handle, "sync").mockImplementation(async () => {
+          if (fileSyncFails) {
+            throw new Error("reservation file sync failed");
+          }
+          await sync();
+          synced = true;
+        });
+      }
+      return handle;
+    });
+    const execute = vi.fn(async (...args: Parameters<typeof f.adapter.execute>) => {
+      expect(synced).toBe(true);
+      return f.adapter.execute(...args);
+    });
+    try {
+      const result = await placeFinanceOrder({
+        ...f.request,
+        adapters: [{ ...f.adapter, execute }],
+        safetyContext: createFinanceExecutionSafetyContext(f.input),
+      });
+      expect(result.status).toBe(placed ? "placed" : "refused");
+      expect(execute).toHaveBeenCalledTimes(placed ? 1 : 0);
+      if (!placed) {
+        expect(result.refusalReasons).toContain("execution_safety_reservation_unavailable");
+      }
+    } finally {
+      openSpy.mockRestore();
+      platformSpy.mockRestore();
+    }
+  },
+);
+
 async function seedAlpacaPendingClaim(
   f: Awaited<ReturnType<typeof fixture>>,
   venue = "alpaca:paper",

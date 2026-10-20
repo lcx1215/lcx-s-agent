@@ -17,6 +17,7 @@ import { syntheticSafetyContext } from "./finance-execution-safety.test-support.
 import {
   advanceFinancePositionProjection,
   appendFinanceExecutionReceipt,
+  closeFinancePositionLedger,
   appendFinancePositionMark,
   appendFinanceBrokerHistory,
   withFinanceBrokerHistorySnapshot,
@@ -86,6 +87,28 @@ function positionOf(receipts: readonly FinanceExecutionReceipt[], instrument = "
   }
   return { ledger, position };
 }
+
+it("closes the cached position writer through an equivalent directory spelling", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "Position-Writer-"));
+  const alias = path.join(path.dirname(directory), path.basename(directory).toLowerCase());
+  const directoryAlias = await fs.stat(alias).then(
+    () => alias,
+    () => directory,
+  );
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  try {
+    await appendFinanceExecutionReceipt(directoryAlias, receipt());
+    close.mockClear();
+    closeFinancePositionLedger(directoryAlias);
+    expect(close).toHaveBeenCalledTimes(1);
+    await fs.rm(directory, { recursive: true });
+  } finally {
+    close.mockRestore();
+    closeFinancePositionLedger(await fs.realpath(directory).catch(() => directory));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
 
 describe("finance position ledger", () => {
   it("counts historical maintenance fills without manufacturing an LCX short or entry PnL", () => {

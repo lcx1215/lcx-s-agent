@@ -1312,7 +1312,8 @@ const MAX_POSITION_LEDGER_WRITERS = 8;
 export function closeFinancePositionLedger(directory: string): void {
   let filename: string;
   try {
-    filename = databasePath(realpathSync(directory));
+    // Match fs.promises.realpath used by the writer, including Windows short paths.
+    filename = databasePath(realpathSync.native(directory));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return;

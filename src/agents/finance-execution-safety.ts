@@ -625,6 +625,12 @@ async function appendJournal(file: string, claim: FinanceExecutionSafetyClaim): 
   } finally {
     await handle.close();
   }
+  // Windows fsync uses FlushFileBuffers on the writable file handle above.
+  // Opening a directory read-only cannot supply a flushable Windows handle.
+  // File flush failures remain fatal on every platform; POSIX also syncs the parent.
+  if (process.platform === "win32") {
+    return;
+  }
   const directory = await fs.open(path.dirname(file), "r");
   try {
     await directory.sync();
