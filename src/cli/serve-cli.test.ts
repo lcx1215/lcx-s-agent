@@ -354,6 +354,21 @@ describe("POST /agent", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: true, payloads: [] });
   });
 
+  it("returns the recovered assistant answer after transient payload errors", async () => {
+    const { url } = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "transient", isError: true }, { text: "recovered answer" }],
+        meta: {},
+      }),
+    });
+    const response = await postAgent(url, { message: "ping" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      payloads: [{ text: "recovered answer" }],
+    });
+  });
+
   it("maps a provider error payload to a bad-gateway response", async () => {
     const { url } = await startServer({
       runAgent: async () => ({
@@ -664,6 +679,41 @@ describe("readServeResultError", () => {
 });
 
 describe("readServeResultFailure", () => {
+  it("requires successful text after the last error and retains fatal run metadata", () => {
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: {},
+      }),
+    ).toBeUndefined();
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "answer" }, { text: "terminal", isError: true }],
+      }),
+    ).toEqual({ status: 502, error: "terminal" });
+    expect(
+      readServeResultFailure({ payloads: [{ text: "transient", isError: true }, { text: " " }] }),
+    ).toEqual({ status: 502, error: "transient" });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: { error: { message: "run failed" } },
+      }),
+    ).toEqual({ status: 502, error: "run failed" });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: { timedOut: true },
+      })?.status,
+    ).toBe(504);
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "transient", isError: true }, { text: "answer" }],
+        meta: { aborted: true },
+      })?.status,
+    ).toBe(409);
+  });
+
   it("uses metadata for status classification and payload text for detail", () => {
     expect(
       readServeResultFailure({
