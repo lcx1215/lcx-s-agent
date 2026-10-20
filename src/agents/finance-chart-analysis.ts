@@ -1,3 +1,5 @@
+import { financeEodSessionDate } from "./finance-eod-session-date.js";
+
 export const FINANCE_CHART_ANALYSIS_SCHEMA_VERSION = "lcx_finance_chart_analysis_v1" as const;
 
 export type FinanceChartBar = Readonly<{
@@ -47,10 +49,17 @@ export type FinanceChartRecord = Readonly<{
 export type FinanceChartBarNormalization = Readonly<{
   bars: readonly FinanceChartBar[];
   droppedCount: number;
+  windowDroppedCount?: number;
 }>;
 
 function finiteNumber(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : Number(value);
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
@@ -78,7 +87,13 @@ function normalizeRecord(record: FinanceChartRecord): FinanceChartBar | undefine
   const timestamp = normalizeTimestamp(
     record.sourceTimestamp ?? readField(record, "timestamp") ?? readField(record, "date"),
   );
-  const date = timestamp?.slice(0, 10);
+  const date = timestamp
+    ? financeEodSessionDate(
+        Date.parse(timestamp),
+        readField(record, "date"),
+        readField(record, "timezoneOffsetMinutes"),
+      )
+    : undefined;
   const open = finiteNumber(readField(record, "open"));
   const high = finiteNumber(readField(record, "high"));
   const low = finiteNumber(readField(record, "low"));
@@ -114,19 +129,48 @@ function normalizeRecord(record: FinanceChartRecord): FinanceChartBar | undefine
 
 function sourceKey(record: FinanceChartRecord): string {
   const providerName = record.providerName;
+  let attribution = "unattributed";
   if (typeof providerName === "string" && providerName.trim()) {
-    return `provider:${providerName.trim().toLowerCase()}`;
+    attribution = `provider:${providerName.trim().toLowerCase()}`;
+  } else {
+    const sourceUrlOrArtifact = record.sourceUrlOrArtifact;
+    if (typeof sourceUrlOrArtifact === "string" && sourceUrlOrArtifact.trim()) {
+      attribution = `source:${sourceUrlOrArtifact.trim()}`;
+    }
   }
-  const sourceUrlOrArtifact = record.sourceUrlOrArtifact;
-  if (typeof sourceUrlOrArtifact === "string" && sourceUrlOrArtifact.trim()) {
-    return `source:${sourceUrlOrArtifact.trim()}`;
-  }
-  return "unattributed";
+  // A provider can publish multiple instruments, feeds, currencies and adjustment bases.
+  return JSON.stringify([
+    attribution,
+    readField(record, "symbol") ?? readField(record, "instrument"),
+    readField(record, "currency"),
+    readField(record, "feed"),
+    readField(record, "adjusted"),
+    readField(record, "adjustment"),
+    readField(record, "instrumentType"),
+    readField(record, "unit"),
+  ]);
 }
 
 export function normalizeFinanceChartBars(
   records: readonly FinanceChartRecord[],
+  window: Readonly<{ asOf?: string; fromDate?: string; toDate?: string }> = {},
 ): FinanceChartBarNormalization {
+  const cutoff = window.asOf === undefined ? undefined : Date.parse(window.asOf);
+  if (cutoff !== undefined && !Number.isFinite(cutoff)) {
+    throw new Error("chart asOf must be a valid timestamp");
+  }
+  for (const [label, date] of [
+    ["fromDate", window.fromDate],
+    ["toDate", window.toDate],
+  ] as const) {
+    if (date !== undefined && financeEodSessionDate(Date.parse(date), date) === undefined) {
+      throw new Error(`chart ${label} must be YYYY-MM-DD`);
+    }
+  }
+  if (window.fromDate && window.toDate && window.fromDate > window.toDate) {
+    throw new Error("chart fromDate must not be after toDate");
+  }
+  let windowDroppedCount = 0;
   const byDate = new Map<string, FinanceChartBar>();
   const conflictingDates = new Set<string>();
   let droppedCount = 0;
@@ -137,11 +181,20 @@ export function normalizeFinanceChartBars(
       droppedCount += 1;
       continue;
     }
+    if (
+      (cutoff !== undefined && Date.parse(normalized.timestamp) > cutoff) ||
+      (window.fromDate !== undefined && normalized.date < window.fromDate) ||
+      (window.toDate !== undefined && normalized.date > window.toDate)
+    ) {
+      windowDroppedCount += 1;
+      droppedCount += 1;
+      continue;
+    }
     const currentSourceKey = sourceKey(record);
     if (selectedSourceKey === undefined) {
       selectedSourceKey = currentSourceKey;
     } else if (currentSourceKey !== selectedSourceKey) {
-      // Do not silently stitch overlapping bars from different providers.
+      // Keep the selected provider and series definition intact.
       droppedCount += 1;
       continue;
     }
@@ -171,7 +224,7 @@ export function normalizeFinanceChartBars(
   const bars = [...byDate.values()].toSorted((left, right) =>
     left.timestamp.localeCompare(right.timestamp),
   );
-  return { bars, droppedCount };
+  return { bars, droppedCount, ...(windowDroppedCount > 0 ? { windowDroppedCount } : {}) };
 }
 
 function mean(values: readonly number[]): number {

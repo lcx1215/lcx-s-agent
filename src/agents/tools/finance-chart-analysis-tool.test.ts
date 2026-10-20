@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
+import * as collectionRegistry from "../finance-market-collection-registry.js";
 import type { AnyAgentTool } from "./common.js";
 import { createFinanceChartAnalysisTool } from "./finance-chart-analysis-tool.js";
 
@@ -10,6 +11,7 @@ beforeEach(() => {
   vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCES", "1");
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -66,6 +68,125 @@ function directBars() {
 }
 
 describe("finance_chart_analysis tool", () => {
+  it.each([
+    {
+      window: { asOf: "2026-01-10T00:00:00.000Z" },
+      count: 10,
+      first: "2026-01-01",
+      last: "2026-01-10",
+    },
+    { window: { fromDate: "2026-01-10" }, count: 12, first: "2026-01-10", last: "2026-01-21" },
+    { window: { toDate: "2026-01-10" }, count: 10, first: "2026-01-01", last: "2026-01-10" },
+    { window: { asOf: "2025-12-31T23:59:59.000Z" }, count: 0, first: undefined, last: undefined },
+  ])(
+    "keeps supplied bars inside the requested window $window",
+    async ({ window, count, first, last }) => {
+      const result = await createFinanceChartAnalysisTool().execute("supplied-window", {
+        instrument: "AAPL",
+        ...window,
+        includeBars: true,
+        bars: directBars().map((bar) => ({
+          ...bar,
+          providerName: "fixture",
+          sourceTimestamp: `${bar.date}T00:00:00.000Z`,
+        })),
+      });
+      expect(result.details).toMatchObject({
+        status: count >= 2 ? "needs_review" : "blocked",
+        normalizedBarCount: count,
+        droppedBarCount: 21 - count,
+        sourceReceipt: {
+          missingEvidence: expect.arrayContaining(["supplied_bars_outside_requested_window"]),
+        },
+      });
+      const details = result.details as { bars: Array<{ date: string }> };
+      expect(details.bars[0]?.date).toBe(first);
+      expect(details.bars.at(-1)?.date).toBe(last);
+    },
+  );
+
+  it("does not let an out-of-window provider choose the supplied source series", async () => {
+    const rows = directBars();
+    const result = await createFinanceChartAnalysisTool().execute("eligible-series", {
+      instrument: "AAPL",
+      asOf: "2026-01-10T00:00:00.000Z",
+      bars: [
+        { ...rows[20], providerName: "future-only" },
+        ...rows.slice(0, 2).map((bar) => ({ ...bar, providerName: "eligible" })),
+      ],
+    });
+    expect(result.details).toMatchObject({
+      status: "needs_review",
+      normalizedBarCount: 2,
+      droppedBarCount: 1,
+      analysis: { features: { totalReturnPct: expect.closeTo(1, 6) } },
+    });
+  });
+
+  it("reports actual timestamp extrema across interleaved source records", async () => {
+    const rows = [2, 0, 3, 1].map((index, order) => ({
+      providerName: order < 2 ? "a" : "b",
+      sourceTimestamp: `2026-01-0${index + 1}T00:00:00.000Z`,
+      delayStatus: "end_of_day",
+      sourceUrlOrArtifact: "fixture:chart",
+      data: directBars()[index],
+    }));
+    vi.spyOn(collectionRegistry, "runFinanceMarketCollectionRefresh").mockResolvedValue({
+      status: "ready",
+      selectedSourceIds: ["fixture-a", "fixture-b"],
+      records: rows,
+      sourceAttempts: [],
+      missingEvidence: [],
+      requiredNextSteps: [],
+    } as unknown as Awaited<
+      ReturnType<typeof collectionRegistry.runFinanceMarketCollectionRefresh>
+    >);
+    const result = await createFinanceChartAnalysisTool().execute("source-range", {
+      instrument: "AAPL",
+      liveFetch: true,
+      asOf: "2026-01-10T00:00:00.000Z",
+    });
+    expect(result.details).toMatchObject({
+      sourceReceipt: {
+        sourceTimestampRange: {
+          first: "2026-01-01T00:00:00.000Z",
+          last: "2026-01-04T00:00:00.000Z",
+        },
+      },
+    });
+  });
+
+  it("does not report a currency switch as investment return", async () => {
+    const tool = createFinanceChartAnalysisTool({ workspaceDir: "/tmp/lcx-chart-tool" });
+    const records = directBars()
+      .slice(0, 6)
+      .map((row, index) => {
+        const close = index < 3 ? 100 + index : 800 + index;
+        return {
+          providerName: "same-provider",
+          data: {
+            ...row,
+            currency: index < 3 ? "USD" : "HKD",
+            open: close - 1,
+            high: close + 1,
+            low: close - 2,
+            close,
+          },
+        };
+      });
+    const result = await tool.execute("currency-boundary", {
+      instrument: "AAPL",
+      bars: records,
+      writeReceipt: false,
+    });
+    expect(result.details).toMatchObject({
+      status: "needs_review",
+      normalizedBarCount: 3,
+      droppedBarCount: 3,
+      analysis: { features: { totalReturnPct: expect.closeTo(2, 6) } },
+    });
+  });
+
   it("analyzes provided bars and writes an inspectable receipt", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-chart-tool-"));
     const tool = createFinanceChartAnalysisTool({ workspaceDir });

@@ -140,6 +140,12 @@ function collectionSourceSummary(receipt: {
   missingEvidence: readonly string[];
   requiredNextSteps: readonly string[];
 }) {
+  const timestamps = receipt.records
+    .map((record) => Date.parse(record.sourceTimestamp))
+    .filter(Number.isFinite)
+    .toSorted((left, right) => left - right);
+  const first = timestamps[0];
+  const last = timestamps.at(-1);
   return {
     status: receipt.status,
     selectedSourceIds: receipt.selectedSourceIds,
@@ -148,8 +154,8 @@ function collectionSourceSummary(receipt: {
     providers: [...new Set(receipt.records.map((record) => record.providerName))],
     sourceUrls: [...new Set(receipt.records.map((record) => record.sourceUrlOrArtifact))],
     sourceTimestampRange: {
-      first: receipt.records[0]?.sourceTimestamp,
-      last: receipt.records.at(-1)?.sourceTimestamp,
+      first: first === undefined ? undefined : new Date(first).toISOString(),
+      last: last === undefined ? undefined : new Date(last).toISOString(),
     },
     delayStatuses: [...new Set(receipt.records.map((record) => record.delayStatus))],
     missingEvidence: receipt.missingEvidence,
@@ -345,7 +351,24 @@ export function createFinanceChartAnalysisTool(options?: {
           };
         }
 
-        const normalization = normalizeFinanceChartBars(sourceRecords);
+        const normalization = normalizeFinanceChartBars(
+          sourceRecords,
+          params.bars ? { asOf, fromDate: params.fromDate, toDate: params.toDate } : undefined,
+        );
+        if (normalization.windowDroppedCount) {
+          sourceReceipt = {
+            ...sourceReceipt,
+            windowDroppedCount: normalization.windowDroppedCount,
+            missingEvidence: [
+              ...((sourceReceipt.missingEvidence as string[] | undefined) ?? []),
+              "supplied_bars_outside_requested_window",
+            ],
+            requiredNextSteps: [
+              ...((sourceReceipt.requiredNextSteps as string[] | undefined) ?? []),
+              "supply_bars_within_requested_window",
+            ],
+          };
+        }
         const analysis =
           normalization.bars.length >= 2
             ? analyzeFinanceChartBars(instrument ?? "provided_bars", normalization.bars, {
