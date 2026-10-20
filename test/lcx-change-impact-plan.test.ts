@@ -6,6 +6,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { reviewMechanismComparison } from "../scripts/operator/lcx-change-impact-plan.js";
+import {
+  CONSOLIDATION_CLUSTERS,
+  CONSOLIDATED_ENTRYPOINT_FAMILIES,
+  SHARED_ENTRYPOINT_OWNERS,
+} from "../scripts/operator/lcx-flow-consolidation-declarations.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -68,6 +73,58 @@ async function mechanismFixture() {
   ];
   return { root, input, routes, oldReport, newReport, source };
 }
+
+it("runs the original cold explicit-path CLI against the single lightweight declaration owner", async () => {
+  const started = performance.now();
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "scripts/operator/lcx-change-impact-plan.ts",
+      "--json",
+      "--files",
+      "test/changed.test.ts",
+      "scripts/operator/lcx-flow-consolidation-declarations.ts",
+    ],
+    { cwd: repoRoot, timeout: 20_000, maxBuffer: 10 * 1024 * 1024 },
+  );
+  const coldMs = Math.round(performance.now() - started);
+  const value = JSON.parse(stdout);
+  expect(value.ok).toBe(true);
+  expect(value.changedFilesReadback).toEqual({ source: "explicit_paths", status: "observed" });
+  expect(value.unmatchedFiles).toEqual([]);
+  expect(value.strayGate.consolidation.normSource).toMatchObject({
+    path: "scripts/operator/lcx-flow-consolidation-declarations.ts",
+    compatibilityExportPath: "scripts/operator/lcx-flow-graph.ts",
+    declarationHashMeaning: "sha256_of_json_export_values_not_file_bytes",
+    declarationSha256: createHash("sha256")
+      .update(
+        JSON.stringify([
+          CONSOLIDATION_CLUSTERS,
+          CONSOLIDATED_ENTRYPOINT_FAMILIES,
+          SHARED_ENTRYPOINT_OWNERS,
+        ]),
+      )
+      .digest("hex"),
+    fullFileRead: "not_observed",
+  });
+  const source = await fs.readFile(
+    path.join(repoRoot, value.strayGate.consolidation.normSource.path),
+    "utf8",
+  );
+  expect(source).not.toMatch(/^import (?!type\b)/mu);
+  const compatibility = await import("../scripts/operator/lcx-flow-graph.js");
+  expect(compatibility.CONSOLIDATION_CLUSTERS).toBe(CONSOLIDATION_CLUSTERS);
+  expect(compatibility.CONSOLIDATED_ENTRYPOINT_FAMILIES).toBe(CONSOLIDATED_ENTRYPOINT_FAMILIES);
+  expect(compatibility.SHARED_ENTRYPOINT_OWNERS).toBe(SHARED_ENTRYPOINT_OWNERS);
+  console.log(
+    JSON.stringify({
+      coldChangeImpactMs: coldMs,
+      declarationOwner: value.strayGate.consolidation.normSource.path,
+    }),
+  );
+}, 30_000);
 
 describe("selected source-bound mechanism report comparison", () => {
   it("compares actual selected fields without treating source hashes as semantic equivalence or mutation authority", async () => {

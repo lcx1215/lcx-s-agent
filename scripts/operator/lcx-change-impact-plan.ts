@@ -10,7 +10,7 @@ import {
   CONSOLIDATION_CLUSTERS,
   CONSOLIDATED_ENTRYPOINT_FAMILIES,
   SHARED_ENTRYPOINT_OWNERS,
-} from "./lcx-flow-graph.js";
+} from "./lcx-flow-consolidation-declarations.js";
 
 type PathRule = {
   id: string;
@@ -403,6 +403,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-doctrine-consistency\.ts$/u,
       /^scripts\/operator\/lcx-external-agent-upgrade-radar\.ts$/u,
       /^scripts\/operator\/lcx-flow-graph\.ts$/u,
+      /^scripts\/operator\/lcx-flow-consolidation-declarations\.ts$/u,
       /^scripts\/operator\/lcx-github-cli-capability-inventory\.ts$/u,
       /^scripts\/operator\/lcx-governance-autopilot\.ts$/u,
       /^scripts\/operator\/lcx-head-tail-consistency\.ts$/u,
@@ -1610,8 +1611,10 @@ async function readConsolidation(priorWork: PriorWorkResult, deadlineAt: number)
     omittedPriorReadIndices: [] as number[],
     cleanup: undefined as "local_owner_read_cleanup_unconfirmed" | undefined,
     normSource: {
-      path: "scripts/operator/lcx-flow-graph.ts",
+      path: "scripts/operator/lcx-flow-consolidation-declarations.ts",
+      compatibilityExportPath: "scripts/operator/lcx-flow-graph.ts",
       exports: declarationNames,
+      declarationHashMeaning: "sha256_of_json_export_values_not_file_bytes",
       declarationSha256: createHash("sha256")
         .update(
           JSON.stringify([

@@ -10,6 +10,9 @@ import vm from "node:vm";
 import ts from "typescript";
 import { vi } from "vitest";
 import {
+  CONSOLIDATION_CLUSTERS,
+  CONSOLIDATED_ENTRYPOINT_FAMILIES,
+  SHARED_ENTRYPOINT_OWNERS,
   auditWorkflowHandoffs,
   readProcessOwnerSource,
   type WorkflowFieldRef,
@@ -520,6 +523,9 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     )(...Object.values(dependencies)) as (...args: unknown[]) => unknown;
   };
   const common = {
+    CONSOLIDATION_CLUSTERS,
+    CONSOLIDATED_ENTRYPOINT_FAMILIES,
+    SHARED_ENTRYPOINT_OWNERS,
     fs,
     fsSync,
     path,
