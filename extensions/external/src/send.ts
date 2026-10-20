@@ -171,6 +171,8 @@ export async function sendExternalMessage(
   const { response, release } = await fetchWithSsrFGuard({
     url: request.url,
     init: request.init,
+    additionalSensitiveHeaders:
+      params.account.outboundAuth === "header" ? [params.account.outboundTokenHeader] : undefined,
     fetchImpl: params.fetchImpl,
     signal: params.signal,
     timeoutMs: params.account.timeoutMs,
