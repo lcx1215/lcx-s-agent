@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { expect, it } from "vitest";
 import { guardChildMemory, processTreeRssBytes } from "./child-memory-budget.js";
@@ -35,37 +35,61 @@ it("rejects an unavailable process measurement rather than reporting enforcement
   }
 });
 
-it("keeps guarding an owned child after its detached group leader exits", async () => {
-  const child = spawn(
-    "python3",
-    [
-      "-c",
-      "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(0.5); allocation=bytearray(48*1024*1024); allocation[::4096]=bytes([1])*(len(allocation)//4096); time.sleep(10)']); time.sleep(0.25)",
-    ],
-    { detached: true },
-  );
-  const closed = once(child, "close");
-  let failure: Error | undefined;
-  const guard = guardChildMemory(child, {
-    budgetMb: 40,
-    includeProcessGroup: true,
-    onError: (error) => {
-      failure = error;
+// Owned POSIX process groups and ps RSS are unavailable on Windows.
+it.skipIf(process.platform === "win32")(
+  "keeps guarding an owned child after its detached group leader exits",
+  async () => {
+    const child = spawn(
+      "python3",
+      [
+        "-c",
+        "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(0.5); allocation=bytearray(48*1024*1024); allocation[::4096]=bytes([1])*(len(allocation)//4096); time.sleep(10)']); time.sleep(0.25)",
+      ],
+      { detached: true },
+    );
+    const closed = once(child, "close");
+    let failure: Error | undefined;
+    const guard = guardChildMemory(child, {
+      budgetMb: 40,
+      includeProcessGroup: true,
+      onError: (error) => {
+        failure = error;
+        if (child.pid) {
+          killProcessTree(child.pid, { graceMs: 25 });
+        }
+      },
+    });
+    try {
+      await guard.ready;
+      await once(child, "exit");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      expect(failure?.message).toBe("memory_budget_exceeded");
+    } finally {
       if (child.pid) {
         killProcessTree(child.pid, { graceMs: 25 });
       }
-    },
-  });
-  try {
-    await guard.ready;
-    await once(child, "exit");
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(failure?.message).toBe("memory_budget_exceeded");
-  } finally {
-    if (child.pid) {
-      killProcessTree(child.pid, { graceMs: 25 });
+      await closed;
+      await guard.stop().catch(() => undefined);
     }
-    await closed;
-    await guard.stop().catch(() => undefined);
-  }
-});
+  },
+);
+
+it.skipIf(process.platform !== "win32")(
+  "fails closed when native Windows RSS observation is unavailable",
+  async () => {
+    // No real process is targeted: the Windows reader rejects before any OS query.
+    const child = new ChildProcess();
+    Object.defineProperty(child, "pid", { value: 42 });
+    let failure: Error | undefined;
+    const guard = guardChildMemory(child, {
+      budgetMb: 64,
+      includeProcessGroup: true,
+      onError: (error) => {
+        failure = error;
+      },
+    });
+    await expect(guard.ready).rejects.toThrow("memory_observation_unavailable");
+    await expect(guard.stop()).rejects.toThrow("memory_observation_unavailable");
+    expect(failure?.message).toBe("memory_observation_unavailable");
+  },
+);
