@@ -135,4 +135,75 @@ describe("createPersistentDedupe", () => {
     expect(await reader.checkAndRecord("old-msg", { namespace: "acct" })).toBe(true);
     expect(await reader.checkAndRecord("new-msg", { namespace: "acct" })).toBe(false);
   });
+  it("conditionally releases one strict claim without deleting a replacement", async () => {
+    const root = await makeTmpRoot();
+    const options = {
+      ttlMs: 10_000,
+      memoryMaxSize: 100,
+      fileMaxEntries: 1000,
+      resolveFilePath: (namespace: string) => path.join(root, `${namespace}.json`),
+    };
+    const dedupe = createPersistentDedupe(options);
+    const now = Date.now();
+    expect(
+      await dedupe.checkAndRecord("retry", { namespace: "a", now, requirePersistence: true }),
+    ).toBe(true);
+    expect(
+      await dedupe.settleClaim("retry", { namespace: "a", recordedAt: now - 1, retryable: true }),
+    ).toBe(false);
+    expect(
+      await dedupe.settleClaim("retry", { namespace: "a", recordedAt: now, retryable: true }),
+    ).toBe(true);
+    await expect(
+      dedupe.checkAndRecord("retry", { namespace: "a", now, requirePersistence: true }),
+    ).rejects.toThrow("timestamp must be unique");
+    expect(
+      await dedupe.checkAndRecord("retry", {
+        namespace: "a",
+        now: now + 1,
+        requirePersistence: true,
+      }),
+    ).toBe(true);
+    expect(
+      await dedupe.settleClaim("retry", { namespace: "a", recordedAt: now, retryable: true }),
+    ).toBe(false);
+    expect(await createPersistentDedupe(options).checkAndRecord("retry", { namespace: "a" })).toBe(
+      false,
+    );
+    expect(
+      await dedupe.settleClaim("retry", { namespace: "a", recordedAt: now + 1, retryable: false }),
+    ).toBe(true);
+  });
+
+  it("persists prototype-looking message IDs before accepting a strict claim", async () => {
+    const root = await makeTmpRoot();
+    const options = {
+      ttlMs: 10_000,
+      memoryMaxSize: 100,
+      fileMaxEntries: 1000,
+      resolveFilePath: () => path.join(root, "dedupe.json"),
+    };
+    const first = createPersistentDedupe(options);
+    expect(await first.checkAndRecord("__proto__", { requirePersistence: true })).toBe(true);
+    expect(
+      await createPersistentDedupe(options).checkAndRecord("__proto__", {
+        requirePersistence: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses strict dispatch on disk failure while preserving existing memory fallback", async () => {
+    const root = await makeTmpRoot();
+    const parentFile = path.join(root, "file");
+    await fs.writeFile(parentFile, "not a directory");
+    const dedupe = createPersistentDedupe({
+      ttlMs: 10_000,
+      memoryMaxSize: 100,
+      fileMaxEntries: 1000,
+      resolveFilePath: () => path.join(parentFile, "dedupe.json"),
+    });
+    await expect(dedupe.checkAndRecord("strict", { requirePersistence: true })).rejects.toThrow();
+    expect(await dedupe.checkAndRecord("legacy")).toBe(true);
+    expect(await dedupe.checkAndRecord("legacy")).toBe(false);
+  });
 });

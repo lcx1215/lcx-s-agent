@@ -49,4 +49,44 @@ describe("external replay guard", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+  it("keeps processing concurrent, successful and unknown claims blocked across instances", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "external-replay-lifecycle-"));
+    try {
+      const first = createExternalReplayGuard({ stateDir });
+      const peer = createExternalReplayGuard({ stateDir });
+      const key = { accountId: "primary", messageId: "inflight" };
+      const claims = await Promise.all([first.claimMessage(key), first.claimMessage(key)]);
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(await peer.claimMessage(key)).toBeUndefined();
+      await claims.find(Boolean)!.settle("completed");
+      expect(await createExternalReplayGuard({ stateDir }).claimMessage(key)).toBeUndefined();
+      const unknownKey = { ...key, messageId: "unknown" };
+      const unknown = await first.claimMessage(unknownKey);
+      await unknown!.settle("delivery_unknown");
+      expect(
+        await createExternalReplayGuard({ stateDir }).claimMessage(unknownKey),
+      ).toBeUndefined();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("releases only an owned safe failure and never reuses its settlement handle", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "external-replay-release-"));
+    try {
+      const first = createExternalReplayGuard({ stateDir });
+      const peer = createExternalReplayGuard({ stateDir });
+      const key = { accountId: "primary", messageId: "retry" };
+      const original = await first.claimMessage(key);
+      expect(await peer.claimMessage(key)).toBeUndefined();
+      await original!.settle("retryable_before_dispatch");
+      const next = await peer.claimMessage(key);
+      expect(next).toBeDefined();
+      await original!.settle("retryable_before_dispatch");
+      expect(await createExternalReplayGuard({ stateDir }).claimMessage(key)).toBeUndefined();
+      await next!.settle("completed");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });

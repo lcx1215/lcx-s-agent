@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { createDedupeCache } from "../infra/dedupe.js";
 import type { FileLockOptions } from "./file-lock.js";
 import { withFileLock } from "./file-lock.js";
@@ -18,10 +19,16 @@ export type PersistentDedupeCheckOptions = {
   namespace?: string;
   now?: number;
   onDiskError?: (error: unknown) => void;
+  /** Refuse dispatch unless the reservation is durable; existing callers retain memory fallback. */
+  requirePersistence?: boolean;
 };
 
 export type PersistentDedupe = {
   checkAndRecord: (key: string, options?: PersistentDedupeCheckOptions) => Promise<boolean>;
+  settleClaim: (
+    key: string,
+    options: { namespace?: string; recordedAt: number; retryable: boolean },
+  ) => Promise<boolean>;
   warmup: (namespace?: string, onError?: (error: unknown) => void) => Promise<number>;
   clearMemory: () => void;
   memorySize: () => number;
@@ -53,9 +60,9 @@ function mergeLockOptions(overrides?: Partial<FileLockOptions>): FileLockOptions
 
 function sanitizeData(value: unknown): PersistentDedupeData {
   if (!value || typeof value !== "object") {
-    return {};
+    return Object.create(null) as PersistentDedupeData;
   }
-  const out: PersistentDedupeData = {};
+  const out = Object.create(null) as PersistentDedupeData;
   for (const [key, ts] of Object.entries(value as Record<string, unknown>)) {
     if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
       out[key] = ts;
@@ -91,6 +98,26 @@ function pruneData(
     });
 }
 
+async function readRequiredDedupeData(filePath: string): Promise<PersistentDedupeData> {
+  try {
+    const value: unknown = JSON.parse(await fs.readFile(filePath, "utf8"));
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.values(value).some((ts) => typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0)
+    ) {
+      throw new Error("invalid persistent dedupe state");
+    }
+    return sanitizeData(value);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return Object.create(null) as PersistentDedupeData;
+    }
+    throw error;
+  }
+}
+
 export function createPersistentDedupe(options: PersistentDedupeOptions): PersistentDedupe {
   const ttlMs = Math.max(0, Math.floor(options.ttlMs));
   const memoryMaxSize = Math.max(0, Math.floor(options.memoryMaxSize));
@@ -98,6 +125,8 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
   const lockOptions = mergeLockOptions(options.lockOptions);
   const memory = createDedupeCache({ ttlMs, maxSize: memoryMaxSize });
   const inflight = new Map<string, Promise<boolean>>();
+  const releasableClaims = new Map<string, number>();
+  let lastClaimAt = 0;
 
   async function checkAndRecordInner(
     key: string,
@@ -105,16 +134,19 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
     scopedKey: string,
     now: number,
     onDiskError?: (error: unknown) => void,
+    requirePersistence = false,
   ): Promise<boolean> {
-    if (memory.check(scopedKey, now)) {
+    // Recoverable claims consult durable state: another owner may have safely released it.
+    if (!requirePersistence && memory.check(scopedKey, now)) {
       return false;
     }
 
     const path = options.resolveFilePath(namespace);
     try {
       const duplicate = await withFileLock(path, lockOptions, async () => {
-        const { value } = await readJsonFileWithFallback<PersistentDedupeData>(path, {});
-        const data = sanitizeData(value);
+        const data = requirePersistence
+          ? await readRequiredDedupeData(path)
+          : sanitizeData((await readJsonFileWithFallback<PersistentDedupeData>(path, {})).value);
         const seenAt = data[key];
         const isRecent = seenAt != null && (ttlMs <= 0 || now - seenAt < ttlMs);
         if (isRecent) {
@@ -128,6 +160,10 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
       return !duplicate;
     } catch (error) {
       onDiskError?.(error);
+      if (requirePersistence) {
+        memory.delete(scopedKey);
+        throw error;
+      }
       memory.check(scopedKey, now);
       return true;
     }
@@ -171,10 +207,27 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
 
     const onDiskError = dedupeOptions?.onDiskError ?? options.onDiskError;
     const now = dedupeOptions?.now ?? Date.now();
-    const work = checkAndRecordInner(trimmed, namespace, scopedKey, now, onDiskError);
+    if (dedupeOptions?.requirePersistence) {
+      if (now <= lastClaimAt) {
+        throw new Error("persistent dedupe claim timestamp must be unique");
+      }
+      lastClaimAt = now;
+    }
+    const work = checkAndRecordInner(
+      trimmed,
+      namespace,
+      scopedKey,
+      now,
+      onDiskError,
+      dedupeOptions?.requirePersistence,
+    );
     inflight.set(scopedKey, work);
     try {
-      return await work;
+      const accepted = await work;
+      if (accepted && dedupeOptions?.requirePersistence) {
+        releasableClaims.set(scopedKey, now);
+      }
+      return accepted;
     } finally {
       inflight.delete(scopedKey);
     }
@@ -182,6 +235,35 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
 
   return {
     checkAndRecord,
+    settleClaim: async (key, releaseOptions) => {
+      const trimmed = key.trim();
+      const namespace = releaseOptions.namespace?.trim() || "global";
+      const scopedKey = `${namespace}:${trimmed}`;
+      if (
+        !trimmed ||
+        inflight.has(scopedKey) ||
+        releasableClaims.get(scopedKey) !== releaseOptions.recordedAt
+      ) {
+        return false;
+      }
+      // Consume the release handle once, including on uncertain disk failures.
+      releasableClaims.delete(scopedKey);
+      const filePath = options.resolveFilePath(namespace);
+      return await withFileLock(filePath, lockOptions, async () => {
+        const data = await readRequiredDedupeData(filePath);
+        if (data[trimmed] !== releaseOptions.recordedAt) {
+          return false;
+        }
+        if (releaseOptions.retryable) {
+          delete data[trimmed];
+        } else {
+          data[trimmed] = Math.max(releaseOptions.recordedAt, Date.now());
+        }
+        await writeJsonFileAtomically(filePath, data);
+        memory.delete(scopedKey);
+        return true;
+      });
+    },
     warmup,
     clearMemory: () => memory.clear(),
     memorySize: () => memory.size(),

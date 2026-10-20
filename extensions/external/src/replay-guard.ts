@@ -34,8 +34,15 @@ export type ExternalReplayGuardOptions = {
   onDiskError?: (error: unknown) => void;
 };
 
+export type ExternalReplayOutcome = "completed" | "retryable_before_dispatch" | "delivery_unknown";
+export type ExternalReplayClaim = { settle: (outcome: ExternalReplayOutcome) => Promise<void> };
 export type ExternalReplayGuard = {
+  /** Legacy terminal admission; callers with a processing lifecycle use claimMessage. */
   shouldProcessMessage: (params: { accountId: string; messageId: string }) => Promise<boolean>;
+  claimMessage: (params: {
+    accountId: string;
+    messageId: string;
+  }) => Promise<ExternalReplayClaim | undefined>;
 };
 
 export type LcxIdentityExternalReplayMigration = Readonly<{
@@ -182,15 +189,67 @@ export function createExternalReplayGuard(
     onDiskError: options.onDiskError,
   });
 
-  return {
-    shouldProcessMessage: async ({ accountId, messageId }) => {
-      const trimmedMessageId = messageId.trim();
-      if (!trimmedMessageId) {
-        return true;
-      }
-      return await persistentDedupe.checkAndRecord(trimmedMessageId, {
+  const processing = new Map<string, number>();
+  let lastClaimAt = 0;
+  const claimKey = (accountId: string, messageId: string) => JSON.stringify([accountId, messageId]);
+  const claimMessage: ExternalReplayGuard["claimMessage"] = async ({ accountId, messageId }) => {
+    const trimmedMessageId = messageId.trim();
+    if (!trimmedMessageId) {
+      return { settle: async () => {} };
+    }
+    const key = claimKey(accountId, trimmedMessageId);
+    if (processing.has(key)) {
+      return undefined;
+    }
+    const recordedAt = Math.max(Date.now(), lastClaimAt + 1);
+    lastClaimAt = recordedAt;
+    processing.set(key, recordedAt);
+    try {
+      const accepted = await persistentDedupe.checkAndRecord(trimmedMessageId, {
         namespace: accountId,
+        now: recordedAt,
+        requirePersistence: true,
       });
+      if (!accepted) {
+        processing.delete(key);
+        return undefined;
+      }
+    } catch (error) {
+      processing.delete(key);
+      throw error;
+    }
+    let consumed = false;
+    return {
+      settle: async (outcome) => {
+        if (consumed) {
+          return;
+        }
+        consumed = true;
+        if (processing.get(key) !== recordedAt) {
+          throw new Error("external replay claim ownership changed");
+        }
+        const settled = await persistentDedupe.settleClaim(trimmedMessageId, {
+          namespace: accountId,
+          recordedAt,
+          retryable: outcome === "retryable_before_dispatch",
+        });
+        if (!settled) {
+          throw new Error("external replay reservation changed; recovery remains blocked");
+        }
+        // Completed and uncertain dispatches retain the durable reservation across restarts.
+        processing.delete(key);
+      },
+    };
+  };
+  return {
+    claimMessage,
+    shouldProcessMessage: async (params) => {
+      const claim = await claimMessage(params);
+      if (!claim) {
+        return false;
+      }
+      await claim.settle("completed");
+      return true;
     },
   };
 }

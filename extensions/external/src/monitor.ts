@@ -17,7 +17,11 @@ import {
   type OpenClawConfig,
 } from "lcx-agent/plugin-sdk";
 import { normalizeExternalInboundMessage } from "./protocol.js";
-import { createExternalReplayGuard, type ExternalReplayGuard } from "./replay-guard.js";
+import {
+  createExternalReplayGuard,
+  type ExternalReplayGuard,
+  type ExternalReplayClaim,
+} from "./replay-guard.js";
 import { isExternalInboundMessageAllowed, isExternalWebhookAuthorized } from "./security.js";
 import { sendExternalMessage } from "./send.js";
 import type { ExternalInboundMessage, ResolvedExternalAccount } from "./types.js";
@@ -142,11 +146,18 @@ export function createExternalWebhookRequestHandler(params: {
       }
 
       const message = parsed.value;
-      const shouldProcess = await replayGuard.shouldProcessMessage({
-        accountId: target.account.accountId,
-        messageId: message.messageId,
-      });
-      if (!shouldProcess) {
+      const replayKey = { accountId: target.account.accountId, messageId: message.messageId };
+      let claim: ExternalReplayClaim | undefined;
+      try {
+        claim = await replayGuard.claimMessage(replayKey);
+      } catch (error) {
+        target.runtime.error(
+          `[${target.account.accountId}] external replay claim failed: ${String(error)}`,
+        );
+        sendJson(res, 503, { ok: false, error: "replay_state_unavailable" });
+        return true;
+      }
+      if (!claim) {
         target.log?.info?.(
           `[${target.account.accountId}] duplicate external webhook ignored messageId=${message.messageId}`,
         );
@@ -154,11 +165,26 @@ export function createExternalWebhookRequestHandler(params: {
         return true;
       }
       target.statusSink?.({ lastInboundAt: Date.now() });
-      void processMessage(message, target).catch((error: unknown) => {
-        target.runtime.error(
-          `[${target.account.accountId}] external webhook processing failed: ${String(error)}`,
-        );
-      });
+      void Promise.resolve()
+        .then(() => processMessage(message, target))
+        .then(
+          () => claim.settle("completed"),
+          async (error: unknown) => {
+            const outcome =
+              error instanceof ExternalMessageProcessingError && error.beforeDispatch
+                ? "retryable_before_dispatch"
+                : "delivery_unknown";
+            await claim.settle(outcome);
+            target.runtime.error(
+              `[${target.account.accountId}] external webhook processing failed outcome=${outcome}: ${String(error)}`,
+            );
+          },
+        )
+        .catch((error: unknown) => {
+          target.runtime.error(
+            `[${target.account.accountId}] external replay settlement failed; delivery_unknown remains blocked: ${String(error)}`,
+          );
+        });
       sendJson(res, 202, { ok: true, messageId: message.messageId });
       return true;
     } finally {
@@ -227,9 +253,38 @@ export async function resolveExternalCommandAuthorization(params: {
   return access.commandAuthorized;
 }
 
+class ExternalMessageProcessingError extends Error {
+  constructor(
+    readonly beforeDispatch: boolean,
+    cause: unknown,
+  ) {
+    super(
+      beforeDispatch
+        ? "external processing failed before dispatch"
+        : "external delivery outcome unknown",
+      { cause },
+    );
+  }
+}
+
 export async function processExternalMessage(
   message: ExternalInboundMessage,
   target: ExternalWebhookTarget,
+): Promise<void> {
+  let dispatchEntered = false;
+  try {
+    await processExternalMessageInner(message, target, () => {
+      dispatchEntered = true;
+    });
+  } catch (cause) {
+    throw new ExternalMessageProcessingError(!dispatchEntered, cause);
+  }
+}
+
+async function processExternalMessageInner(
+  message: ExternalInboundMessage,
+  target: ExternalWebhookTarget,
+  enterDispatch: () => void,
 ): Promise<void> {
   const core = target.channelRuntime;
   if (!core) {
@@ -302,6 +357,8 @@ export async function processExternalMessage(
     channel: "external",
     accountId: target.account.accountId,
   });
+  let replyFailed = false;
+  enterDispatch();
   await core.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: context,
     cfg: target.config,
@@ -324,6 +381,7 @@ export async function processExternalMessage(
         target.statusSink?.({ lastOutboundAt: Date.now() });
       },
       onError: (error, info) => {
+        replyFailed = true;
         target.runtime.error(
           `[${target.account.accountId}] external ${info.kind} reply failed: ${String(error)}`,
         );
@@ -331,4 +389,7 @@ export async function processExternalMessage(
     },
     replyOptions: { onModelSelected },
   });
+  if (replyFailed) {
+    throw new Error("external dispatcher reported an uncertain reply failure");
+  }
 }
