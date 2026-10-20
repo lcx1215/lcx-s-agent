@@ -58,6 +58,50 @@ function dateMs(value: string | undefined) {
     : NaN;
 }
 
+/** Undefined means the date or published calendar year is unverified. */
+export function isFinanceUsEquitySessionDate(date: string): boolean | undefined {
+  const time = dateMs(date);
+  const closures = holidays[date.slice(0, 4)];
+  if (!Number.isFinite(time) || !closures) {
+    return undefined;
+  }
+  const weekday = new Date(time).getUTCDay();
+  return weekday !== 0 && weekday !== 6 && !closures.includes(date.slice(5));
+}
+
+// Published 13:00 ET cash-equity closes from the same NYSE calendars above.
+const earlyCloses: Record<string, readonly string[]> = {
+  "2025": ["07-03", "11-28", "12-24"],
+  "2026": ["11-27", "12-24"],
+  "2027": ["11-26"],
+  "2028": ["07-03", "11-24"],
+};
+
+/** Offline verified cash-equity bounds; closures and unknown years are not sessions. */
+export function financeUsEquitySessionBounds(date: string):
+  | {
+      openMinute: number;
+      closeMinute: number;
+    }
+  | undefined {
+  if (isFinanceUsEquitySessionDate(date) !== true) {
+    return undefined;
+  }
+  return {
+    openMinute: 570,
+    closeMinute: earlyCloses[date.slice(0, 4)]?.includes(date.slice(5)) ? 780 : 960,
+  };
+}
+
+function isUsHistorySymbol(instrument: string): boolean {
+  const symbol = instrument.trim().toUpperCase();
+  if (symbol.startsWith("US.")) {
+    return /^[A-Z][A-Z0-9]*(?:[.-][A-Z])?$/u.test(symbol.slice(3));
+  }
+  // Keep native tickers and common US share classes; a global suffix is no US calendar authority.
+  return /^[A-Z][A-Z0-9]*(?:-[A-Z]|\.[AB])?$/u.test(symbol);
+}
+
 /** Calendar completeness is separate from freshness and cross-source price agreement. */
 export function assessFinanceHistoryCoverage(
   request: FinanceMarketCollectionRequest,
@@ -66,9 +110,9 @@ export function assessFinanceHistoryCoverage(
   const from = dateMs(request.fromDate);
   const to = dateMs(request.toDate);
   const crypto = ["crypto", "cryptocurrency"].includes(request.assetClass.toLowerCase());
-  const equity = ["common_stock", "equity", "stock", "us_equity"].includes(
-    request.assetClass.toLowerCase(),
-  );
+  const equity =
+    ["common_stock", "equity", "stock", "us_equity"].includes(request.assetClass.toLowerCase()) &&
+    isUsHistorySymbol(request.instrument);
   if (
     !Number.isFinite(from) ||
     !Number.isFinite(to) ||
@@ -97,7 +141,8 @@ export function assessFinanceHistoryCoverage(
   for (let time = from; time <= to; time += dayMs) {
     const date = new Date(time);
     const label = date.toISOString().slice(0, 10);
-    if (equity && !holidays[label.slice(0, 4)]) {
+    const equitySession = equity ? isFinanceUsEquitySessionDate(label) : undefined;
+    if (equity && equitySession === undefined) {
       return {
         status: "unverified" as const,
         gaps: ["historical_calendar_year_unverified"],
@@ -105,12 +150,7 @@ export function assessFinanceHistoryCoverage(
         providers: [],
       };
     }
-    if (
-      crypto ||
-      (date.getUTCDay() !== 0 &&
-        date.getUTCDay() !== 6 &&
-        !holidays[label.slice(0, 4)].includes(label.slice(5)))
-    ) {
+    if (crypto || equitySession) {
       expected.push(label);
     }
   }

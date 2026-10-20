@@ -4,6 +4,7 @@ import {
   type FinanceAlpacaMarketSession,
 } from "./finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import { financeUsEquitySessionBounds } from "./finance-history-coverage.js";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
 import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
 import { turnoverAndCost } from "./quant-math-advanced.js";
@@ -442,7 +443,9 @@ function metric(returns: readonly number[], trades: number): Metric {
   let peak = 1;
   let maxDrawdown = 0;
   for (const value of returns) {
-    equity *= 1 + value;
+    // Every session is sized from config.capital, not the prior session's wealth.
+    // These are fixed-notional P&L fractions; compounding would invent reinvestment.
+    equity += value;
     peak = Math.max(peak, equity);
     maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
   }
@@ -505,8 +508,7 @@ export function runFinanceIntradayPaperReplay(params: {
   const sessionsByDate = new Map(marketSessions.map((session) => [session.date, session]));
   if (
     sessionsByDate.size !== marketSessions.length ||
-    (preCloseExitEnabled &&
-      marketSessions.some((session) => financeAlpacaMarketSessionIssue(session) !== null))
+    marketSessions.some((session) => financeAlpacaMarketSessionIssue(session) !== null)
   ) {
     throw new Error("intraday replay received an invalid or duplicate market-calendar session");
   }
@@ -516,7 +518,7 @@ export function runFinanceIntradayPaperReplay(params: {
     left.startAt.localeCompare(right.startAt),
   )) {
     const session = sessionParts(bar.startAt);
-    if (preCloseExitEnabled) {
+    if (params.marketSessions) {
       const marketSession = sessionsByDate.get(session.date);
       if (!marketSession) {
         if (session.minute >= 570 && session.minute < 960) {
@@ -552,6 +554,7 @@ export function runFinanceIntradayPaperReplay(params: {
   const trades: FinanceIntradayPaperTrade[] = [];
   const strategyReturns: number[] = [];
   const baselineReturns: number[] = [];
+  let baselineTrades = 0;
   const excludedSessions: Array<{
     sessionDate: string;
     reason: "incomplete_calendar_session" | "insufficient_opening_history";
@@ -612,6 +615,22 @@ export function runFinanceIntradayPaperReplay(params: {
         );
       }
     }
+    if (!preCloseExitEnabled) {
+      const bounds = params.marketSessions
+        ? marketSession
+        : financeUsEquitySessionBounds(sessionDate);
+      if (
+        !bounds ||
+        !isCompleteSession(bars, intervalSeconds, bounds.openMinute, bounds.closeMinute)
+      ) {
+        excludedSessions.push({
+          sessionDate,
+          reason: "incomplete_calendar_session",
+          selectedBars: bars.length,
+        });
+        continue;
+      }
+    }
     if (bars.length <= config.openingRangeBars + 1) {
       excludedSessions.push({
         sessionDate,
@@ -622,9 +641,21 @@ export function runFinanceIntradayPaperReplay(params: {
     }
     const opening = bars.slice(0, config.openingRangeBars);
     const openingHigh = Math.max(...opening.map((bar) => bar.high));
-    const baselineEntry = bars[config.openingRangeBars];
+    const baselineEntry = bars[0];
     const sessionEnd = bars.at(-1)!;
-    baselineReturns.push(round(sessionEnd.close / baselineEntry.open - 1 - roundTripCost));
+    const baselineQuantity = Math.floor(
+      (config.capital * config.maxAllocationFraction) / baselineEntry.open,
+    );
+    if (baselineQuantity > 0) {
+      baselineTrades += 1;
+    }
+    baselineReturns.push(
+      round(
+        (baselineQuantity *
+          (sessionEnd.close - baselineEntry.open - baselineEntry.open * roundTripCost)) /
+          config.capital,
+      ),
+    );
     const preCloseMinute = marketSession?.closeMinute ?? 960;
     const preCloseIndex = preCloseExitEnabled
       ? bars.findIndex(
@@ -684,7 +715,9 @@ export function runFinanceIntradayPaperReplay(params: {
     }
     const grossReturn = exitPrice / entry.open - 1;
     const netReturn = grossReturn - roundTripCost;
-    strategyReturns.push(round(netReturn));
+    strategyReturns.push(
+      round((quantity * (exitPrice - entry.open - entry.open * roundTripCost)) / config.capital),
+    );
     trades.push(
       Object.freeze({
         sessionDate,
@@ -713,14 +746,15 @@ export function runFinanceIntradayPaperReplay(params: {
       source(),
     );
   }
-  const marketCalendarRef = preCloseExitEnabled
-    ? caseflowFingerprint(
-        marketSessions
-          .filter((session) => replayCalendarDates.has(session.date))
-          .map(({ date, calendarRef }) => ({ date, calendarRef }))
-          .toSorted((left, right) => left.date.localeCompare(right.date)),
-      )
-    : undefined;
+  const marketCalendarRef =
+    params.marketSessions !== undefined
+      ? caseflowFingerprint(
+          marketSessions
+            .filter((session) => replayCalendarDates.has(session.date))
+            .map(({ date, calendarRef }) => ({ date, calendarRef }))
+            .toSorted((left, right) => left.date.localeCompare(right.date)),
+        )
+      : undefined;
   const datasetRef = caseflowFingerprint({
     ledgerHeadRef: params.ledgerHeadRef,
     bars: params.bars,
@@ -736,7 +770,7 @@ export function runFinanceIntradayPaperReplay(params: {
     config,
     trades: Object.freeze(trades),
     strategy: metric(strategyReturns, trades.length),
-    retailOpenToCloseBaseline: metric(baselineReturns, baselineReturns.length),
+    retailOpenToCloseBaseline: metric(baselineReturns, baselineTrades),
     cashBaseline: metric(
       strategyReturns.map(() => 0),
       0,

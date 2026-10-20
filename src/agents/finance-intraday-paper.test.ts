@@ -16,10 +16,17 @@ import {
   runFinanceIntradayPaperReplay,
 } from "./finance-intraday-paper.js";
 
-function session(prices: readonly number[], day = "2026-01-05"): FinanceIntradayBar[] {
+function session(
+  prices: readonly number[],
+  day = "2026-01-05",
+  complete = true,
+): FinanceIntradayBar[] {
   const start = Date.parse(`${day}T14:30:00.000Z`);
-  return prices.map((close, index) => {
-    const open = index === 0 ? close : (prices[index - 1] ?? close);
+  const values = complete
+    ? [...prices, ...Array<number>(Math.max(0, 78 - prices.length)).fill(prices.at(-1)!)]
+    : prices;
+  return values.map((close, index) => {
+    const open = index === 0 ? close : (values[index - 1] ?? close);
     const startAt = new Date(start + index * 300_000).toISOString();
     return {
       instrument: "SPY",
@@ -92,6 +99,86 @@ const config = {
 } as const;
 
 describe("finance intraday paper replay", () => {
+  it.each(["middle", "missing_open", "missing_close"])(
+    "rejects a contiguous partial v1 session: %s",
+    (kind) => {
+      const full = session([100, 100, 100, 101, 102, 103]);
+      const bars =
+        kind === "middle"
+          ? full.slice(6, 30)
+          : kind === "missing_open"
+            ? full.slice(1)
+            : full.slice(0, -1);
+      expect(() =>
+        runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: "partial", config }),
+      ).toThrow(/complete sessions/);
+    },
+  );
+
+  it("admits a complete published early close and rejects holiday or unknown calendar dates", () => {
+    const early = session([100, 100, 100, 101, 102, 103], "2026-11-27").slice(0, 42);
+    expect(
+      runFinanceIntradayPaperReplay({ bars: early, ledgerHeadRef: "early", config }).strategy
+        .sessions,
+    ).toBe(1);
+    for (const day of ["2026-12-25", "2030-01-07"]) {
+      expect(() =>
+        runFinanceIntradayPaperReplay({
+          bars: session([100, 100, 100, 101, 102, 103], day),
+          ledgerHeadRef: "unverified",
+          config,
+        }),
+      ).toThrow(/complete sessions/);
+    }
+  });
+
+  it("uses and binds an explicit official calendar in v1", () => {
+    const bars = session([100, 100, 100, 101, 102, 103]);
+    const calendar = marketCalendarSession("2026-01-05");
+    const result = runFinanceIntradayPaperReplay({
+      bars,
+      ledgerHeadRef: "calendar",
+      config,
+      marketSessions: [calendar],
+    });
+    expect(result.marketCalendarRef).toBeTruthy();
+    expect(() =>
+      runFinanceIntradayPaperReplay({
+        bars,
+        ledgerHeadRef: "calendar",
+        config,
+        marketSessions: [{ ...calendar, closeMinute: 780 }],
+      }),
+    ).toThrow(/invalid/);
+  });
+
+  it.each([0.1, 0.5, 1])(
+    "scales strategy and benchmark returns by deployed capital (%s)",
+    (allocation) => {
+      const receipt = runFinanceIntradayPaperReplay({
+        bars: session([100, 100, 100, 101, 102, 103]),
+        ledgerHeadRef: null,
+        config: {
+          ...config,
+          maxAllocationFraction: allocation,
+          feeBpsPerSide: 0,
+          spreadBps: 0,
+          slippageBpsPerSide: 0,
+        },
+      });
+      const trade = receipt.trades[0];
+      expect(receipt.strategy.totalReturn).toBeCloseTo(
+        (trade.quantity * (trade.exitReferencePrice - trade.entryReferencePrice)) / config.capital,
+        10,
+      );
+      const baselineQuantity = Math.floor((config.capital * allocation) / 100);
+      expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(
+        (baselineQuantity * 3) / config.capital,
+        10,
+      );
+    },
+  );
+
   it.each([4, 5])("refuses a missing signal-entry/holding interval at index %s", (missingIndex) => {
     const bars = session([100, 101, 100, 102, 103, 104, 105]).filter(
       (_, index) => index !== missingIndex,
@@ -116,7 +203,7 @@ describe("finance intraday paper replay", () => {
 
   it("retains calendar-rejected days alongside usable days instead of concealing source gaps", () => {
     const bars = completeRegularSession();
-    const incomplete = session([100, 101, 100, 102, 103, 104]);
+    const incomplete = session([100, 101, 100, 102, 103, 104], "2026-01-05", false);
     const result = runFinanceIntradayPaperReplay({
       bars: [...bars, ...incomplete],
       ledgerHeadRef: "head",
@@ -191,12 +278,60 @@ describe("finance intraday paper replay", () => {
     });
   });
 
+  it("starts its open-to-close benchmark at the actual session open, independent of opening-range length", () => {
+    const bars = session([100, 110, 120, 130, 135, 140]);
+    for (const openingRangeBars of [2, 3, 4]) {
+      const receipt = runFinanceIntradayPaperReplay({
+        bars,
+        ledgerHeadRef: "opening-move",
+        config: {
+          ...config,
+          openingRangeBars,
+          feeBpsPerSide: 0,
+          spreadBps: 0,
+          slippageBpsPerSide: 0,
+        },
+      });
+      expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(
+        (50 * (140 - 100)) / 10000,
+        10,
+      );
+    }
+  });
+
   it("charges the strategy and retail baseline with the same round-trip cost model", () => {
     const bars = session([100, 100, 100, 101, 101, 101]);
     const receipt = runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: null, config });
     // 1 bp fee + 2 bp half-spread + 2 bp slippage on each of two sides.
     expect(receipt.trades[0]?.costFraction).toBe(0.001);
-    expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(0.009, 10);
+    expect(receipt.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(0.0045, 10);
+  });
+
+  it("keeps uninvestable capital in cash for both strategy and benchmark", () => {
+    const receipt = runFinanceIntradayPaperReplay({
+      bars: session([100, 100, 100, 101, 102, 103]),
+      ledgerHeadRef: null,
+      config: { ...config, capital: 1 },
+    });
+    expect(receipt.strategy).toMatchObject({ trades: 0, totalReturn: 0 });
+    expect(receipt.retailOpenToCloseBaseline).toMatchObject({ trades: 0, totalReturn: 0 });
+  });
+
+  it("accumulates fixed-capital P&L without inventing reinvestment across sessions", () => {
+    const prices = [100, 100, 100, 101, 102, 103];
+    const costs = { ...config, feeBpsPerSide: 0, spreadBps: 0, slippageBpsPerSide: 0 };
+    const one = runFinanceIntradayPaperReplay({
+      bars: session(prices),
+      ledgerHeadRef: null,
+      config: costs,
+    });
+    const two = runFinanceIntradayPaperReplay({
+      bars: [...session(prices), ...session(prices, "2026-01-06")],
+      ledgerHeadRef: null,
+      config: costs,
+    });
+    expect(two.strategy.totalReturn).toBeCloseTo(2 * one.strategy.totalReturn, 10);
+    expect(two.retailOpenToCloseBaseline.totalReturn).toBeCloseTo(0.03, 10);
   });
 
   it("records cash when there is no breakout and can show costs erasing a gross edge", () => {
@@ -214,6 +349,11 @@ describe("finance intraday paper replay", () => {
     });
     expect(costly.trades[0]?.grossReturn).toBeGreaterThan(0);
     expect(costly.trades[0]?.netReturn).toBeLessThan(0);
+    const trade = costly.trades[0];
+    const accountReturn =
+      (trade.quantity * trade.entryReferencePrice * trade.netReturn) / config.capital;
+    expect(costly.strategy.totalReturn).toBeCloseTo(accountReturn, 10);
+    expect(costly.strategy.maxDrawdown).toBeCloseTo(-accountReturn, 10);
   });
 
   it("replays v2 exits before the closing bar and rejects incomplete sessions", () => {
@@ -233,7 +373,7 @@ describe("finance intraday paper replay", () => {
     });
     expect(() =>
       runFinanceIntradayPaperReplay({
-        bars: session([100, 101, 100, 102, 103, 104]),
+        bars: session([100, 101, 100, 102, 103, 104], "2026-01-05", false),
         ledgerHeadRef: "partial",
         config,
         strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
