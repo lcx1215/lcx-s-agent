@@ -440,7 +440,8 @@ export async function buildLcxLiveFadeoutAudit() {
       owner: "scripts/operator/lcx-commercial-acceptance-harness.ts",
       file: "scripts/operator/lcx-commercial-acceptance-harness.ts",
       requiredTerms: [
-        "channel_runtime_probe_ok_user_visible_pending",
+        'import { resolveExternalChannelTruth } from "./lcx-external-channel-status.ts"',
+        "resolveExternalChannelTruth({",
         "externalChannelBinding",
         "post_migration_external_canary_missing",
         "bindingMissingProof",

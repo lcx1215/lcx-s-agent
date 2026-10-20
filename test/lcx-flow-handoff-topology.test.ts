@@ -108,7 +108,7 @@ describe("exact fields in encoded receipt transports", () => {
     },
   );
 });
-async function functionBody(file: string, name: string) {
+async function functionBody(file: string, name: string, followLocalCalls = false) {
   const source = await fs.readFile(file, "utf8");
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const node = ast.statements.find(
@@ -116,7 +116,34 @@ async function functionBody(file: string, name: string) {
       ts.isFunctionDeclaration(statement) && statement.name?.text === name,
   );
   expect(node?.body).toBeDefined();
-  return node!.body!.getText(ast);
+  const bodies: string[] = [];
+  const visited = new Set<ts.FunctionDeclaration>();
+  function collect(declaration: ts.FunctionDeclaration) {
+    if (!declaration.body || visited.has(declaration)) {
+      return;
+    }
+    visited.add(declaration);
+    bodies.push(declaration.body.getText(ast));
+    if (!followLocalCalls) {
+      return;
+    }
+    function visit(child: ts.Node) {
+      if (ts.isCallExpression(child) && ts.isIdentifier(child.expression)) {
+        const calleeName = child.expression.text;
+        const callee = ast.statements.find(
+          (statement): statement is ts.FunctionDeclaration =>
+            ts.isFunctionDeclaration(statement) && statement.name?.text === calleeName,
+        );
+        if (callee) {
+          collect(callee);
+        }
+      }
+      ts.forEachChild(child, visit);
+    }
+    ts.forEachChild(declaration.body, visit);
+  }
+  collect(node!);
+  return bodies.join("\n");
 }
 
 async function originalFinanceSourceAudit(overrides: Record<string, string> = {}) {
@@ -267,6 +294,7 @@ describe("factory topology describes original source without inventing consumers
     const monitor = await functionBody(
       "extensions/external/src/monitor.ts",
       "processExternalMessage",
+      true,
     );
     expect(monitor).toContain("dispatchReplyWithBufferedBlockDispatcher");
     expect(monitor).toContain("sendExternalMessage");

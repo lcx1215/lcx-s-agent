@@ -13,6 +13,7 @@ import {
   executeDirectedDailyResearchTask,
   inspectDirectedContentReview,
 } from "../../scripts/operator/lcx-directed-daily-research-brief.js";
+import { resolveExternalChannelTruth } from "../../scripts/operator/lcx-external-channel-status.js";
 import type { FinanceMarketCollectionAdapter } from "../../src/agents/finance-market-collection-registry.js";
 import type { QualityHarnessModelRequest } from "../../src/agents/quality-harness-contract.js";
 import {
@@ -65,7 +66,12 @@ async function nativeFunctions(file: string, names?: readonly string[]) {
         (!names || names.includes(node.name!.text)),
     )
     .map((node) => node.getText(ast));
-  const context = vm.createContext({ createHash, inspectDirectedContentReview, exports: {} });
+  const context = vm.createContext({
+    createHash,
+    inspectDirectedContentReview,
+    resolveExternalChannelTruth,
+    exports: {},
+  });
   vm.runInContext(
     ts.transpileModule(functions.join("\n"), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },

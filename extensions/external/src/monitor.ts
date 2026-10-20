@@ -259,9 +259,7 @@ class ExternalMessageProcessingError extends Error {
     cause: unknown,
   ) {
     super(
-      beforeDispatch
-        ? "external processing failed before dispatch"
-        : "external delivery outcome unknown",
+      `${beforeDispatch ? "external processing failed before dispatch" : "external delivery outcome unknown"}: ${String(cause)}`,
       { cause },
     );
   }
