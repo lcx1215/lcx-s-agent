@@ -41,8 +41,12 @@ export type UniverseJoinFault = "missing_source" | "hash_conflict";
 
 /** Native private owners and original join. Missing source is deliberately never replaced by a pass. */
 export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault) {
-  // Finish or cancel before the caller's 90s test budget can remove an active cwd.
-  const preparationSignal = AbortSignal.timeout(80_000);
+  // Reserve the original native owner's full 30s within the caller's 90s budget.
+  // Preparation cannot consume the owner window; both phases still finish by 80s.
+  const startedAt = performance.now();
+  const preparationSignal = AbortSignal.timeout(45_000);
+  let processSignal = preparationSignal;
+  let ownerStartedAt: number | undefined;
   const sourceHashes: Record<string, string> = {};
   const sourceTexts: Record<string, string> = {};
   const readSource = async (relative: string) => {
@@ -64,7 +68,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   const denied: Array<{ script: string; args: string[]; reason: string }> = [];
   const sourceCalls: Array<{ id: string; args: string[]; stdout: string; exitCode: number }> = [];
   const execute = async (command: string, args: string[], options: ExecFileOptions = {}) => {
-    preparationSignal.throwIfAborted();
+    processSignal.throwIfAborted();
     const script = args.find((arg) => arg.endsWith(".ts"));
     assert.ok(
       command === "git" ||
@@ -77,7 +81,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     assert.notEqual("detached" in options ? options.detached : false, true);
     const timeoutLimitMs =
       command === process.execPath && script && path.basename(script) === "lcx-universe-index.ts"
-        ? 45_000
+        ? 30_000
         : 20_000;
     const timeoutMs = Math.min(Number(options.timeout) || timeoutLimitMs, timeoutLimitMs);
     const observation: (typeof processes)[number] = {
@@ -99,9 +103,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
         args,
         {
           ...options,
-          signal: options.signal
-            ? AbortSignal.any([preparationSignal, options.signal])
-            : preparationSignal,
+          signal: options.signal ? AbortSignal.any([processSignal, options.signal]) : processSignal,
           timeout: timeoutMs,
           encoding: "utf8",
         },
@@ -249,10 +251,20 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     "extensions/external",
   ];
   // Copy original indexed source, not ignored dependency trees or private fixture outputs.
-  const listed = await execute("git", ["ls-files", "-z", "--", ...sourceAreas], {
+  const listed = await execute("git", ["ls-files", "--stage", "-z", "--", ...sourceAreas], {
     cwd: sourceRoot,
   });
-  const indexedFiles = listed.stdout.split("\0").filter(Boolean);
+  const indexed = listed.stdout
+    .split("\0")
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("\t");
+      assert.ok(separator > 0, "indexed_source_metadata_missing");
+      const [mode, , stage] = entry.slice(0, separator).split(" ");
+      assert.equal(stage, "0", "conflicted_source_cannot_form_private_snapshot");
+      return { file: entry.slice(separator + 1), symlink: mode === "120000" };
+    });
+  const indexedFiles = indexed.map((entry) => entry.file);
   const existingAreas: string[] = [];
   const rootFiles: string[] = [];
   for (const area of sourceAreas) {
@@ -261,15 +273,32 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       existingAreas.push(area);
     }
   }
-  // Copy only the original indexed inputs, with bounded concurrency, instead of
-  // repeatedly walking whole source trees and filtering every directory entry.
-  for (let offset = 0; offset < indexedFiles.length; offset += 32) {
+  // Indexed regular files need only a byte copy, not a recursive cp per path.
+  // Create each parent once; preserve actual symlinks without sharing writable inodes.
+  const parents = [...new Set(indexedFiles.map((file) => path.dirname(path.join(repo, file))))];
+  for (let offset = 0; offset < parents.length; offset += 32) {
+    preparationSignal.throwIfAborted();
+    const created = await Promise.allSettled(
+      parents
+        .slice(offset, offset + 32)
+        .map((directory) => fs.mkdir(directory, { recursive: true })),
+    );
+    const failure = created.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      throw failure.reason;
+    }
+  }
+  for (let offset = 0; offset < indexed.length; offset += 32) {
     preparationSignal.throwIfAborted();
     const copies = await Promise.allSettled(
-      indexedFiles.slice(offset, offset + 32).map(async (file) => {
+      indexed.slice(offset, offset + 32).map(async ({ file, symlink }) => {
+        const source = path.join(sourceRoot, file);
         const destination = path.join(repo, file);
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.cp(path.join(sourceRoot, file), destination, { verbatimSymlinks: true });
+        if (symlink && (await fs.lstat(source)).isSymbolicLink()) {
+          await fs.cp(source, destination, { verbatimSymlinks: true });
+        } else {
+          await fs.copyFile(source, destination);
+        }
       }),
     );
     const failure = copies.find((copy) => copy.status === "rejected");
@@ -292,24 +321,20 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   // without spawning dozens of tiny Git processes. Each Git child retains 20s.
   const pathsToStage = [...indexedFiles, ...rootFiles];
   const pathspec = path.join(root, "architecture-stage-paths.bin");
-  for (let offset = 0; offset < pathsToStage.length; offset += 1_024) {
-    preparationSignal.throwIfAborted();
-    await fs.writeFile(pathspec, pathsToStage.slice(offset, offset + 1_024).join("\0") + "\0", {
-      mode: 0o600,
-    });
-    await execute(
-      "git",
-      [
-        "-c",
-        "core.autocrlf=false",
-        "add",
-        "--force",
-        `--pathspec-from-file=${pathspec}`,
-        "--pathspec-file-nul",
-      ],
-      { cwd: repo },
-    );
-  }
+  preparationSignal.throwIfAborted();
+  await fs.writeFile(pathspec, pathsToStage.join("\0") + "\0", { mode: 0o600 });
+  await execute(
+    "git",
+    [
+      "-c",
+      "core.autocrlf=false",
+      "add",
+      "--force",
+      `--pathspec-from-file=${pathspec}`,
+      "--pathspec-file-nul",
+    ],
+    { cwd: repo },
+  );
   await fs.rm(pathspec);
   await execute(
     "git",
@@ -551,6 +576,11 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     },
   ];
   const ownerExecute = async (_command: string, args: string[]) => {
+    if (ownerStartedAt === undefined) {
+      preparationSignal.throwIfAborted();
+      ownerStartedAt = performance.now();
+      processSignal = AbortSignal.timeout(35_000);
+    }
     const command = commands.find((item) => args.includes(item.script));
     assert.ok(command, `governance_child_not_allowlisted:${args.join(" ")}`);
     const ownerArgs = args.slice(args.indexOf(command.script) + 1);
@@ -666,6 +696,12 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   const data = {
     parentRunId,
     snapshot,
+    timing: {
+      preparationMs: Math.round((ownerStartedAt ?? performance.now()) - startedAt),
+      ownerPhaseMs: Math.round(performance.now() - (ownerStartedAt ?? startedAt)),
+      preparationBudgetMs: 45_000,
+      ownerPhaseBudgetMs: 35_000,
+    },
     fault,
     callerInputs,
     sourceCalls,
