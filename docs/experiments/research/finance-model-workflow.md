@@ -9,7 +9,7 @@ This explicit specialist workflow is an available research route, not a
 per-order prerequisite. Keep routine judgments in the existing trade-review
 tool loop; invoke this workflow when the task needs its specialist contracts.
 Its role and review boundaries remain in force once selected. See the
-[lifecycle owner map](../../../ops/architecture/finance-automatic-lifecycle-owner-map.md).
+[lifecycle owner map](https://github.com/lcx1215/lcx-s-agent/blob/main/ops/architecture/finance-automatic-lifecycle-owner-map.md).
 
 | Responsibility                               | Candidate selection                       | Admission boundary                          |
 | -------------------------------------------- | ----------------------------------------- | ------------------------------------------- |

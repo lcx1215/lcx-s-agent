@@ -9,7 +9,7 @@ decision to run this DAG. The existing trade-review loop may decide from
 sufficient supplied evidence or request a precise registered tool for a
 specific doubt. Once this research workflow is selected, its required lanes,
 source contracts and budget checks still apply. See the
-[lifecycle owner map](../../ops/architecture/finance-automatic-lifecycle-owner-map.md).
+[lifecycle owner map](https://github.com/lcx1215/lcx-s-agent/blob/main/ops/architecture/finance-automatic-lifecycle-owner-map.md).
 
 The combination is a finite DAG when the caller needs more than a preferred
 list. Each node names one registered module and its upstream node IDs. The

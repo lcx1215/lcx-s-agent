@@ -125,7 +125,7 @@ ADF 统计量都没有达到 5% Fuller 临界值；这不证明永不回归，�
   node --import tsx docs/experiments/research/commodity-pair-y-maturity-panel/replay.mts
   ```
 
-计算使用仓库 [quant-math-pair-spread.ts](../../../../src/agents/quant-math-pair-spread.ts)
+计算使用仓库 [quant-math-pair-spread.ts](https://github.com/lcx1215/lcx-s-agent/blob/main/src/agents/quant-math-pair-spread.ts)
 的诊断和事件回放核心。保存的快照可复现当前 `result.json`；重新采集可能因供应商
 修订而产生不同数据及 SHA。
 
