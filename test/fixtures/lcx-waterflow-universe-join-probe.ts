@@ -598,7 +598,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
   const directOwners = await Promise.all(
     commands.map((command) => runOwner(command, { parentRunId, snapshot })),
   );
-  assert.ok(phase);
+  assert.ok(phase, JSON.stringify(directOwners.find((owner) => owner.id === "universeIndex")));
   const before = structuredClone(directOwners);
   for (const owner of before) {
     assert.equal(owner.runReceipt.parentRunId, parentRunId);
