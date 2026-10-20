@@ -3440,9 +3440,21 @@ export async function runFinanceResearchRun(
     if (quality?.finalArtifact) {
       feedbackArtifact = quality.finalArtifact;
       feedbackResponseSource = "quality_final_artifact";
+      // evaluateQuality selects a completed formatter artifact; later failed attempts
+      // may retain that earlier artifact. Reviewers cannot attest its producer's input.
+      const producer = quality.attempts
+        .toReversed()
+        .flatMap((attempt) => attempt.stages)
+        .find(
+          (stage) =>
+            stage.taskId === "formatting" &&
+            stage.status === "completed" &&
+            stage.outputKind === "artifact",
+        );
+      const producerCall = producer?.modelCalls?.findLast((call) => call.outcome === "completed");
       feedbackResponseEvidence = feedbackPromptEvidence(
         qualityEvidence(batch).evidence,
-        quality.attempts.at(-1)?.stages.flatMap((stage) => stage.modelCalls ?? []) ?? [],
+        producerCall ? [producerCall] : [],
         quality.evidenceCoverage?.controller?.runnerClippedEvidenceIds ?? [],
       );
       feedbackUnaddressedReason = "feedback_response_missing";
