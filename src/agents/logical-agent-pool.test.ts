@@ -385,6 +385,47 @@ describe("logical agent pool", () => {
     },
   );
 
+  it.each([undefined, false, true])(
+    "requires provider opt-in with the default grant (allowProviderCalls=%s)",
+    async (allowProviderCalls) => {
+      const invoke = vi.fn(async () => ({ ok: true }));
+      const pool = new LogicalAgentPool({
+        allowProviderCalls,
+        modelRouting: {
+          revision: "provider-opt-in-test",
+          adapters: [
+            {
+              id: "remote",
+              provider: "fixture",
+              modelId: "remote",
+              mode: "adapter",
+              capabilities: ["json"],
+              requiredTools: [],
+              requiredSideEffects: ["provider_call"],
+              invoke,
+            },
+          ],
+          defaultPolicy: {
+            primary: "remote",
+            requiredCapabilities: ["json"],
+            maxInputBytes: 10000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [{ id: "provider-opt-in", agentId: "financial_extraction", input: {} }],
+        executor: async ({ modelSlot, signal }) => ({
+          output: await modelSlot.invoke({}, signal),
+          sideEffects: ["provider_call"],
+        }),
+      });
+      expect(invoke).toHaveBeenCalledTimes(allowProviderCalls === true ? 1 : 0);
+      expect(result.status).toBe(allowProviderCalls === true ? "completed" : "failed");
+    },
+  );
+
   it("blocks descendants after a failed role without running them", async () => {
     const plan = buildDefaultLogicalAgentPlan({ ask: "失败传播测试" });
     const executed: string[] = [];
@@ -1092,8 +1133,9 @@ describe("logical agent pool", () => {
     );
   });
 
-  it("admits every declared side effect under the open default grant", async () => {
+  it("admits every declared side effect with explicit provider opt-in", async () => {
     const result = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({ allowProviderCalls: true }),
       tasks: [{ id: "unrestricted", agentId: "risk_check", input: { ask: "x" } }],
       executor: () =>
         ({

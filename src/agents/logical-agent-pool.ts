@@ -308,8 +308,7 @@ export type LocalModelPoolOptions<
   TInput = unknown,
   TResult = unknown,
 > = Partial<LocalModelPoolConfig> & {
-  /** Adds `provider_call` to this pool's grant; a widening that is meaningful only when a
-   * caller has already narrowed `capabilities`. */
+  /** Explicitly admits `provider_call`; false/omitted forbids it even in an open grant. */
   allowProviderCalls?: boolean;
   /**
    * Capability grant applied to every task in this pool. Defaults to the open
@@ -523,6 +522,8 @@ export class LogicalAgentPool<TInput, TResult> {
             stableStringify({
               routing: this.#modelRouter.routing,
               allowProviderCalls: this.#allowProviderCalls,
+              // Earlier open grants bypassed false; do not resume their completed tasks.
+              providerCallGateVersion: 1,
               // Included only when a caller narrowed the grant, so an un-narrowed pool keeps
               // exactly its previous fingerprint.
               ...(this.#capabilities ? { capabilities: this.#capabilities } : {}),
@@ -674,7 +675,13 @@ export class LogicalAgentPool<TInput, TResult> {
                 (effect) => effect !== "provider_call",
               ),
             }
-          : granted,
+          : {
+              ...granted,
+              allowedSideEffects: granted.allowedSideEffects.filter(
+                (effect) => effect !== "provider_call",
+              ),
+              forbiddenSideEffects: [...granted.forbiddenSideEffects, "provider_call"],
+            },
       );
       const agent = freezeLogicalAgentDefinition({
         ...registeredAgent,
