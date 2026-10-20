@@ -20,6 +20,11 @@ export type DistillExample = {
     sourcePath: string;
     sourceKind: string;
     generatedAt?: string;
+    // Optional for legacy rows; never infer an absent generator contract.
+    caseSchemaVersion?: string;
+    generatorVersion?: string;
+    featureSignature?: string;
+    id?: string;
   };
 };
 
@@ -172,6 +177,27 @@ function sourceKindCounts(examples: DistillExample[]): Record<string, number> {
     acc[example.meta.sourceKind] = (acc[example.meta.sourceKind] ?? 0) + 1;
     return acc;
   }, {});
+}
+
+export function generatedProvenanceSummary(examples: DistillExample[]) {
+  const generated = examples.filter(
+    (example) => example.meta.sourceKind === "generalization_generator",
+  );
+  const counts = (field: "caseSchemaVersion" | "generatorVersion") =>
+    generated.reduce<Record<string, number>>((result, example) => {
+      const value = example.meta[field]?.trim() || "not_recorded";
+      result[value] = (result[value] ?? 0) + 1;
+      return result;
+    }, {});
+  return {
+    boundary: "declared_host_generator_metadata_not_replay_verification_or_model_learning",
+    caseSchemaVersions: counts("caseSchemaVersion"),
+    generatorVersions: counts("generatorVersion"),
+    incompleteProvenanceRows: generated.filter(
+      ({ meta }) =>
+        !meta.caseSchemaVersion || !meta.generatorVersion || !meta.featureSignature || !meta.id,
+    ).length,
+  };
 }
 
 function trustTierCounts(examples: DistillExample[]): Record<string, number> {
@@ -2652,8 +2678,8 @@ export function buildGeneratedExamples(
       prompt: row.prompt,
       completion: row.completion,
       meta: {
+        ...row.meta,
         sourcePath: `generalization-generator/${generated.id}.json`,
-        sourceKind: "generalization_generator",
       },
     });
   }
@@ -2850,6 +2876,7 @@ async function main(): Promise<void> {
       boundary: "synthetic_rule_generated_train_only",
       requested: options.mixGenerated,
       admitted: generatedExamples.length,
+      provenance: generatedProvenanceSummary(generatedExamples),
       seed: options.generatedSeed,
       holdoutFraction: options.generatedHoldoutFraction,
       split: "train",

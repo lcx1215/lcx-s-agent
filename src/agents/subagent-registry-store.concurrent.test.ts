@@ -218,10 +218,25 @@ describe("subagent registry cross-process persistence", () => {
       const stale = start(
         directory,
         `${storeImports}
+      import { getSubagentRunsSnapshotForRead } from './src/agents/subagent-registry-state.ts';
+      // Runtime writers leave optional undefined fields which JSON omits.
+      runs.get('retired').archiveAtMs = undefined;
+      if (!persistSubagentRunsToDisk(runs)) throw new Error('baseline write failed');
       process.send('ready'); process.once('message', () => {
         // Ordinary read queries must not advance the write baseline.
         loadSubagentRegistryFromDisk(); runs.get('old').task = 'stale update';
-        process.send({ok: persistSubagentRunsToDisk(runs), failure: getSubagentRegistryPersistFailure()}); process.exit(0);
+        runs.get('retired').task = 'pending unrelated local edit';
+        const ok = persistSubagentRunsToDisk(runs);
+        const failure = getSubagentRegistryPersistFailure();
+        delete process.env.VITEST; process.env.NODE_ENV = 'production';
+        const snapshot = getSubagentRunsSnapshotForRead(runs);
+        process.send({ok, failure, snapshot: {
+          hasOld: snapshot.has('old'), oldTask: snapshot.get('old')?.task ?? null,
+          oldEndedAt: snapshot.get('old')?.endedAt ?? null,
+          oldOutcome: snapshot.get('old')?.outcome?.status ?? null,
+          pendingTask: snapshot.get('retired')?.task,
+          retryRejected: !persistSubagentRunsToDisk(runs),
+        }}); process.exit(0);
       });
     `,
       );
@@ -239,6 +254,14 @@ describe("subagent registry cross-process persistence", () => {
       expect(await stale.receive()).toMatchObject({
         ok: false,
         failure: { kind: "write-error", detail: expect.stringContaining("conflict") },
+        snapshot: {
+          hasOld: change === "terminal",
+          oldTask: change === "terminal" ? "old" : null,
+          oldEndedAt: change === "terminal" ? 9 : null,
+          oldOutcome: change === "terminal" ? "ok" : null,
+          pendingTask: "pending unrelated local edit",
+          retryRejected: true,
+        },
       });
       expect(fs.readFileSync(pathname, "utf8")).toBe(before);
     },

@@ -151,8 +151,6 @@ export class LocalTextWorker {
             }
             this.setReferenced(false);
             if (typeof response.text === "string") {
-              this.failures = 0;
-              this.lastInferenceSucceededAt = new Date().toISOString();
               pending.resolve({ text: response.text, pid: child.pid ?? 0 });
             } else {
               const error = new Error("local_worker_inference_failed");
@@ -311,6 +309,12 @@ export class LocalTextWorker {
       child.stdin.write(`${JSON.stringify({ id, prompt, maxTokens, memoryBudgetMb: budgetMb })}\n`);
       const result = await reply;
       const memory = await guard.stop();
+      if (terminalFailure) {
+        throw terminalFailure;
+      }
+      signal.throwIfAborted();
+      this.failures = 0;
+      this.lastInferenceSucceededAt = new Date().toISOString();
       return { ...result, memory };
     } catch (error) {
       let failure =
@@ -329,6 +333,7 @@ export class LocalTextWorker {
             ? new Error(`local_worker_${observationError.code}`)
             : new Error("local_worker_memory_observation_unavailable"));
       }
+      failure = terminalFailure ?? failure;
       // A valid protocol-level inference failure can reuse loaded weights, as before.
       if (failure.message !== "local_worker_inference_failed") {
         await this.kill(failure).catch(() => undefined);

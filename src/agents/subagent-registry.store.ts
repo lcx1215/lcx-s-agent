@@ -250,6 +250,14 @@ function comparableRun(entry: SubagentRunRecord | undefined): unknown {
       );
 }
 
+/** Compare the same normalized JSON shape used by persistence conflict checks. */
+export function equalSubagentRegistryRun(
+  left: SubagentRunRecord | undefined,
+  right: SubagentRunRecord | undefined,
+): boolean {
+  return isDeepStrictEqual(comparableRun(left), comparableRun(right));
+}
+
 export function saveSubagentRegistryToDisk(
   runs: Map<string, SubagentRunRecord>,
   baseline: Map<string, SubagentRunRecord> = new Map(),

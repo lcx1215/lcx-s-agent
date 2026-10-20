@@ -1,6 +1,6 @@
-import { isDeepStrictEqual } from "node:util";
 import {
   describeSubagentRegistryLoadStatus,
+  equalSubagentRegistryRun,
   getSubagentRegistryLoadStatus,
   loadSubagentRegistryFromDisk,
   saveSubagentRegistryToDisk,
@@ -35,8 +35,12 @@ export function resetSubagentRegistryStateForTests(): void {
 }
 
 export function persistSubagentRunsToDisk(runs: Map<string, SubagentRunRecord>): boolean {
+  // Keep the attempted baseline even when the write is rejected. Reads must
+  // distinguish a pending local change from a conflicting durable update.
+  const baseline = writeBaselines.get(runs) ?? new Map<string, SubagentRunRecord>();
+  writeBaselines.set(runs, baseline);
   try {
-    const written = saveSubagentRegistryToDisk(runs, writeBaselines.get(runs) ?? new Map());
+    const written = saveSubagentRegistryToDisk(runs, baseline);
     if (!written) {
       lastPersistFailure = {
         at: Date.now(),
@@ -102,11 +106,17 @@ export function getSubagentRunsSnapshotForRead(
   }
   const baseline = writeBaselines.get(inMemoryRuns);
   for (const [runId, entry] of inMemoryRuns.entries()) {
-    // A read must not resurrect a peer's completed/deleted run from unchanged
-    // memory. Keep unsaved local changes and fall back to memory on read failure.
-    // Do not advance the write baseline: concurrent write conflicts still matter.
-    if (readableSnapshot && baseline?.has(runId) && isDeepStrictEqual(entry, baseline.get(runId))) {
-      continue;
+    // A peer's durable change wins over both unchanged memory and a conflicting
+    // local mutation whose write was rejected. Pending local edits still overlay
+    // an unchanged durable baseline. Reads never advance the write baseline.
+    if (readableSnapshot && baseline) {
+      const before = baseline.get(runId);
+      if (
+        equalSubagentRegistryRun(entry, before) ||
+        !equalSubagentRegistryRun(merged.get(runId), before)
+      ) {
+        continue;
+      }
     }
     merged.set(runId, entry);
   }
