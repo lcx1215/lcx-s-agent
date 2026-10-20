@@ -1579,6 +1579,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
   head: ["AGENTS.md", "README.md", "ops/local-brain/README.md", "src/agents/system-prompt.ts"],
   workflow: [
     "scripts/operator/lcx-flow-graph.ts",
+    "scripts/operator/lcx-flow-consolidation-declarations.ts",
     "scripts/operator/lcx-governance-autopilot.ts",
     "scripts/operator/lcx-skillopt-lite.ts",
     "scripts/operator/lcx-mind-model.ts",

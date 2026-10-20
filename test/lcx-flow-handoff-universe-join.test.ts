@@ -93,7 +93,8 @@ describe("native private same-parent Universe owner join and failure feedback", 
         )
       ) {
         expect(result.before.find((owner) => owner.id === "mindModel")?.ok).toBe(true);
-        expect(result.before.find((owner) => owner.id === "flowGraph")?.ok).toBe(true);
+        const flowGraph = result.before.find((owner) => owner.id === "flowGraph");
+        expect(flowGraph?.ok, JSON.stringify(flowGraph?.compact)).toBe(true);
         expect(result.review.reason).toBe("cleanup_review_upstream_quality_failed:contextRecovery");
         expect(result.audit.status).toBe("normal_block");
         expect(result.audit.gaps).toEqual([]);

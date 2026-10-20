@@ -525,6 +525,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     const statements = ast.statements.filter(
       (node) =>
         !ts.isImportDeclaration(node) &&
+        !ts.isExportDeclaration(node) &&
         !(ts.isIfStatement(node) && node.getText(ast).includes("import.meta.url")),
     );
     const moduleUrl = pathToFileURL(path.join(repo, relative)).href;
