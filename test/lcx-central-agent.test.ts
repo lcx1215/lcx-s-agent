@@ -51,20 +51,46 @@ import {
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../src/agents/central-harness/tool-registry.js";
 import type { CentralPerception, CentralRunReceipt } from "../src/agents/central-harness/types.js";
-import { appendFinanceBars } from "../src/agents/finance-bar-ledger.js";
-import { appendFinanceBrokerHistory } from "../src/agents/finance-position-ledger.js";
+import { appendFinanceBars, closeFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  closeFinancePositionLedger,
+} from "../src/agents/finance-position-ledger.js";
 
 const centralTestRoots: string[] = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
   await Promise.all(
-    centralTestRoots.splice(0).map((root) => fsp.rm(root, { recursive: true, force: true })),
+    centralTestRoots.splice(0).map((root) => {
+      closeFinanceBarLedger(path.join(root, "state/finance"));
+      closeFinancePositionLedger(path.join(root, "state/finance"));
+      return fsp.rm(root, { recursive: true, force: true });
+    }),
   );
 });
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("central atomic JSON publication", () => {
+  it("retries a transient replacement lock while retaining atomic publication", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "central-atomic-locked-"));
+    centralTestRoots.push(dir);
+    const target = path.join(dir, "latest.json");
+    await fsp.writeFile(target, JSON.stringify({ original: true }));
+    const rename = vi
+      .spyOn(fsp, "rename")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("destination temporarily locked"), { code: "EPERM" }),
+      );
+    try {
+      await writeJsonAtomic(target, { replacement: true });
+      expect(rename).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(await fsp.readFile(target, "utf8"))).toEqual({ replacement: true });
+      expect(await fsp.readdir(dir)).toEqual(["latest.json"]);
+    } finally {
+      rename.mockRestore();
+    }
+  });
   it("supports concurrent writes in one process without sharing a temporary file", async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "central-atomic-parallel-"));
     centralTestRoots.push(dir);

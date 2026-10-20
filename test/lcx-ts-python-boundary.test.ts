@@ -15,7 +15,27 @@ async function runBoundary() {
       env: process.env,
       maxBuffer: 10 * 1024 * 1024,
     },
-  );
+  ).catch((error: unknown) => {
+    // The operator intentionally exits nonzero for an unclassified file. Keep
+    // its structured diagnosis so CI reports the path instead of only exec failure.
+    if (
+      error &&
+      typeof error === "object" &&
+      "stdout" in error &&
+      typeof error.stdout === "string"
+    ) {
+      const payload: unknown = JSON.parse(error.stdout);
+      if (
+        payload &&
+        typeof payload === "object" &&
+        "boundary" in payload &&
+        payload.boundary === "local_ts_python_boundary_only"
+      ) {
+        return { stdout: error.stdout };
+      }
+    }
+    throw error;
+  });
   return JSON.parse(stdout) as {
     ok: boolean;
     boundary: string;
@@ -32,6 +52,7 @@ async function runBoundary() {
       migrate: Array<{ path: string; plainRole: string; reason: string; targetTsOwner?: string }>;
     };
     unknownFiles: string[];
+    stalePolicies?: string[];
     liveTouched: boolean;
     providerConfigTouched: boolean;
     protectedMemoryTouched: boolean;
@@ -42,7 +63,14 @@ describe("lcx-ts-python-boundary", () => {
   it("classifies every current Python file into keep, wrap, or migrate", async () => {
     const payload = await runBoundary();
 
-    expect(payload.ok).toBe(true);
+    expect(
+      payload.ok,
+      JSON.stringify({
+        summary: payload.summary,
+        unknownFiles: payload.unknownFiles,
+        stalePolicies: payload.stalePolicies,
+      }),
+    ).toBe(true);
     expect(payload.boundary).toBe("local_ts_python_boundary_only");
     expect(payload.unknownFiles).toEqual([]);
     expect(payload.summary.pythonFiles).toBe(

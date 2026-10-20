@@ -18,6 +18,11 @@ import {
   type FinanceExecutionReceipt,
 } from "../../src/agents/finance-execution-adapter.ts";
 import {
+  appendFinancePositionMark,
+  closeFinancePositionLedger,
+  readFinancePositionRecords,
+} from "../../src/agents/finance-position-ledger.js";
+import {
   FINANCE_STATE_DIR_ENV,
   financePositionLedgerPath,
 } from "../../src/agents/finance-state-dir.ts";
@@ -82,11 +87,26 @@ async function appendReceipt(
 
 afterEach(async () => {
   await Promise.all(
-    directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    directories.splice(0).map((dir) => {
+      closeFinancePositionLedger(dir);
+      return fs.rm(dir, { recursive: true, force: true });
+    }),
   );
 });
 
 describe("finance position ledger operator entry", () => {
+  it("releases an idle writer and reopens the same verified durable stream", async () => {
+    const directory = await storeDirectory();
+    await appendFinancePositionMark(directory, { instrument: "AAA", price: 100, at: PAST });
+    closeFinancePositionLedger(directory);
+    closeFinancePositionLedger(directory);
+    await appendFinancePositionMark(directory, {
+      instrument: "AAA",
+      price: 101,
+      at: "2026-09-18T00:00:00Z",
+    });
+    expect((await readFinancePositionRecords(directory)).records).toHaveLength(2);
+  });
   it("no longer requires --dir, so the shared resolver can decide", () => {
     // Regression guard for the alignment change: this used to throw
     // "--dir requires the ledger directory", which forced every caller to name a path that the

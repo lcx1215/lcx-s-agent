@@ -25,7 +25,20 @@ export async function writeJsonAtomic(filePath: string, payload: unknown): Promi
   const tmp = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
   try {
     await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    await fs.rename(tmp, filePath);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(tmp, filePath);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt >= 3 || !["EBUSY", "EPERM", "EACCES"].includes(code ?? "")) {
+          throw error;
+        }
+        // Windows can briefly hold the destination during concurrent replacement.
+        // Retry the atomic rename; never copy over or unlink the last complete target.
+        await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      }
+    }
   } finally {
     await fs.rm(tmp, { force: true });
   }

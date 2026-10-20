@@ -16,7 +16,10 @@ import {
   writeFinanceNightReviewEvidence,
 } from "../src/agents/finance-night-review-context.js";
 import { FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME } from "../src/agents/finance-portfolio-composition.js";
-import { appendFinanceExecutionReceipt } from "../src/agents/finance-position-ledger.js";
+import {
+  appendFinanceExecutionReceipt,
+  closeFinancePositionLedger,
+} from "../src/agents/finance-position-ledger.js";
 import { financeResearchPortfolioAbstentionSchema } from "../src/agents/finance-research-portfolio-plan.js";
 import { FINANCE_SCHEDULER_LOCK } from "../src/agents/finance-scheduler-lock.js";
 import { runFinanceCycleProcess } from "../src/agents/finance-scheduler-process.js";
@@ -115,6 +118,7 @@ afterEach(async () => {
   transport.run = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  closeFinancePositionLedger(directory);
   await fsp.rm(directory, { recursive: true, force: true });
 });
 

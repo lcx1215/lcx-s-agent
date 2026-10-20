@@ -496,7 +496,9 @@ describe("offline same-cycle central handoff", () => {
           throw new Error("missing original handoff path");
         }
         inputPaths.push(inputPath);
-        expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+          expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        }
         inputs.push(JSON.parse(await fs.readFile(inputPath, "utf8")));
       } else {
         await options.beforeDirect?.();

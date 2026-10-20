@@ -36,7 +36,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
@@ -1307,6 +1307,28 @@ type PositionLedgerWriter = {
 };
 const positionLedgerWriters = new Map<string, PositionLedgerWriter>();
 const MAX_POSITION_LEDGER_WRITERS = 8;
+
+/** Release an idle directory's cached writer before its owner removes or moves the ledger. */
+export function closeFinancePositionLedger(directory: string): void {
+  let filename: string;
+  try {
+    filename = databasePath(realpathSync(directory));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  const writer = positionLedgerWriters.get(filename);
+  if (!writer) {
+    return;
+  }
+  if (writer.busy || positionDatabaseWriteTurns.has(filename)) {
+    throw new Error("position ledger writer still in use");
+  }
+  writer.db.close();
+  positionLedgerWriters.delete(filename);
+}
 
 function acquirePositionLedgerWriter(directory: string): PositionLedgerWriter {
   const filename = databasePath(directory);
