@@ -840,7 +840,14 @@ function open(directory: string, writer = false): Database {
 
 /** Upgrade the original writer's ledger without fabricating a decision or outcome. */
 export function initializeFinanceIntradayControlLedger(directory: string): void {
-  open(directory, true);
+  const filename = financeIntradayControlLedgerPath(directory);
+  const borrowed = connections.get(filename)?.db;
+  const db = open(directory, true);
+  if (db !== borrowed) {
+    // Metadata-only startup must not pin an otherwise unused ledger open.
+    connections.delete(filename);
+    db.close();
+  }
 }
 
 function decodeDecision(row: {

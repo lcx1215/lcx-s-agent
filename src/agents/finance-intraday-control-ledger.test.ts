@@ -1172,6 +1172,31 @@ it("authenticates every history progress field against the original durable ledg
   }
 });
 
+it("releases fresh cursor initializer connections while preserving the stored identity", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-startup-"));
+  temporary.push(directory);
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  const readIdentity = () => {
+    const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+    try {
+      return db.prepare("SELECT ledger_id FROM finance_intraday_cursor_auth").get();
+    } finally {
+      db.close();
+    }
+  };
+  try {
+    initializeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(1);
+    const identity = readIdentity();
+    initializeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(3);
+    expect(readIdentity()).toEqual(identity);
+  } finally {
+    close.mockRestore();
+  }
+});
+
 it("does not initialize cursor authentication during old-ledger history reads", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-old-ledger-"));
   temporary.push(directory);
