@@ -19,10 +19,12 @@ import {
   appendFinanceExecutionReceipt,
   appendFinancePositionMark,
   appendFinanceBrokerHistory,
+  withFinanceBrokerHistorySnapshot,
   FINANCE_POSITION_LEDGER_PROJECTION,
   FINANCE_POSITION_LEDGER_SCHEMA,
   projectFinancePositions,
   readFinancePositionLedger,
+  readFinanceAccountPositionLedger,
   readFinancePositionProjectionStatus,
   readFinancePositionRecords,
   readFinanceLatestBrokerReconciliations,
@@ -310,6 +312,91 @@ function openDatabase(directory: string) {
   const { DatabaseSync } = requireNodeSqlite();
   return new DatabaseSync(financePositionLedgerPath(directory));
 }
+
+describe("position reader cancellation", () => {
+  it.each(["raw", "projection", "account", "latest"])(
+    "rejects an already cancelled %s read",
+    async (kind) => {
+      const directory = await storeDirectory();
+      const controller = new AbortController();
+      const reason = new Error("cancelled position reader");
+      controller.abort(reason);
+      const options = { signal: controller.signal };
+      const reading =
+        kind === "raw"
+          ? readFinancePositionRecords(directory, options)
+          : kind === "projection"
+            ? readFinancePositionLedger(directory, options)
+            : kind === "account"
+              ? readFinanceAccountPositionLedger(
+                  directory,
+                  { accountId: "fixture", venue: "alpaca:paper" },
+                  options,
+                )
+              : readFinanceLatestBrokerReconciliations(directory, options);
+      await expect(reading).rejects.toBe(reason);
+    },
+  );
+
+  it("cancels a yielding latest reconciliation scan and releases its database", async () => {
+    const directory = await storeDirectory();
+    for (let index = 0; index < 65; index++) {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "fixture",
+        venue: "alpaca:paper",
+        query: "orders",
+        cursor: String(index),
+        payload: [],
+      });
+    }
+    const controller = new AbortController();
+    const reason = new Error("cancelled latest reconciliation scan");
+    const immediate = globalThis.setImmediate;
+    const spy = vi.spyOn(globalThis, "setImmediate").mockImplementationOnce((callback) => {
+      controller.abort(reason);
+      return immediate(callback);
+    });
+    try {
+      await expect(
+        readFinanceLatestBrokerReconciliations(directory, { signal: controller.signal }),
+      ).rejects.toBe(reason);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await readFinanceLatestBrokerReconciliations(directory)).toEqual({
+      records: [],
+      omittedAccounts: 0,
+    });
+  });
+
+  it("settles a raw stream cancellation without leaving its read transaction open", async () => {
+    const directory = await storeDirectory();
+    for (let index = 0; index < 70; index++) {
+      await appendFinancePositionMark(directory, {
+        instrument: `FIX${index}`,
+        at: PAST,
+        price: 100,
+      });
+    }
+    const controller = new AbortController();
+    const reason = new Error("cancelled raw stream");
+    const fingerprint = caseflow.caseflowFingerprint;
+    const spy = vi.spyOn(caseflow, "caseflowFingerprint").mockImplementation((value) => {
+      const result = fingerprint(value);
+      controller.abort(reason);
+      return result;
+    });
+    try {
+      await expect(
+        readFinancePositionRecords(directory, { signal: controller.signal }),
+      ).rejects.toBe(reason);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await readFinancePositionRecords(directory)).records).toHaveLength(70);
+  });
+});
 
 describe("finance position ledger store", () => {
   it("appends a receipt produced by the real execution seam and re-derives the position", async () => {
@@ -861,7 +948,7 @@ it("keeps header normalization and fresh payloads when reusing verified byte-ide
     venue: "alpaca:paper",
     query: "activities:proof",
     cursor: "",
-    payload: [{ id: "fill", qty: "1" }],
+    payload: [{ id: "fill", qty: "1", nested: { items: [null, false, 0, { amount: "2" }] } }],
   };
   const first = await appendFinanceBrokerHistory(directory, body);
   const { ref: _ref, ...raw } = first.record;
@@ -893,11 +980,13 @@ it("retains full payload normalization when the original schema transformed a ra
     venue: "alpaca:paper",
     query: "activities:proof",
     cursor: "",
-    payload: [{ id: "fill", qty: "1" }],
+    payload: [{ id: "fill", qty: "1", nested: { items: [null, false, 0, { amount: "2" }] } }],
   };
   const first = await appendFinanceBrokerHistory(directory, body);
   const { ref: _ref, ...raw } = first.record;
-  raw.body.payload[0] = JSON.parse('{"id":"fill","qty":"1","__proto__":{"polluted":true}}');
+  raw.body.payload[0] = JSON.parse(
+    '{"id":"fill","qty":"1","nested":{"items":[null,false,0,{"amount":"2"}]},"__proto__":{"polluted":true}}',
+  );
   const db = openDatabase(directory);
   try {
     db.exec("DROP TRIGGER finance_broker_history_no_update");
@@ -1793,4 +1882,518 @@ it("cooperative broker appends retain distinct concurrent pages without lock con
       )
     ).recordCount,
   ).toBe(602);
+});
+
+it("decodes only sealed account activities while validating every broker row", async () => {
+  const directory = await storeDirectory();
+  const rows = [];
+  for (const [accountId, query] of [
+    ["activity-select", "orders:unused"],
+    ["activity-select", "activities:sealed"],
+    ["activity-select", "activities:later"],
+    ["foreign-select", "activities:foreign"],
+  ]) {
+    rows.push(
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload: [{ id: query, value: query }],
+      }),
+    );
+  }
+  await reduceFinanceBrokerHistoryRecords(
+    directory,
+    "activity-select",
+    "alpaca:paper",
+    0,
+    (n) => n + 1,
+    { streams: [] },
+  );
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    const selected = await readFinanceBrokerHistoryActivities(
+      directory,
+      "activity-select",
+      "alpaca:paper",
+      rows[1].record.sequence,
+    );
+    expect(selected.activities).toEqual([{ id: "activities:sealed", value: "activities:sealed" }]);
+    expect(selected.headRef).toBe(rows[2].record.ref);
+    expect(parse).toHaveBeenCalledTimes(1);
+  } finally {
+    parse.mockRestore();
+  }
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    const row = db.prepare("SELECT body FROM finance_broker_history WHERE sequence=4").get();
+    const value = JSON.parse(String(row?.body));
+    value.body.payload[0].value = "tampered";
+    db.prepare("UPDATE finance_broker_history SET body=? WHERE sequence=4").run(
+      JSON.stringify(value),
+    );
+  } finally {
+    db.close();
+  }
+  await expect(
+    readFinanceBrokerHistoryActivities(
+      directory,
+      "activity-select",
+      "alpaca:paper",
+      rows[1].record.sequence,
+    ),
+  ).rejects.toThrow(/integrity|chain mismatch/);
+});
+
+it("reuses a verified broker append prefix without rescanning unchanged history", async () => {
+  const { directory, body } = await cooperativeHistoryFixture();
+  await appendFinanceBrokerHistory(directory, { ...body, cursor: "warm-prefix" });
+  const { DatabaseSync } = requireNodeSqlite();
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+  try {
+    const appended = await appendFinanceBrokerHistory(directory, { ...body, cursor: "next-page" });
+    expect(appended.record.sequence).toBe(602);
+    expect(prepare.mock.calls.some(([sql]) => sql.includes("ORDER BY sequence"))).toBe(false);
+    const duplicate = await appendFinanceBrokerHistory(directory, { ...body, cursor: "next-page" });
+    expect(duplicate.appended).toBe(false);
+    expect(duplicate.record).toEqual(appended.record);
+  } finally {
+    prepare.mockRestore();
+  }
+});
+
+it("invalidates the resident append proof on external inserts and altered index binding", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "resident",
+    venue: "alpaca:paper",
+    query: "activities:resident",
+    cursor: "1",
+    payload: [{ id: "1" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  const externalBody = { ...body, cursor: "2" };
+  const external = { sequence: 2, previousRef: first.record.ref, body: externalBody };
+  const db = openDatabase(directory);
+  db.prepare("INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)").run(
+    2,
+    caseflowFingerprint(external),
+    JSON.stringify(external),
+  );
+  try {
+    const duplicate = await appendFinanceBrokerHistory(directory, externalBody);
+    expect(duplicate.appended).toBe(false);
+    expect(duplicate.record.sequence).toBe(2);
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.exec("UPDATE finance_broker_history SET sequence=20 WHERE sequence=2");
+    await expect(appendFinanceBrokerHistory(directory, body)).rejects.toThrow(/chain mismatch/);
+  } finally {
+    db.close();
+  }
+});
+
+it("keeps a cold writer lease alive under connection pool pressure", async () => {
+  const { directory, body } = await cooperativeHistoryFixture();
+  const others = await Promise.all(Array.from({ length: 10 }, () => storeDirectory()));
+  const results = await Promise.all([
+    appendFinanceBrokerHistory(directory, { ...body, cursor: "busy-cold-owner" }),
+    ...others.map((target, i) =>
+      appendFinanceBrokerHistory(target, { ...body, cursor: `pool-${i}` }),
+    ),
+  ]);
+  expect(results[0].record.sequence).toBe(601);
+  expect(results.every((r) => r.appended)).toBe(true);
+  expect(
+    (await appendFinanceBrokerHistory(directory, { ...body, cursor: "busy-cold-owner" })).appended,
+  ).toBe(false);
+});
+
+it("reopens a replaced broker database without retaining the old append head", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "replace",
+    venue: "alpaca:paper",
+    query: "activities:replace",
+    cursor: "1",
+    payload: [{ id: "1" }],
+  };
+  await appendFinanceBrokerHistory(directory, body);
+  await fs.rm(directory, { recursive: true, force: true });
+  await fs.mkdir(directory);
+  const recreated = await appendFinanceBrokerHistory(directory, body);
+  expect(recreated.appended).toBe(true);
+  expect(recreated.record.sequence).toBe(1);
+  expect(recreated.record.previousRef).toBeNull();
+});
+
+it("shares one verified broker snapshot across projections and retains its cutoff during external append", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "snapshot",
+    venue: "alpaca:paper",
+    query: "activities:snapshot",
+    cursor: "1",
+    payload: [{ id: "1" }],
+  };
+  await appendFinanceBrokerHistory(directory, body);
+  const foreign = await appendFinanceBrokerHistory(directory, { ...body, accountId: "foreign" });
+  const { DatabaseSync } = requireNodeSqlite();
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+  try {
+    await withFinanceBrokerHistorySnapshot(directory, async () => {
+      const before = await reduceFinanceBrokerHistoryRecords(
+        directory,
+        "snapshot",
+        "alpaca:paper",
+        0,
+        (n) => n + 1,
+      );
+      const db = openDatabase(directory);
+      try {
+        const external = {
+          sequence: 3,
+          previousRef: foreign.record.ref,
+          body: { ...body, cursor: "2", payload: [{ id: "2" }] },
+        };
+        db.prepare("INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)").run(
+          3,
+          caseflowFingerprint(external),
+          JSON.stringify(external),
+        );
+        const reconciliation = {
+          sequence: 4,
+          previousRef: caseflowFingerprint(external),
+          body: {
+            ...body,
+            query: "reconciliation:snapshot",
+            payload: [{ observedAt: "2026-10-15T12:00:00.000Z" }],
+          },
+        };
+        db.prepare("INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)").run(
+          4,
+          caseflowFingerprint(reconciliation),
+          JSON.stringify(reconciliation),
+        );
+      } finally {
+        db.close();
+      }
+      const [after, activities] = await Promise.all([
+        reduceFinanceBrokerHistoryRecords(directory, "snapshot", "alpaca:paper", 0, (n) => n + 1),
+        readFinanceBrokerHistoryActivities(directory, "snapshot", "alpaca:paper", 3),
+      ]);
+      expect((await readFinanceLatestBrokerReconciliations(directory)).records).toEqual([]);
+      expect(after).toEqual(before);
+      expect(activities.activities).toEqual([{ id: "1" }]);
+      expect(prepare.mock.calls.filter(([sql]) => sql.includes("typeof(body)"))).toHaveLength(1);
+    });
+  } finally {
+    prepare.mockRestore();
+  }
+  expect(
+    (await readFinanceBrokerHistoryActivities(directory, "snapshot", "alpaca:paper", 3)).activities,
+  ).toEqual([{ id: "1" }, { id: "2" }]);
+  expect((await readFinanceLatestBrokerReconciliations(directory)).records[0].sequence).toBe(4);
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET ref=? WHERE sequence=2").run("0".repeat(64));
+  } finally {
+    db.close();
+  }
+  const consume = vi.fn(async () => "must not run");
+  await expect(withFinanceBrokerHistorySnapshot(directory, consume)).rejects.toThrow(
+    /chain mismatch/,
+  );
+  expect(consume).not.toHaveBeenCalled();
+});
+
+it("appends a mark without rehashing an unchanged position prefix", async () => {
+  const directory = await storeDirectory();
+  for (let i = 0; i < 80; i += 1) {
+    await appendFinancePositionMark(directory, {
+      instrument: "SPY",
+      price: 100 + i,
+      at: new Date(Date.UTC(2020, 0, 1, 0, i)).toISOString(),
+    });
+  }
+  const hash = vi.spyOn(caseflow, "caseflowFingerprint");
+  try {
+    const last = await appendFinancePositionMark(directory, {
+      instrument: "SPY",
+      price: 200,
+      at: "2020-02-01T00:00:00.000Z",
+    });
+    expect(last.record.sequence).toBe(81);
+    expect(hash.mock.calls.length).toBeLessThan(10);
+    hash.mockClear();
+    expect(await advanceFinancePositionProjection(directory)).toMatchObject({
+      sequence: 81,
+      headSequence: 81,
+      stale: false,
+    });
+    expect(hash.mock.calls.length).toBeLessThan(10);
+  } finally {
+    hash.mockRestore();
+  }
+});
+
+it("revalidates position prefixes after external writes and binds SQL lookup identity", async () => {
+  const directory = await storeDirectory();
+  const mark = { instrument: "SPY", price: 100, at: "2020-01-01T00:00:00.000Z" };
+  const first = await appendFinancePositionMark(directory, mark);
+  const { ref, ...stored } = first.record;
+  const externalMark = { ...mark, price: 110, at: "2020-01-02T00:00:00.000Z" };
+  const external = {
+    ...stored,
+    sequence: 2,
+    previousRef: ref,
+    recordKey: `mark:SPY@${externalMark.at}`,
+    body: { kind: "mark", mark: externalMark },
+  };
+  const db = openDatabase(directory);
+  try {
+    db.prepare(
+      "INSERT INTO finance_position_records(kind,record_key,sequence,ref,body) VALUES (?,?,?,?,?)",
+    ).run("mark", external.recordKey, 2, caseflowFingerprint(external), JSON.stringify(external));
+    const duplicate = await appendFinancePositionMark(directory, externalMark);
+    expect(duplicate.appended).toBe(false);
+    expect(duplicate.record.sequence).toBe(2);
+    db.exec("DROP TRIGGER finance_position_no_update");
+    db.exec("UPDATE finance_position_records SET record_key='wrong-key' WHERE sequence=2");
+    await expect(appendFinancePositionMark(directory, mark)).rejects.toThrow(
+      /index binding mismatch/,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+it("serializes position writes with a yielding broker audit in the same database", async () => {
+  const { directory, body } = await cooperativeHistoryFixture();
+  const [broker, mark, projection] = await Promise.all([
+    appendFinanceBrokerHistory(directory, { ...body, cursor: "mixed-streams" }),
+    appendFinancePositionMark(directory, {
+      instrument: "SPY",
+      price: 100,
+      at: "2020-01-01T00:00:00.000Z",
+    }),
+    advanceFinancePositionProjection(directory),
+  ]);
+  expect(broker.record.sequence).toBe(601);
+  expect(mark.record.sequence).toBe(1);
+  expect(projection.stale).toBe(false);
+  expect((await readFinancePositionLedger(directory)).marks).toHaveLength(1);
+});
+
+it("reads projection head and watermark from one database snapshot", async () => {
+  const directory = await storeDirectory();
+  const first = await appendFinancePositionMark(directory, {
+    instrument: "SPY",
+    price: 100,
+    at: "2020-01-01T00:00:00.000Z",
+  });
+  await advanceFinancePositionProjection(directory);
+  const { ref, ...stored } = first.record;
+  const next = {
+    ...stored,
+    sequence: 2,
+    previousRef: ref,
+    recordKey: "mark:SPY@2020-01-02T00:00:00.000Z",
+    body: { kind: "mark", mark: { instrument: "SPY", price: 110, at: "2020-01-02T00:00:00.000Z" } },
+  };
+  const nextRef = caseflowFingerprint(next);
+  const external = openDatabase(directory);
+  const { DatabaseSync } = requireNodeSqlite();
+  // oxlint-disable-next-line typescript-eslint/unbound-method -- Invoked with the intercepted database receiver via .call below.
+  const original = DatabaseSync.prototype.prepare;
+  let injected = false;
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
+    this: InstanceType<typeof DatabaseSync>,
+    sql: string,
+  ) {
+    if (!injected && sql.includes("SELECT sequence, ref, updated_at")) {
+      injected = true;
+      external.exec("BEGIN IMMEDIATE");
+      external
+        .prepare(
+          "INSERT INTO finance_position_records(kind,record_key,sequence,ref,body) VALUES (?,?,?,?,?)",
+        )
+        .run("mark", next.recordKey, 2, nextRef, JSON.stringify(next));
+      external
+        .prepare("UPDATE finance_position_projection_state SET sequence=2,ref=?")
+        .run(nextRef);
+      external.exec("COMMIT");
+    }
+    return original.call(this, sql);
+  });
+  try {
+    const status = await readFinancePositionProjectionStatus(directory);
+    expect(injected).toBe(true);
+    expect(status).toMatchObject({ sequence: 1, headSequence: 1, ref, headRef: ref, stale: false });
+  } finally {
+    prepare.mockRestore();
+    external.close();
+  }
+  expect(await readFinancePositionProjectionStatus(directory)).toMatchObject({
+    sequence: 2,
+    headSequence: 2,
+    ref: nextRef,
+    headRef: nextRef,
+  });
+});
+
+it("streams scoped position history without blocking queued work and still checks excluded tails", async () => {
+  const directory = await storeDirectory();
+  await appendFinanceExecutionReceipt(
+    directory,
+    receipt({ accountId: "selected", recordedAt: "2020-01-01T00:00:00.000Z" }),
+  );
+  await appendFinanceExecutionReceipt(
+    directory,
+    receipt({ accountId: "foreign", recordedAt: "2020-01-01T00:00:01.000Z" }),
+  );
+  await appendFinanceExecutionReceipt(
+    directory,
+    receipt({ recordedAt: "2020-01-01T00:00:02.000Z" }),
+  );
+  for (let i = 0; i < 80; i += 1) {
+    await appendFinancePositionMark(directory, {
+      instrument: "AAPL",
+      price: 100 + i,
+      at: new Date(Date.UTC(2020, 1, 1, 0, i)).toISOString(),
+    });
+  }
+  let scheduled = false;
+  let yielded = false;
+  const original = caseflow.caseflowFingerprint;
+  const hash = vi.spyOn(caseflow, "caseflowFingerprint").mockImplementation((value) => {
+    if (!scheduled) {
+      scheduled = true;
+      setImmediate(() => {
+        yielded = true;
+      });
+    }
+    return original(value);
+  });
+  try {
+    const scoped = await readFinanceAccountPositionLedger(directory, {
+      accountId: "selected",
+      venue: "paper",
+    });
+    expect(scoped.receipts).toHaveLength(1);
+    expect(scoped).toMatchObject({ excludedReceiptCount: 2, unassignedReceiptCount: 1 });
+    expect(yielded).toBe(true);
+    const historical = await readFinancePositionLedger(directory, {
+      asOf: "2020-01-01T00:00:00.000Z",
+    });
+    expect(historical).toMatchObject({
+      recordCount: 83,
+      receiptRecordCount: 3,
+      markRecordCount: 80,
+    });
+    expect(historical.receipts).toHaveLength(1);
+    expect(historical.marks).toHaveLength(0);
+  } finally {
+    hash.mockRestore();
+  }
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_position_no_update");
+    db.prepare("UPDATE finance_position_records SET ref=? WHERE sequence=83").run("0".repeat(64));
+  } finally {
+    db.close();
+  }
+  await expect(
+    readFinanceAccountPositionLedger(directory, { accountId: "selected", venue: "paper" }),
+  ).rejects.toThrow(/integrity mismatch/);
+  await expect(
+    readFinancePositionLedger(directory, { asOf: "2020-01-01T00:00:00.000Z" }),
+  ).rejects.toThrow(/integrity mismatch/);
+});
+
+it("keeps latest reconciliation on one snapshot while yielding across an external append", async () => {
+  const directory = await storeDirectory();
+  const accountId = path.basename(directory);
+  const body = {
+    kind: "broker_history" as const,
+    accountId,
+    venue: "alpaca:paper",
+    query: "reconciliation:yield",
+    cursor: "initial",
+    payload: [{ observedAt: "2026-10-01T00:00:00Z", label: "before" }],
+  };
+  let last = await appendFinanceBrokerHistory(directory, body);
+  for (let i = 0; i < 80; i++) {
+    last = await appendFinanceBrokerHistory(directory, {
+      ...body,
+      query: "activities:yield",
+      cursor: String(i),
+      payload: [{ id: String(i) }],
+    });
+  }
+  let scheduled = false;
+  let appended = false;
+  const original = caseflow.caseflowFingerprint;
+  const hash = vi.spyOn(caseflow, "caseflowFingerprint").mockImplementation((value) => {
+    if (!scheduled) {
+      scheduled = true;
+      setImmediate(() => {
+        const record = {
+          sequence: 82,
+          previousRef: last.record.ref,
+          body: {
+            ...body,
+            cursor: "next",
+            payload: [{ observedAt: "2026-10-02T00:00:00Z", label: "after" }],
+          },
+        };
+        const db = openDatabase(directory);
+        try {
+          db.prepare("INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)").run(
+            82,
+            original(record),
+            JSON.stringify(record),
+          );
+          appended = true;
+        } finally {
+          db.close();
+        }
+      });
+    }
+    return original(value);
+  });
+  const options = { scope: { accountId, venue: "alpaca:paper" } };
+  try {
+    const current = await readFinanceLatestBrokerReconciliations(directory, options);
+    expect(appended).toBe(true);
+    expect(current.records[0]).toMatchObject({
+      sequence: 1,
+      superseded: true,
+      snapshot: { label: "before" },
+    });
+  } finally {
+    hash.mockRestore();
+  }
+  const next = await readFinanceLatestBrokerReconciliations(directory, options);
+  expect(next.records[0]).toMatchObject({
+    sequence: 82,
+    superseded: false,
+    snapshot: { label: "after" },
+  });
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    db.prepare("UPDATE finance_broker_history SET ref=? WHERE sequence=82").run("0".repeat(64));
+  } finally {
+    db.close();
+  }
+  await expect(readFinanceLatestBrokerReconciliations(directory, options)).rejects.toThrow(
+    "broker history chain mismatch",
+  );
 });

@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   commitFinanceSchedulerDatabaseState,
   FINANCE_SCHEDULER_DATABASE,
+  isFinanceSchedulerDecisionIndexCurrent,
   readFinanceSchedulerDatabaseState,
 } from "./finance-scheduler-ledger.js";
 import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
@@ -293,7 +294,11 @@ function parseSchedulerState(raw: string): SchedulerState {
 
 /** Migration runs after acquiring the scheduler lock; status reads never create a database. */
 export function initializeFinanceSchedulerDatabase(directory: string): void {
-  if (readFinanceSchedulerDatabaseState(directory) !== undefined) {
+  const existing = readFinanceSchedulerDatabaseState(directory);
+  if (existing !== undefined) {
+    if (!isFinanceSchedulerDecisionIndexCurrent(directory)) {
+      commitFinanceSchedulerDatabaseState(directory, existing, []);
+    }
     return;
   }
   const state = readFinanceSchedulerState(directory);

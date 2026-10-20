@@ -34,8 +34,9 @@
  *   `ref` is the canonical hash of its content. A read re-verifies both.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
@@ -469,27 +470,87 @@ type PositionDatabase = InstanceType<ReturnType<typeof requireNodeSqlite>["Datab
  * Read every record and re-verify the chain. A row whose stored `ref` no longer matches its
  * body, or whose sequence or back-link is off, is a hard error rather than a silent skip.
  */
-function readStoredRecords(db: PositionDatabase): FinancePositionRecord[] {
-  const rows = db.prepare("SELECT ref, body FROM finance_position_records ORDER BY sequence").all();
+function decodePositionRow(row: {
+  ref?: unknown;
+  body?: unknown;
+  sequence?: unknown;
+  kind?: unknown;
+  record_key?: unknown;
+}): FinancePositionRecord {
+  if (typeof row.body !== "string" || typeof row.ref !== "string") {
+    throw new Error("invalid position record");
+  }
+  const raw: unknown = JSON.parse(row.body);
+  if (caseflowFingerprint(raw) !== row.ref) {
+    throw new Error("position record integrity mismatch");
+  }
+  const record = StoredRecordSchema.parse(raw);
+  if (
+    record.sequence !== row.sequence ||
+    record.body.kind !== row.kind ||
+    record.recordKey !== row.record_key
+  ) {
+    throw new Error("position record index binding mismatch");
+  }
+  return { ...record, ref: row.ref };
+}
+
+function* readVerifiedPositionRecords(db: PositionDatabase) {
   let previousRef: string | null = null;
-  return rows.map((row, index) => {
-    if (typeof row.body !== "string" || typeof row.ref !== "string") {
-      throw new Error("invalid position record");
-    }
-    const raw: unknown = JSON.parse(row.body);
-    if (caseflowFingerprint(raw) !== row.ref) {
-      throw new Error("position record integrity mismatch");
-    }
-    const record = StoredRecordSchema.parse(raw);
-    if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
+  let sequence = 0;
+  for (const row of db
+    .prepare(
+      "SELECT ref,body,sequence,kind,record_key FROM finance_position_records ORDER BY sequence",
+    )
+    .iterate()) {
+    const record = decodePositionRow(row);
+    if (record.sequence !== ++sequence || record.previousRef !== previousRef) {
       throw new Error("position record chain mismatch");
     }
-    previousRef = row.ref;
-    return { ...record, ref: row.ref };
-  });
+    previousRef = record.ref;
+    yield record;
+  }
+}
+
+type PositionHead = { sequence: number; ref: string | null };
+async function readVerifiedPositionHead(db: PositionDatabase): Promise<PositionHead> {
+  let head: PositionHead = { sequence: 0, ref: null };
+  if (!hasTable(db, "finance_position_records")) {
+    return head;
+  }
+  for (const record of readVerifiedPositionRecords(db)) {
+    head = { sequence: record.sequence, ref: record.ref };
+    if (record.sequence % 64 === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  return head;
+}
+
+async function verifyPositionWriterHead(writer: PositionLedgerWriter) {
+  const version = writer.db.prepare("PRAGMA data_version").get()?.data_version;
+  if (typeof version !== "number") {
+    throw new Error("position data version unavailable");
+  }
+  if (writer.positionHead?.version !== version) {
+    writer.positionHead = undefined;
+    writer.positionHead = { version, ...(await readVerifiedPositionHead(writer.db)) };
+  }
+  return writer.positionHead;
 }
 
 async function appendRecord(
+  directory: string,
+  body: FinancePositionRecordBody,
+  recordKey: string,
+  observedAt: string,
+): Promise<FinancePositionRecordAppend> {
+  return withPositionDatabaseWriteTurn(directory, (canonical) =>
+    appendPositionRecordOnTurn(canonical, body, recordKey, observedAt),
+  );
+}
+
+async function appendPositionRecordOnTurn(
   directory: string,
   body: FinancePositionRecordBody,
   recordKey: string,
@@ -505,26 +566,19 @@ async function appendRecord(
     throw new Error("position record observation cannot be dated in the future");
   }
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const { DatabaseSync } = requireNodeSqlite();
-  const db = new DatabaseSync(databasePath(directory));
+  const writer = acquirePositionLedgerWriter(directory);
+  const { db } = writer;
   try {
-    chmodSync(databasePath(directory), 0o600);
-    // auto_vacuum must be set before the first journal_mode=WAL write: switching to WAL
-    // initialises the database file and silently freezes auto_vacuum afterwards.
-    db.exec(
-      `PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`,
-    );
-    applySqliteMigrations({
-      db,
-      ledgerTable: POSITION_LEDGER_MIGRATION_LEDGER,
-      migrations: POSITION_LEDGER_MIGRATIONS,
-    });
     db.exec("BEGIN IMMEDIATE");
     try {
-      const records = readStoredRecords(db);
-      const existing = records.find(
-        (item) => item.body.kind === body.kind && item.recordKey === recordKey,
-      );
+      const head = await verifyPositionWriterHead(writer);
+      const { version } = head;
+      const existingRow = db
+        .prepare(
+          "SELECT ref,body,sequence,kind,record_key FROM finance_position_records WHERE kind=? AND record_key=?",
+        )
+        .get(body.kind, recordKey);
+      const existing = existingRow ? decodePositionRow(existingRow) : undefined;
       if (existing) {
         const comparable = (value: typeof body) => {
           if (
@@ -551,8 +605,8 @@ async function appendRecord(
       const record = StoredRecordSchema.parse({
         schemaVersion: FINANCE_POSITION_RECORD_SCHEMA,
         recordKey,
-        sequence: records.length + 1,
-        previousRef: records.at(-1)?.ref ?? null,
+        sequence: head.sequence + 1,
+        previousRef: head.ref,
         recordedAt: new Date().toISOString(),
         body,
       });
@@ -561,13 +615,20 @@ async function appendRecord(
         "INSERT INTO finance_position_records(kind,record_key,sequence,ref,body) VALUES (?,?,?,?,?)",
       ).run(body.kind, recordKey, record.sequence, ref, JSON.stringify(record));
       db.exec("COMMIT");
+      writer.positionHead = { version, sequence: record.sequence, ref };
       return Object.freeze({ record: Object.freeze({ ...record, ref }), appended: true });
     } catch (error) {
-      db.exec("ROLLBACK");
+      writer.positionHead = undefined;
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
       throw error;
     }
   } finally {
-    db.close();
+    writer.busy = false;
+    if (positionLedgerWriters.get(databasePath(directory)) !== writer) {
+      db.close();
+    }
   }
 }
 
@@ -633,34 +694,72 @@ function hasTable(db: PositionDatabase, name: string): boolean {
 /** Read the stored stream. An absent database is an empty ledger, not an error. */
 export async function readFinancePositionRecords(
   directory: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<FinancePositionRecordsRead> {
-  const empty: FinancePositionRecordsRead = Object.freeze({
-    records: Object.freeze([] as FinancePositionRecord[]),
-    receipts: Object.freeze([] as FinanceExecutionReceipt[]),
-    marks: Object.freeze([] as FinancePositionMark[]),
-    headRef: null,
+  const read = await reduceVerifiedPositionRecords(
+    directory,
+    [] as FinancePositionRecord[],
+    (records, record) => {
+      records.push(record);
+      return records;
+    },
+    options,
+  );
+  const records = read.value;
+  return Object.freeze({
+    records: Object.freeze(records),
+    receipts: Object.freeze(
+      records.flatMap((item) => (item.body.kind === "receipt" ? [item.body.receipt] : [])),
+    ),
+    marks: Object.freeze(
+      records.flatMap((item) => (item.body.kind === "mark" ? [item.body.mark] : [])),
+    ),
+    headRef: read.headRef,
   });
+}
+
+async function reduceVerifiedPositionRecords<T>(
+  directory: string,
+  initial: T,
+  reduce: (state: T, record: FinancePositionRecord) => T,
+  options: { signal?: AbortSignal } = {},
+) {
+  options.signal?.throwIfAborted();
+  let value = initial;
+  let recordCount = 0;
+  let receiptRecordCount = 0;
+  let markRecordCount = 0;
+  let headRef: string | null = null;
   const db = await openReadOnly(directory);
-  if (!db) {
-    return empty;
-  }
   try {
-    if (!hasTable(db, "finance_position_records")) {
-      return empty;
+    options.signal?.throwIfAborted();
+    if (db && hasTable(db, "finance_position_records")) {
+      db.exec("BEGIN");
+      let lastYieldAt = performance.now();
+      for (const record of readVerifiedPositionRecords(db)) {
+        options.signal?.throwIfAborted();
+        recordCount += 1;
+        if (record.body.kind === "receipt") {
+          receiptRecordCount += 1;
+        } else {
+          markRecordCount += 1;
+        }
+        headRef = record.ref;
+        value = reduce(value, record);
+        if (record.sequence % 64 === 0 || performance.now() - lastYieldAt >= 8) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          lastYieldAt = performance.now();
+          options.signal?.throwIfAborted();
+        }
+      }
     }
-    const records = readStoredRecords(db);
-    return Object.freeze({
-      records: Object.freeze(records),
-      receipts: Object.freeze(
-        records.flatMap((item) => (item.body.kind === "receipt" ? [item.body.receipt] : [])),
-      ),
-      marks: Object.freeze(
-        records.flatMap((item) => (item.body.kind === "mark" ? [item.body.mark] : [])),
-      ),
-      headRef: records.at(-1)?.ref ?? null,
-    });
+    options.signal?.throwIfAborted();
+    return { value, recordCount, receiptRecordCount, markRecordCount, headRef };
   } finally {
-    db.close();
+    if (db?.isTransaction) {
+      db.exec("ROLLBACK");
+    }
+    db?.close();
   }
 }
 
@@ -670,30 +769,43 @@ export async function readFinancePositionRecords(
  */
 export async function readFinancePositionLedger(
   directory: string,
-  options: { asOf?: string } = {},
+  options: { asOf?: string; signal?: AbortSignal } = {},
 ): Promise<FinancePositionLedgerRead> {
-  const read = await readFinancePositionRecords(directory);
   const asOf = options.asOf?.trim() ?? "";
   if (asOf.length > 0 && !Number.isFinite(Date.parse(asOf))) {
     throw new Error("asOf must be an ISO datetime");
   }
   const cutoff = asOf.length === 0 ? undefined : Date.parse(asOf);
-  const consideredReceipts =
-    cutoff === undefined
-      ? read.receipts
-      : read.receipts.filter((receipt) => Date.parse(receipt.fill.filledAt) <= cutoff);
-  const consideredMarks =
-    cutoff === undefined ? read.marks : read.marks.filter((mark) => Date.parse(mark.at) <= cutoff);
+  const read = await reduceVerifiedPositionRecords(
+    directory,
+    { receipts: [] as FinanceExecutionReceipt[], marks: [] as FinancePositionMark[] },
+    (state, record) => {
+      if (record.body.kind === "receipt") {
+        const receipt = record.body.receipt;
+        if (cutoff === undefined || Date.parse(receipt.fill.filledAt) <= cutoff) {
+          state.receipts.push(receipt);
+        }
+      } else {
+        const mark = record.body.mark;
+        if (cutoff === undefined || Date.parse(mark.at) <= cutoff) {
+          state.marks.push(mark);
+        }
+      }
+      return state;
+    },
+    options,
+  );
+  const { receipts: consideredReceipts, marks: consideredMarks } = read.value;
   // The projection lets the last mark per instrument win, so sorting by time makes "last"
   // mean "latest"; a stable sort keeps append order as the tie-break.
   const orderedMarks = consideredMarks.toSorted((left, right) => left.at.localeCompare(right.at));
   return Object.freeze({
     ledger: projectFinancePositions({ receipts: consideredReceipts, marks: orderedMarks }),
-    receipts: Object.freeze([...consideredReceipts]),
-    marks: Object.freeze([...orderedMarks]),
-    recordCount: read.records.length,
-    receiptRecordCount: read.receipts.length,
-    markRecordCount: read.marks.length,
+    receipts: Object.freeze(consideredReceipts),
+    marks: Object.freeze(orderedMarks),
+    recordCount: read.recordCount,
+    receiptRecordCount: read.receiptRecordCount,
+    markRecordCount: read.markRecordCount,
     headRef: read.headRef,
   });
 }
@@ -770,7 +882,7 @@ function readWatermark(
  */
 function statusOf(
   watermark: FinancePositionProjectionWatermark,
-  head: FinancePositionRecord | undefined,
+  head: PositionHead | undefined,
 ): FinancePositionProjectionStatus {
   const headSequence = head?.sequence ?? 0;
   const recordsSince = Math.max(0, headSequence - watermark.sequence);
@@ -791,15 +903,19 @@ export async function readFinancePositionProjectionStatus(
   directory: string,
   projection: string = FINANCE_POSITION_LEDGER_PROJECTION,
 ): Promise<FinancePositionProjectionStatus> {
-  const read = await readFinancePositionRecords(directory);
-  const head = read.records.at(-1);
   const db = await openReadOnly(directory);
   if (!db) {
-    return statusOf(Object.freeze({ projection, ...NEVER_PROJECTED }), head);
+    return statusOf(Object.freeze({ projection, ...NEVER_PROJECTED }), undefined);
   }
   try {
+    // Head and consumed watermark must describe the same committed snapshot.
+    db.exec("BEGIN");
+    const head = await readVerifiedPositionHead(db);
     return statusOf(readWatermark(db, projection), head);
   } finally {
+    if (db.isTransaction) {
+      db.exec("ROLLBACK");
+    }
     db.close();
   }
 }
@@ -813,41 +929,46 @@ export async function advanceFinancePositionProjection(
   directory: string,
   params: { projection?: string } = {},
 ): Promise<FinancePositionProjectionStatus> {
+  return withPositionDatabaseWriteTurn(directory, (canonical) =>
+    advancePositionProjectionOnTurn(canonical, params),
+  );
+}
+
+async function advancePositionProjectionOnTurn(
+  directory: string,
+  params: { projection?: string },
+): Promise<FinancePositionProjectionStatus> {
   const projection = params.projection?.trim() || FINANCE_POSITION_LEDGER_PROJECTION;
   if (projection.length === 0) {
     throw new Error("projection name must not be blank");
   }
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const { DatabaseSync } = requireNodeSqlite();
-  const db = new DatabaseSync(databasePath(directory));
+  const writer = acquirePositionLedgerWriter(directory);
+  const { db } = writer;
   try {
-    chmodSync(databasePath(directory), 0o600);
-    // auto_vacuum must be set before the first journal_mode=WAL write: switching to WAL
-    // initialises the database file and silently freezes auto_vacuum afterwards.
-    db.exec(
-      `PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`,
-    );
-    applySqliteMigrations({
-      db,
-      ledgerTable: POSITION_LEDGER_MIGRATION_LEDGER,
-      migrations: POSITION_LEDGER_MIGRATIONS,
-    });
-    const head = readStoredRecords(db).at(-1);
     db.exec("BEGIN IMMEDIATE");
     try {
+      const head = await verifyPositionWriterHead(writer);
       db.prepare(
         "INSERT INTO finance_position_projection_state(projection,sequence,ref,updated_at) " +
           "VALUES (?,?,?,?) ON CONFLICT(projection) DO UPDATE SET " +
           "sequence=excluded.sequence, ref=excluded.ref, updated_at=excluded.updated_at",
       ).run(projection, head?.sequence ?? 0, head?.ref ?? null, new Date().toISOString());
+      const status = statusOf(readWatermark(db, projection), head);
       db.exec("COMMIT");
+      return status;
     } catch (error) {
-      db.exec("ROLLBACK");
+      writer.positionHead = undefined;
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
       throw error;
     }
-    return statusOf(readWatermark(db, projection), head);
   } finally {
-    db.close();
+    writer.busy = false;
+    if (positionLedgerWriters.get(databasePath(directory)) !== writer) {
+      db.close();
+    }
   }
 }
 
@@ -857,22 +978,36 @@ export async function advanceFinancePositionProjection(
 export async function readFinanceAccountPositionLedger(
   directory: string,
   scope: { accountId: string; venue: string },
+  options: { signal?: AbortSignal } = {},
 ) {
   if (!scope.accountId.trim() || !scope.venue.trim()) {
     throw new Error("explicit account and venue scope required");
   }
-  const read = await readFinancePositionRecords(directory);
-  const receipts = read.receipts.filter(
-    (receipt) => receipt.accountId === scope.accountId && receipt.venue === scope.venue,
+  const read = await reduceVerifiedPositionRecords(
+    directory,
+    { receipts: [] as FinanceExecutionReceipt[], unassignedReceiptCount: 0 },
+    (state, record) => {
+      if (record.body.kind === "receipt") {
+        const receipt = record.body.receipt;
+        if (receipt.accountId === undefined) {
+          state.unassignedReceiptCount += 1;
+        }
+        if (receipt.accountId === scope.accountId && receipt.venue === scope.venue) {
+          state.receipts.push(receipt);
+        }
+      }
+      return state;
+    },
+    options,
   );
+  const { receipts, unassignedReceiptCount } = read.value;
   return Object.freeze({
     ledger: projectFinancePositions({ receipts }),
     receipts: Object.freeze(receipts),
     historyStatus:
       receipts.length === 0 ? ("missing" as const) : ("recorded_history_only" as const),
-    excludedReceiptCount: read.receipts.length - receipts.length,
-    unassignedReceiptCount: read.receipts.filter((receipt) => receipt.accountId === undefined)
-      .length,
+    excludedReceiptCount: read.receiptRecordCount - receipts.length,
+    unassignedReceiptCount,
     headRef: read.headRef,
   });
 }
@@ -926,6 +1061,30 @@ type BrokerHistoryHashProof = {
 const brokerHistoryHashProofs = new Map<string, BrokerHistoryHashProof>();
 let brokerHistoryHeaderProofBytes = 0;
 
+// JSON-decoded payload records contain only data properties. The record schema
+// copies their top level and preserves unknown values by identity. Compare both
+// key order and values: any transformation conservatively retains full parsing.
+function brokerPayloadUnchanged(
+  parsed: BrokerHistoryBody["payload"],
+  raw: BrokerHistoryBody["payload"],
+): boolean {
+  return (
+    parsed.length === raw.length &&
+    parsed.every((record, index) => {
+      const keys = Object.keys(record);
+      const original = raw[index];
+      const originalKeys = Object.keys(original);
+      return (
+        keys.length === originalKeys.length &&
+        keys.every(
+          (key, keyIndex) =>
+            key === originalKeys[keyIndex] && Object.is(record[key], original[key]),
+        )
+      );
+    })
+  );
+}
+
 /** Hash every current row and verify the global chain before lazily decoding selected payloads. */
 function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
   if (!hasTable(db, "finance_broker_history")) {
@@ -937,7 +1096,7 @@ function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
   const utf8 = db.prepare("PRAGMA encoding").get()?.encoding === "UTF-8";
   for (const row of db
     .prepare(
-      `SELECT ref,typeof(body) AS body_type,${utf8 ? "CAST(body AS BLOB)" : "body"} AS body FROM finance_broker_history ORDER BY sequence`,
+      `SELECT sequence,ref,typeof(body) AS body_type,${utf8 ? "CAST(body AS BLOB)" : "body"} AS body FROM finance_broker_history ORDER BY sequence`,
     )
     .iterate()) {
     if (
@@ -990,6 +1149,7 @@ function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
     const canonicalRef = proof?.ref ?? caseflowFingerprint(raw);
     if (
       canonicalRef !== row.ref ||
+      header.sequence !== row.sequence ||
       header.previousRef !== previousRef ||
       header.sequence !== ++sequence
     ) {
@@ -1001,9 +1161,10 @@ function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
       proof = {
         ref: canonicalRef,
         // A transforming schema must still run on later reads (for example __proto__ keys).
-        payloadUnchanged:
-          JSON.stringify(readRecord().body.payload) ===
-          JSON.stringify((raw as z.infer<typeof BrokerHistoryRecordSchema>).body.payload),
+        payloadUnchanged: brokerPayloadUnchanged(
+          readRecord().body.payload,
+          (raw as z.infer<typeof BrokerHistoryRecordSchema>).body.payload,
+        ),
       };
       brokerHistoryHashProofs.set(encodedHash, proof);
     }
@@ -1022,36 +1183,182 @@ function* readVerifiedBrokerHistoryRows(db: PositionDatabase) {
   }
 }
 
-/** Validate every account's chain while retaining only the caller's selected rows. */
-function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
-  for (const row of readVerifiedBrokerHistoryRows(db)) {
-    yield row.readRecord();
+type BrokerReadSnapshot = { filename: string; db: PositionDatabase };
+const brokerReadSnapshots = new AsyncLocalStorage<BrokerReadSnapshot>();
+
+/** One verified, repeatable local snapshot for a compound economic projection. */
+export async function withFinanceBrokerHistorySnapshot<T>(
+  directory: string,
+  read: () => Promise<T>,
+): Promise<T> {
+  const filename = databasePath(directory);
+  if (brokerReadSnapshots.getStore()?.filename === filename) {
+    return read();
+  }
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return read();
+  }
+  try {
+    db.exec("PRAGMA temp_store=FILE; BEGIN");
+    db.exec(
+      "CREATE TEMP TABLE broker_read_headers (sequence INTEGER PRIMARY KEY, ref TEXT NOT NULL, header TEXT NOT NULL)",
+    );
+    const insert = db.prepare("INSERT INTO broker_read_headers VALUES (?,?,?)");
+    // Complete global verification before exposing the snapshot to concurrent readers.
+    for (const row of readVerifiedBrokerHistoryRows(db)) {
+      insert.run(row.header.sequence, row.ref, JSON.stringify(row.header));
+      if (row.header.sequence % 64 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+    return await brokerReadSnapshots.run({ filename, db }, read);
+  } finally {
+    if (db.isTransaction) {
+      db.exec("ROLLBACK");
+    }
+    db.close();
+  }
+}
+
+function* readSnapshotBrokerHistoryRows(snapshot: BrokerReadSnapshot) {
+  const { db } = snapshot;
+  for (const row of db
+    .prepare("SELECT sequence,ref,header FROM broker_read_headers ORDER BY sequence")
+    .iterate()) {
+    const header = JSON.parse(String(row.header)) as BrokerHistoryProofHeader;
+    const ref = String(row.ref);
+    yield {
+      header,
+      ref,
+      proof: undefined as BrokerHistoryHashProof | undefined,
+      readRecord: () => {
+        const stored = db
+          .prepare("SELECT body FROM finance_broker_history WHERE sequence=?")
+          .get(header.sequence);
+        if (typeof stored?.body !== "string") {
+          throw new Error("broker snapshot record unavailable");
+        }
+        const raw: unknown = JSON.parse(stored.body);
+        const proof = brokerHistoryHashProofs.get(
+          createHash("sha256").update(stored.body).digest("hex"),
+        );
+        const record = (
+          proof?.payloadUnchanged
+            ? BrokerHistoryHeaderSchema.parse(raw)
+            : BrokerHistoryRecordSchema.parse(raw)
+        ) as z.infer<typeof BrokerHistoryRecordSchema>;
+        if (
+          (proof?.ref ?? caseflowFingerprint(raw)) !== ref ||
+          record.sequence !== header.sequence
+        ) {
+          throw new Error("broker snapshot record integrity mismatch");
+        }
+        return { ...record, ref };
+      },
+    };
   }
 }
 
 /** Additive table in the existing database; never appends to the position chain. */
-const brokerHistoryAppendTurns = new Map<string, Promise<void>>();
+const positionDatabaseWriteTurns = new Map<string, Promise<void>>();
 export async function appendFinanceBrokerHistory(
   directory: string,
   body: BrokerHistoryBody,
   options: { signal?: AbortSignal } = {},
 ) {
   options.signal?.throwIfAborted();
+  return withPositionDatabaseWriteTurn(directory, (canonical) =>
+    appendBrokerHistoryOnTurn(canonical, body, options),
+  );
+}
+
+async function withPositionDatabaseWriteTurn<T>(
+  directory: string,
+  write: (canonical: string) => Promise<T> | T,
+): Promise<T> {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  directory = await fs.realpath(directory);
   const key = databasePath(directory);
-  const previous = brokerHistoryAppendTurns.get(key);
+  const previous = positionDatabaseWriteTurns.get(key);
   let release = () => {};
   const turn = new Promise<void>((resolve) => {
     release = resolve;
   });
-  brokerHistoryAppendTurns.set(key, turn);
+  positionDatabaseWriteTurns.set(key, turn);
   try {
     await previous;
-    return await appendBrokerHistoryOnTurn(directory, body, options);
+    return await write(directory);
   } finally {
     release();
-    if (brokerHistoryAppendTurns.get(key) === turn) {
-      brokerHistoryAppendTurns.delete(key);
+    if (positionDatabaseWriteTurns.get(key) === turn) {
+      positionDatabaseWriteTurns.delete(key);
     }
+  }
+}
+
+type PositionLedgerWriter = {
+  db: PositionDatabase;
+  dev: number;
+  ino: number;
+  busy: boolean;
+  head?: { version: number; sequence: number; ref: string | null };
+  positionHead?: { version: number; sequence: number; ref: string | null };
+};
+const positionLedgerWriters = new Map<string, PositionLedgerWriter>();
+const MAX_POSITION_LEDGER_WRITERS = 8;
+
+function acquirePositionLedgerWriter(directory: string): PositionLedgerWriter {
+  const filename = databasePath(directory);
+  const cached = positionLedgerWriters.get(filename);
+  const stat = statSync(filename, { throwIfNoEntry: false });
+  if (cached && !cached.busy) {
+    positionLedgerWriters.delete(filename);
+    if (stat && stat.dev === cached.dev && stat.ino === cached.ino) {
+      cached.busy = true;
+      positionLedgerWriters.set(filename, cached);
+      return cached;
+    }
+    cached.db.close();
+  }
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(filename);
+  try {
+    chmodSync(filename, 0o600);
+    // Preserve initialization order: auto_vacuum must precede the first WAL write.
+    db.exec(
+      "PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA temp_store=FILE;",
+    );
+    applySqliteMigrations({
+      db,
+      ledgerTable: POSITION_LEDGER_MIGRATION_LEDGER,
+      migrations: POSITION_LEDGER_MIGRATIONS,
+    });
+    // Disposable acceleration only: populated from a fully verified canonical chain.
+    // SQLite can spill this index to disk; historical payloads never live in JS caches.
+    db.exec(
+      "CREATE TEMP TABLE broker_append_lookup (fingerprint TEXT PRIMARY KEY, sequence INTEGER NOT NULL)",
+    );
+    const opened = statSync(filename);
+    const writer: PositionLedgerWriter = { db, dev: opened.dev, ino: opened.ino, busy: true };
+    if (positionLedgerWriters.size >= MAX_POSITION_LEDGER_WRITERS) {
+      const idle = [...positionLedgerWriters].find(([, entry]) => !entry.busy);
+      if (idle) {
+        positionLedgerWriters.delete(idle[0]);
+        idle[1].db.close();
+      }
+    }
+    // Under pressure an active lease is never evicted. Extra writers are ephemeral.
+    if (
+      !positionLedgerWriters.has(filename) &&
+      positionLedgerWriters.size < MAX_POSITION_LEDGER_WRITERS
+    ) {
+      positionLedgerWriters.set(filename, writer);
+    }
+    return writer;
+  } catch (error) {
+    db.close();
+    throw error;
   }
 }
 
@@ -1063,54 +1370,64 @@ async function appendBrokerHistoryOnTurn(
   options.signal?.throwIfAborted();
   const validated = BrokerHistoryBodySchema.parse(body);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const { DatabaseSync } = requireNodeSqlite();
-  const db = new DatabaseSync(databasePath(directory));
+  const writer = acquirePositionLedgerWriter(directory);
+  const { db } = writer;
   try {
-    chmodSync(databasePath(directory), 0o600);
-    db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
-    applySqliteMigrations({
-      db,
-      ledgerTable: POSITION_LEDGER_MIGRATION_LEDGER,
-      migrations: POSITION_LEDGER_MIGRATIONS,
-    });
     db.exec("BEGIN IMMEDIATE");
     try {
-      const fingerprint = caseflowFingerprint(validated);
-      let last: { sequence: number; ref: string } | undefined;
-      let existing: BrokerHistoryRecord | undefined;
-      // Finding a duplicate never ends validation: corrupt tails and other accounts
-      // must still fail before returning the first matching observation.
-      for (const row of readVerifiedBrokerHistoryRows(db)) {
-        if (row.header.sequence % 64 === 0) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-        }
-        options.signal?.throwIfAborted();
-        last = { sequence: row.header.sequence, ref: row.ref };
-        if (
-          !existing &&
-          row.header.accountId === validated.accountId &&
-          row.header.venue === validated.venue &&
-          row.header.query === validated.query &&
-          row.header.cursor === validated.cursor &&
-          row.header.payloadCount === validated.payload.length
-        ) {
-          const bodyFingerprint =
+      const version = db.prepare("PRAGMA data_version").get()?.data_version;
+      if (typeof version !== "number") {
+        throw new Error("broker history data version unavailable");
+      }
+      if (writer.head?.version !== version) {
+        writer.head = undefined;
+        db.exec("DELETE FROM broker_append_lookup");
+        let sequence = 0;
+        let ref: string | null = null;
+        const index = db.prepare("INSERT OR IGNORE INTO broker_append_lookup VALUES (?,?)");
+        for (const row of readVerifiedBrokerHistoryRows(db)) {
+          if (row.header.sequence % 64 === 0) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+          options.signal?.throwIfAborted();
+          const fingerprint =
             row.proof?.bodyFingerprint ?? caseflowFingerprint(row.readRecord().body);
           if (row.proof) {
-            row.proof.bodyFingerprint = bodyFingerprint;
+            row.proof.bodyFingerprint = fingerprint;
           }
-          if (bodyFingerprint === fingerprint) {
-            existing = row.readRecord();
-          }
+          index.run(fingerprint, row.header.sequence);
+          sequence = row.header.sequence;
+          ref = row.ref;
         }
+        writer.head = { version, sequence, ref };
       }
-      if (existing) {
+      options.signal?.throwIfAborted();
+      const fingerprint = caseflowFingerprint(validated);
+      const match = db
+        .prepare("SELECT sequence FROM broker_append_lookup WHERE fingerprint=?")
+        .get(fingerprint);
+      if (match) {
+        const row = db
+          .prepare("SELECT ref,body FROM finance_broker_history WHERE sequence=?")
+          .get(match.sequence);
+        if (!row || typeof row.body !== "string" || typeof row.ref !== "string") {
+          throw new Error("broker history duplicate index mismatch");
+        }
+        const raw: unknown = JSON.parse(row.body);
+        const record = BrokerHistoryRecordSchema.parse(raw);
+        if (
+          record.sequence !== match.sequence ||
+          caseflowFingerprint(raw) !== row.ref ||
+          caseflowFingerprint(record.body) !== fingerprint
+        ) {
+          throw new Error("broker history duplicate integrity mismatch");
+        }
         db.exec("COMMIT");
-        return { record: existing, appended: false };
+        return { record: { ...record, ref: row.ref }, appended: false };
       }
       const record = {
-        sequence: (last?.sequence ?? 0) + 1,
-        previousRef: last?.ref ?? null,
+        sequence: writer.head.sequence + 1,
+        previousRef: writer.head.ref,
         body: validated,
       };
       const ref = caseflowFingerprint(record);
@@ -1119,14 +1436,22 @@ async function appendBrokerHistoryOnTurn(
         ref,
         JSON.stringify(record),
       );
+      db.prepare("INSERT INTO broker_append_lookup VALUES (?,?)").run(fingerprint, record.sequence);
       db.exec("COMMIT");
+      writer.head = { version, sequence: record.sequence, ref };
       return { record: { ...record, ref }, appended: true };
     } catch (error) {
-      db.exec("ROLLBACK");
+      writer.head = undefined;
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
       throw error;
     }
   } finally {
-    db.close();
+    writer.busy = false;
+    if (positionLedgerWriters.get(databasePath(directory)) !== writer) {
+      db.close();
+    }
   }
 }
 /** Pure local projection: verify the global chain, retaining only caller-owned state. */
@@ -1142,7 +1467,9 @@ export async function reduceFinanceBrokerHistoryRecords<T>(
   if (!accountId.trim() || !venue.trim()) {
     throw new Error("broker history requires account and venue");
   }
-  const db = await openReadOnly(directory);
+  const active = brokerReadSnapshots.getStore();
+  const snapshot = active?.filename === databasePath(directory) ? active : undefined;
+  const db = snapshot?.db ?? (await openReadOnly(directory));
   if (!db) {
     return { value: initial, headRef: null, recordCount: 0 };
   }
@@ -1151,9 +1478,11 @@ export async function reduceFinanceBrokerHistoryRecords<T>(
     let headRef: string | null = null;
     let recordCount = 0;
     const streams = options.streams ? new Set(options.streams) : undefined;
-    for (const row of readVerifiedBrokerHistoryRows(db)) {
+    for (const row of snapshot
+      ? readSnapshotBrokerHistoryRows(snapshot)
+      : readVerifiedBrokerHistoryRows(db)) {
       // Keep socket acknowledgements, heartbeat pongs and host deadlines runnable.
-      // Every current row still receives the original byte/hash/chain validation.
+      // Shared snapshots were fully verified before use; standalone reads verify here.
       if (row.header.sequence % 64 === 0) {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
@@ -1170,7 +1499,9 @@ export async function reduceFinanceBrokerHistoryRecords<T>(
     }
     return { value, headRef, recordCount };
   } finally {
-    db.close();
+    if (!snapshot) {
+      db.close();
+    }
   }
 }
 
@@ -1207,24 +1538,31 @@ export async function readFinanceBrokerHistoryActivities(
   ) {
     throw new Error("broker activities require account, venue and sealed sequence");
   }
-  const db = await openReadOnly(directory);
+  const active = brokerReadSnapshots.getStore();
+  const snapshot = active?.filename === databasePath(directory) ? active : undefined;
+  const db = snapshot?.db ?? (await openReadOnly(directory));
   if (!db) {
     return { activities: [], headRef: null };
   }
   try {
     const activities = new Map<string, { fingerprint: string; row: Record<string, unknown> }>();
     let headRef: string | null = null;
-    for (const record of readBrokerHistoryRows(db)) {
-      if (record.sequence % 64 === 0) {
+    for (const row of snapshot
+      ? readSnapshotBrokerHistoryRows(snapshot)
+      : readVerifiedBrokerHistoryRows(db)) {
+      if (row.header.sequence % 64 === 0) {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
-      if (record.body.accountId !== accountId || record.body.venue !== venue) {
+      if (row.header.accountId !== accountId || row.header.venue !== venue) {
         continue;
       }
-      headRef = record.ref;
-      if (record.sequence > throughSequence || !record.body.query.startsWith("activities:")) {
+      headRef = row.ref;
+      if (row.header.sequence > throughSequence || !row.header.query.startsWith("activities:")) {
         continue;
       }
+      // The full chain is verified here or by the shared snapshot. Decode only activity payloads
+      // inside this account's sealed window; unrelated pages are not decision input.
+      const record = row.readRecord();
       for (const row of record.body.payload) {
         if (typeof row.id !== "string" || !row.id) {
           throw new Error("missing activity identity");
@@ -1239,15 +1577,22 @@ export async function readFinanceBrokerHistoryActivities(
     }
     return { activities: [...activities.values()].map(({ row }) => row), headRef };
   } finally {
-    db.close();
+    if (!snapshot) {
+      db.close();
+    }
   }
 }
 
 /** Latest reconciliations per book, with chain validation and no migration or writes. */
 export async function readFinanceLatestBrokerReconciliations(
   directory: string,
-  options: { asOf?: string; scope?: { accountId: string; venue: string } } = {},
+  options: {
+    asOf?: string;
+    scope?: { accountId: string; venue: string };
+    signal?: AbortSignal;
+  } = {},
 ) {
+  options.signal?.throwIfAborted();
   if (options.scope && (!options.scope.accountId.trim() || !options.scope.venue.trim())) {
     throw new Error("broker reconciliation scope requires account and venue");
   }
@@ -1255,24 +1600,41 @@ export async function readFinanceLatestBrokerReconciliations(
   if (cutoff !== undefined && !Number.isFinite(cutoff)) {
     throw new Error("invalid broker reconciliation cutoff");
   }
-  const db = await openReadOnly(directory);
+  const active = brokerReadSnapshots.getStore();
+  const snapshot = active?.filename === databasePath(directory) ? active : undefined;
+  const db = snapshot?.db ?? (await openReadOnly(directory));
   if (!db) {
+    options.signal?.throwIfAborted();
     return { records: [], omittedAccounts: 0 };
   }
   try {
+    options.signal?.throwIfAborted();
     const latest = new Map<string, BrokerHistoryRecord>();
     const heads = new Map<string, string>();
-    for (const row of readBrokerHistoryRows(db)) {
+    let lastYieldAt = performance.now();
+    for (const verified of snapshot
+      ? readSnapshotBrokerHistoryRows(snapshot)
+      : readVerifiedBrokerHistoryRows(db)) {
+      options.signal?.throwIfAborted();
+      const header = verified.header;
+      // This latest-only projection still audits the whole history. Keep its
+      // pinned SQLite iterator responsive just like the other history readers.
+      if (header.sequence % 64 === 0 || performance.now() - lastYieldAt >= 8) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        lastYieldAt = performance.now();
+        options.signal?.throwIfAborted();
+      }
       // Scope retention, not validation: the generator still verifies every tail row.
       if (
         options.scope &&
-        (row.body.accountId !== options.scope.accountId || row.body.venue !== options.scope.venue)
+        (header.accountId !== options.scope.accountId || header.venue !== options.scope.venue)
       ) {
         continue;
       }
-      const key = JSON.stringify([row.body.venue, row.body.accountId]);
-      heads.set(key, row.ref);
-      if (row.body.query.startsWith("reconciliation:")) {
+      const key = JSON.stringify([header.venue, header.accountId]);
+      heads.set(key, verified.ref);
+      if (header.query.startsWith("reconciliation:")) {
+        const row = verified.readRecord();
         const observedAt = row.body.payload[0]?.observedAt;
         if (
           cutoff !== undefined &&
@@ -1284,6 +1646,7 @@ export async function readFinanceLatestBrokerReconciliations(
         latest.set(key, row);
       }
     }
+    options.signal?.throwIfAborted();
     const selected = [...latest.entries()].toSorted((a, b) => b[1].sequence - a[1].sequence);
     return {
       records: selected.slice(0, 3).map(([key, row]) => ({
@@ -1299,6 +1662,8 @@ export async function readFinanceLatestBrokerReconciliations(
       omittedAccounts: Math.max(0, selected.length - 3),
     };
   } finally {
-    db.close();
+    if (!snapshot) {
+      db.close();
+    }
   }
 }

@@ -1,15 +1,17 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import type { AlpacaSafetyAccountArithmeticDiagnostic } from "./finance-alpaca-safety-provider.js";
+import * as fingerprints from "./finance-caseflow.js";
 import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
   readFinanceIntradayExecutionCoverage,
+  readFinanceIntradayAccountHistory,
   readFinanceIntradayDecisions,
   readFinanceIntradayOutcome,
   readFinanceIntradayOutcomes,
@@ -662,4 +664,260 @@ it("persists exact future-quote timing without accepting contradictory arithmeti
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+it("does not rehash the verified decision prefix for each resident append or scoped read", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-incremental-"));
+  temporary.push(directory);
+  for (let i = 0; i < 120; i++) {
+    await appendFinanceIntradayDecision(directory, { ...input, signalId: `prefix-${i}` });
+  }
+  const hash = vi.spyOn(fingerprints, "caseflowFingerprint");
+  try {
+    await appendFinanceIntradayDecision(directory, {
+      ...input,
+      signalId: "selected",
+      instrument: "QQQ",
+    });
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: "selected",
+      status: "refused",
+      reasons: ["fixture"],
+    });
+    const selected = await readFinanceIntradayDecisions(directory, { instrument: "QQQ" });
+    expect(selected.map((r) => r.input.signalId)).toEqual(["selected"]);
+    expect(hash.mock.calls.length).toBeLessThan(10);
+  } finally {
+    hash.mockRestore();
+  }
+});
+
+it.each(["body", "chain", "index"] as const)(
+  "invalidates the resident proof on external %s corruption even outside the selected scope",
+  async (mode) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-external-"));
+    temporary.push(directory);
+    await appendFinanceIntradayDecision(directory, input);
+    await appendFinanceIntradayDecision(directory, {
+      ...input,
+      signalId: "other",
+      instrument: "QQQ",
+    });
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+    try {
+      db.exec("DROP TRIGGER finance_intraday_decisions_no_update");
+      if (mode === "index") {
+        db.prepare(
+          "UPDATE finance_intraday_decisions SET signal_id='wrong' WHERE sequence=1",
+        ).run();
+      } else {
+        const row = db
+          .prepare("SELECT body FROM finance_intraday_decisions WHERE sequence=1")
+          .get();
+        const body = JSON.parse(String(row?.body));
+        if (mode === "body") {
+          body.input.reason = "tampered";
+          db.prepare("UPDATE finance_intraday_decisions SET body=? WHERE sequence=1").run(
+            JSON.stringify(body),
+          );
+        } else {
+          body.previousRef = "f".repeat(64);
+          db.prepare("UPDATE finance_intraday_decisions SET body=?,ref=? WHERE sequence=1").run(
+            JSON.stringify(body),
+            fingerprints.caseflowFingerprint(body),
+          );
+        }
+      }
+    } finally {
+      db.close();
+    }
+    await expect(readFinanceIntradayDecisions(directory, { instrument: "QQQ" })).rejects.toThrow(
+      /intraday decision/,
+    );
+    await expect(
+      appendFinanceIntradayDecision(directory, { ...input, signalId: "must-not-append" }),
+    ).rejects.toThrow(/intraday decision/);
+  },
+);
+
+it("revalidates a second writer and chains the next resident append to its committed decision", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-second-writer-"));
+  temporary.push(directory);
+  const first = await appendFinanceIntradayDecision(directory, input);
+  const second = {
+    schemaVersion: "lcx_finance_intraday_decision_v1",
+    sequence: 2,
+    previousRef: first.record.ref,
+    recordedAt: new Date().toISOString(),
+    input: { ...input, signalId: "external", instrument: "QQQ" },
+  };
+  const secondRef = fingerprints.caseflowFingerprint(second);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+  try {
+    db.prepare(
+      "INSERT INTO finance_intraday_decisions(ref,signal_id,sequence,body) VALUES (?,?,?,?)",
+    ).run(secondRef, "external", 2, JSON.stringify(second));
+  } finally {
+    db.close();
+  }
+  const third = await appendFinanceIntradayDecision(directory, { ...input, signalId: "third" });
+  expect(third.record.sequence).toBe(3);
+  expect(third.record.previousRef).toBe(secondRef);
+  const selected = await readFinanceIntradayDecisions(directory, { instrument: "QQQ" });
+  expect(selected.map((r) => r.ref)).toEqual([secondRef]);
+  expect((await appendFinanceIntradayDecision(directory, second.input)).appended).toBe(false);
+});
+
+it("reopens an evicted ledger with a full proof and does not retain caller-mutated records", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-reopen-"));
+  temporary.push(directory);
+  const first = await appendFinanceIntradayDecision(directory, input);
+  first.record.input.instrument = "MUTATED";
+  for (let i = 0; i < 9; i++) {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-evict-"));
+    temporary.push(other);
+    await appendFinanceIntradayDecision(other, input);
+  }
+  const hash = vi.spyOn(fingerprints, "caseflowFingerprint");
+  try {
+    const rows = await readFinanceIntradayDecisions(directory);
+    expect(rows[0].input.instrument).toBe("SPY");
+    expect(hash.mock.calls.length).toBeGreaterThanOrEqual(2);
+  } finally {
+    hash.mockRestore();
+  }
+});
+
+it("uses the migrated scope index and preserves schema-normalized legacy instruments", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-scope-index-"));
+  temporary.push(directory);
+  const first = await appendFinanceIntradayDecision(directory, input);
+  const { ref: _ref, ...record } = first.record;
+  const legacy = { ...record, input: { ...record.input, instrument: " SPY " } };
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+  try {
+    const plan = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT ref,body FROM finance_intraday_decisions WHERE trim(json_extract(body,'$.input.instrument'))=? ORDER BY sequence",
+      )
+      .all("SPY");
+    expect(JSON.stringify(plan)).toContain("USING INDEX finance_intraday_decisions_instrument");
+    db.exec("DROP TRIGGER finance_intraday_decisions_no_update");
+    db.prepare("UPDATE finance_intraday_decisions SET body=?,ref=? WHERE sequence=1").run(
+      JSON.stringify(legacy),
+      fingerprints.caseflowFingerprint(legacy),
+    );
+  } finally {
+    db.close();
+  }
+  const rows = await readFinanceIntradayDecisions(directory, { instrument: "SPY" });
+  expect(rows).toHaveLength(1);
+  expect(rows[0].input.instrument).toBe("SPY");
+});
+
+it("persists the original account request failure without accepting provider secrets", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "account-request-diagnostic-"));
+  temporary.push(directory);
+  const outcome = {
+    signalId: "account-request-failure",
+    status: "refused" as const,
+    reasons: ["intraday_execution_unexpected_error"],
+    executionFailure: {
+      stage: "account_book" as const,
+      category: "unexpected" as const,
+      elapsedMs: 4000,
+      account: {
+        stage: "broker_reconciliation" as const,
+        code: "ECONNRESET",
+        elapsedMs: 3900,
+        request: {
+          endpoint: "positions" as const,
+          phase: "request" as const,
+          code: "ECONNRESET",
+          elapsedMs: 3000,
+        },
+      },
+    },
+  };
+  await appendFinanceIntradayOutcome(directory, outcome);
+  expect(await readFinanceIntradayOutcome(directory, outcome.signalId)).toEqual(outcome);
+  for (const request of [
+    { ...outcome.executionFailure.account.request, url: "private-provider-content" },
+    { ...outcome.executionFailure.account.request, code: "private-provider-content" },
+  ]) {
+    await expect(
+      appendFinanceIntradayOutcome(directory, {
+        ...outcome,
+        signalId: "unsafe-request",
+        executionFailure: {
+          ...outcome.executionFailure,
+          account: { ...outcome.executionFailure.account, request },
+        },
+      } as never),
+    ).rejects.toThrow();
+  }
+});
+
+it("recovers bounded account outcomes across sessions without attributing anonymous or foreign failures", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-account-history-"));
+  temporary.push(directory);
+  vi.useFakeTimers();
+  const start = Date.parse("2026-09-18T18:00:00.000Z");
+  for (let index = 0; index < 30; index++) {
+    vi.setSystemTime(start + index * 1000);
+    const signalId = `history-${index}`;
+    await appendFinanceIntradayDecision(directory, {
+      ...input,
+      signalId,
+      instrument: index === 0 ? "IWM" : "SPY",
+    });
+    await appendFinanceIntradayOutcome(directory, {
+      signalId,
+      status: index === 0 ? "uncertain" : "refused",
+      reasons: ["account_read_failed"],
+      ...(index === 28
+        ? {}
+        : {
+            executionScope: {
+              accountId: index === 29 ? "foreign" : "selected",
+              venue: "alpaca:paper" as const,
+            },
+          }),
+    });
+  }
+  const asOf = "2026-09-21T13:00:00.000Z";
+  const history = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf,
+  });
+  expect(history).toMatchObject({
+    status: "observed",
+    scannedOutcomes: 24,
+    earlierHistoryMayBeOmitted: true,
+    omittedEntries: 16,
+  });
+  expect(history.entries).toHaveLength(8);
+  expect(history.entries[0]).toMatchObject({
+    signalId: "history-27",
+    status: "refused",
+    reviewStatus: "not_observed",
+    decision: "unknown",
+    reasons: ["account_read_failed"],
+    decisionRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    outcomeRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+  // Reopen the same original book after a weekend; no in-memory feedback cache is needed.
+  expect(
+    await readFinanceIntradayAccountHistory(directory, { accountId: "selected", asOf }),
+  ).toEqual(history);
+  const earlier = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf: "2026-09-18T18:00:02.000Z",
+  });
+  expect(earlier.entries.map((entry) => entry.signalId)).toEqual(["history-1", "history-0"]);
+  expect(earlier.entries.find((entry) => entry.status === "uncertain")?.status).toBe("uncertain");
+  expect(history.scopeLimitation).toContain("without_native_account_identity");
 });

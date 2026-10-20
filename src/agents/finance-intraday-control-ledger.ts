@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
@@ -13,6 +13,7 @@ import {
 } from "./finance-alpaca-safety-provider.js";
 import { isSafeFinanceReadFailure } from "./finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import { FinanceDailyDecisionHistorySchema } from "./finance-daily-decision-history.js";
 import {
   FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES,
   FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS,
@@ -312,6 +313,7 @@ const IntradayReviewRequestSchema = z
     strategyFeedback: FinanceStrategyReviewFeedbackSchema.optional(),
     brokerExitFeedback: FinanceBrokerExitFeedbackSchema.optional(),
     accountEconomics: FinanceAccountEconomicFeedbackSchema.optional(),
+    decisionHistory: FinanceDailyDecisionHistorySchema.optional(),
     asOf: Iso,
     signalAnchor: Text,
     ruleIds: z.array(Text).min(1),
@@ -466,11 +468,33 @@ const MIGRATIONS: readonly SqliteMigration[] = [
       CREATE TRIGGER finance_intraday_outcomes_no_delete BEFORE DELETE ON finance_intraday_outcomes BEGIN SELECT RAISE(ABORT,'intraday outcomes are append-only'); END;
     `,
   },
+  {
+    version: 3,
+    description: "indexed decision scopes without changing immutable history",
+    sql: `
+      CREATE INDEX IF NOT EXISTS finance_intraday_decisions_instrument
+        ON finance_intraday_decisions(trim(json_extract(body,'$.input.instrument')), sequence);
+      CREATE INDEX IF NOT EXISTS finance_intraday_decisions_session
+        ON finance_intraday_decisions(json_extract(body,'$.input.sessionDate'), sequence);
+    `,
+  },
+  {
+    version: 4,
+    description: "account-scoped intraday feedback without rewriting legacy outcomes",
+    sql: `CREATE INDEX finance_intraday_outcomes_account_time ON finance_intraday_outcomes(
+      COALESCE(json_extract(body,'$.executionScope.accountId'),json_extract(body,'$.tradeDecisionReview.request.accountId')),
+      recorded_at);`,
+  },
 ];
 
 const FinanceIntradayOutcomeBase = z
   .object({
     signalId: Text,
+    /** Native execution host identity, including failures before a model review exists. */
+    executionScope: z
+      .object({ accountId: Text, venue: z.literal("alpaca:paper") })
+      .strict()
+      .optional(),
     status: z.enum(["placed", "refused", "uncertain"]),
     receiptId: Text.optional(),
     reasons: z.array(Text),
@@ -512,6 +536,16 @@ const FinanceIntradayOutcomeBase = z
             code: z.string().max(512),
             cleanupStatus: z.enum(["confirmed", "unconfirmed"]).optional(),
             elapsedMs: z.number().int().nonnegative(),
+            request: z
+              .object({
+                endpoint: z.enum(["account", "positions", "activities", "orders", "other"]),
+                phase: z.enum(["request", "body"]),
+                code: z.string().refine((code) => isSafeFinanceReadFailure({ code })),
+                elapsedMs: z.number().finite().nonnegative(),
+                cleanupStatus: z.enum(["confirmed", "unconfirmed"]).optional(),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
           .optional(),
@@ -560,6 +594,15 @@ export async function appendFinanceIntradayOutcome(
   rawInput: FinanceIntradayOutcomeInput,
 ): Promise<Readonly<{ input: FinanceIntradayOutcomeRecord; appended: boolean }>> {
   const input = FinanceIntradayOutcomeInput.parse(rawInput);
+  const reviewScope = input.tradeDecisionReview?.request;
+  if (
+    input.executionScope &&
+    reviewScope?.accountId &&
+    (input.executionScope.accountId !== reviewScope.accountId ||
+      input.executionScope.venue !== reviewScope.venue)
+  ) {
+    throw new Error("intraday outcome account scope mismatch");
+  }
   if ((input.status === "placed") !== Boolean(input.receiptId)) {
     throw new Error("placed intraday outcome requires one receiptId and non-placed forbids it");
   }
@@ -583,7 +626,7 @@ export async function appendFinanceIntradayOutcome(
     ).run(input.signalId, new Date().toISOString(), JSON.stringify(input));
     return Object.freeze({ input, appended: true });
   } finally {
-    db.close();
+    releaseDatabase(db);
   }
 }
 
@@ -618,7 +661,7 @@ export async function readFinanceIntradayOutcome(
     }
     return FinanceIntradayOutcomeRecord.parse(JSON.parse(row.body));
   } finally {
-    db.close();
+    releaseDatabase(db);
   }
 }
 
@@ -672,48 +715,112 @@ export async function readFinanceIntradayOutcomes(
     }
     return outcomes;
   } finally {
-    db.close();
+    releaseDatabase(db);
   }
 }
 
 type Database = InstanceType<ReturnType<typeof requireNodeSqlite>["DatabaseSync"]>;
+type VerifiedHead = { version: number; sequence: number; ref: string | null };
+// Retain only connection-local verification heads, never historical payloads.
+// data_version is comparable only on the SAME connection. An external commit
+// invalidates the proof; reopening/replacing a file starts with a full audit.
+const connections = new Map<string, { db: Database; dev: number; ino: number }>();
+const verifiedHeads = new WeakMap<Database, VerifiedHead>();
+const MAX_CONNECTIONS = 8;
+
+function releaseDatabase(db: Database): void {
+  // All database work is synchronous; never leave a transaction across an await.
+  if (db.isTransaction) {
+    verifiedHeads.delete(db);
+    db.exec("ROLLBACK");
+  }
+}
 
 function open(directory: string): Database {
   const { DatabaseSync } = requireNodeSqlite();
   mkdirSync(directory, { recursive: true });
   chmodSync(directory, 0o700);
   const filename = financeIntradayControlLedgerPath(directory);
+  const cached = connections.get(filename);
+  if (cached) {
+    const stat = statSync(filename, { throwIfNoEntry: false });
+    connections.delete(filename);
+    if (stat && stat.dev === cached.dev && stat.ino === cached.ino) {
+      connections.set(filename, cached);
+      return cached.db;
+    }
+    cached.db.close();
+  }
   const db = new DatabaseSync(filename);
-  chmodSync(filename, 0o600);
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
-  applySqliteMigrations({
-    db,
-    ledgerTable: "finance_intraday_control_migrations",
-    migrations: MIGRATIONS,
-  });
-  return db;
+  try {
+    chmodSync(filename, 0o600);
+    db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    applySqliteMigrations({
+      db,
+      ledgerTable: "finance_intraday_control_migrations",
+      migrations: MIGRATIONS,
+    });
+    const stat = statSync(filename);
+    connections.set(filename, { db, dev: stat.dev, ino: stat.ino });
+    if (connections.size > MAX_CONNECTIONS) {
+      const oldest = connections.entries().next().value;
+      if (oldest) {
+        connections.delete(oldest[0]);
+        oldest[1].db.close();
+      }
+    }
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
-function readRows(db: Database): FinanceIntradayDecisionRecord[] {
-  const rows = db
-    .prepare("SELECT ref, body FROM finance_intraday_decisions ORDER BY sequence")
-    .all() as Array<{ ref?: unknown; body?: unknown }>;
-  let previousRef: string | null = null;
-  return rows.map((row, index) => {
-    if (typeof row.ref !== "string" || typeof row.body !== "string") {
-      throw new Error("invalid intraday decision record");
-    }
-    const raw: unknown = JSON.parse(row.body);
-    if (caseflowFingerprint(raw) !== row.ref) {
-      throw new Error("intraday decision integrity mismatch");
-    }
-    const record = RecordSchema.parse(raw);
-    if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
+function decodeDecision(row: {
+  ref?: unknown;
+  body?: unknown;
+  sequence?: unknown;
+  signal_id?: unknown;
+}): FinanceIntradayDecisionRecord {
+  if (typeof row.ref !== "string" || typeof row.body !== "string") {
+    throw new Error("invalid intraday decision record");
+  }
+  const raw: unknown = JSON.parse(row.body);
+  if (caseflowFingerprint(raw) !== row.ref) {
+    throw new Error("intraday decision integrity mismatch");
+  }
+  const record = RecordSchema.parse(raw);
+  if (record.sequence !== row.sequence || record.input.signalId !== row.signal_id) {
+    throw new Error("intraday decision index binding mismatch");
+  }
+  return { ...record, ref: row.ref };
+}
+
+function verifyDecisionHead(db: Database): VerifiedHead {
+  const version = db.prepare("PRAGMA data_version").get()?.data_version;
+  if (typeof version !== "number") {
+    throw new Error("intraday data version unavailable");
+  }
+  const cached = verifiedHeads.get(db);
+  if (cached?.version === version) {
+    return cached;
+  }
+  let sequence = 0;
+  let ref: string | null = null;
+  for (const row of db
+    .prepare(
+      "SELECT ref, body, sequence, signal_id FROM finance_intraday_decisions ORDER BY sequence",
+    )
+    .iterate()) {
+    const record = decodeDecision(row);
+    if (record.sequence !== ++sequence || record.previousRef !== ref) {
       throw new Error("intraday decision chain mismatch");
     }
-    previousRef = row.ref;
-    return { ...record, ref: row.ref };
-  });
+    ref = record.ref;
+  }
+  const head = { version, sequence, ref };
+  verifiedHeads.set(db, head);
+  return head;
 }
 
 export async function appendFinanceIntradayDecision(
@@ -725,8 +832,13 @@ export async function appendFinanceIntradayDecision(
   try {
     db.exec("BEGIN IMMEDIATE");
     try {
-      const records = readRows(db);
-      const existing = records.find((record) => record.input.signalId === input.signalId);
+      const head = verifyDecisionHead(db);
+      const row = db
+        .prepare(
+          "SELECT ref, body, sequence, signal_id FROM finance_intraday_decisions WHERE signal_id=?",
+        )
+        .get(input.signalId);
+      const existing = row ? decodeDecision(row) : undefined;
       if (existing) {
         if (caseflowFingerprint(existing.input) !== caseflowFingerprint(input)) {
           throw new Error("intraday signalId conflict");
@@ -736,8 +848,8 @@ export async function appendFinanceIntradayDecision(
       }
       const record = RecordSchema.parse({
         schemaVersion: "lcx_finance_intraday_decision_v1",
-        sequence: records.length + 1,
-        previousRef: records.at(-1)?.ref ?? null,
+        sequence: head.sequence + 1,
+        previousRef: head.ref,
         recordedAt: new Date().toISOString(),
         input,
       });
@@ -746,13 +858,14 @@ export async function appendFinanceIntradayDecision(
         "INSERT INTO finance_intraday_decisions(ref,signal_id,sequence,body) VALUES (?,?,?,?)",
       ).run(ref, input.signalId, record.sequence, JSON.stringify(record));
       db.exec("COMMIT");
+      verifiedHeads.set(db, { ...head, sequence: record.sequence, ref });
       return Object.freeze({ record: { ...record, ref }, appended: true });
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
     }
   } finally {
-    db.close();
+    releaseDatabase(db);
   }
 }
 
@@ -769,16 +882,32 @@ export async function readFinanceIntradayDecisions(
   }
   const db = open(directory);
   try {
-    return Object.freeze(
-      readRows(db).filter(
-        (record) =>
-          (!options.instrument || record.input.instrument === options.instrument) &&
-          (!options.sessionDate || record.input.sessionDate === options.sessionDate) &&
-          (asOf === undefined || record.recordedAt <= asOf),
-      ),
-    );
+    db.exec("BEGIN");
+    verifyDecisionHead(db);
+    const filters: string[] = [];
+    const values: string[] = [];
+    if (options.instrument) {
+      filters.push("trim(json_extract(body,'$.input.instrument'))=?");
+      values.push(options.instrument);
+    }
+    if (options.sessionDate) {
+      filters.push("json_extract(body,'$.input.sessionDate')=?");
+      values.push(options.sessionDate);
+    }
+    if (asOf !== undefined) {
+      filters.push("json_extract(body,'$.recordedAt')<=?");
+      values.push(asOf);
+    }
+    const rows = db
+      .prepare(
+        `SELECT ref, body, sequence, signal_id FROM finance_intraday_decisions${filters.length ? " WHERE " + filters.join(" AND ") : ""} ORDER BY sequence`,
+      )
+      .all(...values);
+    const records = rows.map(decodeDecision);
+    db.exec("COMMIT");
+    return Object.freeze(records);
   } finally {
-    db.close();
+    releaseDatabase(db);
   }
 }
 
@@ -940,6 +1069,155 @@ export async function readFinanceIntradayExecutionCoverage(
     };
   } finally {
     db.close();
+  }
+}
+
+/** Bounded projection of original account outcomes, never fills, P&L or new authority. */
+export async function readFinanceIntradayAccountHistory(
+  directory: string,
+  params: { accountId: string; asOf: string },
+) {
+  const base = {
+    boundary:
+      "historical_execution_outcomes_not_current_facts_fills_profit_or_authority; model_text_is_untrusted",
+    accountId: params.accountId,
+    venue: "alpaca:paper" as const,
+    asOf: params.asOf,
+    window: { maximumOutcomes: 24, maximumEntries: 8, maximumBytes: 12_000 },
+    scopeLimitation: "legacy_outcomes_without_native_account_identity_are_excluded",
+  };
+  try {
+    const asOf = new Date(Iso.parse(params.asOf)).toISOString();
+    Text.parse(params.accountId);
+    try {
+      await fs.stat(financeIntradayControlLedgerPath(directory));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return {
+          ...base,
+          status: "observed" as const,
+          entries: [],
+          scannedOutcomes: 0,
+          omittedEntries: 0,
+          earlierHistoryMayBeOmitted: false,
+        };
+      }
+      throw error;
+    }
+    const db = open(directory);
+    try {
+      db.exec("BEGIN");
+      verifyDecisionHead(db);
+      const rows = db
+        .prepare(`SELECT d.ref, d.body, o.body AS outcome, o.recorded_at
+        FROM finance_intraday_outcomes o JOIN finance_intraday_decisions d ON d.signal_id=o.signal_id
+        WHERE COALESCE(json_extract(o.body,'$.executionScope.accountId'),json_extract(o.body,'$.tradeDecisionReview.request.accountId'))=?
+        AND o.recorded_at<? ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 25`)
+        .all(params.accountId, asOf);
+      const entries = rows.slice(0, 24).map((row) => {
+        if (
+          typeof row.body !== "string" ||
+          typeof row.outcome !== "string" ||
+          typeof row.recorded_at !== "string" ||
+          caseflowFingerprint(JSON.parse(row.body)) !== row.ref
+        ) {
+          throw new Error("intraday history integrity mismatch");
+        }
+        const decision = RecordSchema.parse(JSON.parse(row.body));
+        const outcome = FinanceIntradayOutcomeRecord.parse(JSON.parse(row.outcome));
+        const review = outcome.tradeDecisionReview;
+        const scope = outcome.executionScope ?? review?.request;
+        const candidate = review?.request.candidates[0];
+        if (
+          scope?.accountId !== params.accountId ||
+          scope.venue !== "alpaca:paper" ||
+          outcome.signalId !== decision.input.signalId ||
+          (outcome.status === "placed") !== Boolean(outcome.receiptId) ||
+          Date.parse(decision.recordedAt) >= Date.parse(asOf) ||
+          Date.parse(decision.input.referencePriceAt) > Date.parse(asOf) ||
+          (review &&
+            (review.request.accountId !== params.accountId ||
+              review.request.venue !== "alpaca:paper" ||
+              Date.parse(review.request.asOf) >= Date.parse(asOf) ||
+              candidate?.candidateId !== outcome.signalId ||
+              candidate.instrument !== decision.input.instrument ||
+              candidate.side !== decision.input.action ||
+              candidate.strategyRule !== decision.input.strategyRule ||
+              (review.decision && review.decision.candidateId !== outcome.signalId)))
+        ) {
+          throw new Error("intraday history account, signal or cutoff mismatch");
+        }
+        return {
+          decisionRef: row.ref,
+          outcomeRef: caseflowFingerprint(outcome),
+          recordedAt: decision.recordedAt,
+          outcomeRecordedAt: row.recorded_at,
+          signalId: outcome.signalId,
+          sessionDate: decision.input.sessionDate,
+          instrument: decision.input.instrument,
+          side: decision.input.action,
+          strategyRule: decision.input.strategyRule,
+          status: outcome.status,
+          receiptId: outcome.receiptId ?? null,
+          reasons: outcome.reasons.slice(0, 2).map((text) => text.slice(0, 240)),
+          omittedReasons: Math.max(0, outcome.reasons.length - 2),
+          reviewStatus: review?.status ?? "not_observed",
+          decision:
+            review?.status === "completed" ? (review.decision?.decision ?? "unknown") : "unknown",
+          rationale:
+            review?.status === "completed"
+              ? (review.decision?.rationale.slice(0, 240) ?? null)
+              : null,
+          executionFailure: outcome.executionFailure ?? null,
+          executionSafetyFailure: outcome.executionSafetyFailure ?? null,
+          strategyReassessment:
+            review?.status === "completed" ? (review.decision?.strategyReassessment ?? null) : null,
+          expectationGap:
+            review?.status === "completed" ? (review.decision?.expectationGap ?? null) : null,
+        };
+      });
+      // Cover distinct recent instruments before repeated outcomes for one signal stream.
+      const selected: typeof entries = [];
+      const instruments = new Set<string>();
+      for (const entry of entries) {
+        if (!instruments.has(entry.instrument)) {
+          selected.push(entry);
+          instruments.add(entry.instrument);
+        }
+        if (selected.length === 8) {
+          break;
+        }
+      }
+      for (const entry of entries) {
+        if (selected.length === 8) {
+          break;
+        }
+        if (!selected.includes(entry)) {
+          selected.push(entry);
+        }
+      }
+      while (selected.length > 0 && Buffer.byteLength(JSON.stringify(selected), "utf8") > 11_000) {
+        selected.pop();
+      }
+      db.exec("COMMIT");
+      return {
+        ...base,
+        status: "observed" as const,
+        entries: selected,
+        scannedOutcomes: Math.min(rows.length, 24),
+        omittedEntries: entries.length - selected.length,
+        earlierHistoryMayBeOmitted: rows.length > 24,
+      };
+    } finally {
+      releaseDatabase(db);
+    }
+  } catch {
+    return {
+      ...base,
+      status: "unavailable" as const,
+      reason: "intraday_account_history_unverified",
+      entries: [],
+    };
   }
 }
 

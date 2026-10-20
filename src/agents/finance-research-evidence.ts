@@ -84,8 +84,27 @@ export function buildFinanceMonthlyTrendDerivedEvidence(
     (value): value is FinanceEvidenceRecord =>
       isEvidenceRecord(value) && value.form === "cross_asset_trend",
   );
-  if (trendRules.length !== 1) {
+  if (
+    trendRules.length === 0 ||
+    new Set(trendRules.map((rule) => rule.ruleId)).size !== trendRules.length
+  ) {
     return [];
+  }
+  if (trendRules.length > 1) {
+    // Arithmetic is scoped to each identified method. The original single-rule
+    // binder still validates it; portfolio composition alone owns execution budgets.
+    return Object.freeze(
+      trendRules.flatMap((rule) =>
+        buildFinanceMonthlyTrendDerivedEvidence(
+          controllerEvidence.map((item) =>
+            item === activeRuleItems[0]
+              ? { ...item, text: JSON.stringify({ activeRules: [rule] }) }
+              : item,
+          ),
+          asOf,
+        ),
+      ),
+    );
   }
   const rule = trendRules[0];
   const ruleInstrumentsValue = rule.instruments;
@@ -795,17 +814,37 @@ const MACRO_SERIES_IDENTITY_FIELDS = [
   "seasonal_adjustment",
 ] as const;
 
-function macroSeriesIdentity(data: Readonly<Record<string, unknown>>): string {
+function macroSeriesIdentity(record: FinanceMarketCollectionItem): string {
+  const data = record.data;
   const dimensions = Object.fromEntries(
     MACRO_SERIES_IDENTITY_FIELDS.flatMap((field) => {
       const value = data[field];
       return typeof value === "string" || typeof value === "number" ? [[field, value]] : [];
     }),
   );
+  if (record.providerName === "bls-public-macro-series") {
+    const period = data.period;
+    const frequency =
+      period === "M13"
+        ? "annual_average"
+        : typeof period === "string" && /^M(?:0[1-9]|1[0-2])$/u.test(period)
+          ? "monthly"
+          : typeof period === "string" && /^Q0[1-4]$/u.test(period)
+            ? "quarterly"
+            : undefined;
+    if (frequency) {
+      dimensions.observationFrequency = frequency;
+    }
+  }
   return JSON.stringify(dimensions);
 }
 
 function macroObservationDate(record: FinanceMarketCollectionItem): string {
+  if (record.providerName === "bls-public-macro-series") {
+    // The BLS adapter already anchors year + native period in UTC. M01 repeats
+    // every year and M13 is an annual average, not an observation date.
+    return record.sourceTimestamp.slice(0, 10);
+  }
   for (const field of ["date", "observation_date", "observationDate", "record_date", "period"]) {
     const value = record.data[field];
     if (typeof value === "string" && value.length > 0) {
@@ -822,14 +861,14 @@ function summarizeMacroSeries(
 ): string[] {
   const series = new Map<string, FinanceMarketCollectionItem[]>();
   for (const record of records) {
-    const key = macroSeriesIdentity(record.data);
+    const key = JSON.stringify([record.providerName, macroSeriesIdentity(record)]);
     const grouped = series.get(key) ?? [];
     grouped.push(record);
     series.set(key, grouped);
   }
 
   return [...series.values()].map((observations) => {
-    const dimensions = JSON.parse(macroSeriesIdentity(observations[0].data)) as Record<
+    const dimensions = JSON.parse(macroSeriesIdentity(observations[0])) as Record<
       string,
       string | number
     >;
@@ -889,7 +928,7 @@ function summarizeMacroSeries(
       : undefined;
     const realtimeStart = vintageRecord?.data.realtime_start;
     const realtimeEnd = vintageRecord?.data.realtime_end;
-    return `${prefix}: ${identity}, ${latestText}, observation period=${latestPeriod}; previous=${previousText}. Observation period is not publication time; publication time=${publicationTime ? String(vintageRecord!.data[publicationTime]) : "unverified"}; vintage interval=${typeof realtimeStart === "string" ? realtimeStart : "unverified"}..${typeof realtimeEnd === "string" ? realtimeEnd : "unverified"}. ${conflictFacts.join("; ")}${conflictFacts.length > 0 ? ". " : ""}Historical FRED queries conservatively use the prior UTC day, not intraday release availability. Units and revisions need source review.`;
+    return `${prefix}: ${identity} (provider=${observations[0].providerName}), ${latestText}, observation period=${latestPeriod}; previous=${previousText}. Observation period is not publication time; publication time=${publicationTime ? String(vintageRecord!.data[publicationTime]) : "unverified"}; vintage interval=${typeof realtimeStart === "string" ? realtimeStart : "unverified"}..${typeof realtimeEnd === "string" ? realtimeEnd : "unverified"}. ${conflictFacts.join("; ")}${conflictFacts.length > 0 ? ". " : ""}Historical FRED queries conservatively use the prior UTC day, not intraday release availability. Units and revisions need source review.`;
   });
 }
 const rounded = (value: number) => Math.round(value * 1_000) / 1_000;

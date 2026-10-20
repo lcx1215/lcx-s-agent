@@ -1,5 +1,6 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
@@ -237,6 +238,147 @@ function openDatabase(directory: string): BarDatabase {
   }
 }
 
+type BarWriter = {
+  db: BarDatabase;
+  dev: number;
+  ino: number;
+  busy: boolean;
+  filename: string;
+  head?: { version: number; sequence: number; ref: string | null };
+};
+// Busy leases cannot be evicted while a cold integrity audit yields.
+// Keep only bounded connections and disposable SQLite indexes, never historical payloads.
+const barWriters = new Map<string, BarWriter>();
+function acquireBarWriter(directory: string): BarWriter {
+  mkdirSync(directory, { recursive: true });
+  const filename = financeBarLedgerPath(realpathSync(directory));
+  const cached = barWriters.get(filename);
+  const stat = statSync(filename, { throwIfNoEntry: false });
+  if (cached && !cached.busy) {
+    barWriters.delete(filename);
+    if (stat && stat.dev === cached.dev && stat.ino === cached.ino) {
+      cached.busy = true;
+      barWriters.set(filename, cached);
+      return cached;
+    }
+    cached.db.close();
+  }
+  const db = openDatabase(directory);
+  try {
+    db.exec(`PRAGMA temp_store=FILE;
+      CREATE TEMP TABLE bar_content_lookup (signature TEXT PRIMARY KEY, ref TEXT NOT NULL);
+      CREATE TEMP TABLE bar_key_lookup (record_key TEXT PRIMARY KEY, ref TEXT NOT NULL);`);
+    const opened = statSync(filename);
+    const writer: BarWriter = { db, dev: opened.dev, ino: opened.ino, filename, busy: true };
+    if (barWriters.size >= 8) {
+      const oldest = [...barWriters].find(([, writer]) => !writer.busy);
+      if (oldest) {
+        barWriters.delete(oldest[0]);
+        oldest[1].db.close();
+      }
+    }
+    if (!barWriters.has(filename) && barWriters.size < 8) {
+      barWriters.set(filename, writer);
+    }
+    return writer;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+const barWriteTurns = new Map<string, Promise<void>>();
+
+/** Release this directory's cached connection after its appends have finished. */
+export function closeFinanceBarLedger(directory: string): void {
+  let filename: string;
+  try {
+    filename = financeBarLedgerPath(realpathSync(directory));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  const writer = barWriters.get(filename);
+  if (!writer) {
+    return;
+  }
+  if (writer.busy || barWriteTurns.has(filename)) {
+    throw new Error("bar ledger writer still in use");
+  }
+  writer.db.close();
+  barWriters.delete(filename);
+}
+
+async function withBarWriteTurn<T>(directory: string, write: () => Promise<T>): Promise<T> {
+  mkdirSync(directory, { recursive: true });
+  const filename = financeBarLedgerPath(realpathSync(directory));
+  const previous = barWriteTurns.get(filename) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  barWriteTurns.set(filename, turn);
+  await previous;
+  try {
+    return await write();
+  } finally {
+    release();
+    if (barWriteTurns.get(filename) === turn) {
+      barWriteTurns.delete(filename);
+    }
+  }
+}
+
+function indexBarRecord(db: BarDatabase, record: FinanceBarRecord): void {
+  const content = db.prepare("INSERT OR REPLACE INTO bar_content_lookup VALUES (?, ?)");
+  for (const bar of record.body.bars) {
+    content.run(barSignature(bar), record.ref);
+  }
+  db.prepare("INSERT OR IGNORE INTO bar_key_lookup VALUES (?, ?)").run(
+    record.recordKey,
+    record.ref,
+  );
+}
+
+async function verifyBarWriter(writer: BarWriter) {
+  const version = writer.db.prepare("PRAGMA data_version").get()?.data_version;
+  if (typeof version !== "number") {
+    throw new Error("bar database version unavailable");
+  }
+  if (writer.head?.version === version) {
+    return writer.head;
+  }
+  writer.db.exec("DELETE FROM bar_content_lookup; DELETE FROM bar_key_lookup;");
+  let sequence = 0;
+  let ref: string | null = null;
+  let lastYieldAt = performance.now();
+  for (const record of readStoredRecords(writer.db)) {
+    indexBarRecord(writer.db, record);
+    sequence = record.sequence;
+    ref = record.ref;
+    if (sequence % 64 === 0 || performance.now() - lastYieldAt >= 8) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      lastYieldAt = performance.now();
+    }
+  }
+  writer.head = { version, sequence, ref };
+  return writer.head;
+}
+
+function readIndexedBarRecord(db: BarDatabase, ref: string): FinanceBarRecord {
+  const row = db.prepare("SELECT body FROM finance_bar_records WHERE ref = ?").get(ref);
+  if (typeof row?.body !== "string") {
+    throw new Error("indexed bar record missing");
+  }
+  const raw: unknown = JSON.parse(row.body);
+  if (caseflowFingerprint(raw) !== ref) {
+    throw new Error("bar record integrity mismatch");
+  }
+  return { ...StoredRecordSchema.parse(raw), ref };
+}
+
 function openReadOnlyDatabase(directory: string): BarDatabase {
   const { DatabaseSync } = requireNodeSqlite();
   const db = new DatabaseSync(financeBarLedgerPath(directory), { readOnly: true });
@@ -385,94 +527,101 @@ export async function appendFinanceBars(
     throw new Error("bar record observation cannot be dated in the future");
   }
 
-  const db = openDatabase(directory);
-  try {
-    db.exec("BEGIN IMMEDIATE");
+  return withBarWriteTurn(directory, async () => {
+    const writer = acquireBarWriter(directory);
+    const db = writer.db;
     try {
-      const records = Array.from(readStoredRecords(db));
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const head = await verifyBarWriter(writer);
+        const recordCount = head.sequence;
+        const lookup = db.prepare("SELECT ref FROM bar_content_lookup WHERE signature = ?");
+        const fresh = body.bars.filter((bar) => !lookup.get(barSignature(bar)));
+        const repeatsSkipped = body.bars.length - fresh.length;
 
-      // Content, not batch identity, decides what is new: see `repeatsSkipped`.
-      const known = new Set<string>();
-      for (const record of records) {
-        for (const bar of record.body.bars) {
-          known.add(barSignature(bar));
+        if (fresh.length === 0) {
+          const first = body.bars[0];
+          const holder = first ? lookup.get(barSignature(first))?.ref : head.ref;
+          if (typeof holder !== "string") {
+            throw new Error("bar replay holder missing");
+          }
+          const record = readIndexedBarRecord(db, holder);
+          db.exec("COMMIT");
+          // Everything here was already on file. Report the record that holds it, so "nothing was
+          // filed" can be told apart from "the book is empty and nothing was ever filed".
+          return Object.freeze({
+            record,
+            appended: false,
+            repeatsSkipped,
+            recordCount,
+            headRef: head?.ref ?? null,
+          });
         }
-      }
-      const fresh = body.bars.filter((bar) => !known.has(barSignature(bar)));
-      const repeatsSkipped = body.bars.length - fresh.length;
 
-      if (fresh.length === 0) {
-        db.exec("COMMIT");
-        // Everything here was already on file. Report the record that holds it, so "nothing was
-        // filed" can be told apart from "the book is empty and nothing was ever filed".
-        const first = body.bars[0];
-        const holder = first
-          ? [...records]
-              .toReversed()
-              .find((record) =>
-                record.body.bars.some((bar) => barSignature(bar) === barSignature(first)),
-              )
-          : undefined;
-        return Object.freeze({
-          record: holder ?? records.at(-1)!,
-          appended: false,
-          repeatsSkipped,
-          recordCount: records.length,
-          headRef: records.at(-1)?.ref ?? null,
+        const filed = { ...body, bars: fresh };
+        const recordKey = caseflowFingerprint({
+          instrument: filed.instrument,
+          derivation: filed.derivation,
+          origin: filed.provenance.origin,
+          bars: [...filed.bars]
+            .map(
+              (bar) =>
+                `${bar.date}:${bar.open}:${bar.high}:${bar.low}:${bar.close}:${bar.volume ?? ""}:${bar.sampleCount ?? ""}`,
+            )
+            .toSorted(),
         });
-      }
-
-      const filed = { ...body, bars: fresh };
-      const recordKey = caseflowFingerprint({
-        instrument: filed.instrument,
-        derivation: filed.derivation,
-        origin: filed.provenance.origin,
-        bars: [...filed.bars]
-          .map(
-            (bar) =>
-              `${bar.date}:${bar.open}:${bar.high}:${bar.low}:${bar.close}:${bar.volume ?? ""}:${bar.sampleCount ?? ""}`,
-          )
-          .toSorted(),
-      });
-      const existing = records.find((record) => record.recordKey === recordKey);
-      if (existing) {
-        db.exec("COMMIT");
-        return Object.freeze({
-          record: existing,
-          appended: false,
-          repeatsSkipped,
-          recordCount: records.length,
-          headRef: records.at(-1)?.ref ?? null,
+        const existingRef = db
+          .prepare("SELECT ref FROM bar_key_lookup WHERE record_key = ?")
+          .get(recordKey)?.ref;
+        const existing =
+          typeof existingRef === "string" ? readIndexedBarRecord(db, existingRef) : undefined;
+        if (existing) {
+          db.exec("COMMIT");
+          return Object.freeze({
+            record: existing,
+            appended: false,
+            repeatsSkipped,
+            recordCount,
+            headRef: head?.ref ?? null,
+          });
+        }
+        const record = StoredRecordSchema.parse({
+          schemaVersion: FINANCE_BAR_RECORD_SCHEMA,
+          recordKey,
+          sequence: recordCount + 1,
+          previousRef: head?.ref ?? null,
+          recordedAt: new Date().toISOString(),
+          body: filed,
         });
+        const ref = caseflowFingerprint(record);
+        db.prepare(
+          "INSERT INTO finance_bar_records (ref, sequence, previous_ref, recorded_at, body) VALUES (?, ?, ?, ?, ?)",
+        ).run(ref, record.sequence, record.previousRef, record.recordedAt, JSON.stringify(record));
+        indexBarRecord(db, { ...record, ref });
+        db.exec("COMMIT");
+        writer.head = { version: head.version, sequence: record.sequence, ref };
+        return Object.freeze({
+          record: { ...record, ref },
+          appended: true,
+          repeatsSkipped,
+          recordCount: recordCount + 1,
+          headRef: ref,
+        });
+      } catch (error) {
+        writer.head = undefined;
+        db.exec("ROLLBACK");
+        throw error;
       }
-      const record = StoredRecordSchema.parse({
-        schemaVersion: FINANCE_BAR_RECORD_SCHEMA,
-        recordKey,
-        sequence: records.length + 1,
-        previousRef: records.at(-1)?.ref ?? null,
-        recordedAt: new Date().toISOString(),
-        body: filed,
-      });
-      const ref = caseflowFingerprint(record);
-      db.prepare(
-        "INSERT INTO finance_bar_records (ref, sequence, previous_ref, recorded_at, body) VALUES (?, ?, ?, ?, ?)",
-      ).run(ref, record.sequence, record.previousRef, record.recordedAt, JSON.stringify(record));
-      db.exec("COMMIT");
-      const after = Array.from(readStoredRecords(db));
-      return Object.freeze({
-        record: { ...record, ref },
-        appended: true,
-        repeatsSkipped,
-        recordCount: after.length,
-        headRef: ref,
-      });
     } catch (error) {
-      db.exec("ROLLBACK");
+      writer.head = undefined;
       throw error;
+    } finally {
+      writer.busy = false;
+      if (barWriters.get(writer.filename) !== writer) {
+        writer.db.close();
+      }
     }
-  } finally {
-    db.close();
-  }
+  });
 }
 
 /**
@@ -483,8 +632,8 @@ export async function appendFinanceBars(
  */
 function* readStoredRecords(db: BarDatabase): Generator<FinanceBarRecord> {
   const rows = db
-    .prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence")
-    .iterate() as Iterable<{ ref?: unknown; body?: unknown }>;
+    .prepare("SELECT ref, sequence, body FROM finance_bar_records ORDER BY sequence")
+    .iterate() as Iterable<{ ref?: unknown; sequence?: unknown; body?: unknown }>;
   let previousRef: string | null = null;
   let sequence = 0;
   for (const row of rows) {
@@ -496,7 +645,11 @@ function* readStoredRecords(db: BarDatabase): Generator<FinanceBarRecord> {
       throw new Error("bar record integrity mismatch");
     }
     const record = StoredRecordSchema.parse(raw);
-    if (record.sequence !== ++sequence || record.previousRef !== previousRef) {
+    if (
+      record.sequence !== ++sequence ||
+      row.sequence !== record.sequence ||
+      record.previousRef !== previousRef
+    ) {
       throw new Error("bar record chain mismatch");
     }
     previousRef = row.ref;
@@ -555,10 +708,12 @@ export async function readFinanceBarLedger(
   options: {
     asOf?: string;
     instrument?: string;
+    instruments?: readonly string[];
     source?: FinanceBarSourceFilter;
     includeSources?: boolean;
   } = {},
 ): Promise<FinanceBarLedger> {
+  const instruments = options.instruments === undefined ? undefined : new Set(options.instruments);
   const source = options.source === undefined ? undefined : SourceFilter.parse(options.source);
   const sourceSelection = source
     ? {
@@ -583,6 +738,7 @@ export async function readFinanceBarLedger(
     });
   }
   const db = openReadOnlyDatabase(directory);
+  db.exec("BEGIN");
   try {
     if (!hasBarRecordsTable(db)) {
       return Object.freeze({
@@ -609,15 +765,25 @@ export async function readFinanceBarLedger(
     let omittedSourceRecordCount = 0;
     const allSourceCloses = new Map<string, number>();
     const allSourceDivergentKeys = new Set<string>();
+    let lastYieldAt = performance.now();
     // Consume the entire verified chain even for a narrow read. Only the requested
     // projection is retained; a filtered-out or trailing corruption still rejects it.
     for (const record of readStoredRecords(db)) {
       recordCount += 1;
       headRef = record.ref;
+      // Keep the complete integrity audit responsive to timers and cancellation
+      // owners. The read transaction pins the same chain across every yield.
+      if (recordCount % 64 === 0 || performance.now() - lastYieldAt >= 8) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        lastYieldAt = performance.now();
+      }
       if (asOf !== undefined && asOf.length > 0 && record.body.observedAt.localeCompare(asOf) > 0) {
         continue;
       }
       if (options.instrument !== undefined && record.body.instrument !== options.instrument) {
+        continue;
+      }
+      if (instruments && !instruments.has(record.body.instrument)) {
         continue;
       }
       if (options.includeSources) {
@@ -731,6 +897,7 @@ export async function readFinanceBarLedger(
         : {}),
     });
   } finally {
+    db.exec("ROLLBACK");
     db.close();
   }
 }

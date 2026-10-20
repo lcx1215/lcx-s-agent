@@ -8,8 +8,10 @@ import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedbac
 import { brokerSymbol } from "./finance-broker-reconciliation.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeEtClock, latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
+import { readFinanceDailyDecisionHistory } from "./finance-daily-decision-history.js";
 import {
   readFinanceIntradayDecisions,
+  readFinanceIntradayAccountHistory,
   readFinanceIntradayOutcomes,
   type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
@@ -18,6 +20,7 @@ import {
   projectFinancePositions,
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
+  withFinanceBrokerHistorySnapshot,
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import type { FinanceActiveStrategyResearchSource } from "./finance-research-portfolio-plan.js";
@@ -794,103 +797,109 @@ async function readFinanceActiveStrategyResearchEvidenceAndSource(params: {
   start.setUTCMonth(start.getUTCMonth() - months - 1);
   const fromDate = start.toISOString().slice(0, 10);
   const toDate = latestCompletedWeekdaySessionDate(params.asOf);
-  const histories = await Promise.all(
-    instruments.map(async (instrument) => {
-      const book = await readFinanceBarLedger(params.directory, { instrument, asOf: params.asOf });
-      const rawWindow = book.bars.filter((bar) => bar.date >= fromDate && bar.date <= toDate);
-      // This is a close-only projection: differing OHLC records with the same close
-      // must not manufacture extra return observations. Conflicting closes remain.
-      const window = [
-        ...new Map(rawWindow.map((bar) => [JSON.stringify([bar.date, bar.close]), bar])).values(),
-      ];
-      const bars = window.slice(-400);
-      const monthEndDates = new Map<string, string>();
-      for (const bar of bars) {
-        const month = bar.date.slice(0, 7);
-        const prior = monthEndDates.get(month);
-        if (!prior || bar.date > prior) {
-          monthEndDates.set(month, bar.date);
+  const book =
+    instruments.length > 0
+      ? await readFinanceBarLedger(params.directory, { instruments, asOf: params.asOf })
+      : undefined;
+  const histories = book
+    ? instruments.map((instrument) => {
+        const rawWindow = book.bars.filter(
+          (bar) => bar.instrument === instrument && bar.date >= fromDate && bar.date <= toDate,
+        );
+        // This is a close-only projection: differing OHLC records with the same close
+        // must not manufacture extra return observations. Conflicting closes remain.
+        const window = [
+          ...new Map(rawWindow.map((bar) => [JSON.stringify([bar.date, bar.close]), bar])).values(),
+        ];
+        const bars = window.slice(-400);
+        const monthEndDates = new Map<string, string>();
+        // The daily display cap must not shorten the declared method horizon.
+        for (const bar of window) {
+          const month = bar.date.slice(0, 7);
+          const prior = monthEndDates.get(month);
+          if (!prior || bar.date > prior) {
+            monthEndDates.set(month, bar.date);
+          }
         }
-      }
-      const monthlyCloseObservations = [...monthEndDates.entries()]
-        .toSorted(([left], [right]) => left.localeCompare(right))
-        .map(([month, sessionDate]) => ({
-          month,
-          sessionDate,
-          closeValues: [
-            ...new Set(bars.filter((bar) => bar.date === sessionDate).map((bar) => bar.close)),
-          ].toSorted((left, right) => left - right),
-        }));
-      const divergentDates = book.divergentDates.filter((key) => {
-        const date = key.slice(key.lastIndexOf("@") + 1);
-        return date >= fromDate && date <= toDate;
-      });
-      const historyPayload =
-        params.historyFormat === "daily_calculation"
-          ? {
+        const monthlyCloseObservations = [...monthEndDates.entries()]
+          .toSorted(([left], [right]) => left.localeCompare(right))
+          .map(([month, sessionDate]) => ({
+            month,
+            sessionDate,
+            closeValues: [
+              ...new Set(window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close)),
+            ].toSorted((left, right) => left - right),
+          }));
+        const divergentDates = book.divergentDates.filter((key) => {
+          const date = key.slice(key.lastIndexOf("@") + 1);
+          return key.startsWith(`${instrument}@`) && date >= fromDate && date <= toDate;
+        });
+        const historyPayload =
+          params.historyFormat === "daily_calculation"
+            ? {
+                instrument,
+                headRef: book.headRef,
+                fromDate,
+                toDate,
+                windowBarCount: window.length,
+                rawBarCount: rawWindow.length,
+                collapsedRepeatedCloses: rawWindow.length - window.length,
+                suppliedBarCount: bars.length,
+                omittedByLimit: window.length - bars.length,
+                divergentDates,
+                closes: bars.map((bar) => [bar.date, bar.close]),
+                monthlyCloseObservations,
+              }
+            : {
+                instrument,
+                headRef: book.headRef,
+                fromDate,
+                toDate,
+                windowBarCount: window.length,
+                rawBarCount: rawWindow.length,
+                collapsedRepeatedCloses: rawWindow.length - window.length,
+                uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
+                suppliedBarCount: window.length,
+                omittedByLimit: 0,
+                divergentDates,
+                divergentCloseObservations: divergentDates.map((key) => {
+                  const sessionDate = key.slice(key.lastIndexOf("@") + 1);
+                  return {
+                    sessionDate,
+                    closeValues: [
+                      ...new Set(
+                        window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
+                      ),
+                    ].toSorted((left, right) => left - right),
+                  };
+                }),
+                boundary:
+                  "stored historical observations summarized to the last session in the requested window per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
+                columns: ["month", "sessionDate", "closeValues"],
+                monthlyCloseObservations,
+              };
+        const evidence: FinanceCommitteeEvidence = {
+          id: `finance-controller:eod:${instrument}`,
+          source: "finance-bar-ledger",
+          timestamp: params.asOf,
+          text: JSON.stringify(historyPayload),
+        };
+        return {
+          evidence,
+          // Keep daily rows out of model context while the existing numerical engine
+          // still receives its actual inputs. The durable book and headRef retain them.
+          calculationInput: {
+            ...evidence,
+            text: JSON.stringify({
               instrument,
-              headRef: book.headRef,
-              fromDate,
-              toDate,
-              windowBarCount: window.length,
-              rawBarCount: rawWindow.length,
-              collapsedRepeatedCloses: rawWindow.length - window.length,
-              suppliedBarCount: bars.length,
-              omittedByLimit: window.length - bars.length,
               divergentDates,
-              closes: bars.map((bar) => [bar.date, bar.close]),
-              monthlyCloseObservations,
-            }
-          : {
-              instrument,
-              headRef: book.headRef,
-              fromDate,
-              toDate,
-              windowBarCount: window.length,
-              rawBarCount: rawWindow.length,
-              collapsedRepeatedCloses: rawWindow.length - window.length,
-              uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
-              suppliedBarCount: bars.length,
-              omittedByLimit: window.length - bars.length,
-              divergentDates,
-              divergentCloseObservations: divergentDates.map((key) => {
-                const sessionDate = key.slice(key.lastIndexOf("@") + 1);
-                return {
-                  sessionDate,
-                  closeValues: [
-                    ...new Set(
-                      window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
-                    ),
-                  ].toSorted((left, right) => left - right),
-                };
-              }),
-              boundary:
-                "stored historical observations summarized to the last supplied session per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
-              columns: ["month", "sessionDate", "closeValues"],
-              monthlyCloseObservations,
-            };
-      const evidence: FinanceCommitteeEvidence = {
-        id: `finance-controller:eod:${instrument}`,
-        source: "finance-bar-ledger",
-        timestamp: params.asOf,
-        text: JSON.stringify(historyPayload),
-      };
-      return {
-        evidence,
-        // Keep daily rows out of model context while the existing numerical engine
-        // still receives its actual inputs. The durable book and headRef retain them.
-        calculationInput: {
-          ...evidence,
-          text: JSON.stringify({
-            instrument,
-            divergentDates,
-            suppliedBarCount: bars.length,
-            closes: bars.map((bar) => [bar.date, bar.close]),
-          }),
-        },
-      };
-    }),
-  );
+              suppliedBarCount: window.length,
+              closes: window.map((bar) => [bar.date, bar.close]),
+            }),
+          },
+        };
+      })
+    : [];
   const selectedRules = activeRules.map((rule) => ({
     ruleId: rule.ruleId,
     form: rule.form,
@@ -1073,8 +1082,23 @@ function projectFinanceBrokerAccountResearchSummary(params: {
                 : typeof rawQuantity === "string" && rawQuantity.trim()
                   ? Number(rawQuantity)
                   : Number.NaN;
+            const rawMarketValue = position.market_value;
+            const marketValue =
+              typeof rawMarketValue === "number"
+                ? rawMarketValue
+                : typeof rawMarketValue === "string" && rawMarketValue.trim()
+                  ? Number(rawMarketValue)
+                  : Number.NaN;
             return typeof position.symbol === "string" && Number.isFinite(quantity)
-              ? [{ symbol: position.symbol, quantity }]
+              ? [
+                  {
+                    symbol: position.symbol,
+                    quantity,
+                    ...(params.includeAccountFields
+                      ? { marketValue: Number.isFinite(marketValue) ? marketValue : null }
+                      : {}),
+                  },
+                ]
               : [];
           })
         : [];
@@ -1130,6 +1154,10 @@ function projectFinanceBrokerAccountResearchSummary(params: {
         ...(Array.isArray(snapshotObject.positions) &&
         snapshotPositions.length !== snapshotObject.positions.length
           ? ["positions.invalid_entries"]
+          : []),
+        ...(params.includeAccountFields &&
+        snapshotPositions.some((position) => position.marketValue === null)
+          ? ["positions.market_value"]
           : []),
         ...(!Array.isArray(protection?.coverage) ? ["protectionCoverage"] : []),
       ];
@@ -1232,7 +1260,15 @@ function projectFinanceBrokerAccountResearchSummary(params: {
 }
 
 /** Local canonical observations only: no broker call, allocation or execution authority. */
-export async function buildFinanceBrokerAccountResearchEvidence(params: {
+export async function buildFinanceBrokerAccountResearchEvidence(
+  params: Parameters<typeof buildFinanceBrokerAccountResearchEvidenceSnapshot>[0],
+) {
+  return withFinanceBrokerHistorySnapshot(params.directory, () =>
+    buildFinanceBrokerAccountResearchEvidenceSnapshot(params),
+  );
+}
+
+async function buildFinanceBrokerAccountResearchEvidenceSnapshot(params: {
   directory: string;
   asOf: string;
   /** Both fields select one canonical book; omit both for the legacy night aggregate. */
@@ -1304,6 +1340,19 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
     ? {
         ...projected,
         accountScope: { accountId: params.accountId, venue: params.venue },
+        ...(params.venue === "alpaca:paper"
+          ? {
+              executionHistory: readFinanceDailyDecisionHistory({
+                directory: params.directory,
+                accountId: params.accountId,
+                asOf: params.asOf,
+              }),
+              intradayExecutionHistory: await readFinanceIntradayAccountHistory(params.directory, {
+                accountId: params.accountId ?? "",
+                asOf: params.asOf,
+              }),
+            }
+          : {}),
         currentAccountFactsStatus: usableCurrentAccountFacts ? "observed" : "unknown",
         positionSnapshots: projected.positionSnapshots.map((snapshot) =>
           usableCurrentAccountFacts
@@ -1610,6 +1659,40 @@ export async function buildFinanceNightReviewEvidence(params: {
         ]
       : []),
     ...controllerEodEvidence,
+    ...(params.includeResearchScope
+      ? [
+          {
+            id: `finance-night:execution-history:${params.etDate}`,
+            source: "finance-daily-execution-history",
+            timestamp: params.asOf,
+            text: JSON.stringify({
+              executionAuthority: "none",
+              accounts: await Promise.all(
+                [
+                  ...new Set(
+                    brokerReconciliations.records
+                      .filter((record) => record.venue === "alpaca:paper")
+                      .map((record) => record.accountId),
+                  ),
+                ]
+                  .slice(0, 2)
+                  .map(async (accountId) => ({
+                    accountId,
+                    intradayHistory: await readFinanceIntradayAccountHistory(params.directory, {
+                      accountId,
+                      asOf: params.asOf,
+                    }),
+                    history: readFinanceDailyDecisionHistory({
+                      directory: params.directory,
+                      accountId,
+                      asOf: params.asOf,
+                    }),
+                  })),
+              ),
+            }),
+          },
+        ]
+      : []),
   ]);
   const intradayIndex = evidence.findIndex(
     (item) => item.id === `finance-night:intraday:${params.etDate}`,

@@ -878,3 +878,54 @@ describe("durable macro collection reuse", () => {
     expect(result.jobs[0]?.sourceReuse).toBeUndefined();
   });
 });
+
+it("retains completed evidence and defers queued jobs when wall time expires before timers run", async () => {
+  vi.useFakeTimers();
+  const started = Date.now();
+  const base = options();
+  const adapter = collection(fixtureFetch);
+  const calls: string[] = [];
+  const packet = await runFinanceResearchBatch({
+    ...base,
+    maxConcurrency: 1,
+    totalTimeoutMs: 1000,
+    sourceTimeoutMs: 500,
+    realtimeAdapters: [],
+    targets: ["SPY", "QQQ", "IWM"].map((instrument) => ({
+      id: instrument,
+      instrument,
+      assetClass: "us_equity",
+      realtime: false,
+      collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+    })),
+    collectionAdapters: [
+      {
+        ...adapter,
+        collect: async (request, signal) => {
+          calls.push(request.instrument);
+          const result = await adapter.collect(request, signal);
+          if (request.instrument === "QQQ") {
+            vi.setSystemTime(started + 60_000);
+          }
+          return result;
+        },
+      },
+    ],
+  });
+  expect(calls).toEqual(["SPY", "QQQ"]);
+  expect(packet.status).toBe("timed_out");
+  expect(packet.jobs.map((job) => job.status)).toEqual(["ready", "timed_out", "timed_out"]);
+  expect(packet.jobs[2].missingEvidence).toContain("job_not_dispatched");
+  const { buildFinanceSourceRecoveryPlan } = await import("./finance-source-recovery.js");
+  const recovery = buildFinanceSourceRecoveryPlan(
+    packet,
+    new Date(Date.parse(AS_OF) + 60_000).toISOString(),
+  );
+  // A successful HTTP read followed by a late adapter result still requires evidence review.
+  expect(recovery.entries.map((entry) => entry.action)).toEqual([
+    "preserve",
+    "review_evidence",
+    "retry",
+  ]);
+  expect(packet.budget.httpDispatchCount).toBe(2);
+});

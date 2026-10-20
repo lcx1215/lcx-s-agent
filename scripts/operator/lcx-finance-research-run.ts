@@ -36,6 +36,7 @@ import {
   financeScheduledResearchHandoffSchema,
   type FinanceResearchControllerHandoff,
   assertFinanceResearchRuleUse,
+  financeResearchPortfolioAbstentionSchema,
   type FinanceResearchControllerRuleUse,
 } from "../../src/agents/finance-research-portfolio-plan.js";
 import {
@@ -1025,6 +1026,69 @@ async function writeVerifiedPortfolioPlan(
   };
 }
 
+/** Publish a reviewed abstention through the same capital-plan owner as positive allocations.
+ * Zero budgets withhold new entries; they do not liquidate owned positions. */
+export async function writeResearchCapitalDecision(
+  filePath: string,
+  params: {
+    asOf: string;
+    context: NonNullable<FinanceResearchRunInput["portfolioContext"]>;
+    researchReceiptId: string;
+    abstention: NonNullable<FinanceResearchRunReceipt["portfolioAbstention"]>;
+  },
+): Promise<FinancePortfolioPlanWrite> {
+  const context = financeResearchPortfolioContextSchema.parse(params.context);
+  const abstention = financeResearchPortfolioAbstentionSchema.parse(params.abstention);
+  return writeVerifiedPortfolioPlan(filePath, {
+    asOf: params.asOf,
+    validUntil: new Date(Date.parse(params.asOf) + context.validityMinutes * 60_000).toISOString(),
+    accountId: context.accountId,
+    venue: context.venue,
+    conflictPolicy: context.conflictPolicy,
+    allocations: context.activeStrategyIds.map((strategyId) => ({
+      strategyId,
+      budgetFraction: 0,
+      evidenceIds: abstention.evidenceIds,
+    })),
+    candidates: [],
+    provenance: {
+      kind: "finance_research_allocation",
+      receiptId: params.researchReceiptId,
+      evidenceIds: abstention.evidenceIds,
+    },
+  });
+}
+
+/** The original operator publishes only quality-accepted capital decisions. */
+export async function publishResearchCapitalOutcome(
+  filePath: string,
+  receipt: FinanceResearchRunReceipt,
+): Promise<FinancePortfolioPlanWrite | undefined> {
+  if (
+    receipt.status !== "candidate" ||
+    !receipt.gates.every((gate) => gate.passed) ||
+    receipt.quality?.status !== "verified" ||
+    !receipt.quality.quality.passed
+  ) {
+    return undefined;
+  }
+  if (receipt.portfolioPlan && receipt.portfolioAbstention) {
+    throw new Error("conflicting research capital outcomes");
+  }
+  if (receipt.portfolioPlan) {
+    return writeVerifiedPortfolioPlan(filePath, receipt.portfolioPlan);
+  }
+  if (receipt.portfolioAbstention && receipt.plan.portfolioContext) {
+    return writeResearchCapitalDecision(filePath, {
+      asOf: receipt.plan.asOf,
+      context: receipt.plan.portfolioContext,
+      researchReceiptId: `quality:${receipt.quality.runId}`,
+      abstention: receipt.portfolioAbstention,
+    });
+  }
+  return undefined;
+}
+
 /** Read once, bind original bytes, then reuse the parsed controller inputs. */
 export async function readControllerResearchInput(
   options: Pick<
@@ -1412,10 +1476,9 @@ export async function run(options: Options): Promise<{
       };
     }
   }
-  const portfolioPlanWrite =
-    options.portfolioPlanOut && receipt.portfolioPlan
-      ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
-      : undefined;
+  const portfolioPlanWrite = options.portfolioPlanOut
+    ? await publishResearchCapitalOutcome(options.portfolioPlanOut, receipt)
+    : undefined;
   return {
     receipt,
     ...(written === undefined ? {} : { written }),

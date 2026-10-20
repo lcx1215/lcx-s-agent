@@ -436,8 +436,12 @@ function normalizeControllerEvidence(
   if (value === undefined) {
     return Object.freeze([]);
   }
-  if (value.length > 24) {
-    throw new Error("controllerEvidence must contain at most 24 items");
+  // Controller history includes citeable per-method arithmetic as well as source
+  // series. Use the existing downstream evidence capacity, not a smaller legacy cap.
+  if (value.length > QUALITY_HARNESS_MAX_EVIDENCE_ITEMS) {
+    throw new Error(
+      `controllerEvidence must contain at most ${QUALITY_HARNESS_MAX_EVIDENCE_ITEMS} items`,
+    );
   }
   let totalBytes = 0;
   const normalized = value.map((item, index) => {
@@ -1211,6 +1215,7 @@ export function buildAllRegisteredFinanceResearchTargets(
   horizonMonths: number,
   realtimeAdapters: readonly FinanceRealtimeSourceAdapter[],
   collectionAdapters: readonly FinanceMarketCollectionAdapter[],
+  asOfMode?: FinanceAsOfMode,
 ): readonly FinanceResearchBatchTarget[] {
   const history = buildHistoryCollection(horizonMonths, asOf);
   const result: FinanceResearchBatchTarget[] = [];
@@ -1222,6 +1227,7 @@ export function buildAllRegisteredFinanceResearchTargets(
               instrument: "BTCUSDT",
               assetClass: "crypto",
               asOf,
+              asOfMode,
               useCase: "finance_research_run",
               freshnessMaxMinutes: 30,
               crossSourceSkewMaxMinutes: 5,
@@ -1232,6 +1238,7 @@ export function buildAllRegisteredFinanceResearchTargets(
       instrument: symbol,
       assetClass: symbol === "BTCUSDT" ? "crypto" : "us_equity",
       asOf,
+      asOfMode,
       useCase: "finance_research_run",
       freshnessMaxMinutes: 24 * 60,
       crossSourceSkewMaxMinutes: 60,
@@ -1249,6 +1256,16 @@ export function buildAllRegisteredFinanceResearchTargets(
   for (const adapter of collectionAdapters) {
     if (adapter.sampleRequest) {
       const sample = adapter.sampleRequest;
+      if (
+        !adapter.supports({
+          ...sample,
+          asOf,
+          asOfMode,
+          limit: 100,
+        })
+      ) {
+        continue;
+      }
       result.push({
         id: `source-${adapter.id}`,
         sourceAdapterIds: [adapter.id],
@@ -1307,7 +1324,7 @@ export function buildAllRegisteredFinanceResearchTargets(
           ).map((collection) => ({ collection, limit: 20, freshnessMaxMinutes: 366 * 24 * 60 })),
         ];
     const collection = candidates.find((candidate) =>
-      adapter.supports({ ...candidate, instrument: symbol, assetClass, asOf }),
+      adapter.supports({ ...candidate, instrument: symbol, assetClass, asOf, asOfMode }),
     );
     if (collection) {
       result.push({
@@ -2741,7 +2758,7 @@ function committeeGate(
     passed,
     reason: passed
       ? preparation
-        ? "producer preparation completed; full post-module quality review remains required"
+        ? "research preparation completed; full quality review remains required"
         : "all required logical-agent committee lanes completed"
       : `committee status=${committee.execution.status}; missing=${committee.coverage.missingLanes.join(",") || "none"}`,
   };
@@ -2881,6 +2898,7 @@ export async function runFinanceResearchRun(
           horizonMonths,
           realtimeAdapters,
           collectionAdapters,
+          options.input.asOfMode,
         )
       : buildDefaultFinanceResearchTargets(ask, horizonMonths, asOf, equityUniverseSnapshot));
   const executionTargetPlan =
@@ -3041,8 +3059,9 @@ export async function runFinanceResearchRun(
 
   const strategyMethodKit = buildFinanceStrategyMethodKit(ask);
   const strategyMethodKitModelContext = toFinanceStrategyMethodKitModelContext(strategyMethodKit);
+  // Produce the initial research/ledger/module inputs once, then let the full
+  // Quality DAG own review and repair within the same caller-supplied budget.
   const committeePurpose =
-    options.input.executeModules === true &&
     options.qualityEnabled !== false &&
     (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
       ? ("producer_preparation" as const)
@@ -3271,7 +3290,10 @@ export async function runFinanceResearchRun(
         ? {
             id: "quality" as const,
             passed: false,
-            reason: "not_run:module_producer_prerequisites_failed",
+            reason:
+              options.input.executeModules === true
+                ? "not_run:module_producer_prerequisites_failed"
+                : "not_run:research_preparation_failed",
           }
         : qualityGate(quality);
     moduleExecution = finalizeModuleExecution(
