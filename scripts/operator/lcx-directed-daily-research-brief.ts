@@ -1720,7 +1720,7 @@ async function directedArchiveFiles(root: string, date?: string, signal?: AbortS
         .toSorted()
         .toReversed()
         .slice(0, 64 - files.length)
-        .map((name) => path.join(relative, name)),
+        .map((name) => path.join(relative, name).split(path.sep).join("/")),
     );
     if (files.length >= 64) {
       break;
@@ -2447,7 +2447,7 @@ export async function readDirectedDailyAdmission(options: {
       return receipt("held", "daily_admission_first_run_history_exists");
     }
     const pin = input.previous!;
-    const relative = path.relative(root, path.resolve(root, pin.path));
+    const relative = path.relative(root, path.resolve(root, pin.path)).split(path.sep).join("/");
     if (
       relative !== latestPath &&
       !/^memory\/directed-daily-research\/\d{4}-\d{2}-\d{2}\/[^/]+__directed-daily-research-brief\.json$/u.test(

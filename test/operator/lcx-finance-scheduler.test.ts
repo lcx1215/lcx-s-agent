@@ -30,6 +30,7 @@ import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alp
 import { syncAlpacaIntradayBars } from "../../src/agents/finance-alpaca-intraday.js";
 import {
   appendFinanceBars,
+  closeFinanceBarLedger,
   readFinanceBarLedger,
   type FinanceBarAppendInput,
 } from "../../src/agents/finance-bar-ledger.js";
@@ -503,6 +504,7 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
 afterEach(() => {
   expect(process.listenerCount("SIGTERM")).toBe(originalTermListeners);
   expect(process.listenerCount("SIGINT")).toBe(originalIntListeners);
+  closeFinanceBarLedger(directory);
   fs.rmSync(directory, { recursive: true, force: true });
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -2608,7 +2610,7 @@ it.each(["context_read", "progress_write"] as const)(
             return originalRead(file, options);
           })
         : vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-            if (String(to).endsWith("/progress.json")) {
+            if (path.basename(String(to)) === "progress.json") {
               throw new Error("transient EIO");
             }
             return originalRename(from, to);

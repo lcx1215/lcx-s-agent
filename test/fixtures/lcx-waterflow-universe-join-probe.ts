@@ -94,6 +94,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
         (error, stdout, stderr) => {
           if (error) {
             error.message += `\nprivate_process_stderr=${stderr.slice(-2000)}`;
+            error.message += `\nprivate_process_failure=${JSON.stringify({ code: error.code, signal: error.signal, killed: error.killed, timeoutMs })}`;
             reject(Object.assign(error, { stdout, stderr }));
           } else {
             resolve({ stdout, stderr });
@@ -247,6 +248,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     }
   }
   const existingAreas: string[] = [];
+  const rootFiles: string[] = [];
   for (const area of sourceAreas) {
     if (fsSync.existsSync(path.join(sourceRoot, area))) {
       await fs.cp(path.join(sourceRoot, area), path.join(repo, area), {
@@ -263,14 +265,31 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       const bytes = await fs.readFile(path.join(sourceRoot, file));
       await fs.writeFile(path.join(repo, file), bytes);
       copiedArchitecture.push({ path: file, sha256: sha(bytes) });
+      rootFiles.push(file);
       existingAreas.push(file);
     }
   }
   // Preserve copied fixture bytes independently of the host Git newline policy.
   // Windows autocrlf warnings can otherwise exhaust execFile's stderr buffer.
-  await execute("git", ["-c", "core.autocrlf=false", "add", "--force", ...existingAreas], {
-    cwd: repo,
-  });
+  // Bound each preparation command's work and argv length. Indexing the entire
+  // copied source tree in one command can exhaust its 20s limit on Windows.
+  // Original owner processes retain their existing timeout and cancellation guards.
+  const pathsToStage = [...indexedFiles, ...rootFiles];
+  while (pathsToStage.length > 0) {
+    const batch: string[] = [];
+    let argumentBytes = 0;
+    while (pathsToStage.length > 0 && batch.length < 128) {
+      const next = pathsToStage[0];
+      if (batch.length > 0 && argumentBytes + next.length > 12_000) {
+        break;
+      }
+      batch.push(pathsToStage.shift()!);
+      argumentBytes += next.length + 1;
+    }
+    await execute("git", ["-c", "core.autocrlf=false", "add", "--force", "--", ...batch], {
+      cwd: repo,
+    });
+  }
   await execute(
     "git",
     [

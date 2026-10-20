@@ -56,6 +56,7 @@ type ExecLinesResult = {
   ok: boolean;
   lines: string[];
   error?: string;
+  errorCode?: string;
 };
 
 function usage(): never {
@@ -294,8 +295,47 @@ async function execLinesWithStatus(
         .filter(Boolean),
     };
   } catch (error) {
-    return { ok: false, lines: [], error: String(error) };
+    return {
+      ok: false,
+      lines: [],
+      error: String(error),
+      errorCode: (error as NodeJS.ErrnoException).code,
+    };
   }
+}
+
+async function readVisibleFileInventory(deadline: OwnerDeadline) {
+  const primary = await execLinesWithStatus(
+    "rg",
+    ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"],
+    repoRoot,
+    true,
+    deadline,
+  );
+  if (primary.ok || primary.errorCode !== "ENOENT") {
+    return { ...primary, source: "rg", primaryError: undefined };
+  }
+  // Git enumerates both indexed and untracked, nonignored files. Never report
+  // a tracked-only inventory as complete merely because optional rg is absent.
+  const fallback = await execLinesWithStatus(
+    "git",
+    [
+      "-c",
+      "core.quotepath=false",
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--",
+      ".",
+      ":(exclude)node_modules",
+      ":(glob,exclude)**/node_modules/**",
+    ],
+    repoRoot,
+    true,
+    deadline,
+  );
+  return { ...fallback, source: "git_tracked_and_untracked", primaryError: primary.error };
 }
 
 function normalizeRepoPaths(files: readonly string[]): string[] {
@@ -997,13 +1037,7 @@ async function main() {
   try {
     const [trackedInventory, visibleInventory, gitStatusInventory] = await Promise.all([
       execLinesWithStatus("git", ["ls-files"], repoRoot, true, deadline),
-      execLinesWithStatus(
-        "rg",
-        ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"],
-        repoRoot,
-        true,
-        deadline,
-      ),
+      readVisibleFileInventory(deadline),
       execLinesWithStatus(
         "git",
         ["status", "--short", "--branch", "--untracked-files=all"],
@@ -1205,7 +1239,11 @@ async function main() {
           ? { ok: true }
           : { ok: false, error: trackedInventory.error },
         visibleInventory: visibleInventory.ok
-          ? { ok: true }
+          ? {
+              ok: true,
+              source: visibleInventory.source,
+              primaryError: visibleInventory.primaryError,
+            }
           : { ok: false, error: visibleInventory.error, fallback: "tracked_files_only" },
         gitStatusInventory: gitStatusInventory.ok
           ? { ok: true }
