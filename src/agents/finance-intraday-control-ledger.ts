@@ -768,7 +768,7 @@ function initializeCursorAuth(db: Database): void {
   }
 }
 
-function readCursorAuth(db: Database): { ledgerId: string; key: Buffer } {
+function readCursorAuth(db: Database): { ledgerId: string; key: Buffer } | undefined {
   if (
     !db
       .prepare(
@@ -776,7 +776,7 @@ function readCursorAuth(db: Database): { ledgerId: string; key: Buffer } {
       )
       .get()
   ) {
-    throw new Error("intraday_history_cursor_auth_uninitialized");
+    return undefined;
   }
   const row = db
     .prepare("SELECT ledger_id,key_hex FROM finance_intraday_cursor_auth WHERE singleton=1")
@@ -1228,11 +1228,18 @@ export async function readFinanceIntradayAccountHistory(
     try {
       db.exec("PRAGMA query_only=ON; PRAGMA busy_timeout=5000; BEGIN");
       const auth = readCursorAuth(db);
-      const sign = (value: Record<string, unknown>) =>
-        createHmac("sha256", auth.key)
+      if (cursor && !auth) {
+        throw new Error("intraday_history_cursor_auth_uninitialized");
+      }
+      const sign = (value: Record<string, unknown>) => {
+        if (!auth) {
+          throw new Error("intraday_history_cursor_auth_uninitialized");
+        }
+        return createHmac("sha256", auth.key)
           .update("finance_intraday_account_history_v2\0")
           .update(JSON.stringify(value))
           .digest("hex");
+      };
       const payload = (value: {
         scope: string;
         asOf: string;
@@ -1243,7 +1250,7 @@ export async function readFinanceIntradayAccountHistory(
         freshSequence: number;
       }) => ({
         v: 2,
-        ledgerId: auth.ledgerId,
+        ledgerId: auth?.ledgerId,
         scope: value.scope,
         asOf: value.asOf,
         at: value.at,
@@ -1254,7 +1261,7 @@ export async function readFinanceIntradayAccountHistory(
       });
       if (
         cursor &&
-        (cursor.ledgerId !== auth.ledgerId ||
+        (cursor.ledgerId !== auth?.ledgerId ||
           !timingSafeEqual(
             Buffer.from(cursor.mac, "hex"),
             Buffer.from(sign(payload(cursor)), "hex"),
@@ -1267,6 +1274,9 @@ export async function readFinanceIntradayAccountHistory(
         sequence: number,
         progress: { historicalDone: boolean; freshAt: string; freshSequence: number },
       ) => {
+        if (!auth) {
+          return null;
+        }
         const value = payload({ scope, asOf: historyAsOf, at, sequence, ...progress });
         return Buffer.from(JSON.stringify({ ...value, mac: sign(value) })).toString("base64url");
       };
@@ -1474,6 +1484,12 @@ export async function readFinanceIntradayAccountHistory(
         !historicalDone || freshRows.length > selectedFresh.length ? resumeCursor : null;
       db.exec("COMMIT");
       const result = {
+        ...(!auth
+          ? {
+              cursorStatus: "unavailable_until_original_writer_upgrade" as const,
+              continuationGap: "intraday_history_cursor_auth_uninitialized",
+            }
+          : {}),
         nextCursor,
         resumeCursor,
         pageCursor:

@@ -1175,6 +1175,12 @@ it("does not initialize cursor authentication during old-ledger history reads", 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-old-ledger-"));
   temporary.push(directory);
   await appendFinanceIntradayDecision(directory, input);
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: input.signalId,
+    status: "refused",
+    reasons: ["retained before upgrade"],
+    executionScope: { accountId: "account", venue: "alpaca:paper" },
+  });
   const { DatabaseSync } = requireNodeSqlite();
   const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
   try {
@@ -1187,9 +1193,14 @@ it("does not initialize cursor authentication during old-ledger history reads", 
       asOf: "2026-10-21T15:00:00.000Z",
     });
     expect(observed).toMatchObject({
-      status: "unavailable",
-      reason: "intraday_history_cursor_auth_uninitialized",
+      status: "observed",
+      cursorStatus: "unavailable_until_original_writer_upgrade",
+      continuationGap: "intraday_history_cursor_auth_uninitialized",
+      pageCursor: null,
+      nextCursor: null,
+      resumeCursor: null,
     });
+    expect(observed.entries.map((entry) => entry.signalId)).toEqual([input.signalId]);
     expect(db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
     await appendFinanceIntradayDecision(directory, { ...input, signalId: "new-writer-upgrade" });
     expect(
