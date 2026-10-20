@@ -105,6 +105,20 @@ describe("LCX identity migration writer contract", () => {
 
   it.each([
     {
+      name: "cron entries preserved before an appended job",
+      writer: "cron",
+      source: "{version:1,jobs:[{id:'keep',schedule:{kind:'cron',expr:'0 9 * * 1-5'}}]}",
+      next: '{"version":1,"jobs":[{"id":"keep","schedule":{"kind":"cron","expr":"0 9 * * 1-5"}},{"id":"new"}]}',
+      accepted: true,
+    },
+    {
+      name: "an appended job cannot replace the original cron entry",
+      writer: "cron",
+      source: "{version:1,jobs:[{id:'keep'}]}",
+      next: '{"version":1,"jobs":[{"id":"changed"},{"id":"new"}]}',
+      accepted: false,
+    },
+    {
       name: "unrelated raw replacement",
       writer: "config",
       source: "legacy-source\n",

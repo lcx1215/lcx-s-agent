@@ -508,6 +508,12 @@ async function preservesMigrationSource(
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === "object" && !Array.isArray(value);
   const preservesJson = (source: unknown, next: unknown): boolean => {
+    if (Array.isArray(source) && Array.isArray(next)) {
+      return (
+        next.length >= source.length &&
+        source.every((entry, index) => preservesJson(entry, next[index]))
+      );
+    }
     if (isRecord(source) && isRecord(next)) {
       return Object.entries(source).every(
         ([key, value]) => Object.hasOwn(next, key) && preservesJson(value, next[key]),
