@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import vm from "node:vm";
 import ts from "typescript";
 import {
@@ -108,6 +109,8 @@ export async function prepareOriginalFinanceModuleMain(params: {
   allocation?: number;
   dailyExecutableRule?: boolean;
   asOf?: string;
+  /** Controlled offline transport latency; real source cancellation remains authoritative. */
+  sourceDelayMs?: number;
 }) {
   const workspace = path.join(params.directory, "workspace");
   const book = path.join(params.directory, "finance-book");
@@ -204,6 +207,9 @@ export async function prepareOriginalFinanceModuleMain(params: {
     }
     if (params.fault === "source_timeout") {
       await waitForAbort(signal);
+    }
+    if (params.sourceDelayMs !== undefined) {
+      await delay(params.sourceDelayMs, undefined, { signal });
     }
   };
   const realtime = (
@@ -564,7 +570,9 @@ export async function probeOriginalFinanceModuleMain(
             collectionAdapters: [collection],
             maxSourcesPerJob: 2,
             maxConcurrency: 1,
-            sourceTimeoutMs: 20,
+            // Only the deliberate never-returning source fault needs a tiny deadline.
+            // Healthy scripted transports retain the owner default within the same total budget.
+            ...(params.fault === "source_timeout" ? { sourceTimeoutMs: 20 } : {}),
             totalTimeoutMs: 2_000,
           },
         },

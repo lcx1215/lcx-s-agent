@@ -445,7 +445,59 @@ export async function probeOriginalFinanceSchedulerPlan(params: {
     !params.researchPreparation &&
     (!nativeProducer?.receipt?.portfolioPlan || nativeProducer.receipt.status !== "candidate")
   ) {
-    throw new Error("native producer did not make an accepted research plan; do not fabricate one");
+    const receipt = nativeProducer?.receipt;
+    throw new Error(
+      "native producer did not make an accepted research plan; do not fabricate one:" +
+        JSON.stringify({
+          status: receipt?.status,
+          gates: receipt?.gates,
+          missingEvidence: receipt?.missingEvidence.slice(0, 20),
+          checkpoint: nativeProducer?.checkpoint
+            ? {
+                status: nativeProducer.checkpoint.status,
+                reason: nativeProducer.checkpoint.reason,
+                runId: nativeProducer.checkpoint.runId,
+              }
+            : undefined,
+          sourceJobs: receipt?.batch?.jobs.map((job) => ({
+            targetId: job.targetId,
+            status: job.status,
+            missingEvidence: job.missingEvidence,
+            conflicts: job.conflicts,
+            sourceAttempts: job.receipt?.sourceAttempts.map((attempt) => ({
+              adapterId: attempt.adapterId,
+              status: attempt.status,
+              error: attempt.error,
+              latencyMs: attempt.latencyMs,
+              apiCalls: attempt.apiCalls.map(({ status, timeoutMs, transportError }) => ({
+                status,
+                timeoutMs,
+                transportError,
+              })),
+            })),
+          })),
+          committee: {
+            coverage: receipt?.committee?.coverage,
+            status: receipt?.committee?.model.status,
+            roles: receipt?.committee?.model.roleStatuses.map(({ taskId, status, error }) => ({
+              taskId,
+              status,
+              error,
+            })),
+          },
+          modelCheckpoint: receipt?.modelCheckpoint,
+          moduleNodes: receipt?.moduleExecution?.nodes.map((node) => ({
+            moduleId: node.moduleId,
+            status: node.status,
+            missingEvidence: node.missingEvidence,
+          })),
+          quality: {
+            status: receipt?.quality?.status,
+            verification: receipt?.quality?.verification,
+            quality: receipt?.quality?.quality,
+          },
+        }).slice(0, 8_000),
+    );
   }
   const directory = params.researchPreparation?.book ?? nativeProducer!.book;
   const asOf = params.researchPreparation?.asOf ?? nativeProducer!.receipt!.plan.asOf;

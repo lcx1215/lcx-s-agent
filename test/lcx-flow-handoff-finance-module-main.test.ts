@@ -134,6 +134,21 @@ describe("original finance rule to module to reviewed plan handoff", () => {
     expect(result.frameworkContract).toBeNull();
   });
 
+  it("accepts valid source latency within the total budget instead of the deliberate fault deadline", async () => {
+    const result = await probe("healthy-source-latency", { sourceDelayMs: 40 });
+    expect(
+      result.receipt?.status,
+      JSON.stringify({
+        gates: result.receipt?.gates,
+        missingEvidence: result.receipt?.missingEvidence,
+        checkpoint: result.checkpoint,
+      }),
+    ).toBe("candidate");
+    expect(result.receipt?.gates.every((gate) => gate.passed)).toBe(true);
+    expect(result.sourceCalls.every((call) => !call.aborted)).toBe(true);
+    expect(result.planReadback).toBeDefined();
+  });
+
   it.each(["missing_source", "source_timeout"] as const)(
     "rejects %s before downstream model/module adoption",
     async (fault) => {
