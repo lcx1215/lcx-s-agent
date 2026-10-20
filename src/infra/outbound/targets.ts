@@ -45,7 +45,9 @@ export type HeartbeatSenderContext = {
   allowFrom: string[];
 };
 
-export type OutboundTargetResolution = { ok: true; to: string } | { ok: false; error: Error };
+export type OutboundTargetResolution =
+  | { ok: true; to: string; routeTarget?: string }
+  | { ok: false; error: Error };
 
 export type SessionDeliveryTarget = {
   channel?: DeliverableMessageChannel;
@@ -217,13 +219,18 @@ export function resolveOutboundTarget(params: {
 
   const resolveTarget = plugin.outbound?.resolveTarget;
   if (resolveTarget) {
-    return resolveTarget({
+    const resolved = resolveTarget({
       cfg: params.cfg,
       to: effectiveTo,
       allowFrom,
       accountId: params.accountId ?? undefined,
       mode: params.mode ?? "explicit",
     });
+    // The final External resolver returns a raw ID. Keep its actual input,
+    // including configured defaults, for callers that must derive a session.
+    return resolved.ok && params.channel === "external" && effectiveTo
+      ? { ...resolved, routeTarget: effectiveTo }
+      : resolved;
   }
 
   if (effectiveTo) {

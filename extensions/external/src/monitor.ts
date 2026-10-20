@@ -3,6 +3,7 @@ import {
   beginWebhookRequestPipelineOrReject,
   createReplyPrefixOptions,
   createWebhookInFlightLimiter,
+  formatExternalTarget,
   isNormalizedSenderAllowed,
   readJsonWebhookBodyOrReject,
   registerWebhookTargetWithPluginRoute,
@@ -265,7 +266,7 @@ export async function processExternalMessage(
     RawBody: message.text,
     CommandBody: message.text,
     From: `external:${message.senderId}`,
-    To: `external:${message.conversationId}`,
+    To: formatExternalTarget(message.conversationId, message.chatType),
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
     ChatType: message.chatType,
@@ -286,7 +287,7 @@ export async function processExternalMessage(
     GroupChannel: message.chatType === "channel" ? conversationLabel : undefined,
     GroupSubject: message.chatType === "group" ? conversationLabel : undefined,
     OriginatingChannel: "external",
-    OriginatingTo: `external:${message.conversationId}`,
+    OriginatingTo: formatExternalTarget(message.conversationId, message.chatType),
   });
 
   await core.session.recordSessionMetaFromInbound({

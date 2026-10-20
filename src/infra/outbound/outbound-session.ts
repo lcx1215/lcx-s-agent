@@ -1,6 +1,7 @@
 import type { MsgContext } from "../../auto-reply/templating.js";
 import type { ChatType } from "../../channels/chat-type.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
+import { parseExternalTarget } from "../../channels/plugins/normalize/external.js";
 import type { ChannelId } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { recordSessionMetaFromInbound, resolveStorePath } from "../../config/sessions.js";
@@ -796,20 +797,11 @@ function resolveTlonSession(
 function resolveExternalSession(
   params: ResolveOutboundSessionRouteParams,
 ): OutboundSessionRoute | null {
-  let trimmed = stripProviderPrefix(params.target, "external").trim();
-  if (!trimmed) {
+  const parsed = parseExternalTarget(params.target);
+  if (!parsed) {
     return null;
   }
-
-  const lower = trimmed.toLowerCase();
-  const explicitKind =
-    lower.startsWith("group:") || lower.startsWith("room:")
-      ? "group"
-      : lower.startsWith("channel:")
-        ? "channel"
-        : lower.startsWith("dm:") || lower.startsWith("user:") || lower.startsWith("direct:")
-          ? "direct"
-          : undefined;
+  const explicitKind = parsed.kind;
   const resolvedKind =
     params.resolvedTarget?.kind === "user"
       ? "direct"
@@ -819,7 +811,7 @@ function resolveExternalSession(
           ? "channel"
           : undefined;
   const peerKind = explicitKind ?? resolvedKind ?? "direct";
-  const peerId = trimmed.replace(/^(user|channel|group|conversation|room|dm|direct):/i, "").trim();
+  const peerId = parsed.id;
   if (!peerId) {
     return null;
   }

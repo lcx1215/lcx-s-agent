@@ -8,7 +8,7 @@ import {
   getChannelMessageAdapter,
   type CrossContextComponentsBuilder,
 } from "./channel-adapters.js";
-import { normalizeTargetForProvider } from "./target-normalization.js";
+import { normalizeTargetForComparison } from "./target-normalization.js";
 import { formatTargetDisplay, lookupDirectoryDisplay } from "./target-resolver.js";
 
 export type CrossContextDecoration = {
@@ -66,7 +66,7 @@ function resolveContextGuardTarget(
 }
 
 function normalizeTarget(channel: ChannelId, raw: string): string | undefined {
-  return normalizeTargetForProvider(channel, raw) ?? raw.trim();
+  return normalizeTargetForComparison(channel, raw) ?? raw.trim();
 }
 
 function isCrossContextTarget(params: {

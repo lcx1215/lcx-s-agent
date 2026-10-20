@@ -2,7 +2,7 @@ import { isMessagingToolDuplicate } from "../../agents/pi-embedded-helpers.js";
 import type { MessagingToolSend } from "../../agents/pi-embedded-runner.js";
 import { normalizeChannelId } from "../../channels/plugins/index.js";
 import type { ReplyToMode } from "../../config/types.js";
-import { normalizeTargetForProvider } from "../../infra/outbound/target-normalization.js";
+import { normalizeTargetForComparison } from "../../infra/outbound/target-normalization.js";
 import { normalizeOptionalAccountId } from "../../routing/account-id.js";
 import { parseTelegramTarget } from "../../telegram/targets.js";
 import type { OriginatingChannelType } from "../templating.js";
@@ -226,7 +226,7 @@ export function shouldSuppressMessagingToolReplies(params: {
   if (!provider) {
     return false;
   }
-  const originTarget = normalizeTargetForProvider(provider, params.originatingTo);
+  const originTarget = normalizeTargetForComparison(provider, params.originatingTo);
   if (!originTarget) {
     return false;
   }
@@ -243,7 +243,7 @@ export function shouldSuppressMessagingToolReplies(params: {
     if (targetProvider !== provider) {
       return false;
     }
-    const targetKey = normalizeTargetForProvider(targetProvider, target.to);
+    const targetKey = normalizeTargetForComparison(targetProvider, target.to);
     if (!targetKey) {
       return false;
     }

@@ -2,6 +2,7 @@ import { runSubagentAnnounceFlow } from "../../agents/subagent-announce.js";
 import { countActiveDescendantRuns } from "../../agents/subagent-registry.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
+import { formatExternalTarget } from "../../channels/plugins/normalize/external.js";
 import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveAgentMainSessionKey } from "../../config/sessions.js";
@@ -9,6 +10,7 @@ import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import { resolveOutboundSessionRoute } from "../../infra/outbound/outbound-session.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
+import { normalizeTargetForComparison } from "../../infra/outbound/target-normalization.js";
 import { logWarn } from "../../logger.js";
 import type { CronJob, CronRunTelemetry } from "../types.js";
 import type { DeliveryTargetResolution } from "./delivery-target.js";
@@ -39,6 +41,9 @@ export function matchesMessagingToolDeliveryTarget(
   // Strip :topic:NNN suffix from target.to before comparing — the cron delivery.to
   // is already stripped to chatId only, but the agent's message tool may pass a
   // topic-qualified target (e.g. "-1003597428309:topic:462").
+  if (channel === "external") {
+    return normalizeTargetForComparison(channel, target.to) === delivery.to;
+  }
   const normalizedTargetTo = target.to.replace(/:topic:\d+$/, "");
   return normalizedTargetTo === delivery.to;
 }
@@ -60,14 +65,19 @@ async function resolveCronAnnounceSessionKey(params: {
   delivery: {
     channel: NonNullable<DeliveryTargetResolution["channel"]>;
     to?: string;
+    routeTarget?: string;
     accountId?: string;
     threadId?: string | number;
   };
 }): Promise<string> {
-  const to = params.delivery.to?.trim();
-  if (!to) {
+  const rawTo = params.delivery.to?.trim();
+  if (!rawTo) {
     return params.fallbackSessionKey;
   }
+  const to =
+    params.delivery.channel === "external"
+      ? (params.delivery.routeTarget ?? formatExternalTarget(rawTo, "direct"))
+      : rawTo;
   try {
     const route = await resolveOutboundSessionRoute({
       cfg: params.cfg,
@@ -227,6 +237,7 @@ export async function dispatchCronDelivery(
       delivery: {
         channel: delivery.channel,
         to: delivery.to,
+        routeTarget: delivery.routeTarget,
         accountId: delivery.accountId,
         threadId: delivery.threadId,
       },
@@ -304,7 +315,10 @@ export async function dispatchCronDelivery(
         requesterSessionKey: announceSessionKey,
         requesterOrigin: {
           channel: delivery.channel,
-          to: delivery.to,
+          to:
+            delivery.channel === "external"
+              ? (delivery.routeTarget ?? formatExternalTarget(delivery.to, "direct"))
+              : delivery.to,
           accountId: delivery.accountId,
           threadId: delivery.threadId,
         },

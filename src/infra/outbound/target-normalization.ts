@@ -1,4 +1,5 @@
 import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
+import { parseExternalTarget } from "../../channels/plugins/normalize/external.js";
 import type { ChannelId } from "../../channels/plugins/types.js";
 import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 
@@ -58,4 +59,12 @@ function hashSignature(value: string): string {
     hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
   }
   return (hash >>> 0).toString(36);
+}
+
+/** Comparison keys are identities, never dispatch targets. */
+export function normalizeTargetForComparison(provider: string, raw?: string): string | undefined {
+  if (provider.trim().toLowerCase() === "external") {
+    return raw ? parseExternalTarget(raw)?.id : undefined;
+  }
+  return normalizeTargetForProvider(provider, raw);
 }

@@ -694,3 +694,9 @@ export { loadWebMedia, type WebMediaResult } from "../web/media.js";
 
 // Security utilities
 export { redactSensitiveText } from "../logging/redact.js";
+
+export {
+  parseExternalTarget,
+  normalizeExternalTarget,
+  formatExternalTarget,
+} from "../channels/plugins/normalize/external.js";

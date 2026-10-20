@@ -1163,7 +1163,7 @@ describe("logical agent pool", () => {
         tasks,
         runId,
         checkpointStore,
-        pool: new LogicalAgentPool({ allowProviderCalls: true }),
+        pool: new LogicalAgentPool<unknown, string>({ allowProviderCalls: true }),
         executor: () => ({ output: "previous", sideEffects: ["provider_call"] as const }),
       });
       expect(initial.status).toBe("completed");
@@ -1180,7 +1180,7 @@ describe("logical agent pool", () => {
           runId,
           checkpointStore,
           resume: true,
-          pool: new LogicalAgentPool(),
+          pool: new LogicalAgentPool<unknown, string>(),
           executor,
         }),
       ).rejects.toThrow("fingerprint mismatch");

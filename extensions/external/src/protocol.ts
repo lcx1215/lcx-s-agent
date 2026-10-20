@@ -159,17 +159,4 @@ export function normalizeExternalInboundMessage(raw: unknown): ExternalProtocolP
   };
 }
 
-export function normalizeExternalTarget(target: string): string | undefined {
-  const trimmed = target.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  // Routing syntax belongs to the channel/session layer, not the receiver's ID.
-  return (
-    trimmed
-      .replace(/^external:/i, "")
-      .trim()
-      .replace(/^(group|room|channel|dm|user|direct|conversation):/i, "")
-      .trim() || undefined
-  );
-}
+export { normalizeExternalTarget } from "lcx-agent/plugin-sdk";
