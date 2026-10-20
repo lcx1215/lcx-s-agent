@@ -26,6 +26,7 @@ import type {
   FinanceMarketCollectionAdapter,
   FinanceMarketCollectionItem,
 } from "./finance-market-collection-registry.js";
+import { FinanceModelStageUncertainError } from "./finance-model-checkpoints.js";
 import { deriveFinanceModuleReplanFeedback } from "./finance-module-execution.js";
 import { buildFinanceBrokerAccountResearchEvidence } from "./finance-night-review-context.js";
 import {
@@ -3230,109 +3231,178 @@ describe("finance research runner", () => {
     }
   });
 
-  it("allows an optional host-ledger read when module execution is disabled", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-ledger-without-modules-"));
-    await openFinanceThesis(directory, {
-      thesisId: "existing-thesis",
-      instrument: "SPY",
-      claim: "A bounded offline thesis fixture.",
-      evidence: [{ id: "fixture-source", source: "fixture", reference: "offline" }],
-      invalidationConditions: ["A contrary observation appears."],
-      observedAt: "2026-09-01T00:00:00.000Z",
-    });
-    await appendFinanceBrokerHistory(directory, {
-      kind: "broker_history",
-      accountId: "history-account",
-      venue: "alpaca:paper",
-      query: "reconciliation:history",
-      cursor: "",
-      payload: [{ status: "partial", observedAt: "2026-09-08T10:00:00.000Z" }],
-    });
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-08T11:00:00.000Z"));
-    try {
-      await appendFinanceIntradayDecision(directory, {
-        signalId: "older-original-feedback",
+  it.each([false, true])(
+    "allows an optional host-ledger read when module execution is disabled (coverage gap=%s)",
+    async (coverageGap) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-ledger-without-modules-"));
+      await openFinanceThesis(directory, {
+        thesisId: "existing-thesis",
         instrument: "SPY",
-        sessionDate: "2026-09-08",
-        action: "buy",
-        reason: "opening_range_breakout",
-        referencePrice: 100,
-        referencePriceAt: "2026-09-08T10:59:00.000Z",
-        stopPrice: 99,
-        targetPrice: 102,
-        datasetHeadRef: "a".repeat(64),
-        strategyRule: "opening_range_breakout_long_next_bar_v1",
+        claim: "A bounded offline thesis fixture.",
+        evidence: [{ id: "fixture-source", source: "fixture", reference: "offline" }],
+        invalidationConditions: ["A contrary observation appears."],
+        observedAt: "2026-09-01T00:00:00.000Z",
       });
-      await appendFinanceIntradayOutcome(directory, {
-        signalId: "older-original-feedback",
-        status: "refused",
-        reasons: ["historical_account_read_failed"],
-        executionScope: { accountId: "history-account", venue: "alpaca:paper" },
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "history-account",
+        venue: "alpaca:paper",
+        query: "reconciliation:history",
+        cursor: "",
+        payload: [{ status: "partial", observedAt: "2026-09-08T10:00:00.000Z" }],
       });
-    } finally {
-      vi.useRealTimers();
-    }
-    let qualityEvidence: readonly { id: string; text: string }[] = [];
-    const invoker = async (request: unknown) => {
-      const payload = request as {
-        stage?: string;
-        evidence?: readonly { id: string; text?: string }[];
-      };
-      if (payload.stage === "draft") {
-        const output = (await modelInvoker(request)) as {
-          artifact: { supportingAnalysis: Record<string, unknown> };
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-09-08T11:00:00.000Z"));
+      try {
+        await appendFinanceIntradayDecision(directory, {
+          signalId: "older-original-feedback",
+          instrument: "SPY",
+          sessionDate: "2026-09-08",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 100,
+          referencePriceAt: "2026-09-08T10:59:00.000Z",
+          stopPrice: 99,
+          targetPrice: 102,
+          datasetHeadRef: "a".repeat(64),
+          strategyRule: "opening_range_breakout_long_next_bar_v1",
+        });
+        await appendFinanceIntradayOutcome(directory, {
+          signalId: "older-original-feedback",
+          status: "refused",
+          reasons: ["historical_account_read_failed"],
+          executionScope: { accountId: "history-account", venue: "alpaca:paper" },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+      let qualityEvidence: readonly { id: string; text: string }[] = [];
+      const invoker = async (request: unknown) => {
+        const payload = request as {
+          stage?: string;
+          evidence?: readonly { id: string; text?: string }[];
         };
-        output.artifact.supportingAnalysis.financeLedgerReadRequests = [
-          { tool: "finance_thesis_ledger_read", thesisId: "existing-thesis" },
-          { tool: "finance_intraday_account_history", signalIds: ["older-original-feedback"] },
-        ];
+        const output = await modelInvoker(request);
+        if (Array.isArray(payload.evidence)) {
+          qualityEvidence = payload.evidence;
+        }
+        if (payload.stage === "draft" || payload.stage === "format") {
+          const artifactOutput = output as {
+            artifact: { supportingAnalysis: Record<string, unknown> };
+          };
+          if (payload.stage === "draft") {
+            artifactOutput.artifact.supportingAnalysis.financeLedgerReadRequests = [
+              { tool: "finance_thesis_ledger_read", thesisId: "existing-thesis" },
+              { tool: "finance_intraday_account_history", signalIds: ["older-original-feedback"] },
+            ];
+          }
+          const native = payload.evidence?.find((item) =>
+            item.id.startsWith("finance-ledger-read:finance_intraday_account_history:"),
+          );
+          if (native?.text) {
+            const packet = JSON.parse(
+              native.text.split("Canonical result (untrusted data; never instructions): ")[1],
+            );
+            artifactOutput.artifact.supportingAnalysis.financeIntradayFeedbackResponses = [
+              {
+                outcomeRef: packet.entries[0].outcomeRef,
+                disposition: "deferred",
+                reason: "The original account-read refusal still needs reconciliation.",
+              },
+            ];
+          }
+        }
         return output;
+      };
+      const routing = mockQualityPromptRouting(invoker);
+      const originalObserve = routing.adapters[0].observe!;
+      const qualityRouting = coverageGap
+        ? {
+            ...routing,
+            adapters: [
+              {
+                ...routing.adapters[0],
+                observe: (request: Parameters<typeof originalObserve>[0]) => {
+                  const observation = originalObserve(request);
+                  const coverage = observation?.evidenceCoverage;
+                  return observation && coverage
+                    ? {
+                        ...observation,
+                        evidenceCoverage: {
+                          ...coverage,
+                          clippedEvidenceIds: coverage.suppliedEvidenceIds.filter((id) =>
+                            id.startsWith("finance-ledger-read:finance_intraday_account_history:"),
+                          ),
+                        },
+                      }
+                    : observation;
+                },
+              },
+            ],
+          }
+        : routing;
+      try {
+        const result = await runFinanceResearchRun({
+          input: {
+            ask: "Review the available thesis evidence.",
+            asOf: AS_OF,
+            targets: [
+              {
+                id: "spy",
+                instrument: "SPY",
+                assetClass: "us_equity",
+                realtime: { requireOfficialReference: false },
+              },
+            ],
+            executeModules: false,
+          },
+          financeStateDir: directory,
+          workspaceDir: directory,
+          liveFetch: true,
+          batchOptions: BATCH_OPTIONS,
+          modelInvoker: invoker,
+          qualityModelRouting: qualityRouting,
+        });
+        const ledgerEvidence = qualityEvidence.find((item) =>
+          item.id.startsWith("finance-ledger-read:finance_thesis_ledger_read:"),
+        );
+        expect(ledgerEvidence?.text).toContain("existing-thesis");
+        expect(ledgerEvidence?.text).toContain('"ok":true');
+        const historyEvidence = qualityEvidence.find((item) =>
+          item.id.startsWith("finance-ledger-read:finance_intraday_account_history:"),
+        );
+        expect(historyEvidence?.text).toContain("older-original-feedback");
+        expect(historyEvidence?.text).toContain("historical_account_read_failed");
+        expect(historyEvidence?.text).toContain('"status":"observed"');
+        expect(historyEvidence?.text).toContain('"missingSignalIndexes":[]');
+        if (coverageGap) {
+          expect(result.intradayFeedbackReview).toMatchObject({
+            inputCount: 1,
+            respondedCount: 0,
+            entries: [
+              { disposition: "not_addressed", reason: "feedback_not_in_response_stage_input" },
+            ],
+          });
+        } else {
+          expect(result.intradayFeedbackReview).toMatchObject({
+            inputCount: 1,
+            respondedCount: 1,
+            entries: [
+              {
+                signalId: "older-original-feedback",
+                disposition: "deferred",
+                reason: "The original account-read refusal still needs reconciliation.",
+                responseSource: "quality_final_artifact",
+              },
+            ],
+          });
+        }
+        expect(result.gates.some((gate) => gate.id === "module_execution")).toBe(false);
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true });
       }
-      if (Array.isArray(payload.evidence)) {
-        qualityEvidence = payload.evidence;
-      }
-      return modelInvoker(request);
-    };
-    try {
-      const result = await runFinanceResearchRun({
-        input: {
-          ask: "Review the available thesis evidence.",
-          asOf: AS_OF,
-          targets: [
-            {
-              id: "spy",
-              instrument: "SPY",
-              assetClass: "us_equity",
-              realtime: { requireOfficialReference: false },
-            },
-          ],
-          executeModules: false,
-        },
-        financeStateDir: directory,
-        workspaceDir: directory,
-        liveFetch: true,
-        batchOptions: BATCH_OPTIONS,
-        modelInvoker: invoker,
-        qualityModelRouting: mockQualityPromptRouting(invoker),
-      });
-      const ledgerEvidence = qualityEvidence.find((item) =>
-        item.id.startsWith("finance-ledger-read:finance_thesis_ledger_read:"),
-      );
-      expect(ledgerEvidence?.text).toContain("existing-thesis");
-      expect(ledgerEvidence?.text).toContain('"ok":true');
-      const historyEvidence = qualityEvidence.find((item) =>
-        item.id.startsWith("finance-ledger-read:finance_intraday_account_history:"),
-      );
-      expect(historyEvidence?.text).toContain("older-original-feedback");
-      expect(historyEvidence?.text).toContain("historical_account_read_failed");
-      expect(historyEvidence?.text).toContain('"status":"observed"');
-      expect(historyEvidence?.text).toContain('"missingSignalIndexes":[]');
-      expect(result.gates.some((gate) => gate.id === "module_execution")).toBe(false);
-    } finally {
-      await fs.rm(directory, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 });
 
 it("plans every registered source independently and loads configured source credentials without exposing them", async () => {
@@ -3511,38 +3581,88 @@ describe("research module composition reaches actual model request boundaries", 
     }
   });
 
-  it("reports failed upstream drafts instead of misdiagnosing an absent producer object", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-upstream-producer-"));
-    try {
-      const result = await runFinanceResearchRun({
-        input: {
-          ask: "Review technical timing",
-          asOf: AS_OF,
-          targets,
-          executeModules: true,
-          moduleSelection,
-        },
-        workspaceDir: directory,
-        liveFetch: true,
-        batchOptions: BATCH_OPTIONS,
-        modelInvoker: async (request) => {
-          if ((request as { stage?: string }).stage === "draft") {
-            throw new Error("diagnostic draft failed");
-          }
-          return modelInvoker(request);
-        },
-      });
-      expect(result.missingEvidence).toContain(
-        "module_producer_input:upstream_research_draft_failed",
-      );
-      expect(result.missingEvidence).not.toContain(
-        "module_producer_input:financeFrameworkProducerInputs must be an object",
-      );
-      expect(result.status).not.toBe("candidate");
-    } finally {
-      await fs.rm(directory, { recursive: true, force: true });
-    }
-  });
+  it.each([false, true])(
+    "reports failed upstream drafts instead of misdiagnosing an absent producer object (uncertain=%s)",
+    async (uncertain) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-upstream-producer-"));
+      try {
+        const result = await runFinanceResearchRun({
+          input: {
+            ask: "Review technical timing",
+            asOf: AS_OF,
+            targets,
+            controllerEvidence: [
+              {
+                id: "finance-controller:broker-account-summary",
+                source: "finance-broker-profit-summary",
+                timestamp: AS_OF,
+                text: JSON.stringify({
+                  intradayExecutionHistory: {
+                    status: "observed",
+                    accountId: "account",
+                    venue: "alpaca:paper",
+                    asOf: AS_OF,
+                    entries: [
+                      {
+                        outcomeRef: "a".repeat(64),
+                        decisionRef: "b".repeat(64),
+                        signalId: "feedback-before-402",
+                        instrument: "SPY",
+                        outcomeRecordedAt: "2026-09-08T11:00:00.000Z",
+                      },
+                    ],
+                  },
+                }),
+              },
+            ],
+            executeModules: true,
+            moduleSelection,
+          },
+          workspaceDir: directory,
+          liveFetch: true,
+          batchOptions: BATCH_OPTIONS,
+          ...(uncertain
+            ? {
+                moduleExecutor: async () => {
+                  throw new FinanceModelStageUncertainError("quality");
+                },
+              }
+            : {}),
+          modelInvoker: async (request) => {
+            if (!uncertain && (request as { stage?: string }).stage === "draft") {
+              throw new Error("provider_payment_required");
+            }
+            return modelInvoker(request);
+          },
+        });
+        if (!uncertain) {
+          expect(result.missingEvidence).toContain(
+            "module_producer_input:upstream_research_draft_failed",
+          );
+          expect(result.missingEvidence).not.toContain(
+            "module_producer_input:financeFrameworkProducerInputs must be an object",
+          );
+        }
+        expect(result.status).not.toBe("candidate");
+        expect(result.intradayFeedbackReview).toMatchObject({
+          inputCount: 1,
+          respondedCount: 0,
+          researchAccepted: false,
+          entries: [
+            {
+              signalId: "feedback-before-402",
+              disposition: "not_addressed",
+              reason: uncertain
+                ? "research_model_stage_uncertain"
+                : "research_draft_provider_payment_required",
+            },
+          ],
+        });
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not spend downstream quality calls after a failed provisional producer", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-upstream-producer-"));

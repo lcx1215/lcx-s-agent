@@ -1054,7 +1054,7 @@ it("retains terminal history and drains multiple fresh outcomes across natural c
       });
       expect(page.status).toBe("observed");
       expect(page.entries.length).toBeLessThanOrEqual(8);
-      expect(page.scannedOutcomes).toBeLessThanOrEqual(24);
+      expect("scannedOutcomes" in page ? page.scannedOutcomes : Infinity).toBeLessThanOrEqual(24);
       expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(12_000);
       for (const entry of page.entries) {
         (entry.signalId.startsWith("old-") ? recoveredOld : recoveredFresh).add(entry.signalId);

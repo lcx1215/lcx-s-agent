@@ -765,6 +765,7 @@ async function runNightResearchReview(params: {
       etDate: params.attempt.etDate,
       settlement: params.settlement,
       includeResearchScope: true,
+      preferredAccountId: params.context.intradayController?.accountId,
       researchWorkspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
     });
     await writeFinanceNightReviewEvidence(evidencePath, evidence);

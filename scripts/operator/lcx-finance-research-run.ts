@@ -708,6 +708,9 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
     ...(receipt.controllerHandoff ? { controllerHandoff: receipt.controllerHandoff } : {}),
     ...(receipt.controllerRuleUse ? { controllerRuleUse: receipt.controllerRuleUse } : {}),
     ...(receipt.portfolioAbstention ? { portfolioAbstention: receipt.portfolioAbstention } : {}),
+    ...(receipt.intradayFeedbackReview
+      ? { intradayFeedbackReview: receipt.intradayFeedbackReview }
+      : {}),
     plan: {
       asOf: receipt.plan.asOf,
       expectedJobCount: receipt.plan.expectedJobCount,
@@ -1572,6 +1575,7 @@ export function compactFinanceResearchSummary(
     portfolioAbstention?: FinanceResearchRunReceipt["portfolioAbstention"];
     controllerHandoff?: FinanceResearchControllerHandoff;
     controllerRuleUse?: FinanceResearchControllerRuleUse;
+    intradayFeedbackReview?: FinanceResearchRunReceipt["intradayFeedbackReview"];
   },
 ) {
   return {
@@ -1587,6 +1591,21 @@ export function compactFinanceResearchSummary(
     ...(summary.portfolioAbstention ? { portfolioAbstention: summary.portfolioAbstention } : {}),
     ...(summary.controllerHandoff ? { controllerHandoff: summary.controllerHandoff } : {}),
     ...(summary.controllerRuleUse ? { controllerRuleUse: summary.controllerRuleUse } : {}),
+    ...(summary.intradayFeedbackReview
+      ? {
+          intradayFeedbackReview: {
+            boundary: summary.intradayFeedbackReview.boundary,
+            inputCount: summary.intradayFeedbackReview.inputCount,
+            respondedCount: summary.intradayFeedbackReview.respondedCount,
+            unaddressedCount:
+              summary.intradayFeedbackReview.inputCount -
+              summary.intradayFeedbackReview.respondedCount,
+            researchAccepted: summary.intradayFeedbackReview.researchAccepted,
+            gapCount: summary.intradayFeedbackReview.gaps.length,
+            details: "original_written_research_receipt",
+          },
+        }
+      : {}),
   };
 }
 

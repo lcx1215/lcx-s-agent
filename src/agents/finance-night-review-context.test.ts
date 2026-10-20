@@ -2518,11 +2518,25 @@ it("hands original account execution history to day configuration and night rese
         },
       ],
     });
+    // The scheduler-selected account must survive the two-account projection.
+    for (const accountId of ["newer-one", "newer-two"]) {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query: `reconciliation:${accountId}`,
+        cursor: "",
+        payload: [
+          { observedAt: asOf, brokerCash: 1000, positions: [], protection: { coverage: [] } },
+        ],
+      });
+    }
     const night = await buildFinanceNightReviewEvidence({
       directory,
       asOf,
       etDate: "2026-09-22",
       includeResearchScope: true,
+      preferredAccountId: "selected",
       settlement: {
         scoredFiled: { appended: 0, skipped: 0 },
         reflection: {},
@@ -2534,13 +2548,18 @@ it("hands original account execution history to day configuration and night rese
     const history = JSON.parse(
       night.find((item) => item.source === "finance-daily-execution-history")!.text,
     );
-    expect(history.accounts).toEqual([
-      {
-        accountId: "selected",
-        history: day.executionHistory,
-        intradayHistory: day.intradayExecutionHistory,
-      },
-    ]);
+    expect(history.accountCoverage).toMatchObject({
+      observedAccountCount: 3,
+      includedAccountCount: 2,
+      omittedAccountIds: ["newer-one"],
+      preferredAccountStatus: "included",
+    });
+    expect(history.accounts).toHaveLength(2);
+    expect(history.accounts[0]).toEqual({
+      accountId: "selected",
+      history: day.executionHistory,
+      intradayHistory: day.intradayExecutionHistory,
+    });
     expect(
       night.reduce((bytes, item) => bytes + Buffer.byteLength(item.text), 0),
     ).toBeLessThanOrEqual(250_000);
@@ -2583,7 +2602,13 @@ it("resumes original hashed research history across day/night and retries a fail
     });
     const archive = path.join(directory, "state", "finance-research-runs", "2026-09-22");
     await fs.mkdir(archive, { recursive: true });
-    const save = async (mode: "day" | "night", history: unknown, at: string, ok: boolean) => {
+    const save = async (
+      mode: "day" | "night",
+      history: unknown,
+      at: string,
+      ok: boolean,
+      addressed = true,
+    ) => {
       const etDate = "2026-09-22",
         runId = randomUUID();
       const filename = path.join(
@@ -2610,6 +2635,29 @@ it("resumes original hashed research history across day/night and retries a fail
           boundary: "finance_research_run_research_only",
           plan: { asOf: at },
           batch: { committeeEvidence: [evidence] },
+          intradayFeedbackReview: {
+            schemaVersion: "finance_research_intraday_feedback_review_v1",
+            boundary:
+              "reported_research_response_not_configuration_publication_execution_or_adoption",
+            researchAccepted: ok,
+            entries: addressed
+              ? (history as { entries: { outcomeRef: string; decisionRef: string }[] }).entries.map(
+                  (entry) => ({
+                    ...entry,
+                    accountId: "account",
+                    disposition: "deferred",
+                    reason: "Retain unresolved original evidence.",
+                    responseSource: "quality_final_artifact",
+                    evidence: [
+                      {
+                        id: evidence.id,
+                        sha256: createHash("sha256").update(evidence.text).digest("hex"),
+                      },
+                    ],
+                  }),
+                )
+              : [],
+          },
         }),
       );
       await fs.writeFile(filename, bytes);
@@ -2636,6 +2684,15 @@ it("resumes original hashed research history across day/night and retries a fail
       return filename;
     };
     await save("day", initial, asOf, false);
+    commitFinanceSchedulerDatabaseState(directory, "{}", [
+      {
+        runId: "newer-no-receipt",
+        mode: "day",
+        firedAt: "2026-09-22T15:02:00.000Z",
+        completedAt: "2026-09-22T15:03:00.000Z",
+        researchPlanRefresh: { ok: false, processResult: { stdout: "failed before receipt" } },
+      },
+    ]);
     const retryAsOf = "2026-09-22T16:00:00.000Z";
     const retry = await readFinanceScheduledIntradayHistory({
       directory,
@@ -2648,11 +2705,23 @@ it("resumes original hashed research history across day/night and retries a fail
       continuation: { status: "retrying_failed_research_page" },
       pageCursor: "pageCursor" in initial ? initial.pageCursor : undefined,
     });
-    const nightFile = await save("night", retry, retryAsOf, true);
-    const next = await readFinanceScheduledIntradayHistory({
+    await save("night", retry, retryAsOf, true, false);
+    const pending = await readFinanceScheduledIntradayHistory({
       directory,
       accountId: "account",
       asOf: "2026-09-22T17:00:00.000Z",
+      researchWorkspaceDir: directory,
+    });
+    expect(pending).toMatchObject({
+      status: "observed",
+      pageCursor: "pageCursor" in retry ? retry.pageCursor : undefined,
+      continuation: { status: "retrying_unaddressed_feedback_page", pendingFeedbackCount: 8 },
+    });
+    const nightFile = await save("night", pending, "2026-09-22T17:00:00.000Z", true);
+    const next = await readFinanceScheduledIntradayHistory({
+      directory,
+      accountId: "account",
+      asOf: "2026-09-22T18:00:00.000Z",
       researchWorkspaceDir: directory,
     });
     expect(next).toMatchObject({
@@ -2666,10 +2735,52 @@ it("resumes original hashed research history across day/night and retries a fail
       await readFinanceScheduledIntradayHistory({
         directory,
         accountId: "account",
-        asOf: "2026-09-22T18:00:00.000Z",
+        asOf: "2026-09-22T19:00:00.000Z",
         researchWorkspaceDir: directory,
       }),
     ).toMatchObject({ status: "unavailable", reason: "scheduled_history_continuation_unverified" });
+    let page = next;
+    for (let index = 0; index < 6 && page.entries.length > 0; index++) {
+      await save("night", page, page.asOf, true);
+      page = await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: new Date(Date.parse("2026-09-22T18:10:00.000Z") + index * 120_000).toISOString(),
+        researchWorkspaceDir: directory,
+      });
+    }
+    expect(page).toMatchObject({ status: "observed", entries: [], nextCursor: null });
+    expect("resumeCursor" in page && page.resumeCursor).toEqual(expect.any(String));
+    // A pre-resumeCursor terminal receipt must migrate without replaying old history.
+    await save("night", { ...page, resumeCursor: undefined }, page.asOf, true);
+    expect(
+      await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: "2026-09-22T19:00:00.000Z",
+        researchWorkspaceDir: directory,
+      }),
+    ).toMatchObject({ status: "observed", entries: [], nextCursor: null });
+    commitFinanceSchedulerDatabaseState(
+      directory,
+      "{}",
+      Array.from({ length: 16 }, (_, index) => ({
+        runId: `failed-without-receipt-${index}`,
+        mode: index % 2 ? "day" : "night",
+        completedAt: "2026-09-22T18:30:00.000Z",
+      })),
+    );
+    expect(
+      await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: "2026-09-22T20:00:00.000Z",
+        researchWorkspaceDir: directory,
+      }),
+    ).toMatchObject({
+      status: "unavailable",
+      continuationGap: "scheduled_history_scoped_receipt_outside_bounded_window",
+    });
   } finally {
     vi.useRealTimers();
     await fs.rm(directory, { recursive: true, force: true });

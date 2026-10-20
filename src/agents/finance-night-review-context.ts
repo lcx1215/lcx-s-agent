@@ -24,7 +24,7 @@ import {
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import type { FinanceActiveStrategyResearchSource } from "./finance-research-portfolio-plan.js";
-import { readFinanceSchedulerDatabaseRuns } from "./finance-scheduler-ledger.js";
+import { readFinanceSchedulerDatabaseResearchRuns } from "./finance-scheduler-ledger.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
 
@@ -1281,13 +1281,8 @@ export async function readFinanceScheduledIntradayHistory(params: {
       ? (value as Record<string, unknown>)
       : {};
   try {
-    const runs = Object.values(readFinanceSchedulerDatabaseRuns(params.directory) ?? {})
-      .map(object)
-      .toSorted((a, b) =>
-        (typeof b.completedAt === "string" ? b.completedAt : "").localeCompare(
-          typeof a.completedAt === "string" ? a.completedAt : "",
-        ),
-      );
+    const index = readFinanceSchedulerDatabaseResearchRuns(params.directory);
+    const runs = index.runs.map((entry) => object(entry.run));
     for (const run of runs) {
       if (
         typeof run.completedAt !== "string" ||
@@ -1310,7 +1305,15 @@ export async function readFinanceScheduledIntradayHistory(params: {
       if (process.outputTruncated === true) {
         throw new Error("scheduled_history_summary_truncated");
       }
-      const summary = object(JSON.parse(process.stdout));
+      let summary: Record<string, unknown>;
+      try {
+        summary = object(JSON.parse(process.stdout));
+      } catch {
+        if (phase.ok === true) {
+          throw new Error("scheduled_history_success_summary_unreadable");
+        }
+        continue;
+      }
       const written = object(summary.written);
       if (
         typeof written.datedPath !== "string" ||
@@ -1374,18 +1377,28 @@ export async function readFinanceScheduledIntradayHistory(params: {
       if (!Array.isArray(evidence)) {
         continue;
       }
-      const histories: Record<string, unknown>[] = [];
+      const histories: {
+        history: Record<string, unknown>;
+        evidenceId: string;
+        evidenceSha256: string;
+      }[] = [];
       for (const raw of evidence) {
         const item = object(raw);
         if (typeof item.text !== "string") {
           continue;
         }
+        const evidenceId = typeof item.id === "string" ? item.id : "";
+        const evidenceSha256 = createHash("sha256").update(item.text).digest("hex");
         if (
           mode === "day" &&
           item.id === "finance-controller:broker-account-summary" &&
           item.source === "finance-broker-profit-summary"
         ) {
-          histories.push(object(object(JSON.parse(item.text)).intradayExecutionHistory));
+          histories.push({
+            history: object(object(JSON.parse(item.text)).intradayExecutionHistory),
+            evidenceId,
+            evidenceSha256,
+          });
         } else if (
           mode === "night" &&
           typeof run.etDate === "string" &&
@@ -1394,26 +1407,87 @@ export async function readFinanceScheduledIntradayHistory(params: {
         ) {
           const accounts = object(JSON.parse(item.text)).accounts;
           if (Array.isArray(accounts)) {
-            histories.push(...accounts.map((account) => object(object(account).intradayHistory)));
+            for (const account of accounts) {
+              const value = object(account),
+                history = object(value.intradayHistory);
+              if (value.accountId !== history.accountId) {
+                throw new Error("scheduled_history_account_scope_mismatch");
+              }
+              histories.push({ history, evidenceId, evidenceSha256 });
+            }
           }
         }
       }
       const matching = histories.filter(
-        (history) => history.accountId === params.accountId && history.venue === "alpaca:paper",
+        (entry) =>
+          entry.history.accountId === params.accountId && entry.history.venue === "alpaca:paper",
       );
       if (matching.length === 0) {
         continue;
       }
       if (
         matching.length !== 1 ||
-        matching[0].status !== "observed" ||
-        matching[0].asOf !== plan.asOf
+        matching[0].history.status !== "observed" ||
+        matching[0].history.asOf !== plan.asOf ||
+        !Array.isArray(matching[0].history.entries)
       ) {
         throw new Error("scheduled_history_projection_unverified");
       }
-      const history = matching[0];
+      const { history, evidenceId, evidenceSha256 } = matching[0];
+      const review = object(receipt.intradayFeedbackReview);
+      const responses = Array.isArray(review.entries) ? review.entries.map(object) : [];
+      const expectedEntries = (history.entries as unknown[]).map(object);
+      const pendingCount = expectedEntries.filter((entry) => {
+        const matchingResponses = responses.filter(
+          (response) =>
+            response.outcomeRef === entry.outcomeRef &&
+            response.decisionRef === entry.decisionRef &&
+            response.accountId === params.accountId,
+        );
+        if (
+          review.schemaVersion !== "finance_research_intraday_feedback_review_v1" ||
+          review.researchAccepted !== true ||
+          review.boundary !==
+            "reported_research_response_not_configuration_publication_execution_or_adoption" ||
+          matchingResponses.length !== 1
+        ) {
+          return true;
+        }
+        const response = matchingResponses[0];
+        return (
+          typeof response.disposition !== "string" ||
+          !["considered", "deferred", "rejected"].includes(response.disposition) ||
+          response.responseSource !== "quality_final_artifact" ||
+          typeof response.reason !== "string" ||
+          !response.reason.trim() ||
+          !Array.isArray(response.evidence) ||
+          !response.evidence.some((rawSource) => {
+            const source = object(rawSource);
+            return source.id === evidenceId && source.sha256 === evidenceSha256;
+          })
+        );
+      }).length;
       const accepted = phase.ok === true;
-      const cursor = accepted ? history.nextCursor : history.pageCursor;
+      const canAdvance = accepted && pendingCount === 0;
+      let cursor = canAdvance ? (history.resumeCursor ?? history.nextCursor) : history.pageCursor;
+      if (canAdvance && cursor === null) {
+        // Receipts written before resumeCursor still retain the original scoped page token.
+        // Preserve completed old history while recovering all post-window observations.
+        if (typeof history.pageCursor !== "string" || typeof history.historyAsOf !== "string") {
+          throw new Error("scheduled_history_terminal_progress_unverified");
+        }
+        const prior = object(
+          JSON.parse(Buffer.from(history.pageCursor, "base64url").toString("utf8")),
+        );
+        cursor = Buffer.from(
+          JSON.stringify({
+            ...prior,
+            historicalDone: true,
+            freshAt: history.historyAsOf,
+            freshSequence: 0,
+          }),
+        ).toString("base64url");
+      }
       if (cursor !== null && typeof cursor !== "string") {
         return {
           ...(await read()),
@@ -1431,11 +1505,15 @@ export async function readFinanceScheduledIntradayHistory(params: {
           status:
             current.status !== "observed"
               ? "unavailable"
-              : accepted
-                ? cursor === null
+              : canAdvance
+                ? history.nextCursor === null
                   ? "historical_window_complete"
                   : "resumed"
-                : "retrying_failed_research_page",
+                : accepted
+                  ? "retrying_unaddressed_feedback_page"
+                  : "retrying_failed_research_page",
+          pendingFeedbackCount: pendingCount,
+          reasonsRetainedIn: "original_hashed_research_receipt",
           sourceRunId: run.runId,
           sourceMode: mode,
           sourceReceiptSha256: written.sha256,
@@ -1443,12 +1521,20 @@ export async function readFinanceScheduledIntradayHistory(params: {
         },
       };
     }
+    if (index.olderRunsMayExist) {
+      throw new Error("scheduled_history_scoped_receipt_outside_bounded_window");
+    }
     return {
       ...(await read()),
       continuation: { status: "initial_window", reason: "no_prior_scoped_receipt" },
     };
-  } catch {
+  } catch (error) {
+    const gap =
+      error instanceof Error && /^scheduled_history_[a-z_]+$/u.test(error.message)
+        ? error.message
+        : "scheduled_history_original_read_failed";
     return {
+      continuationGap: gap,
       status: "unavailable" as const,
       accountId: params.accountId,
       venue: "alpaca:paper" as const,
@@ -1602,6 +1688,7 @@ export async function buildFinanceNightReviewEvidence(params: {
   /** Include a fail-closed typed scope only for scheduler night research runs. */
   includeResearchScope?: boolean;
   researchWorkspaceDir?: string;
+  preferredAccountId?: string;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
   const positionRead = readFinancePositionLedger(params.directory, { asOf: params.asOf });
   const reconciliationRead = readFinanceLatestBrokerReconciliations(params.directory);
@@ -1757,6 +1844,16 @@ export async function buildFinanceNightReviewEvidence(params: {
       }),
     ),
   };
+  const historyAccounts = [
+    ...new Set(
+      brokerReconciliations.records
+        .filter((record) => record.venue === "alpaca:paper")
+        .map((record) => record.accountId),
+    ),
+  ].toSorted(
+    (left, right) =>
+      Number(right === params.preferredAccountId) - Number(left === params.preferredAccountId),
+  );
   const evidence = Object.freeze([
     Object.freeze({
       id: `finance-night:settlement:${params.etDate}`,
@@ -1872,29 +1969,32 @@ export async function buildFinanceNightReviewEvidence(params: {
             timestamp: params.asOf,
             text: JSON.stringify({
               executionAuthority: "none",
+              accountCoverage: {
+                observedAccountCount: historyAccounts.length,
+                includedAccountCount: Math.min(historyAccounts.length, 2),
+                omittedAccountIds: historyAccounts.slice(2),
+                sourceOmittedAccountCount: brokerReconciliations.omittedAccounts,
+                preferredAccountStatus: !params.preferredAccountId
+                  ? "not_requested"
+                  : historyAccounts.includes(params.preferredAccountId)
+                    ? "included"
+                    : "not_observed",
+              },
               accounts: await Promise.all(
-                [
-                  ...new Set(
-                    brokerReconciliations.records
-                      .filter((record) => record.venue === "alpaca:paper")
-                      .map((record) => record.accountId),
-                  ),
-                ]
-                  .slice(0, 2)
-                  .map(async (accountId) => ({
+                historyAccounts.slice(0, 2).map(async (accountId) => ({
+                  accountId,
+                  intradayHistory: await readFinanceScheduledIntradayHistory({
+                    directory: params.directory,
                     accountId,
-                    intradayHistory: await readFinanceScheduledIntradayHistory({
-                      directory: params.directory,
-                      accountId,
-                      asOf: params.asOf,
-                      researchWorkspaceDir: params.researchWorkspaceDir,
-                    }),
-                    history: readFinanceDailyDecisionHistory({
-                      directory: params.directory,
-                      accountId,
-                      asOf: params.asOf,
-                    }),
-                  })),
+                    asOf: params.asOf,
+                    researchWorkspaceDir: params.researchWorkspaceDir,
+                  }),
+                  history: readFinanceDailyDecisionHistory({
+                    directory: params.directory,
+                    accountId,
+                    asOf: params.asOf,
+                  }),
+                })),
               ),
             }),
           },
