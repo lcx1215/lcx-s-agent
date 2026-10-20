@@ -18,16 +18,10 @@ import {
 } from "../../src/agents/finance-market-collection-registry.ts";
 import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
 import {
-  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
-  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
-  FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS,
-  FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
-  assertFinanceNightResearchAsOf,
-  financeNightResearchHoldingBasisSchema,
+  parseControllerResearchScope,
   readFinanceActiveStrategyResearchScope,
   readFinanceNightReviewResearchScope,
   type FinanceNightResearchInstrument,
-  type FinanceNightResearchScope,
 } from "../../src/agents/finance-night-review-context.ts";
 import {
   createFinanceRealtimeSourceRegistry,
@@ -439,170 +433,7 @@ export function assertResearchAsk(value: string): string {
   return normalized;
 }
 
-export function parseControllerResearchScope(
-  evidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>,
-  asOf: string,
-): FinanceNightResearchScope {
-  assertFinanceNightResearchAsOf(asOf);
-  const matching = evidence.filter(
-    (item) =>
-      item.id === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
-      item.source === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
-  );
-  if (
-    matching.length !== 1 ||
-    matching[0]?.id !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
-    matching[0]?.source !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE
-  ) {
-    throw new Error("--controller-research-scope requires exactly one canonical night scope item");
-  }
-  if (matching[0].timestamp !== asOf) {
-    throw new Error("controller night research scope evidence timestamp does not match --as-of");
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(matching[0].text);
-  } catch {
-    throw new Error("controller night research scope is not valid JSON");
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error("controller night research scope must be an object");
-  }
-  const scope = raw as Record<string, unknown>;
-  if (
-    scope.schemaVersion !== FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION ||
-    scope.asOf !== asOf ||
-    !Array.isArray(scope.activeStrategyIds) ||
-    scope.activeStrategyIds.some((id) => typeof id !== "string" || !id.trim()) ||
-    new Set(scope.activeStrategyIds).size !== scope.activeStrategyIds.length ||
-    !Array.isArray(scope.instruments) ||
-    scope.instruments.length === 0 ||
-    scope.instruments.length > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS
-  ) {
-    throw new Error("controller night research scope is invalid or does not match --as-of");
-  }
-  const seen = new Set<string>();
-  const isSupportedIdentity = (instrument: string, assetClass: unknown) =>
-    assetClass === "crypto"
-      ? /^[A-Z0-9]{2,12}\/USD$/u.test(instrument)
-      : assetClass === "us_equity"
-        ? /^[A-Z]{1,5}(?:\.[A-Z])?$/u.test(instrument)
-        : false;
-  const instruments = scope.instruments.map((value, index) => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      throw new Error(`controller night research scope instrument ${index} must be an object`);
-    }
-    const item = value as Record<string, unknown>;
-    if (
-      typeof item.instrument !== "string" ||
-      typeof item.assetClass !== "string" ||
-      (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
-      !Array.isArray(item.reasons) ||
-      item.reasons.length === 0 ||
-      item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy")
-    ) {
-      throw new Error(`controller night research scope instrument ${index} is malformed`);
-    }
-    const instrument = item.instrument.trim().toUpperCase();
-    if (!isSupportedIdentity(instrument, item.assetClass)) {
-      throw new Error(
-        `controller night research scope has unsupported instrument identity: ${instrument}`,
-      );
-    }
-    const key = `${item.assetClass}:${instrument}`;
-    if (!instrument || seen.has(key)) {
-      throw new Error(
-        `controller night research scope has empty or duplicate instrument: ${instrument}`,
-      );
-    }
-    seen.add(key);
-    return Object.freeze({
-      instrument,
-      assetClass: item.assetClass,
-      reasons: Object.freeze(
-        [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
-      ) as FinanceNightResearchInstrument["reasons"],
-    }) as FinanceNightResearchInstrument;
-  });
-  let coverage: FinanceNightResearchScope["coverage"];
-  if (scope.coverage !== undefined) {
-    if (
-      typeof scope.coverage !== "object" ||
-      scope.coverage === null ||
-      Array.isArray(scope.coverage)
-    ) {
-      throw new Error("controller night research scope coverage is malformed");
-    }
-    const rawCoverage = scope.coverage as Record<string, unknown>;
-    if (
-      !Number.isSafeInteger(rawCoverage.totalInstrumentCount) ||
-      (rawCoverage.totalInstrumentCount as number) <= instruments.length ||
-      rawCoverage.selectionMethod !== "held_priority_et_date_rotation_v1" ||
-      !Array.isArray(rawCoverage.deferredInstruments) ||
-      rawCoverage.deferredInstruments.length === 0 ||
-      (rawCoverage.totalInstrumentCount as number) !==
-        instruments.length + rawCoverage.deferredInstruments.length
-    ) {
-      throw new Error("controller night research scope coverage is invalid");
-    }
-    const deferredInstruments = rawCoverage.deferredInstruments.map((value, index) => {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw new Error(
-          `controller night research scope deferred instrument ${index} is malformed`,
-        );
-      }
-      const item = value as Record<string, unknown>;
-      if (
-        typeof item.instrument !== "string" ||
-        typeof item.assetClass !== "string" ||
-        (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
-        !Array.isArray(item.reasons) ||
-        item.reasons.length === 0 ||
-        item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy") ||
-        new Set(item.reasons).size !== item.reasons.length
-      ) {
-        throw new Error(
-          `controller night research scope deferred instrument ${index} is malformed`,
-        );
-      }
-      const instrument = item.instrument.trim().toUpperCase();
-      if (!isSupportedIdentity(instrument, item.assetClass)) {
-        throw new Error(
-          `controller night research scope has unsupported instrument identity: ${instrument}`,
-        );
-      }
-      const key = `${item.assetClass}:${instrument}`;
-      if (!instrument || seen.has(key)) {
-        throw new Error(
-          `controller night research scope has empty or duplicate instrument: ${instrument}`,
-        );
-      }
-      seen.add(key);
-      return Object.freeze({
-        instrument,
-        assetClass: item.assetClass,
-        reasons: Object.freeze(
-          [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
-        ) as FinanceNightResearchInstrument["reasons"],
-      }) as FinanceNightResearchInstrument;
-    });
-    coverage = Object.freeze({
-      totalInstrumentCount: rawCoverage.totalInstrumentCount as number,
-      deferredInstruments: Object.freeze(deferredInstruments),
-      selectionMethod: "held_priority_et_date_rotation_v1",
-    });
-  }
-  return Object.freeze({
-    schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
-    asOf,
-    activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
-    instruments: Object.freeze(instruments),
-    ...(scope.holdingBasis === undefined
-      ? {}
-      : { holdingBasis: financeNightResearchHoldingBasisSchema.parse(scope.holdingBasis) }),
-    ...(coverage ? { coverage } : {}),
-  });
-}
+export { parseControllerResearchScope } from "../../src/agents/finance-night-review-context.ts";
 
 export function buildControllerNightResearchTargets(params: {
   ask: string;
@@ -1371,6 +1202,7 @@ export async function run(options: Options): Promise<{
       : {}),
     ...(controllerResearchScope
       ? {
+          controllerNightResearchScope: controllerResearchScope,
           targets: buildControllerNightResearchTargets({
             ask,
             horizonMonths: options.horizonMonths,

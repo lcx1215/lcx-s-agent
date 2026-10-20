@@ -15,6 +15,7 @@ import {
   type FinanceModuleSelection,
   type FinanceBrainOrchestrationPlan,
 } from "./finance-brain-orchestration.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import { latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import {
@@ -54,7 +55,11 @@ import {
   parseFinanceDomainProducerInputs,
   type FinanceDomainProducerInputs,
 } from "./finance-module-producer-input.js";
-import { narrowFinanceNightIntradayEvidence } from "./finance-night-review-context.js";
+import {
+  narrowFinanceNightIntradayEvidence,
+  parseControllerResearchScope,
+  type FinanceNightResearchScope,
+} from "./finance-night-review-context.js";
 import type { FinancePortfolioPlan } from "./finance-portfolio-composition.js";
 import { readFinanceLatestBrokerReconciliations } from "./finance-position-ledger.js";
 import {
@@ -201,6 +206,8 @@ export type FinanceResearchRunInput = Readonly<{
   /** Declared research maturity stage; binds which `decisionMode` the run may use. */
   strategyStage?: FinanceStrategyStage;
   targets?: readonly FinanceResearchBatchTarget[];
+  /** Explicit canonical night scope, verified against controller evidence before input admission. */
+  controllerNightResearchScope?: FinanceNightResearchScope;
   /**
    * Controller-produced output from the evidence-driven venue/liquidity/history selector.
    * Broad equity requests never silently substitute a fixed ticker set when this is absent.
@@ -258,6 +265,7 @@ export type FinanceResearchPlan = Readonly<{
   decisionMode: FinanceDecisionMode;
   orchestration: FinanceBrainOrchestrationPlan;
   targets: readonly FinanceResearchBatchTarget[];
+  controllerNightResearchScope?: FinanceNightResearchScope;
   expectedJobCount: number;
   limitations: readonly string[];
   sourceInventory?: {
@@ -1475,6 +1483,35 @@ function buildPlan(
     input.portfolioContext === undefined
       ? undefined
       : financeResearchPortfolioContextSchema.parse(input.portfolioContext);
+  let controllerNightResearchScope: FinanceNightResearchScope | undefined;
+  if (input.controllerNightResearchScope !== undefined) {
+    if (decisionMode !== "research_only" || portfolioContext !== undefined) {
+      throw new Error(
+        "controller night research scope requires research_only without portfolio context",
+      );
+    }
+    controllerNightResearchScope = parseControllerResearchScope(
+      input.controllerEvidence ?? [],
+      asOf,
+    );
+    if (
+      caseflowFingerprint(controllerNightResearchScope) !==
+      caseflowFingerprint(input.controllerNightResearchScope)
+    ) {
+      throw new Error("controller night research scope conflicts with canonical evidence");
+    }
+    if (
+      controllerNightResearchScope.instruments.some(
+        (item) =>
+          !targets.some(
+            (target) =>
+              target.instrument === item.instrument && target.assetClass === item.assetClass,
+          ),
+      )
+    ) {
+      throw new Error("controller night research scope instrument missing from research targets");
+    }
+  }
   const orchestration =
     plannedOrchestration ??
     planFinanceBrainOrchestration({
@@ -1509,6 +1546,7 @@ function buildPlan(
     decisionMode,
     orchestration,
     targets: Object.freeze([...targets]),
+    ...(controllerNightResearchScope ? { controllerNightResearchScope } : {}),
     expectedJobCount,
     limitations,
     sourceInspections: inspections,
@@ -2803,9 +2841,10 @@ function sourceGate(
       .filter((entry) => entry.id.startsWith("finance-model:"))
       .map((entry) => entry.id),
   );
-  const requiredInstruments = plan.portfolioContext?.requiredInstruments ?? [
-    ...new Set(plan.targets.map((target) => target.instrument)),
-  ];
+  const requiredInstruments = plan.portfolioContext?.requiredInstruments ??
+    plan.controllerNightResearchScope?.instruments.map((item) => item.instrument) ?? [
+      ...new Set(plan.targets.map((target) => target.instrument)),
+    ];
   const uncovered = [...new Set(requiredInstruments)].filter(
     (instrument) => !covered.has(`finance-model:${encodeURIComponent(instrument)}`),
   );
@@ -3017,6 +3056,7 @@ export async function runFinanceResearchRun(
       asOf,
       decisionMode,
       moduleSelection,
+      controllerEvidence,
       ...(equityUniverseSnapshot === undefined ? {} : { equityUniverseSnapshot }),
     },
     targets,

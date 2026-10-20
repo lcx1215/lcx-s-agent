@@ -4391,6 +4391,146 @@ it("keeps auxiliary macro gaps visible without blocking covered active strategy 
   expect(result.quarterlyOutput.adopted).toBe(false);
 });
 
+it.each(["night-covered", "night-missing-held", "explicit-macro"] as const)(
+  "preserves canonical night source requirements: %s",
+  async (scenario) => {
+    const nightScope = {
+      schemaVersion: "lcx_finance_night_research_scope_v1" as const,
+      asOf: AS_OF,
+      activeStrategyIds: ["intraday-spy"],
+      instruments: [
+        {
+          instrument: "SPY",
+          assetClass: "us_equity" as const,
+          reasons: ["held_position" as const],
+        },
+      ],
+    };
+    const nightEvidence = [
+      {
+        id: "finance-night:research-scope",
+        source: "finance-night-research-scope",
+        timestamp: AS_OF,
+        text: JSON.stringify(nightScope),
+      },
+    ];
+    const result = await runFinanceResearchRun({
+      input: {
+        ask:
+          scenario === "explicit-macro"
+            ? "Review SPY and the explicitly required CPI series"
+            : "Review held SPY with auxiliary macro context",
+        asOf: AS_OF,
+        decisionMode: "research_only",
+        controllerEvidence: nightEvidence,
+        ...(scenario === "explicit-macro" ? {} : { controllerNightResearchScope: nightScope }),
+        targets: [
+          {
+            id: "active-spy",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+          {
+            id: "macro-cpi",
+            instrument: "CUUR0000SA0",
+            assetClass: "macro_series",
+            realtime: false,
+            collections: [
+              {
+                collection: "macro_series",
+                seriesId: "CUUR0000SA0",
+                limit: 12,
+                freshnessMaxMinutes: 31 * 24 * 60,
+              },
+            ],
+          },
+        ],
+      },
+      liveFetch: true,
+      qualityEnabled: false,
+      modelInvoker,
+      batchOptions: {
+        ...BATCH_OPTIONS,
+        ...(scenario === "night-missing-held" ? { realtimeAdapters: [] } : {}),
+        collectionAdapters: [
+          {
+            ...collectionAdapter(),
+            id: "fixture_macro_unavailable",
+            collect: async () => {
+              throw new Error("fixture macro source unavailable");
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.batch?.committeeEvidence.some((item) => item.id === "finance-model:SPY")).toBe(
+      scenario !== "night-missing-held",
+    );
+    expect(result.gates.find((gate) => gate.id === "source")).toMatchObject({
+      passed: scenario === "night-covered",
+    });
+    expect(result.missingEvidence.some((item) => item.startsWith("macro-cpi:"))).toBe(true);
+    expect(result.portfolioPlan).toBeUndefined();
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  },
+);
+
+it.each(["evidence-conflict", "asset-class-conflict", "wrong-mode"] as const)(
+  "rejects a mismatched explicit night scope before source dispatch: %s",
+  async (fault) => {
+    const scope = {
+      schemaVersion: "lcx_finance_night_research_scope_v1" as const,
+      asOf: AS_OF,
+      activeStrategyIds: ["held-review"],
+      instruments: [
+        {
+          instrument: "SPY",
+          assetClass: "us_equity" as const,
+          reasons: ["held_position" as const],
+        },
+      ],
+    };
+    await expect(
+      runFinanceResearchRun({
+        input: {
+          ask: "Review held SPY",
+          asOf: AS_OF,
+          decisionMode: fault === "wrong-mode" ? "strategy_candidate" : "research_only",
+          controllerNightResearchScope: scope,
+          controllerEvidence: [
+            {
+              id: "finance-night:research-scope",
+              source: "finance-night-research-scope",
+              timestamp: AS_OF,
+              text: JSON.stringify(
+                fault === "evidence-conflict"
+                  ? { ...scope, activeStrategyIds: ["different"] }
+                  : scope,
+              ),
+            },
+          ],
+          targets: [
+            {
+              id: "held-spy",
+              instrument: "SPY",
+              assetClass: fault === "asset-class-conflict" ? "macro_series" : "us_equity",
+              realtime: false,
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow(
+      fault === "evidence-conflict"
+        ? "conflicts with canonical evidence"
+        : fault === "asset-class-conflict"
+          ? "instrument missing from research targets"
+          : "requires research_only without portfolio context",
+    );
+  },
+);
+
 // Scripted local adapter fixtures validate the production quality seam, not real model judgment.
 describe("finance quality objective preserves claim-dependent uncertainty (offline scripted adapter)", () => {
   it.each([false, true])(
