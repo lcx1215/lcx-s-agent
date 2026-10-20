@@ -42,6 +42,58 @@ type OwnerRun = {
 type Review = Awaited<ReturnType<typeof reviewCleanupBeforeDecision>>["review"];
 export type UniverseJoinFault = "missing_source" | "hash_conflict";
 
+/** Inventory the actual source tree without changing its index or importing ignored files. */
+export async function readUniverseSnapshotSources(
+  root: string,
+  git: (args: string[]) => Promise<string>,
+) {
+  const sourceAreas = [
+    "src",
+    "docs",
+    "ops",
+    "scripts",
+    "test",
+    ".agents",
+    "skills",
+    "extensions/external",
+  ];
+  const rootNames = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", ".gitignore"];
+  const listed = await git(["ls-files", "--stage", "-z", "--", ...sourceAreas, ...rootNames]);
+  const indexed = listed
+    .split("\0")
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("\t");
+      assert.ok(separator > 0, "indexed_source_metadata_missing");
+      const [mode, objectId, stage] = entry.slice(0, separator).split(" ");
+      assert.equal(stage, "0", "conflicted_source_cannot_form_private_snapshot");
+      assert.match(objectId, /^[a-f0-9]{40}$/u);
+      return { file: entry.slice(separator + 1), mode, objectId };
+    });
+  const untracked = await git([
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ...sourceAreas,
+    ...rootNames,
+  ]);
+  const known = new Set(indexed.map((entry) => entry.file));
+  for (const file of untracked.split("\0").filter(Boolean)) {
+    if (!known.has(file)) {
+      indexed.push({ file, mode: "100644", objectId: "" });
+      known.add(file);
+    }
+  }
+  for (const file of rootNames) {
+    if (!known.has(file) && fsSync.existsSync(path.join(root, file))) {
+      indexed.push({ file, mode: "100644", objectId: "" });
+    }
+  }
+  return { indexed, sourceAreas };
+}
+
 /** Native private owners and original join. Missing source is deliberately never replaced by a pass. */
 export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault) {
   // Reserve the original native owner's full 30s within the caller's 90s budget.
@@ -251,46 +303,12 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       sha256: sha(hostLoopSource),
     });
   }
-  const sourceAreas = [
-    "src",
-    "docs",
-    "ops",
-    "scripts",
-    "test",
-    ".agents",
-    "skills",
-    "extensions/external",
-  ];
-  // Import exact Git objects directly instead of matching 8k paths repeatedly
-  // through git add. The private index/refs and dirty objects remain independent;
-  // the host object database is only a read-only alternate.
-  const rootNames = ["AGENTS.md", "README.md", "package.json", "tsconfig.json", ".gitignore"];
-  const listed = await execute(
-    "git",
-    ["ls-files", "--stage", "-z", "--", ...sourceAreas, ...rootNames],
-    {
-      cwd: sourceRoot,
-    },
+  // Import exact Git objects directly; untracked sources enter the same private
+  // dirty-blob path as modified tracked files. The host index stays read-only.
+  const { indexed, sourceAreas } = await readUniverseSnapshotSources(
+    sourceRoot,
+    async (args) => (await execute("git", args, { cwd: sourceRoot })).stdout,
   );
-  const indexed = listed.stdout
-    .split("\0")
-    .filter(Boolean)
-    .map((entry) => {
-      const separator = entry.indexOf("\t");
-      assert.ok(separator > 0, "indexed_source_metadata_missing");
-      const [mode, objectId, stage] = entry.slice(0, separator).split(" ");
-      assert.equal(stage, "0", "conflicted_source_cannot_form_private_snapshot");
-      assert.match(objectId, /^[a-f0-9]{40}$/u);
-      return { file: entry.slice(separator + 1), mode, objectId };
-    });
-  for (const file of rootNames) {
-    if (
-      !indexed.some((entry) => entry.file === file) &&
-      fsSync.existsSync(path.join(sourceRoot, file))
-    ) {
-      indexed.push({ file, mode: "100644", objectId: "" });
-    }
-  }
   const gitPath = async (relative: string) =>
     path.resolve(
       sourceRoot,

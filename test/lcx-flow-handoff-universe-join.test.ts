@@ -1,8 +1,13 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { probeUniverseJoin } from "./fixtures/lcx-waterflow-universe-join-probe.js";
+import {
+  probeUniverseJoin,
+  readUniverseSnapshotSources,
+} from "./fixtures/lcx-waterflow-universe-join-probe.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -10,6 +15,27 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 describe("native private same-parent Universe owner join and failure feedback", () => {
+  it("includes untracked source while excluding ignored files without changing the host index", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-source-inventory-"));
+    roots.push(root);
+    const git = async (args: string[]) =>
+      (await promisify(execFile)("git", args, { cwd: root, timeout: 10_000 })).stdout;
+    await git(["init", "--quiet"]);
+    await fs.mkdir(path.join(root, "src"));
+    await fs.writeFile(path.join(root, ".gitignore"), "src/ignored.ts\n");
+    await fs.writeFile(path.join(root, "src/tracked.ts"), "export const tracked = true;\n");
+    await git(["add", ".gitignore", "src/tracked.ts"]);
+    await fs.writeFile(path.join(root, "src/new.ts"), "export const added = true;\n");
+    await fs.writeFile(path.join(root, "src/ignored.ts"), "private ignored content");
+    const before = await fs.readFile(path.join(root, ".git/index"));
+    const { indexed } = await readUniverseSnapshotSources(root, git);
+    expect(indexed.find((entry) => entry.file === "src/tracked.ts")?.objectId).toMatch(
+      /^[a-f0-9]{40}$/u,
+    );
+    expect(indexed.find((entry) => entry.file === "src/new.ts")).toMatchObject({ objectId: "" });
+    expect(indexed.some((entry) => entry.file === "src/ignored.ts")).toBe(false);
+    expect(await fs.readFile(path.join(root, ".git/index"))).toEqual(before);
+  });
   it.each([undefined, "missing_source", "hash_conflict"] as const)(
     "preserves actual %s source failure through original join",
     async (fault) => {
