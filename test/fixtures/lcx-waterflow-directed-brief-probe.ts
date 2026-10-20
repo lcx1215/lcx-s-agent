@@ -230,7 +230,10 @@ export async function prepareNativeDirectedTask(
         collectionAdapters: [collection],
         maxSourcesPerJob: 2,
         maxConcurrency: 1,
-        sourceTimeoutMs: 20,
+        // The tiny deadline belongs to the deliberate never-returning source
+        // fault. Healthy sources retain the original owner's default, still
+        // bounded by this fixture's unchanged 2s total source budget.
+        ...(fault === "source_timeout" ? { sourceTimeoutMs: 20 } : {}),
         totalTimeoutMs: 2000,
       },
     },

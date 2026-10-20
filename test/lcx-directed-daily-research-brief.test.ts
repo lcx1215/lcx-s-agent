@@ -496,6 +496,53 @@ it("preserves other original batch tasks while holding a third generic output wi
   }
 });
 
+it("keeps a healthy private 35ms source eligible while the explicit timeout fault remains held", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-directed-source-budget-"));
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network forbidden")));
+  try {
+    const native = await prepareNativeDirectedTask(workspace);
+    const batch = native.nativeOptions.researchOptions.batchOptions;
+    const result = await executeDirectedDailyResearchTask({
+      ...native.nativeOptions,
+      timeoutMs: 10_000,
+      researchOptions: {
+        ...native.nativeOptions.researchOptions,
+        batchOptions: {
+          ...batch,
+          realtimeAdapters: batch.realtimeAdapters.map((adapter) => ({
+            ...adapter,
+            collect: async (...args: Parameters<typeof adapter.collect>) => {
+              await new Promise((resolve) => setTimeout(resolve, 35));
+              args[1].throwIfAborted();
+              return await adapter.collect(...args);
+            },
+          })),
+        },
+      },
+    });
+    expect(
+      result.taskExecution.status,
+      JSON.stringify("gaps" in result.taskExecution ? result.taskExecution.gaps : []),
+    ).toBe("executed");
+    expect(result.caseBindingsSource).toBeDefined();
+    const faultRoot = path.join(workspace, "timeout-fault");
+    await fs.mkdir(faultRoot);
+    const fault = await prepareNativeDirectedTask(faultRoot, "source_timeout");
+    const held = await executeDirectedDailyResearchTask({
+      ...fault.nativeOptions,
+      timeoutMs: 10_000,
+    });
+    expect(held.taskExecution.status).toBe("failed");
+    expect(held.packetCandidateSections.every((section) => section.status === "held")).toBe(true);
+    expect(held.caseBindingsSource).toBeUndefined();
+    expect(fault.nativeOptions.researchOptions.batchOptions.sourceTimeoutMs).toBe(20);
+    expect(fault.prepared.sourceCalls.some((call) => call.aborted)).toBe(true);
+  } finally {
+    vi.unstubAllGlobals();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
 const priorReviewGap =
   "directed_review_gap: current IV/skew evidence remains missing; retain needs-data stance";
 
@@ -509,6 +556,7 @@ async function preparePublishedDirectedReview(
   const native = prepared.native;
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(Date.parse(native.request.asOf) + 1000));
+  const executionStartedAt = performance.now();
   const execution = batch
     ? await executeDirectedDailyResearchBatch({
         ...prepared.options,
@@ -530,7 +578,39 @@ async function preparePublishedDirectedReview(
     : await executeDirectedDailyResearchTask({ ...native.nativeOptions, timeoutMs: 10_000 });
   if (!execution.caseBindingsSource) {
     await saveBatchProof("whole-admission-execution-held", workspace, execution);
-    throw new Error("native_execution_binding_not_produced");
+    throw new Error(
+      "native_execution_binding_not_produced:" +
+        JSON.stringify({
+          elapsedMs: Math.round(performance.now() - executionStartedAt),
+          batch,
+          batchExecution:
+            "batchExecution" in execution
+              ? {
+                  status: execution.batchExecution.status,
+                  deadlineMs: execution.batchExecution.deadlineMs,
+                  tasks: execution.batchExecution.tasks.map((task) => ({
+                    taskId: task.taskId,
+                    status: task.status,
+                    gaps: task.gaps,
+                  })),
+                }
+              : undefined,
+          taskExecution:
+            "taskExecution" in execution
+              ? {
+                  status: execution.taskExecution.status,
+                  gaps: execution.taskExecution.gaps,
+                }
+              : undefined,
+          sourceBudget: {
+            sourceTimeoutMs:
+              "sourceTimeoutMs" in native.nativeOptions.researchOptions.batchOptions
+                ? native.nativeOptions.researchOptions.batchOptions.sourceTimeoutMs
+                : "original_owner_default",
+            totalTimeoutMs: native.nativeOptions.researchOptions.batchOptions.totalTimeoutMs,
+          },
+        }).slice(0, 8_000),
+    );
   }
   const nativeWrite = await writeBrief(execution, { workspaceDir: workspace });
   const archiveBefore = await fs.readFile(nativeWrite.jsonPath);
