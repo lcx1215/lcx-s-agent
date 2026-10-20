@@ -8,6 +8,9 @@ import { openBoundaryFileSync } from "../../infra/boundary-file-read.js";
 
 const exec = promisify(execFile);
 const MAX_FILE = 5 * 1024 * 1024;
+// Source repositories can contain bundled assets larger than editable outputs.
+// Outputs above the editable limit must inherit source bytes unchanged.
+const MAX_SOURCE_FILE = 16 * 1024 * 1024;
 const MAX_TOTAL = 200 * 1024 * 1024;
 const MAX_FILES = 20_000;
 const PRIVATE =
@@ -19,6 +22,7 @@ export type NativeSource = {
   branch: string;
   commonDir: string;
   manifest: NativeManifest;
+  excludedPaths: string[];
 };
 export async function nativeGit(
   cwd: string,
@@ -40,6 +44,7 @@ function safeRelative(name: string) {
 export async function readNativeFile(
   root: string,
   relative: string,
+  maxBytes = MAX_FILE,
 ): Promise<{ data: Buffer; mode: number }> {
   safeRelative(relative);
   const target = path.join(root, relative);
@@ -53,7 +58,7 @@ export async function readNativeFile(
     rootPath: root,
     boundaryLabel: "native task",
     rejectHardlinks: true,
-    maxBytes: MAX_FILE,
+    maxBytes,
     ioFs: {
       ...fsSync,
       openSync: (file, flags, mode) =>
@@ -80,7 +85,7 @@ export async function readNativeFile(
     ) {
       throw new Error(`path changed before read: ${relative}`);
     }
-    const buffer = Buffer.alloc(Math.min(MAX_FILE + 1, stat.size + 1));
+    const buffer = Buffer.alloc(Math.min(maxBytes + 1, stat.size + 1));
     let bytes = 0;
     while (bytes < buffer.length) {
       const count = fsSync.readSync(fd, buffer, bytes, buffer.length - bytes, bytes);
@@ -109,11 +114,13 @@ export async function snapshotNativeTree(
   destination?: string,
   paths?: string[],
   signal?: AbortSignal,
+  policy?: { source?: boolean; inheritedManifest?: NativeManifest },
 ): Promise<NativeManifest> {
   root = await fs.realpath(root);
   const manifest: NativeManifest = Object.create(null) as NativeManifest;
   let total = 0;
   let entries = 0;
+  const links: Array<{ relative: string; target: string }> = [];
   async function visit(relative: string) {
     signal?.throwIfAborted();
     if (++entries > MAX_FILES) {
@@ -133,7 +140,57 @@ export async function snapshotNativeTree(
       }
       return;
     }
-    const file = await readNativeFile(root, relative);
+    let file: { data: Buffer; mode: number };
+    if (stat.isSymbolicLink()) {
+      const target = await fs.readlink(path.join(root, relative));
+      const lexical = path.resolve(root, path.dirname(relative), target);
+      if (path.isAbsolute(target) || !lexical.startsWith(root + path.sep)) {
+        throw new Error(`symlink rejected: ${relative}`);
+      }
+      const resolved = await fs.realpath(path.join(root, relative));
+      if (
+        !resolved.startsWith(root + path.sep) ||
+        PRIVATE.test(path.relative(root, lexical)) ||
+        PRIVATE.test(path.relative(root, resolved))
+      ) {
+        throw new Error(`symlink rejected: ${relative}`);
+      }
+      const current = await fs.lstat(path.join(root, relative));
+      if (
+        current.ino !== stat.ino ||
+        current.dev !== stat.dev ||
+        current.ctimeMs !== stat.ctimeMs ||
+        (await fs.readlink(path.join(root, relative))) !== target
+      ) {
+        throw new Error(`symlink changed while reading: ${relative}`);
+      }
+      file = { data: Buffer.from(target), mode: 0o120000 };
+      const inherited = policy?.inheritedManifest?.[relative];
+      if (
+        !policy?.source &&
+        (inherited?.mode !== file.mode ||
+          inherited.bytes !== file.data.length ||
+          inherited.sha256 !== createHash("sha256").update(file.data).digest("hex"))
+      ) {
+        throw new Error(`symlink rejected: ${relative}`);
+      }
+      links.push({ relative, target });
+    } else {
+      const inherited = policy?.inheritedManifest?.[relative];
+      const limit = policy?.source
+        ? MAX_SOURCE_FILE
+        : Math.max(MAX_FILE, Math.min(MAX_SOURCE_FILE, inherited?.bytes ?? 0));
+      file = await readNativeFile(root, relative, limit);
+      if (
+        !policy?.source &&
+        file.data.length > MAX_FILE &&
+        (inherited?.mode !== file.mode ||
+          inherited.bytes !== file.data.length ||
+          inherited.sha256 !== createHash("sha256").update(file.data).digest("hex"))
+      ) {
+        throw new Error(`oversized inherited asset changed: ${relative}`);
+      }
+    }
     total += file.data.length;
     if (total > MAX_TOTAL || Object.keys(manifest).length >= MAX_FILES) {
       throw new Error("native workspace exceeds artifact limits");
@@ -143,7 +200,7 @@ export async function snapshotNativeTree(
       mode: file.mode,
       bytes: file.data.length,
     };
-    if (destination) {
+    if (destination && !stat.isSymbolicLink()) {
       const output = path.join(destination, relative);
       await fs.mkdir(path.dirname(output), { recursive: true, mode: 0o700 });
       await fs.writeFile(output, file.data, { flag: "wx", mode: file.mode });
@@ -152,6 +209,15 @@ export async function snapshotNativeTree(
   const names = paths ?? (await fs.readdir(root)).toSorted();
   for (const name of names) {
     await visit(name);
+  }
+  // Copy links last so they cannot become destination ancestors during file writes.
+  if (destination) {
+    for (const { relative, target } of links) {
+      signal?.throwIfAborted();
+      const output = path.join(destination, relative);
+      await fs.mkdir(path.dirname(output), { recursive: true, mode: 0o700 });
+      await fs.symlink(target, output);
+    }
   }
   return manifest;
 }
@@ -207,11 +273,21 @@ export async function inspectNativeSource(
     throw new Error("native coding requires a clean source worktree");
   }
   const tracked = (await nativeGit(root, ["ls-files", "-z"], signal)).split("\0").filter(Boolean);
-  const manifest = await snapshotNativeTree(root, undefined, tracked, signal);
+  // Input exclusions never authorize private editor output. Do not read/copy credentials
+  // merely because they are tracked; record omissions in the source receipt instead.
+  const excludedPaths = tracked.filter((name) => PRIVATE.test(name));
+  const manifest = await snapshotNativeTree(
+    root,
+    undefined,
+    tracked.filter((name) => !PRIVATE.test(name)),
+    signal,
+    { source: true },
+  );
   return {
     root,
     branch,
     commonDir,
+    excludedPaths,
     head: (await nativeGit(root, ["rev-parse", "HEAD"], signal)).trim(),
     manifest,
   };

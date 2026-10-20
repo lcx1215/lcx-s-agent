@@ -38,6 +38,7 @@ import {
 import {
   resolveLatestPointer,
   runSnapshotPath,
+  writeJsonAtomic,
   writeRunSnapshot,
 } from "../src/agents/central-harness/run-store.js";
 import {
@@ -62,6 +63,35 @@ afterEach(async () => {
 });
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("central atomic JSON publication", () => {
+  it("supports concurrent writes in one process without sharing a temporary file", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "central-atomic-parallel-"));
+    centralTestRoots.push(dir);
+    const target = path.join(dir, "latest.json");
+    const versions = Array.from({ length: 6 }, (_, index) => ({
+      index,
+      body: "fixture".repeat(1024),
+    }));
+    const results = await Promise.allSettled(
+      versions.map((version) => writeJsonAtomic(target, version)),
+    );
+    expect(results.filter((result) => result.status === "rejected")).toEqual([]);
+    expect(versions).toContainEqual(JSON.parse(await fsp.readFile(target, "utf8")));
+    expect(await fsp.readdir(dir)).toEqual(["latest.json"]);
+  });
+
+  it("cleans failed publication without changing the existing target", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "central-atomic-failure-"));
+    centralTestRoots.push(dir);
+    const target = path.join(dir, "latest.json");
+    await fsp.mkdir(target);
+    await fsp.writeFile(path.join(target, "original.txt"), "preserve");
+    await expect(writeJsonAtomic(target, { candidate: true })).rejects.toThrow();
+    expect(await fsp.readFile(path.join(target, "original.txt"), "utf8")).toBe("preserve");
+    expect(await fsp.readdir(dir)).toEqual(["latest.json"]);
+  });
+});
 
 describe("central immutable cycle snapshots", () => {
   async function root() {

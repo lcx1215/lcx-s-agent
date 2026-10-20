@@ -22,9 +22,13 @@ export function runSnapshotPath(runsDir: string, runId: string): string {
 /** Atomic JSON publication: write a sibling temp file, then rename over the target. */
 export async function writeJsonAtomic(filePath: string, payload: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp-${process.pid}`;
-  await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-  await fs.rename(tmp, filePath);
+  const tmp = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await fs.rename(tmp, filePath);
+  } finally {
+    await fs.rm(tmp, { force: true });
+  }
 }
 
 /**

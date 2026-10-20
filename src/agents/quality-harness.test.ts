@@ -90,6 +90,7 @@ function demoInvoker(params: {
   weakFormat?: boolean;
   adversarialFinding?: boolean;
   answer?: string;
+  claimText?: string;
   requests?: QualityHarnessModelRequest[];
 }) {
   return async (raw: unknown): Promise<unknown> => {
@@ -119,7 +120,7 @@ function demoInvoker(params: {
             claims: [
               {
                 id: "claim-1",
-                text: "材料记录了一个项目状态。",
+                text: params.claimText ?? "材料记录了一个项目状态。",
                 status: "supported",
                 evidenceIds: ["market"],
               },
@@ -1676,6 +1677,248 @@ describe("quality harness", () => {
     expect(
       result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
     ).toMatchObject({ passed: false });
+  });
+
+  it.each([
+    { answer: "Cap MSFT at 5%.", directive: true },
+    { answer: "Limit NVDA to 10%.", directive: true },
+    { answer: "Cap BRK.B at 5.5%.", directive: true },
+    { answer: "Make MSFT 25% of your portfolio.", directive: true },
+    { answer: "Keep 25% of the portfolio in cash.", directive: true },
+    { answer: "I recommend allocating 5% of your portfolio to MSFT.", directive: true },
+    { answer: "You should allocate 5.5% to MSFT.", directive: true },
+    {
+      answer: "The company plans to allocate 25% of its capital to R&D.",
+      directive: false,
+    },
+    {
+      answer: "The company plans to allocate 25% of its capital to R&D. Cap MSFT at 5%.",
+      directive: true,
+    },
+    { answer: "The fund held 25% of its portfolio in cash.", directive: false },
+    { answer: "Allocation was 25% of the portfolio.", directive: false },
+    { answer: "Allocation: 25%.", directive: true },
+    { answer: "Portfolio weight should be 5%.", directive: true },
+    {
+      answer: "The fund held 25% of its portfolio in cash, so cap MSFT at 5%.",
+      directive: true,
+    },
+    {
+      answer: "风险提示：单票仓位超过账户 20% 就属于过度集中，需要先降风险预算。",
+      directive: false,
+    },
+    { answer: "仓位上限 10% 是硬约束，超过就不再讨论新增风险。", directive: false },
+    { answer: "配置比例的历史均值是 60%，但这是统计描述不是建议。", directive: false },
+    { answer: "Allocation has historically averaged 60% for balanced books.", directive: false },
+  ])(
+    "distinguishes allocation directives from reported facts: $answer",
+    async ({ answer, directive }) => {
+      const result = await runQualityHarness({
+        request: { ...financeRequest, task: "Summarize portfolio research." },
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer }),
+      });
+      const gate = result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety");
+      expect(gate).toBeDefined();
+      if (directive) {
+        expect(gate).toMatchObject({ passed: false });
+        expect(gate?.reason).toContain("direct trade action or recommendation");
+      } else {
+        expect(gate).toMatchObject({ passed: true });
+      }
+    },
+  );
+
+  it("accepts the same valid English date in cited evidence", async () => {
+    const answer = "NVDA was $480.";
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "As of September 6, 2026, NVDA was $480.",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer, claimText: answer }),
+    });
+    expect(
+      result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
+  });
+
+  it.each([
+    {
+      answer: "For a conservative investor, allocate 25% of your portfolio to MSFT.",
+      evidence: "As of 2026-10-19, MSFT portfolio allocation is 25%.",
+      reason: "direct trade action or recommendation",
+    },
+    {
+      answer: "My view is: MSFT should be 5% of your portfolio.",
+      evidence: "As of 2026-10-19, MSFT portfolio allocation is 5%.",
+      reason: "direct trade action or recommendation",
+    },
+    {
+      answer: "Given these risks, cap MSFT at 5%.",
+      evidence: "As of 2026-10-19, MSFT portfolio allocation is 5%.",
+      reason: "direct trade action or recommendation",
+    },
+    {
+      answer: "NVDA current cash flow is -$+10.",
+      evidence: "As of 2026-10-19, NVDA cash flow is $10.",
+      reason: "current-data numbers without matching cited evidence",
+    },
+  ])(
+    "rejects reviewed sizing and malformed-currency regressions: $answer",
+    async ({ answer, evidence, reason }) => {
+      const result = await runQualityHarness({
+        request: {
+          task: "Summarize portfolio research.",
+          evidence: [{ id: "market", text: evidence, source: "independent-fixture" }],
+        },
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer, claimText: answer }),
+      });
+      const gate = result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety");
+      expect(gate).toMatchObject({ passed: false });
+      expect(gate?.reason).toContain(reason);
+    },
+  );
+
+  it.each([
+    { evidenceAmount: "$10", answerAmount: "-$10", grounded: false },
+    { evidenceAmount: "-$10", answerAmount: "$10", grounded: false },
+    { evidenceAmount: "-$10", answerAmount: "$-10", grounded: true },
+    { evidenceAmount: "$-10", answerAmount: "-$10", grounded: true },
+    { evidenceAmount: "-€10", answerAmount: "€-10", grounded: true },
+    { evidenceAmount: "-$10", answerAmount: "-€10", grounded: false },
+    { evidenceAmount: "+$10.00", answerAmount: "$10", grounded: true },
+    { evidenceAmount: "$10.01", answerAmount: "$10.02", grounded: false },
+  ])(
+    "matches signed currency values without losing sign or unit: $evidenceAmount / $answerAmount",
+    async ({ evidenceAmount, answerAmount, grounded }) => {
+      const answer = `NVDA current cash flow is ${answerAmount}.`;
+      const result = await runQualityHarness({
+        request: {
+          ...financeRequest,
+          task: "Review NVDA equity cash flow.",
+          evidence: [
+            {
+              id: "market",
+              text: `As of 2026-09-06, NVDA cash flow is ${evidenceAmount}.`,
+              source: "market-feed-test",
+            },
+          ],
+        },
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer, claimText: answer }),
+      });
+      const gate = result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety");
+      expect(gate).toMatchObject({ passed: grounded });
+      if (!grounded) {
+        expect(gate?.reason).toContain("current-data numbers without matching cited evidence");
+      }
+    },
+  );
+
+  it.each(["-$+10", "$--10", "--$10", "$$10", "+$-10", "-$10+", "-$10$", "-$+10%"])(
+    "keeps the whole malformed currency token under the numeric gate without current keywords: %s",
+    async (amount) => {
+      const answer = `NVDA cash flow is ${amount}.`;
+      const result = await runQualityHarness({
+        request: {
+          task: `Summarize portfolio research. The supplied amount is ${amount}.`,
+          evidence: [
+            {
+              id: "market",
+              text: "As of 2026-10-19, NVDA cash flow is $10.",
+              source: "independent-fixture",
+            },
+          ],
+        },
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer, claimText: answer }),
+      });
+      const gate = result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety");
+      expect(gate).toMatchObject({ passed: false });
+      expect(gate?.reason).toContain("current-data numbers without matching cited evidence");
+      expect(gate?.reason).toContain(amount);
+    },
+  );
+
+  it("does not use a malformed currency token in evidence to certify a legal value", async () => {
+    const answer = "NVDA cash flow is $10.";
+    const result = await runQualityHarness({
+      request: {
+        task: "Summarize portfolio research.",
+        evidence: [
+          {
+            id: "market",
+            text: "As of 2026-10-19, NVDA cash flow is -$+10.",
+            source: "independent-fixture",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer, claimText: answer }),
+    });
+    const gate = result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety");
+    expect(gate).toMatchObject({ passed: false });
+    expect(gate?.reason).toContain("current-data numbers without matching cited evidence");
+  });
+
+  it.each([
+    { answer: "As of September 6, 2026, NVDA was $480.", grounded: true },
+    { answer: "As of February 30, 2026, NVDA was $480.", grounded: false },
+    { answer: "September 6, 2026% was the reported yield; NVDA was $480.", grounded: false },
+    {
+      answer: "September 6, 2026.5 dollars was the reported amount; NVDA was $480.",
+      grounded: false,
+    },
+    { answer: "As of September 6, 2026, NVDA was $480 with a yield of 25%.", grounded: false },
+  ])(
+    "treats only valid English date metadata separately from financial values: $answer",
+    async ({ answer, grounded }) => {
+      const result = await runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({
+          answer,
+          claimText: "NVDA was $480.",
+        }),
+      });
+      expect(
+        result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety"),
+      ).toMatchObject({
+        passed: grounded,
+        reason: grounded
+          ? "final finance answer contains no direct trade instruction or ungrounded current-data number"
+          : expect.stringContaining("current-data numbers without matching cited evidence"),
+      });
+    },
+  );
+
+  it.each([
+    "Cap MSFT at 5%.",
+    "Limit NVDA to 10%.",
+    "Make MSFT 25% of your portfolio.",
+    "Keep 25% of the portfolio in cash.",
+  ])("preserves conditional candidate sizing permission: %s", async (answer) => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        task: "Summarize portfolio research.",
+        sharedContext: { decisionMode: "conditional_trade_candidate" },
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer }),
+    });
+    expect(
+      result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
   });
 
   it("allows a conditional candidate while still rejecting execution claims", async () => {

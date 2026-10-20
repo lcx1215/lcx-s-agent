@@ -943,6 +943,7 @@ async function writeLatest(
   const previous = await readLatest<{
     latestReceipt?: unknown;
     latestRunPath?: unknown;
+    artifactBackfillCursor?: unknown;
   }>(path.basename(LATEST_PATH), {}, (status) => {
     if (status !== "missing") {
       meta.recordEvidenceFailure("latest_pointer_read", status);
@@ -982,6 +983,9 @@ async function writeLatest(
     evidenceComplete: meta.evidenceWriteFailures.length === 0,
     evidenceWriteFailures: meta.evidenceWriteFailures,
     artifactBackfill: meta.artifactBackfill,
+    artifactBackfillCursor: meta.artifactBackfill
+      ? meta.artifactBackfill.nextCursor
+      : (previous.artifactBackfillCursor ?? null),
     artifactBackfillDeferredReason: meta.artifactBackfillDeferredReason,
     liveTouched: false,
     providerConfigTouched: false,
@@ -1046,6 +1050,10 @@ async function main(): Promise<void> {
   };
   // Recovery indexing must not consume the first decision's time budget.
   let artifactBackfill: OwnerArtifactBackfillReceipt | undefined;
+  const previousBackfill = await readLatest<{ artifactBackfillCursor?: unknown }>(
+    path.basename(LATEST_PATH),
+    {},
+  );
   let artifactBackfillDeferredReason: string | null = dryRun
     ? "dry_run_no_recovery"
     : "no_persisted_cycle";
@@ -1142,6 +1150,7 @@ async function main(): Promise<void> {
     if (!artifactBackfill && cyclePersisted && !dryRun && Date.now() < deadline) {
       artifactBackfillDeferredReason = null;
       artifactBackfill = await backfillOwnerArtifacts({
+        cursor: previousBackfill.artifactBackfillCursor,
         config,
         agentId: "main",
         workspaceDir,

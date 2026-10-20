@@ -1760,6 +1760,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "scripts/operator/lcx-finance-research-batch.ts",
       "scripts/operator/lcx-finance-research-run.ts",
       "scripts/operator/lcx-finance-research-checkpoint-run.ts",
+      "test/operator/lcx-finance-research-receipt-atomic.test.ts",
       "test/operator/lcx-finance-research-checkpoint-run.test.ts",
       "scripts/operator/lcx-finance-research-score.ts",
       "scripts/operator/lcx-finance-research-turn.ts",
@@ -1803,6 +1804,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "test/lcx-flow-handoff-night-review-independence.test.ts",
       "test/fixtures/lcx-waterflow-finance-module-main-probe.ts",
       "test/operator/lcx-finance-research-run.test.ts",
+      "test/operator/lcx-finance-research-run.access.test.ts",
       "test/operator/lcx-finance-research-turn.test.ts",
       "test/operator/lcx-finance-research-workspace.test.ts",
     ],
@@ -1969,6 +1971,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "scripts/operator/lcx-external-channel-status.ts",
       "test/lcx-external-channel-status.test.ts",
       "test/lcx-commercial-answer-pipeline.test.ts",
+      "test/lcx-commercial-answer-candidate-cli.test.ts",
       "test/lcx-commercial-answer-pipeline-grounding.test.ts",
       "src/agents/provider-council-handoff.test.ts",
       "src/agents/provider-council-source-handoff.test.ts",
@@ -2022,6 +2025,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "test/fixtures/lcx-waterflow-directed-content-review-probe.ts",
       "test/lcx-finance-research-run.test.ts",
       "test/operator/lcx-finance-research-run.test.ts",
+      "test/operator/lcx-finance-research-run.access.test.ts",
     ],
   },
   {
@@ -2125,6 +2129,7 @@ export const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = 
       "src/agents/finance-realtime-source-registry.test.ts",
       "src/agents/finance-realtime-source-registry.ts",
       "src/agents/geospatial-source-registry.test.ts",
+      "src/agents/geospatial-source-registry.usgs-provenance.test.ts",
       "src/agents/geospatial-source-registry.ts",
       "scripts/operator/finance-data-gateway-live-smoke.ts",
       "scripts/operator/finance-data-gateway-smoke.ts",
@@ -2267,6 +2272,12 @@ export const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
     reason:
       "the finance research CLI test proves both caseflow wiring and focused daily research product registration.",
+  },
+  {
+    path: "test/operator/lcx-finance-research-run.access.test.ts",
+    familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
+    reason:
+      "the research CLI access-recovery test verifies the shared operator's source-access boundaries for both lifecycle and daily research owners.",
   },
   {
     path: "scripts/operator/lcx-finance-research-batch.ts",

@@ -12,6 +12,16 @@ import { executeOwnedProcess } from "./owned-process.js";
 import { createCentralToolRegistry } from "./tool-registry.js";
 import type { CentralPerception, CentralToolSpec } from "./types.js";
 
+it("propagates cancellation through the registered position ledger reader", async () => {
+  const controller = new AbortController();
+  const reason = new Error("ledger caller cancelled");
+  controller.abort(reason);
+  const reader = createCentralToolRegistry({ workspaceDir: "/unused-cancelled-fixture" }).get(
+    "finance_position_ledger_read",
+  )!;
+  await expect(reader.execute({}, controller.signal)).rejects.toBe(reason);
+});
+
 it("carries exact bar-source comparison through the registered reader into the next decision", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "central-bar-source-"));
   const source = {

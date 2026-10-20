@@ -993,6 +993,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/infra\/json-file\.ts$/u,
       /^src\/infra\/device-identity\.ts$/u,
       /^src\/infra\/device-auth-store\.ts$/u,
+      /^src\/discord\/monitor\/thread-bindings\.state\.ts$/u,
       /^src\/infra\/exec-approvals\.ts$/u,
       /^src\/secrets\/shared\.ts$/u,
       /^src\/agents\/pi-model-discovery\.ts$/u,
@@ -1008,6 +1009,7 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["run-changed-tests"],
     commands: [
       "pnpm vitest run src/agents/subagent-registry-store.corrupt-guard.test.ts src/browser/chrome.profile-decoration.unreadable.test.ts src/infra/device-identity.unreadable-guard.test.ts",
+      "pnpm vitest run src/discord/monitor/thread-bindings.corrupt-guard.test.ts src/discord/monitor/thread-bindings.state.identity-migration.test.ts",
       "pnpm vitest run extensions/matrix/src/matrix/credentials.identity-migration.test.ts extensions/zalouser/src/accounts.test.ts",
       "pnpm tsx scripts/operator/lcx-persistence-safety-audit.ts --json",
     ],

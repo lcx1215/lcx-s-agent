@@ -29,6 +29,8 @@ type Coverage = {
 };
 export type OwnerArtifactBackfillReceipt = {
   status: "complete" | "partial" | "unavailable";
+  /** Resume token for the next bounded pass; null means the sweep reached its end. */
+  nextCursor: string | null;
   scanned: number;
   registered: number;
   unchanged: number;
@@ -65,11 +67,13 @@ export async function backfillOwnerArtifacts(input: {
   agentId: string;
   workspaceDir: string;
   limit?: number;
+  cursor?: unknown;
   /** Cooperative run budget; finish the current bounded operation, then stop. */
   deadlineMs?: number;
 }): Promise<OwnerArtifactBackfillReceipt> {
   const receipt: OwnerArtifactBackfillReceipt = {
     status: "complete",
+    nextCursor: typeof input.cursor === "string" ? input.cursor : null,
     scanned: 0,
     registered: 0,
     unchanged: 0,
@@ -92,6 +96,7 @@ export async function backfillOwnerArtifacts(input: {
     receipt.status = "partial";
   };
   let deadlineReached = false;
+  let limitReached = false;
   const stopForDeadline = (coverage?: Coverage): boolean => {
     if (input.deadlineMs === undefined || Date.now() < input.deadlineMs) {
       return false;
@@ -129,8 +134,58 @@ export async function backfillOwnerArtifacts(input: {
     if (stopForDeadline()) {
       return receipt;
     }
+    const scope = createHash("sha256")
+      .update(JSON.stringify([workspace, memory.store.path, input.agentId, ROOTS]))
+      .digest("hex");
+    let resume: { ownerIndex: number; relativePath: string } | undefined;
+    if (input.cursor !== undefined && input.cursor !== null) {
+      try {
+        if (typeof input.cursor !== "string" || input.cursor.length > 4096) {
+          throw new Error("invalid cursor");
+        }
+        const decoded = object(JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")));
+        const ownerIndex = decoded?.ownerIndex;
+        const relativePath = decoded?.relativePath;
+        if (
+          decoded?.scope !== scope ||
+          typeof ownerIndex !== "number" ||
+          !Number.isInteger(ownerIndex) ||
+          ownerIndex < 0 ||
+          ownerIndex >= ROOTS.length ||
+          typeof relativePath !== "string" ||
+          !relativePath.startsWith(`${ROOTS[ownerIndex].root}/`) ||
+          relativePath.split("/").some((part) => !part || part === "." || part === "..")
+        ) {
+          throw new Error("invalid cursor");
+        }
+        resume = { ownerIndex, relativePath };
+      } catch {
+        // An invalid or foreign token cannot skip originals. Restart visibly.
+        receipt.nextCursor = null;
+        gap("", "artifact_backfill_cursor_invalid");
+      }
+    }
+    const comparePath = (a: string, b: string): number => {
+      const left = a.split("/");
+      const right = b.split("/");
+      for (let index = 0; index < Math.min(left.length, right.length); index++) {
+        const difference = left[index].localeCompare(right[index]);
+        if (difference !== 0) {
+          return difference;
+        }
+      }
+      return left.length - right.length;
+    };
+    const advance = (ownerIndex: number, relativePath: string) => {
+      receipt.nextCursor = Buffer.from(
+        JSON.stringify({ scope, ownerIndex, relativePath }),
+      ).toString("base64url");
+    };
     store = ArtifactStore.open({ dbPath: memory.store.path, workspaceDir: workspace });
-    for (const owner of ROOTS) {
+    for (const [ownerIndex, owner] of ROOTS.entries()) {
+      if (resume && ownerIndex < resume.ownerIndex) {
+        continue;
+      }
       if (stopForDeadline()) {
         break;
       }
@@ -144,10 +199,19 @@ export async function backfillOwnerArtifacts(input: {
       };
       receipt.coverage.push(coverage);
       const visit = async (relativeDir: string, depth: number): Promise<void> => {
+        if (
+          resume &&
+          ownerIndex === resume.ownerIndex &&
+          comparePath(relativeDir, resume.relativePath) < 0 &&
+          !resume.relativePath.startsWith(`${relativeDir}/`)
+        ) {
+          return;
+        }
         if (stopForDeadline(coverage)) {
           return;
         }
         if (receipt.scanned >= limit) {
+          limitReached = true;
           receipt.truncated = true;
           coverage.status = "partial";
           return;
@@ -202,9 +266,17 @@ export async function backfillOwnerArtifacts(input: {
             continue;
           }
           if (receipt.scanned >= limit) {
+            limitReached = true;
             receipt.truncated = true;
             coverage.status = "partial";
             return;
+          }
+          if (
+            resume &&
+            ownerIndex === resume.ownerIndex &&
+            comparePath(relativePath, resume.relativePath) <= 0
+          ) {
+            continue;
           }
           receipt.scanned++;
           coverage.scanned++;
@@ -310,6 +382,7 @@ export async function backfillOwnerArtifacts(input: {
             });
             receipt[registered.status]++;
             coverage[registered.status]++;
+            advance(ownerIndex, relativePath);
           } catch (error) {
             gap(
               relativePath,
@@ -318,10 +391,16 @@ export async function backfillOwnerArtifacts(input: {
                 : "artifact_backfill_original_unavailable",
             );
             coverage.status = "partial";
+            // Bad originals remain reported and are retried on the next full sweep;
+            // they must not permanently starve later valid originals.
+            advance(ownerIndex, relativePath);
           }
         }
       };
       await visit(owner.root, 0);
+    }
+    if (!limitReached && !deadlineReached) {
+      receipt.nextCursor = null;
     }
     if (receipt.truncated && !deadlineReached) {
       gap("", "artifact_backfill_limit_or_depth_reached");

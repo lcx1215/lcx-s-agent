@@ -675,7 +675,7 @@ function createCapabilityTools(
       ownerId: "finance_position_ledger_read",
       name: ledgerRead.name,
       label: ledgerRead.label,
-      description: `${ledgerRead.description} Central-harness scope: the finance directory is selected by the host. brokerAccountId reads reconstructed history and brokerSnapshot: latest retained native positions/stop coverage for that exact account, with snapshotRef, observedAt, freshness and omittedHoldings. Omit asOf with brokerAccountId; the retained snapshot reports its own source clock. Check snapshot freshness; history orders cannot prove current open protection. No network refresh. Use historyKind=receipt|order|fill|fee with historyAccountId and historyVenue; historyInstrument, historyFrom and historyThrough narrow the concrete question before pagination. Page size is 1-25 and returned historyCursor continues the same account, venue, filters, and book head. Orders are safe-field raw observations only; fills/fees are normalized alpaca:paper broker facts. Append is unavailable.`,
+      description: `${ledgerRead.description} Central-harness scope: the finance directory is selected by the host. brokerAccountId reads reconstructed history and brokerSnapshot: latest retained native positions/stop coverage for that exact account, with snapshotRef, observedAt, freshness and omittedHoldings. Use brokerSnapshotOnly=true to skip unrelated history reconstruction; continue holdingsPage.nextCursor as brokerSnapshotCursor with the same account. Omit asOf with brokerAccountId; the retained snapshot reports its own source clock. Check snapshot freshness; history orders cannot prove current open protection. No network refresh. Use historyKind=receipt|order|fill|fee with historyAccountId and historyVenue; historyInstrument, historyFrom and historyThrough narrow the concrete question before pagination. Page size is 1-25 and returned historyCursor continues the same account, venue, filters, and book head. Orders are safe-field raw observations only; fills/fees are normalized alpaca:paper broker facts. Append is unavailable.`,
       inputKeys: inputKeys(
         ledgerRead,
         allowedFinanceLedgerDirectories.size > 0
@@ -700,8 +700,8 @@ function createCapabilityTools(
         const escalation = escalationReason(args);
         return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
       },
-      execute: async (args) => {
-        const result = await ledgerRead.execute(`central-capability-${randomUUID()}`, args);
+      execute: async (args, signal) => {
+        const result = await ledgerRead.execute(`central-capability-${randomUUID()}`, args, signal);
         const details = (result as { details?: unknown } | undefined)?.details;
         return details !== null && typeof details === "object" && !Array.isArray(details)
           ? (details as Record<string, unknown>)

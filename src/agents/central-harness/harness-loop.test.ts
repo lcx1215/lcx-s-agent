@@ -317,6 +317,78 @@ it("names oversized bar-source comparisons instead of exceeding the existing rea
   expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
 });
 
+it("carries a snapshot-only holdings cursor through backlog into the next decision", async () => {
+  const nextCursor = "cursor-".repeat(60);
+  const brokerSnapshot = {
+    status: "present",
+    accounts: [
+      {
+        accountId: "fixture",
+        snapshotRef: "a".repeat(64),
+        observedAt: perception.observedAt,
+        holdings: Array.from({ length: 4 }, (_, index) => ({
+          instrument: `FIX${index}`,
+          sourceNote: "retained-".repeat(30),
+        })),
+        holdingsPage: { nextCursor, complete: false },
+      },
+    ],
+  };
+  const spec: CentralToolSpec = {
+    ownerId: "finance_position_ledger_read",
+    name: "fixture",
+    label: "fixture",
+    description: "fixture",
+    boundary: [],
+    allowedSideEffects: [],
+    approve: () => ({ ok: true }),
+    execute: async () => ({
+      schemaVersion: "lcx_finance_position_ledger_read_v2",
+      status: "present",
+      brokerSnapshotOnly: true,
+      brokerSnapshot,
+    }),
+  };
+  const receipt = await runCentralHarnessCycle({
+    perception,
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async () => ({
+        kind: "proposed",
+        provider: "fixture",
+        modelId: "fixture",
+        plan: {
+          actions: [
+            {
+              ownerId: spec.ownerId,
+              args: { brokerAccountId: "fixture", brokerSnapshotOnly: true },
+            },
+          ],
+          note: "read missing holdings",
+        },
+      }),
+    },
+  });
+  const backlog = compactReceipts([receipt], 10);
+  expect(backlog[0].outcomes[0].outcome?.brokerSnapshot).toEqual(brokerSnapshot);
+  const next = await runCentralHarnessCycle({
+    perception: { ...perception, backlog },
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async (seen: CentralPerception) => {
+        expect(seen.backlog[0]).toHaveProperty("outcomes.0.outcome.brokerSnapshot", brokerSnapshot);
+        return {
+          kind: "proposed",
+          provider: "fixture",
+          modelId: "fixture",
+          plan: { actions: [], note: "continue exact retained page cursor" },
+        };
+      },
+    },
+  });
+  expect(next.steps).toEqual([]);
+});
+
 it("retains native protection when the same read also requests historical orders", async () => {
   const brokerSnapshot = {
     status: "present",

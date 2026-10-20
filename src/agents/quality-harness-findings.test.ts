@@ -16,6 +16,9 @@ type Variant =
   | "stale-artifact"
   | "stale-evidence"
   | "unknown-evidence"
+  | "extra-packet-evidence"
+  | "unrelated-evidence"
+  | "mixed-evidence"
   | "missing"
   | "duplicate"
   | "unknown-finding"
@@ -33,6 +36,9 @@ async function run(variant: Variant) {
   const requestsByCallId = new Map<string, QualityHarnessModelRequest>();
   const evidence = [
     { id: "window", text: "SP500 March 10; other sample March 9. Feed unavailable." },
+    ...(["extra-packet-evidence", "unrelated-evidence", "mixed-evidence"].includes(variant)
+      ? [{ id: "unrelated", text: "A separate channel is configured." }]
+      : []),
     ...(variant.startsWith("batch-context-")
       ? Array.from({ length: 16 }, (_, index) => ({
           id: `other-${index}`,
@@ -151,7 +157,16 @@ async function run(variant: Variant) {
                     finding.role.startsWith("evidence_batch_extract_"))
                     ? "unresolved"
                     : "resolved",
-                evidenceIds: [variant === "unknown-evidence" ? "invented" : "window"],
+                evidenceIds:
+                  variant === "mixed-evidence"
+                    ? ["window", "unrelated"]
+                    : [
+                        variant === "unknown-evidence"
+                          ? "invented"
+                          : variant === "unrelated-evidence"
+                            ? "unrelated"
+                            : "window",
+                      ],
                 artifactClaimId: variant === "unknown-anchor" ? "invented" : "c1",
                 artifactQuote:
                   variant === "anchor" || variant === "unknown-anchor"
@@ -241,6 +256,30 @@ async function run(variant: Variant) {
 }
 
 describe("version-bound finding closure", () => {
+  it("allows other packet evidence when closure cites the corrected claim's evidence", async () => {
+    const { result } = await run("extra-packet-evidence");
+    expect(result.status).toBe("verified");
+    expect(result.attempts[0].findings?.every((finding) => finding.status === "resolved")).toBe(
+      true,
+    );
+  });
+  it.each<Variant>(["unrelated-evidence", "mixed-evidence"])(
+    "retains findings when %s is absent from the corrected claim's citations",
+    async (variant) => {
+      const { result } = await run(variant);
+      expect(result.status).toBe("quality-failed");
+      expect(result.verification.status).toBe("not-requested");
+      expect(result.attempts[0].findings).toHaveLength(3);
+      expect(result.attempts[0].findings?.every((finding) => finding.status === "unresolved")).toBe(
+        true,
+      );
+      expect(
+        result.attempts[0].findings?.every(
+          (finding) => finding.closureFailure === "resolution_evidence_not_cited_by_claim",
+        ),
+      ).toBe(true);
+    },
+  );
   it("closes a batch extraction finding only after independent version-bound resolution", async () => {
     const { result, requests } = await run("batch-context-valid");
     expect(result.status, JSON.stringify(result.attempts)).toBe("verified");
@@ -283,6 +322,7 @@ describe("version-bound finding closure", () => {
     expect(prompt).toContain("finding_packet=");
     expect(prompt).toContain(precheck.findingPacket!.evidenceSha256);
     expect(prompt).toContain("the full normalized evidence set");
+    expect(prompt).toContain("evidence elsewhere in the packet cannot substitute");
   });
   it("falls back from a structurally incomplete review to another non-author model", async () => {
     const { result } = await run("fallback-review");

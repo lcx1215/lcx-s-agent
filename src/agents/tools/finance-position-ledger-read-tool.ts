@@ -220,6 +220,18 @@ const FinancePositionLedgerReadSchema = Type.Object({
         "Optional explicit Alpaca paper account id. Omit asOf with this account-wide read. Reads reconstructed broker history and brokerSnapshot: latest retained native positions and stop coverage with its own source time/ref, freshness and explicit omissions. This is a stored snapshot, not a fresh network request; it does not read credentials.",
     }),
   ),
+  brokerSnapshotOnly: Type.Optional(
+    Type.Boolean({
+      description:
+        "Read only the retained native holdings/protection page for brokerAccountId. Skips execution history and economic reconstruction; no network refresh.",
+    }),
+  ),
+  brokerSnapshotCursor: Type.Optional(
+    Type.String({
+      description:
+        "Continue the account's holdingsPage.nextCursor with the same brokerAccountId and snapshot. A stale cursor requires restarting the snapshot.",
+    }),
+  ),
   initialCapital: Type.Optional(
     Type.Number({
       description:
@@ -590,11 +602,12 @@ async function readBehaviourSection(params: {
   directory: string;
   receipts: readonly FinanceExecutionReceipt[];
   marks: readonly FinancePositionMark[];
+  signal?: AbortSignal;
 }) {
   const thresholdsFile = financeBehaviourThresholdsPath(params.directory);
   let raw: string | null = null;
   try {
-    raw = await fs.readFile(thresholdsFile, "utf8");
+    raw = await fs.readFile(thresholdsFile, { encoding: "utf8", signal: params.signal });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -651,6 +664,49 @@ async function readBehaviourSection(params: {
  * substitute its own. That is deliberate — a model choosing the thresholds would be making the
  * judgement and then reading its own measurement as evidence for it.
  */
+async function readBrokerSnapshot(
+  directory: string,
+  brokerAccountId: string,
+  cursor?: string,
+  signal?: AbortSignal,
+) {
+  const brokerReadAt = new Date().toISOString();
+  const nativeFeedback = await readFinancePositionManagementFeedback({
+    directory,
+    observedAt: brokerReadAt,
+    rules: [],
+    holdingsPage: { cursor },
+    scope: { accountId: brokerAccountId, venue: "alpaca:paper" },
+    signal,
+  });
+  return {
+    status: nativeFeedback.status,
+    readAt: brokerReadAt,
+    boundary: "retained_native_positions_and_stop_coverage_not_network_read_or_rule_membership",
+    ...("reason" in nativeFeedback ? { reason: nativeFeedback.reason } : {}),
+    ...(nativeFeedback.accounts !== undefined
+      ? {
+          omittedAccounts: nativeFeedback.omittedAccounts,
+          accounts: nativeFeedback.accounts.map((account) => ({
+            accountId: account.accountId,
+            venue: account.venue,
+            snapshotRef: account.snapshotRef,
+            observedAt: account.observedAt,
+            freshness: account.freshness,
+            positionCount: account.positionCount,
+            uncoveredCount: account.uncoveredCount,
+            unresolvedOrderCount: account.unresolvedOrderCount,
+            omittedHoldings: account.omittedHoldings,
+            ...(account.holdingsPage ? { holdingsPage: account.holdingsPage } : {}),
+            holdings: account.holdings.map(
+              ({ activeRuleIds: _rules, omittedRuleCount: _omittedRules, ...holding }) => holding,
+            ),
+          })),
+        }
+      : {}),
+  };
+}
+
 export function createFinancePositionLedgerReadTool(options?: {
   workspaceDir?: string;
 }): AnyAgentTool {
@@ -658,13 +714,16 @@ export function createFinancePositionLedgerReadTool(options?: {
     label: "Finance Position Ledger Read",
     name: "finance_position_ledger_read",
     description:
-      "Read the durable position book and optional bounded history. For history pass historyKind=receipt|order|fill|fee, historyAccountId, historyVenue, optional instrument/time filters, historyLimit (1-25), then the returned opaque historyCursor. Receipts are LCX execution records; fills/fees use normalized reconciled Alpaca paper facts; orders are deduplicated raw observations with a fixed safe-field projection and are not reconciled. The page is bounded for model context, while existing owners still validate/read the underlying history stream. Read-only: no append, network call, or venue access.",
+      "Read the durable position book and optional bounded history. For current retained holdings only use brokerAccountId with brokerSnapshotOnly=true, then follow holdingsPage.nextCursor as brokerSnapshotCursor. For history pass historyKind=receipt|order|fill|fee, historyAccountId, historyVenue, optional instrument/time filters, historyLimit (1-25), then the returned opaque historyCursor. Receipts are LCX execution records; fills/fees use normalized reconciled Alpaca paper facts; orders are deduplicated raw observations with a fixed safe-field projection and are not reconciled. The page is bounded for model context, while existing owners still validate/read the underlying history stream. Read-only: no append, network call, or venue access.",
     parameters: FinancePositionLedgerReadSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
+      signal?.throwIfAborted();
       const params = args as Record<string, unknown>;
       const directory = readStringParam(params, "directory");
       const asOf = readStringParam(params, "asOf");
       const brokerAccountId = readStringParam(params, "brokerAccountId")?.trim();
+      const brokerSnapshotOnly = params.brokerSnapshotOnly === true;
+      const brokerSnapshotCursor = readStringParam(params, "brokerSnapshotCursor");
       const initialCapital = readNumberParam(params, "initialCapital");
       const includeCurveLevels = params.includeCurveLevels === true;
       const includeBehaviour = params.includeBehaviour === true;
@@ -676,6 +735,23 @@ export function createFinancePositionLedgerReadTool(options?: {
       const historyThrough = readStringParam(params, "historyThrough");
       const historyCursor = readStringParam(params, "historyCursor");
       const historyLimit = readNumberParam(params, "historyLimit") ?? 10;
+
+      if (
+        ((brokerSnapshotOnly || brokerSnapshotCursor !== undefined) && !brokerAccountId) ||
+        (brokerSnapshotOnly &&
+          (initialCapital !== undefined ||
+            historyKind !== undefined ||
+            includeBehaviour ||
+            includeCurveLevels))
+      ) {
+        return jsonResult({
+          ok: false,
+          schemaVersion: FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION,
+          boundary: "finance_position_ledger_read_only",
+          status: "invalid_scope",
+          reason: "snapshot_only_requires_account_and_cannot_include_history_curve_or_behaviour",
+        });
+      }
 
       if (historyKind !== undefined && !["receipt", "order", "fill", "fee"].includes(historyKind)) {
         return jsonResult({
@@ -801,6 +877,7 @@ export function createFinancePositionLedgerReadTool(options?: {
           throw error;
         });
 
+      signal?.throwIfAborted();
       if (!databasePresent) {
         return jsonResult({
           ok: false,
@@ -823,11 +900,39 @@ export function createFinancePositionLedgerReadTool(options?: {
         });
       }
 
-      const read = await readFinancePositionRecords(location.directory);
-      const ledgerRead = await readFinancePositionLedger(
-        location.directory,
-        asOf === undefined ? {} : { asOf },
-      );
+      if (brokerSnapshotOnly && brokerAccountId !== undefined) {
+        const brokerSnapshot = await readBrokerSnapshot(
+          location.directory,
+          brokerAccountId,
+          brokerSnapshotCursor,
+          signal,
+        );
+        signal?.throwIfAborted();
+        return jsonResult({
+          ok: brokerSnapshot?.status === "present",
+          schemaVersion: FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION,
+          boundary: "finance_position_ledger_read_only",
+          status: brokerSnapshot?.status,
+          brokerSnapshot,
+          brokerSnapshotOnly: true,
+          notTouched: [
+            "trading_execution",
+            "order_placement",
+            "provider_config",
+            "external_channel_sender",
+            "protected_memory",
+          ],
+        });
+      }
+
+      const read =
+        initialCapital !== undefined || historyKind === "receipt"
+          ? await readFinancePositionRecords(location.directory, { signal })
+          : undefined;
+      const ledgerRead = await readFinancePositionLedger(location.directory, {
+        ...(asOf === undefined ? {} : { asOf }),
+        signal,
+      });
       const { ledger } = ledgerRead;
       const accountTradingBook =
         brokerAccountId === undefined
@@ -836,46 +941,17 @@ export function createFinancePositionLedgerReadTool(options?: {
               directory: location.directory,
               accountId: brokerAccountId,
               venue: "alpaca:paper",
+              signal,
             });
-      const brokerReadAt = new Date().toISOString();
-      const nativeFeedback =
+      const brokerSnapshot =
         brokerAccountId === undefined
           ? undefined
-          : await readFinancePositionManagementFeedback({
-              directory: location.directory,
-              observedAt: brokerReadAt,
-              rules: [],
-              scope: { accountId: brokerAccountId, venue: "alpaca:paper" },
-            });
-      const brokerSnapshot = nativeFeedback
-        ? {
-            status: nativeFeedback.status,
-            readAt: brokerReadAt,
-            boundary:
-              "retained_native_positions_and_stop_coverage_not_network_read_or_rule_membership",
-            ...("reason" in nativeFeedback ? { reason: nativeFeedback.reason } : {}),
-            ...(nativeFeedback.accounts !== undefined
-              ? {
-                  omittedAccounts: nativeFeedback.omittedAccounts,
-                  accounts: nativeFeedback.accounts.map((account) => ({
-                    accountId: account.accountId,
-                    venue: account.venue,
-                    snapshotRef: account.snapshotRef,
-                    observedAt: account.observedAt,
-                    freshness: account.freshness,
-                    positionCount: account.positionCount,
-                    uncoveredCount: account.uncoveredCount,
-                    unresolvedOrderCount: account.unresolvedOrderCount,
-                    omittedHoldings: account.omittedHoldings,
-                    holdings: account.holdings.map(
-                      ({ activeRuleIds: _rules, omittedRuleCount: _omittedRules, ...holding }) =>
-                        holding,
-                    ),
-                  })),
-                }
-              : {}),
-          }
-        : undefined;
+          : await readBrokerSnapshot(
+              location.directory,
+              brokerAccountId,
+              brokerSnapshotCursor,
+              signal,
+            );
       const historyBook =
         historyKind === "fill" || historyKind === "fee"
           ? brokerAccountId === historyAccountId && accountTradingBook
@@ -884,6 +960,7 @@ export function createFinancePositionLedgerReadTool(options?: {
                 directory: location.directory,
                 accountId: historyAccountId!,
                 venue: "alpaca:paper",
+                signal,
               })
           : null;
       const historyHead = historyBook?.brokerHistory.sourceHeadRef;
@@ -891,14 +968,15 @@ export function createFinancePositionLedgerReadTool(options?: {
         historyKind === "order"
           ? await readFinanceBrokerHistory(location.directory, historyAccountId!, {
               streams: ["orders"],
+              signal,
             })
           : null;
       const orderRows = orderHistory ? projectBrokerOrderFacts(orderHistory.facts) : null;
       const history =
         historyKind === "receipt"
           ? receiptHistoryPage({
-              records: read.records,
-              headRef: read.headRef,
+              records: read!.records,
+              headRef: read!.headRef,
               accountId: historyAccountId!,
               venue: historyVenue!,
               kind: "receipt",
@@ -973,10 +1051,10 @@ export function createFinancePositionLedgerReadTool(options?: {
           ? { status: "not_requested" as const }
           : (() => {
               const asOfMs = asOf === undefined ? Number.POSITIVE_INFINITY : Date.parse(asOf);
-              const curveReceipts = read.receipts.filter(
+              const curveReceipts = read!.receipts.filter(
                 (receipt) => Date.parse(receipt.recordedAt) <= asOfMs,
               );
-              const curveMarks = read.marks.filter((mark) => Date.parse(mark.at) <= asOfMs);
+              const curveMarks = read!.marks.filter((mark) => Date.parse(mark.at) <= asOfMs);
               const curve = buildFinanceEquityCurve({
                 receipts: curveReceipts,
                 marks: curveMarks,
@@ -1007,9 +1085,11 @@ export function createFinancePositionLedgerReadTool(options?: {
             directory: location.directory,
             receipts: ledgerRead.receipts,
             marks: ledgerRead.marks,
+            signal,
           })
         : ({ status: "not_requested" as const } as const);
 
+      signal?.throwIfAborted();
       return jsonResult({
         ok: true,
         schemaVersion: FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION,

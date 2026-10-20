@@ -753,6 +753,7 @@ export function compactReceipts(
     step.ownerId === "finance_bar_ledger" ||
     (step.ownerId === "finance_position_ledger_read" &&
       (isPlainRecord(step.outcome?.history) ||
+        isPlainRecord(step.outcome?.brokerSnapshot) ||
         (isPlainRecord(step.outcome?.brokerTradeEconomics) &&
           isPlainRecord(step.outcome.brokerTradeEconomics.diagnostic))));
   const argumentIdentity = (step: CentralStep) =>
@@ -903,6 +904,7 @@ export function compactReceipts(
       (outcome.ownerId === "finance_bar_ledger" ||
         (outcome.ownerId === "finance_position_ledger_read" &&
           (isPlainRecord(outcome.outcome.history) ||
+            isPlainRecord(outcome.outcome.brokerSnapshot) ||
             (isPlainRecord(outcome.outcome.brokerTradeEconomics) &&
               isPlainRecord(outcome.outcome.brokerTradeEconomics.diagnostic))))),
     );

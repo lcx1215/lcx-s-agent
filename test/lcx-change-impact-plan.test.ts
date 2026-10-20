@@ -936,6 +936,24 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("routes the split thread-binding state owner through persisted-state recovery checks", async () => {
+    const payload = await runPlanArgs(["--files", "src/discord/monitor/thread-bindings.state.ts"]);
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "persisted_state_read_contract",
+          lane: "agent_workflow_memory",
+          matchedFiles: ["src/discord/monitor/thread-bindings.state.ts"],
+          commands: expect.arrayContaining([
+            "pnpm vitest run src/discord/monitor/thread-bindings.corrupt-guard.test.ts src/discord/monitor/thread-bindings.state.identity-migration.test.ts",
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("routes ontology and current operator-support changes to their existing owners", async () => {
     const payload = await runPlanArgs([
       "--files",
