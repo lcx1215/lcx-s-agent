@@ -239,6 +239,7 @@ export class ArtifactStore {
   private constructor(
     private readonly db: Database,
     private readonly workspaceDir: string,
+    private readonly legacyWorkspaceDir: string,
     private readonly readOnly: boolean,
     private readonly ftsAvailable: boolean,
   ) {}
@@ -297,7 +298,12 @@ export class ArtifactStore {
             .get(),
         );
       }
-      return new ArtifactStore(db, fs.realpathSync(params.workspaceDir), readOnly, ftsAvailable);
+      const workspaceDir = fs.realpathSync.native(params.workspaceDir);
+      const legacyWorkspaceDir = fs.realpathSync(params.workspaceDir);
+      if (fs.realpathSync.native(legacyWorkspaceDir) !== workspaceDir) {
+        throw new ArtifactStoreError("artifact_workspace_changed_during_open");
+      }
+      return new ArtifactStore(db, workspaceDir, legacyWorkspaceDir, readOnly, ftsAvailable);
     } catch (error) {
       db?.close();
       if (error instanceof ArtifactStoreError) {
@@ -428,8 +434,23 @@ export class ArtifactStore {
         .prepare("SELECT record_json,workspace_root FROM owner_artifacts WHERE id=?")
         .get(artifact.id) as { record_json: string; workspace_root: string } | undefined;
       if (existing) {
-        if (existing.record_json !== encoded || existing.workspace_root !== this.workspaceDir) {
+        let sameWorkspace = existing.workspace_root === this.workspaceDir;
+        if (!sameWorkspace) {
+          try {
+            sameWorkspace = fs.realpathSync.native(existing.workspace_root) === this.workspaceDir;
+          } catch {
+            // An unavailable old namespace cannot establish workspace authority.
+          }
+        }
+        if (existing.record_json !== encoded || !sameWorkspace) {
           throw new ArtifactStoreError("artifact_identity_conflict");
+        }
+        // Lazy migration of a derived registry key, after original bytes and
+        // immutable metadata have been verified. Read-only callers never write.
+        if (existing.workspace_root !== this.workspaceDir) {
+          this.db
+            .prepare("UPDATE owner_artifacts SET workspace_root=? WHERE id=?")
+            .run(this.workspaceDir, artifact.id);
         }
         this.db.exec("COMMIT");
         return { status: "unchanged", artifact };
@@ -497,10 +518,11 @@ export class ArtifactStore {
       .digest("base64url");
     const cursor = params.cursor === undefined ? undefined : decodeCursor(params.cursor, scope);
     const filters =
-      "a.workspace_root=? AND (? IS NULL OR a.owner=?) AND (? IS NULL OR (a.observed_at<=? AND (a.cutoff IS NULL OR a.cutoff<=?)))" +
+      "a.workspace_root IN (?, ?) AND (? IS NULL OR a.owner=?) AND (? IS NULL OR (a.observed_at<=? AND (a.cutoff IS NULL OR a.cutoff<=?)))" +
       (cursor ? " AND (a.observed_at<? OR (a.observed_at=? AND a.id>?))" : "");
     const values = [
       this.workspaceDir,
+      this.legacyWorkspaceDir,
       owner,
       owner,
       asOf,
@@ -558,8 +580,10 @@ export class ArtifactStore {
     textProjection?: "metadata_and_text";
   }> {
     const row = this.db
-      .prepare("SELECT record_json FROM owner_artifacts WHERE id=? AND workspace_root=?")
-      .get(bounded(id, 240), this.workspaceDir) as { record_json: string } | undefined;
+      .prepare("SELECT record_json FROM owner_artifacts WHERE id=? AND workspace_root IN (?, ?)")
+      .get(bounded(id, 240), this.workspaceDir, this.legacyWorkspaceDir) as
+      | { record_json: string }
+      | undefined;
     if (!row) {
       throw new ArtifactStoreError("artifact_not_registered");
     }

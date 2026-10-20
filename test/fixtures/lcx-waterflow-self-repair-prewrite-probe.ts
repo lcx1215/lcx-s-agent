@@ -463,6 +463,7 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
   directory: string;
   scenario: "read" | "missing_memory" | "review_timeout";
   observeNextFeedback?: boolean;
+  canonicalProducerMap?: boolean;
 }) {
   const produced = await produceOriginalPrewriteRecall({
     directory: options.directory,
@@ -572,9 +573,14 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
     const currentRootBytes = await fs.readFile(produced.current.receipt.latestJsonPath);
     const diagnostic = await readSelfRepairOwnerMapFeedback(produced.workspaceDir, request, host);
     assert.equal(diagnostic.status, "read");
+    let nextWorkspace = produced.workspaceDir;
+    if (options.canonicalProducerMap) {
+      nextWorkspace = path.join(options.directory, "workspace-alias");
+      await fs.symlink(produced.workspaceDir, nextWorkspace, "junction");
+    }
     const next = buildSelfRepairHandsReceipt({
       checkedAt: new Date().toISOString(),
-      workspaceDir: produced.workspaceDir,
+      workspaceDir: nextWorkspace,
       signalKey: `private-next-diagnostic-${randomUUID()}`,
       issue: "next_candidate_consumes_original_owner_diagnostic",
       observedFailure: `Explicit next diagnostic candidate.\n${diagnostic.diagnostic}`,
@@ -585,9 +591,9 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
       diagnosticFeedbackRequest: { request, host },
     });
     // Only private publication paths are isolated; the original writer and allowlist run unchanged.
-    next.latestJsonPath = path.join(produced.workspaceDir, "state/next-diagnostic-latest.json");
-    next.latestMarkdownPath = path.join(produced.workspaceDir, "state/next-diagnostic-latest.md");
-    next.jsonlPath = path.join(produced.workspaceDir, "logs/next-diagnostic.jsonl");
+    next.latestJsonPath = path.join(nextWorkspace, "state/next-diagnostic-latest.json");
+    next.latestMarkdownPath = path.join(nextWorkspace, "state/next-diagnostic-latest.md");
+    next.jsonlPath = path.join(nextWorkspace, "logs/next-diagnostic.jsonl");
     await writeSelfRepairHandsReceipt(next);
     const nextBytes = await fs.readFile(next.latestJsonPath);
     assert.deepEqual(await fs.readFile(produced.current.receipt.latestJsonPath), currentRootBytes);
@@ -620,7 +626,8 @@ export async function probeOriginalSelfRepairSameAttempt(options: {
   const artifactPath = path.join(produced.workspaceDir, produced.artifact.relativePath);
   const latest = (pointer: string) => ref(nativeRoot, pointer);
   const currentScope = await latest("/sourceReview/scope");
-  const mapRef = (pointer: string) => ref(mapPath, pointer);
+  const mapRef = async (pointer: string) =>
+    ref(options.canonicalProducerMap ? await fs.realpath(mapPath) : mapPath, pointer);
   const governanceRef = (pointer: string) => ref(consumed.governancePath!, pointer);
   const nodes: WorkflowHandoffEvidence["nodes"] = [
     {

@@ -348,6 +348,8 @@ describe("LCX ontology registry", () => {
     expect(semanticSurfaces.map((surface) => surface.path)).toEqual(
       expect.arrayContaining([
         "src/agents/finance-caseflow.ts",
+        "src/agents/commercial-answer-pipeline.ts",
+        "scripts/operator/lcx-commercial-answer-pipeline.ts",
         "src/shared/lcx-run-receipt.ts",
         "src/shared/global-evidence-projection.ts",
         "scripts/operator/lcx-ontology.ts",

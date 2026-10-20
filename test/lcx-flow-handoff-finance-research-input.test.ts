@@ -50,7 +50,23 @@ describe("fresh original preflight files -> original research reader -> native d
   });
   async function probe(fault?: ResearchInputFault) {
     const result = await probeOriginalResearchInput({ directory, fault });
-    const proof = { ...result, actualRunnerInputs: inputs };
+    await persistProof(result, fault, structuredClone(inputs));
+    return result;
+  }
+  async function persistProof(
+    result: Awaited<ReturnType<typeof probeOriginalResearchInput>>,
+    fault: ResearchInputFault | undefined,
+    readerInputs: runner.FinanceResearchRunInput[],
+    programmaticAccountBoundary?: {
+      actualRunnerInputs: runner.FinanceResearchRunInput[];
+      failure: string;
+    },
+  ) {
+    const proof = {
+      ...result,
+      actualRunnerInputs: readerInputs,
+      ...(programmaticAccountBoundary ? { programmaticAccountBoundary } : {}),
+    };
     const proofRoot = process.env.LCX_RESEARCH_INPUT_PROOF_DIR;
     if (proofRoot) {
       const caseDirectory = path.join(proofRoot, fault ?? "normal");
@@ -74,7 +90,6 @@ describe("fresh original preflight files -> original research reader -> native d
         );
       }
     }
-    return result;
   }
   it("actually reads this attempt's fresh broker evidence and rule into the original runner", async () => {
     const result = await probe();
@@ -106,16 +121,43 @@ describe("fresh original preflight files -> original research reader -> native d
     "missing_account_scope",
     "invalid_broker_summary",
   ] as const)(
-    "rejects %s in original normalization without writing a planned receipt",
+    "rejects %s at the pinned reader and the programmatic account boundary",
     async (fault) => {
       const result = await probe(fault);
+      expect(inputs).toHaveLength(0);
+      expect(result.failure).toBe("controller handoff controllerEvidence path or bytes mismatch");
+      // The scheduled reader rejects changed bytes before normalization. Keep the
+      // independent programmatic account guard covered without forging a new pin.
+      const boundaryFailure: unknown = await runner
+        .runFinanceResearchRun({
+          input: {
+            ask: "Validate supplied private account evidence.",
+            asOf: result.asOf,
+            controllerEvidence: JSON.parse(result.consumedEvidenceBytes!),
+            portfolioContext: JSON.parse(result.originalContextBytes),
+          },
+          liveFetch: false,
+          workspaceDir: result.workspace,
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(boundaryFailure).toBeInstanceOf(Error);
+      if (!(boundaryFailure instanceof Error)) {
+        throw new Error("missing account boundary failure");
+      }
+      expect(boundaryFailure.message).toMatch(/broker account scope/);
+      await persistProof(result, fault, [], {
+        actualRunnerInputs: structuredClone(inputs),
+        failure: boundaryFailure.message,
+      });
       expect(inputs).toHaveLength(1);
       const broker = inputs[0].controllerEvidence!.find(
         (item) => item.source.trim() === "finance-broker-profit-summary",
       )!;
       expect(broker).toBeDefined();
       expect(result.originalEvidenceSha256).not.toBe(result.consumedEvidenceSha256);
-      expect(result.failure).toMatch(/broker account scope/);
       expect(result.output).toBeUndefined();
       expect(result.receiptReadback).toBeUndefined();
       expect(recording.recordFinanceResearchResult).not.toHaveBeenCalled();
@@ -131,7 +173,7 @@ describe("fresh original preflight files -> original research reader -> native d
     const result = await probe(fault);
     expect(inputs).toEqual([]);
     expect(result.failure).toMatch(
-      fault.startsWith("missing") ? /ENOENT/ : /JSON|position|property|Unexpected/,
+      fault.startsWith("missing") ? /ENOENT/ : /controller handoff .* path or bytes mismatch/,
     );
     expect(result.output).toBeUndefined();
     expect(result.receiptReadback).toBeUndefined();
