@@ -7,6 +7,7 @@ import {
   publishResearchCapitalOutcome,
   writeResearchCapitalDecision,
 } from "../../scripts/operator/lcx-finance-research-run.js";
+import { createFinanceModelCallBudget } from "./configured-finance-model-adapter.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceDailyDecisionHistory } from "./finance-daily-decision-history.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
@@ -63,7 +64,10 @@ import type {
   ModelCallObservation,
   ModelCallRequest,
 } from "./logical-agent-model-router.js";
-import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
+import type {
+  QualityHarnessModelRequest,
+  QualityHarnessStageOutput,
+} from "./quality-harness-contract.js";
 
 const AS_OF = "2026-09-08T12:00:00.000Z";
 
@@ -331,6 +335,69 @@ const BATCH_OPTIONS = {
 } as const;
 
 describe("finance research runner", () => {
+  it("completes producer preparation and a real quality repair within the shared 24-call cap", async () => {
+    const budget = createFinanceModelCallBudget(24);
+    const invoke = async (raw: unknown) => {
+      const request = raw as QualityHarnessModelRequest;
+      // The configured finance workflow's intake is deterministic, not a paid call.
+      if (request.stage !== "intake") {
+        budget.reserve();
+      }
+      const output = (await modelInvoker(raw)) as QualityHarnessStageOutput;
+      if (request.stage === "format" && request.attempt === 1 && output.kind === "artifact") {
+        return {
+          ...output,
+          artifact: {
+            ...output.artifact,
+            claims: output.artifact.claims.map((claim) => ({
+              ...claim,
+              evidenceIds: ["unobserved-first-pass-reference"],
+              evidenceRelations: [
+                { evidenceId: "unobserved-first-pass-reference", relation: "supports" as const },
+              ],
+            })),
+          },
+        };
+      }
+      return output;
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review BTC research evidence without execution authority.",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "btc-budget-fixture",
+            instrument: "BTCUSDT",
+            assetClass: "crypto",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: true,
+      batchOptions: BATCH_OPTIONS,
+      modelInvoker: invoke,
+      qualityModelRouting: mockQualityPromptRouting(invoke),
+    });
+    expect(result.committee?.model).toMatchObject({
+      purpose: "producer_preparation",
+      roleCount: 2,
+    });
+    expect(
+      result.quality?.status,
+      JSON.stringify({
+        budget: budget.snapshot(),
+        attempts: result.quality?.attempts.map((attempt) => ({
+          failedGates: attempt.gates.filter((gate) => !gate.passed),
+          failedStages: attempt.stages.filter((stage) => stage.status !== "completed"),
+        })),
+      }),
+    ).toBe("verified");
+    expect(result.quality?.repair).toMatchObject({ attemptsUsed: 2, repairTriggered: true });
+    expect(budget.snapshot().remaining).toBeGreaterThanOrEqual(0);
+    expect(budget.snapshot().reserved).toBeLessThanOrEqual(24);
+  });
+
   it.each([20, 43, 64])(
     "accepts %s controller evidence items within the existing downstream capacity",
     async (count) => {
