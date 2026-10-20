@@ -992,3 +992,100 @@ it("recovers bounded account outcomes across sessions without attributing anonym
   expect(earlier.entries.find((entry) => entry.status === "uncertain")?.status).toBe("uncertain");
   expect(history.scopeLimitation).toContain("without_native_account_identity");
 });
+
+it("retains terminal history and drains multiple fresh outcomes across natural cutoffs", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-two-stream-history-"));
+  temporary.push(directory);
+  vi.useFakeTimers();
+  try {
+    const append = async (signalId: string, at: string) => {
+      vi.setSystemTime(new Date(at));
+      await appendFinanceIntradayDecision(directory, { ...input, signalId });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId,
+        status: "refused",
+        reasons: ["original scoped outcome"],
+        executionScope: { accountId: "account", venue: "alpaca:paper" },
+      });
+    };
+    for (let index = 0; index < 18; index++) {
+      await append(
+        `old-${index}`,
+        new Date(Date.parse("2026-09-18T18:00:00Z") + index * 1000).toISOString(),
+      );
+    }
+    const cutoff = "2026-09-18T19:00:00.000Z";
+    const initial = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: cutoff,
+    });
+    if (!("resumeCursor" in initial) || !initial.resumeCursor) {
+      throw new Error("missing initial resume");
+    }
+    let cursor = initial.resumeCursor;
+    expect(cursor.length).toBeLessThanOrEqual(512);
+    const token = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      scope: string;
+      at: string;
+      sequence: number;
+    };
+    const legacy = Buffer.from(
+      JSON.stringify({ scope: token.scope, at: token.at, sequence: token.sequence }),
+    ).toString("base64url");
+    expect(
+      await readFinanceIntradayAccountHistory(directory, {
+        accountId: "account",
+        asOf: cutoff,
+        cursor: legacy,
+      }),
+    ).toMatchObject({ status: "observed" });
+    const recoveredOld = new Set(initial.entries.map((entry) => entry.signalId));
+    // Same-time outcomes exercise the sequence tie-breaker of the ascending fresh watermark.
+    for (let index = 0; index < 11; index++) {
+      await append(`fresh-${index}`, cutoff);
+    }
+    const recoveredFresh = new Set<string>();
+    let terminal: Awaited<ReturnType<typeof readFinanceIntradayAccountHistory>> = initial;
+    for (let round = 0; round < 6; round++) {
+      const page = await readFinanceIntradayAccountHistory(directory, {
+        accountId: "account",
+        asOf: new Date(Date.parse(cutoff) + (round + 1) * 60_000).toISOString(),
+        cursor,
+      });
+      expect(page.status).toBe("observed");
+      expect(page.entries.length).toBeLessThanOrEqual(8);
+      expect(page.scannedOutcomes).toBeLessThanOrEqual(24);
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(12_000);
+      for (const entry of page.entries) {
+        (entry.signalId.startsWith("old-") ? recoveredOld : recoveredFresh).add(entry.signalId);
+      }
+      if (!("resumeCursor" in page) || !page.resumeCursor) {
+        throw new Error("missing resume cursor");
+      }
+      cursor = page.resumeCursor;
+      terminal = page;
+      if ("nextCursor" in page && page.nextCursor === null) {
+        break;
+      }
+    }
+    expect(recoveredOld.size).toBe(18);
+    expect(recoveredFresh.size).toBe(11);
+    expect(terminal).toMatchObject({ historicalWindowComplete: true, nextCursor: null });
+    const quiet = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-09-19T19:00:00.000Z",
+      cursor,
+    });
+    expect(quiet).toMatchObject({ status: "observed", entries: [], nextCursor: null });
+    await append("fresh-after-terminal", "2026-09-19T19:01:00.000Z");
+    const renewed = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-09-19T19:02:00.000Z",
+      cursor,
+    });
+    expect(renewed.status).toBe("observed");
+    expect(renewed.entries.map((entry) => entry.signalId)).toEqual(["fresh-after-terminal"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});

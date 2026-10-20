@@ -1084,7 +1084,8 @@ export async function readFinanceIntradayAccountHistory(
   },
 ) {
   const maximumEntries = params.maximumEntries ?? 8;
-  const maximumEntryBytes = maximumEntries === 2 ? 2_500 : 11_000;
+  // Reserve progress tokens, the original envelope and the scheduler's continuation provenance.
+  const maximumEntryBytes = maximumEntries === 2 ? 1_400 : 9_000;
   const base = {
     boundary:
       "historical_execution_outcomes_not_current_facts_fills_profit_or_authority; model_text_is_untrusted",
@@ -1108,6 +1109,9 @@ export async function readFinanceIntradayAccountHistory(
             .object({
               scope: z.string().regex(/^[a-f0-9]{64}$/u),
               asOf: Iso.optional(),
+              historicalDone: z.boolean().optional(),
+              freshAt: Iso.optional(),
+              freshSequence: z.number().int().nonnegative().optional(),
               at: Iso,
               sequence: z.number().int().positive(),
             })
@@ -1124,15 +1128,19 @@ export async function readFinanceIntradayAccountHistory(
     if (Date.parse(historyAsOf) > Date.parse(asOf) || (cursor && cursor.scope !== scope)) {
       throw new Error("intraday history cursor scope mismatch");
     }
-    const encodeCursor = (at: string, sequence: number) =>
-      Buffer.from(
-        JSON.stringify({
-          scope,
-          asOf: historyAsOf,
-          at,
-          sequence,
-        }),
-      ).toString("base64url");
+    const freshAt = cursor?.freshAt ?? historyAsOf;
+    const freshSequence = cursor?.freshSequence ?? 0;
+    if (Date.parse(freshAt) < Date.parse(historyAsOf) || Date.parse(freshAt) > Date.parse(asOf)) {
+      throw new Error("intraday history fresh watermark scope mismatch");
+    }
+    const encodeCursor = (
+      at: string,
+      sequence: number,
+      progress: { historicalDone: boolean; freshAt: string; freshSequence: number },
+    ) =>
+      Buffer.from(JSON.stringify({ scope, asOf: historyAsOf, at, sequence, ...progress })).toString(
+        "base64url",
+      );
     const signalIds =
       params.signalIds === undefined
         ? undefined
@@ -1176,19 +1184,21 @@ export async function readFinanceIntradayAccountHistory(
           cursor?.sequence ?? null,
           signalIds ? JSON.stringify(signalIds) : null,
           signalIds ? JSON.stringify(signalIds) : null,
-          cursor && historyAsOf !== asOf ? 24 : 25,
+          cursor?.historicalDone ? 0 : cursor ? 13 : 25,
         );
-      const latest =
-        cursor && historyAsOf !== asOf
-          ? db
-              .prepare(`SELECT d.ref, d.body, d.sequence, o.body AS outcome, o.recorded_at
+      // Ascending incremental reads ensure bursts cannot be skipped by a newer latest row.
+      const freshRows = cursor
+        ? db
+            .prepare(`SELECT d.ref, d.body, d.sequence, o.body AS outcome, o.recorded_at
           FROM finance_intraday_outcomes o JOIN finance_intraday_decisions d ON d.signal_id=o.signal_id
           WHERE COALESCE(json_extract(o.body,'$.executionScope.accountId'),json_extract(o.body,'$.tradeDecisionReview.request.accountId'))=?
-          AND o.recorded_at<? ORDER BY o.recorded_at DESC, d.sequence DESC LIMIT 1`)
-              .get(params.accountId, asOf)
-          : undefined;
-      const rows = latest
-        ? [latest, ...historicalRows.filter((row) => row.ref !== latest.ref)]
+          AND o.recorded_at<?
+          AND (o.recorded_at>? OR (o.recorded_at=? AND d.sequence>?))
+          ORDER BY o.recorded_at ASC, d.sequence ASC LIMIT 13`)
+            .all(params.accountId, asOf, freshAt, freshAt, freshSequence)
+        : [];
+      const rows = cursor
+        ? [...freshRows.slice(0, 12), ...historicalRows.slice(0, 12)]
         : historicalRows;
       const entries = rows.slice(0, 24).map((row) => {
         if (
@@ -1253,24 +1263,39 @@ export async function readFinanceIntradayAccountHistory(
             review?.status === "completed" ? (review.decision?.expectationGap ?? null) : null,
         };
       });
-      // Cover distinct recent instruments before repeated outcomes for one signal stream.
+      // Historical and incremental streams each retain a prefix and share the same bounds.
       const selected: typeof entries = [];
-      const instruments = new Set<string>();
-      for (const entry of cursor || signalIds ? [] : entries) {
-        if (!instruments.has(entry.instrument)) {
-          selected.push(entry);
-          instruments.add(entry.instrument);
+      const freshRefs = new Set(freshRows.map((row) => row.ref));
+      const freshEntries = entries.filter((entry) => freshRefs.has(entry.decisionRef));
+      const historicalEntries = entries.filter((entry) => !freshRefs.has(entry.decisionRef));
+      if (cursor) {
+        const freshLimit = historicalEntries.length ? maximumEntries / 2 : maximumEntries;
+        selected.push(...freshEntries.slice(0, freshLimit));
+        selected.push(...historicalEntries.slice(0, maximumEntries - selected.length));
+        if (selected.length < maximumEntries) {
+          const freshCount = selected.filter((entry) => freshRefs.has(entry.decisionRef)).length;
+          selected.push(
+            ...freshEntries.slice(freshCount, freshCount + maximumEntries - selected.length),
+          );
         }
-        if (selected.length === maximumEntries) {
-          break;
+      } else {
+        const instruments = new Set<string>();
+        for (const entry of signalIds ? [] : entries) {
+          if (!instruments.has(entry.instrument)) {
+            selected.push(entry);
+            instruments.add(entry.instrument);
+          }
+          if (selected.length === maximumEntries) {
+            break;
+          }
         }
-      }
-      for (const entry of entries) {
-        if (selected.length === maximumEntries) {
-          break;
-        }
-        if (!selected.includes(entry)) {
-          selected.push(entry);
+        for (const entry of entries) {
+          if (selected.length === maximumEntries) {
+            break;
+          }
+          if (!selected.includes(entry)) {
+            selected.push(entry);
+          }
         }
       }
       // Retain immutable refs when a valid large observation exceeds context.
@@ -1293,45 +1318,74 @@ export async function readFinanceIntradayAccountHistory(
           detailGap: "oversize_entry_details_omitted_retain_original_decision_and_outcome_refs",
         };
       };
-      let latestOutcomeOmitted = false;
       while (
         selected.length > 1 &&
         Buffer.byteLength(JSON.stringify(selected), "utf8") > maximumEntryBytes
       ) {
-        if (latest && selected.length === 2 && selected[0].decisionRef === latest.ref) {
-          // Never let a repeated current observation starve the historical page.
-          selected.shift();
-          latestOutcomeOmitted = true;
-        } else {
-          selected.pop();
+        const freshCount = selected.filter((entry) => freshRefs.has(entry.decisionRef)).length;
+        const historicalCount = selected.length - freshCount;
+        // Drop only a stream's tail; preserve one entry from each when both are present.
+        const dropFresh = freshCount > 1 && (historicalCount <= 1 || freshCount > historicalCount);
+        const index = selected.findLastIndex(
+          (entry) => freshRefs.has(entry.decisionRef) === dropFresh,
+        );
+        if (index < 0 || (freshCount === 1 && historicalCount === 1)) {
+          break;
         }
+        selected.splice(index, 1);
       }
-      if (
-        selected.length === 1 &&
-        Buffer.byteLength(JSON.stringify(selected[0]), "utf8") > maximumEntryBytes
-      ) {
-        selected[0] = compact(selected[0]);
+      // Compact only the retained minimal stream prefixes when either observation is oversized.
+      for (const { index } of selected
+        .map((entry, index) => ({ index, bytes: Buffer.byteLength(JSON.stringify(entry)) }))
+        .toSorted((a, b) => b.bytes - a.bytes)) {
+        if (Buffer.byteLength(JSON.stringify(selected), "utf8") <= maximumEntryBytes) {
+          break;
+        }
+        selected[index] = compact(selected[index]);
       }
-      // Initial diversified snapshot resumes immediately after its newest row;
-      // subsequent pages are chronological so diversity selection cannot skip history.
-      const anchor =
-        cursor || signalIds
-          ? rows.find((row) => row.ref === selected.at(-1)?.decisionRef)
-          : rows[0];
-      const more = cursor
-        ? rows.length > selected.length || historicalRows.length === 24
-        : rows.length > 1;
+      const selectedFresh = selected.filter((entry) => freshRefs.has(entry.decisionRef));
+      const selectedHistorical = selected.filter((entry) => !freshRefs.has(entry.decisionRef));
+      const historicalAnchor = cursor
+        ? historicalRows.find((row) => row.ref === selectedHistorical.at(-1)?.decisionRef)
+        : rows[0];
+      const freshAnchor = freshRows.find((row) => row.ref === selectedFresh.at(-1)?.decisionRef);
+      const historicalDone = cursor
+        ? historicalRows.length === selectedHistorical.length
+        : rows.length <= 1;
+      const progress = {
+        historicalDone,
+        freshAt: freshAnchor ? String(freshAnchor.recorded_at) : freshAt,
+        freshSequence: freshAnchor ? Number(freshAnchor.sequence) : freshSequence,
+      };
+      const resumeCursor = signalIds
+        ? null
+        : encodeCursor(
+            historicalAnchor ? String(historicalAnchor.recorded_at) : (cursor?.at ?? historyAsOf),
+            historicalAnchor
+              ? Number(historicalAnchor.sequence)
+              : (cursor?.sequence ?? Number.MAX_SAFE_INTEGER),
+            progress,
+          );
       const nextCursor =
-        !signalIds && selected.length > 0 && more && anchor
-          ? encodeCursor(String(anchor.recorded_at), Number(anchor.sequence))
-          : null;
+        !historicalDone || freshRows.length > selectedFresh.length ? resumeCursor : null;
       db.exec("COMMIT");
       const result = {
         nextCursor,
-        pageCursor: params.cursor ?? encodeCursor(historyAsOf, Number.MAX_SAFE_INTEGER),
+        resumeCursor,
+        pageCursor:
+          params.cursor ??
+          encodeCursor(historyAsOf, Number.MAX_SAFE_INTEGER, {
+            historicalDone: false,
+            freshAt: historyAsOf,
+            freshSequence: 0,
+          }),
         historyAsOf,
-        latestOutcomeRefreshed: latest !== undefined && !latestOutcomeOmitted,
-        ...(latestOutcomeOmitted ? { latestOutcomeOmitted: "history_page_byte_budget" } : {}),
+        historicalWindowComplete: historicalDone,
+        latestOutcomeRefreshed: selectedFresh.length > 0,
+        freshEntriesReturned: selectedFresh.length,
+        ...(freshRows.length > selectedFresh.length
+          ? { freshCoverageGap: "bounded_incremental_page_remaining" }
+          : {}),
         ...(signalIds
           ? {
               requestedSignalCount: signalIds.length,
@@ -1358,8 +1412,14 @@ export async function readFinanceIntradayAccountHistory(
         entries: selected,
         scannedOutcomes: Math.min(rows.length, 24),
         omittedEntries: entries.length - selected.length,
-        earlierHistoryMayBeOmitted: rows.length > 24,
+        earlierHistoryMayBeOmitted: cursor ? !historicalDone : rows.length > 24,
       };
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") > base.window.maximumBytes - 700) {
+        // Envelope growth must not erase a valid page's immutable progress.
+        for (let index = 0; index < selected.length; index++) {
+          selected[index] = compact(selected[index]);
+        }
+      }
       if (Buffer.byteLength(JSON.stringify(result), "utf8") > base.window.maximumBytes) {
         return {
           ...base,
