@@ -1,3 +1,4 @@
+import { ApiCallError } from "./api-call-contract.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 import type {
@@ -192,6 +193,9 @@ async function fetchJson(
   try {
     response = await fetchImpl(url, { headers });
   } catch (error) {
+    if (error instanceof ApiCallError) {
+      throw error;
+    }
     throw new AdditionalSourceAdapterError(
       `source request failed: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -279,6 +283,9 @@ export function createStooqDelayedMarketAdapter(
           headers: { "User-Agent": SEC_USER_AGENT },
         });
       } catch (error) {
+        if (error instanceof ApiCallError) {
+          throw error;
+        }
         throw new AdditionalSourceAdapterError(
           `stooq request failed: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -506,6 +513,9 @@ export function createAlphaVantageMarketAdapter(options: {
             `${metadataUrl}&apikey=${encodeURIComponent(apiKey)}`,
           );
         } catch (error) {
+          if (error instanceof ApiCallError) {
+            throw error;
+          }
           throw new AdditionalSourceAdapterError(
             `alpha vantage metadata unavailable: ${error instanceof Error ? error.message : String(error)}`,
           );

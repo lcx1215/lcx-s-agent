@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ApiCallError } from "./api-call-contract.js";
 import {
   createAlphaVantageMarketAdapter,
   createInvescoIssuerReferenceAdapter,
@@ -26,6 +27,27 @@ const REQUEST = {
 } as const;
 
 describe("additional finance source adapters", () => {
+  it("preserves an inner transport timeout before the source deadline", async () => {
+    const fetchImpl: FetchImpl = async () => {
+      throw new ApiCallError("timeout");
+    };
+    const receipt = await runFinanceRealtimeRefresh({
+      request: REQUEST,
+      adapters: [
+        createNasdaqExchangeMarketAdapter({ fetchImpl }),
+        createStooqDelayedMarketAdapter({ fetchImpl }),
+      ],
+      timeoutMs: 5_000,
+      retry: { attempts: 1 },
+    });
+    expect(receipt.sourceAttempts.map((attempt) => attempt.error)).toEqual([
+      "API timeout",
+      "API timeout",
+    ]);
+    expect(receipt.sourceAttempts.every((attempt) => attempt.status === "failed")).toBe(true);
+    expect(receipt.snapshot).toBeUndefined();
+  });
+
   it("parses a Stooq daily response and rejects challenge HTML", () => {
     const observation = parseStooqDailyCsv(
       "Date,Open,High,Low,Close,Volume\n2026-09-04,717,720,715,718.96,123456",
@@ -405,7 +427,7 @@ describe("additional source market contracts", () => {
         { ...REQUEST, instrument: "300135.SHZ", assetClass: "cn_equity" },
         new AbortController().signal,
       ),
-    ).rejects.toThrow("metadata unavailable: source request failed: API http status 403");
+    ).rejects.toMatchObject({ name: "ApiCallError", kind: "forbidden", httpStatus: 403 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
