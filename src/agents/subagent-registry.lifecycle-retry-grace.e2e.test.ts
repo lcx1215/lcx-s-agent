@@ -34,7 +34,7 @@ const loadConfigMock = vi.fn(() => ({
   agents: { defaults: { subagents: { archiveAfterMinutes: 0 } } },
 }));
 const loadRegistryMock = vi.fn(() => new Map());
-const saveRegistryMock = vi.fn(() => {});
+const saveRegistryMock = vi.fn(() => true);
 const announceSpy = vi.fn(async () => true);
 
 vi.mock("../gateway/call.js", () => ({

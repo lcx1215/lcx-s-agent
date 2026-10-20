@@ -115,10 +115,11 @@ describe("subagent registry store: a source that cannot be read must not be over
       "utf-8",
     );
 
-    expect(loadSubagentRegistryFromDisk().size).toBe(1);
+    const baseline = loadSubagentRegistryFromDisk();
+    expect(baseline.size).toBe(1);
     expect(getSubagentRegistryLoadStatus()).toMatchObject({ state: "ok" });
 
-    saveSubagentRegistryToDisk(new Map([["run-2", makeRun("run-2")]]));
+    saveSubagentRegistryToDisk(new Map([["run-2", makeRun("run-2")]]), baseline);
 
     const persisted = JSON.parse(fs.readFileSync(registryPath(), "utf-8")) as {
       runs: Record<string, { runId: string }>;
@@ -128,5 +129,27 @@ describe("subagent registry store: a source that cannot be read must not be over
 
   it("resolves the registry path under the configured state dir", () => {
     expect(resolveSubagentRegistryPath()).toBe(registryPath());
+  });
+  it.each([
+    { version: 2, runs: [] },
+    { version: 2, runs: { valid: makeRun("valid"), unknown: null } },
+    { version: 2, runs: { mismatched: makeRun("other-id") } },
+  ])("blocks a parseable unknown structure without dropping entries: %j", (value) => {
+    const raw = JSON.stringify(value);
+    fs.writeFileSync(registryPath(), raw);
+    expect(loadSubagentRegistryFromDisk().size).toBe(0);
+    expect(saveSubagentRegistryToDisk(new Map())).toBe(false);
+    expect(fs.readFileSync(registryPath(), "utf8")).toBe(raw);
+  });
+
+  it("rechecks corruption inside the write transaction after an earlier successful load", () => {
+    const runs = new Map([["run-1", makeRun("run-1")]]);
+    expect(saveSubagentRegistryToDisk(runs)).toBe(true);
+    const baseline = loadSubagentRegistryFromDisk();
+    const corrupt = '{"version":2,"runs":';
+    fs.writeFileSync(registryPath(), corrupt);
+    runs.set("run-2", makeRun("run-2"));
+    expect(saveSubagentRegistryToDisk(runs, baseline)).toBe(false);
+    expect(fs.readFileSync(registryPath(), "utf8")).toBe(corrupt);
   });
 });

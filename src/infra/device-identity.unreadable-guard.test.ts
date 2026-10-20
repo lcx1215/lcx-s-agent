@@ -50,6 +50,18 @@ describe("device identity: an identity file that cannot be read is not an absent
     expect(fs.readFileSync(filePath, "utf-8")).toBe(original);
   });
 
+  it.each([
+    { version: 2, deviceId: "existing", publicKeyPem: "public", privateKeyPem: "private" },
+    { version: 1, deviceId: "existing", publicKeyPem: "public" },
+    {},
+  ])("preserves an existing identity with an unsupported or incomplete shape: %j", (value) => {
+    const filePath = path.join(root, "device.json");
+    const original = JSON.stringify(value);
+    fs.writeFileSync(filePath, original, "utf-8");
+    expect(() => loadOrCreateDeviceIdentity(filePath)).toThrow(/cannot read device identity/);
+    expect(fs.readFileSync(filePath, "utf-8")).toBe(original);
+  });
+
   it("still generates an identity when there is no file", () => {
     const identity = loadOrCreateDeviceIdentity(path.join(root, "fresh", "device.json"));
 
@@ -70,6 +82,20 @@ describe("device auth store: a token store that cannot be read is not an empty o
     const original = '{"version":1,"deviceId":"dev-1","tokens":{"dev-1":{';
     fs.writeFileSync(authFilePath(), original, "utf-8");
 
+    expect(() =>
+      storeDeviceAuthToken({ deviceId: "dev-1", role: "node", token: "tok", env: env() }),
+    ).toThrow(/cannot read device auth store/);
+    expect(fs.readFileSync(authFilePath(), "utf-8")).toBe(original);
+  });
+
+  it.each([
+    { version: 1, tokens: { operator: { token: "existing-token", role: "operator" } } },
+    { version: 1, deviceId: "dev-1", tokens: [] },
+    { version: 1, deviceId: "dev-1", tokens: null },
+  ])("preserves an existing token store with an incomplete shape: %j", (value) => {
+    fs.mkdirSync(path.dirname(authFilePath()), { recursive: true });
+    const original = JSON.stringify(value);
+    fs.writeFileSync(authFilePath(), original, "utf-8");
     expect(() =>
       storeDeviceAuthToken({ deviceId: "dev-1", role: "node", token: "tok", env: env() }),
     ).toThrow(/cannot read device auth store/);

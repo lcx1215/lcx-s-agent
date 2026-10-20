@@ -14,7 +14,11 @@ import {
   writeLcxIdentityMigrationCompletionMarker,
   writeLcxIdentityWriterRawWithReceipt,
 } from "./identity-migration.js";
-import { resolveLcxIdentityMigrationPlan } from "./paths.js";
+import {
+  isLcxIdentityMigrationComplete,
+  resolveLcxIdentityMigrationPlan,
+  resolveStateDir,
+} from "./paths.js";
 import {
   appendSessionTranscriptForIdentityMigration,
   createLcxIdentitySessionMigration,
@@ -56,6 +60,43 @@ function migrationPlan(root: string) {
 }
 
 describe("LCX identity migration writer contract", () => {
+  it("activates the canonical root after genuine receipts cover the registered inventory", async () => {
+    await withTempRoot(async (root) => {
+      const legacyStateDir = path.join(root, ".openclaw");
+      await writeRaw(path.join(legacyStateDir, "openclaw.json"), "{}\n");
+      const plan = migrationPlan(root);
+      const writerReceipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const readName = writer === "config" ? "openclaw.json" : `${writer}.state`;
+          const writeName = writer === "config" ? "lcx.json" : `${writer}.state`;
+          const readPath = path.join(legacyStateDir, readName);
+          const raw = writer === "config" ? "{}\n" : `${writer}: legacy state\n`;
+          await writeRaw(readPath, raw);
+          return writeLcxIdentityWriterRawWithReceipt(
+            createLcxIdentityWriterPathContract({
+              writer,
+              migrationPlan: plan,
+              readPath,
+              writePath: path.join(plan.canonicalStateDir, writeName),
+            }),
+            raw,
+          );
+        }),
+      );
+      expect(resolveStateDir({}, () => root)).toBe(legacyStateDir);
+      const marker = await writeLcxIdentityMigrationCompletionMarker({
+        migrationPlan: plan,
+        requiredTargets: writerReceipts.map(({ pathContract }) =>
+          createLcxIdentityMigrationTarget(pathContract),
+        ),
+        writerReceipts,
+      });
+      expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length);
+      expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(true);
+      expect(resolveStateDir({}, () => root)).toBe(plan.canonicalStateDir);
+    });
+  });
+
   it("writes a canonical completion marker atomically", async () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);

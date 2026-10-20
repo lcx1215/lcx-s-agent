@@ -2,82 +2,22 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  LCX_IDENTITY_MIGRATION_INVENTORY,
+  LCX_IDENTITY_WRITER_NAMES,
+  type LcxIdentityMigrationCompletionMarker,
+  type LcxIdentityWriterName,
+} from "./identity-migration-inventory.js";
+import {
   resolveLcxIdentityMigrationCompletionPath,
   type LcxIdentityMigrationPlan,
 } from "./paths.js";
 
-export const LCX_IDENTITY_MIGRATION_INVENTORY = "lcx-identity-writer-inventory-v1" as const;
-
-export type LcxIdentityMigrationCompletionMarker = Readonly<{
-  schemaVersion: 1;
-  canonicalStateDir: string;
-  completedAt: string;
-  inventory: typeof LCX_IDENTITY_MIGRATION_INVENTORY;
-  targetKeys: readonly string[];
-}>;
-
-export type LcxIdentityWriterName =
-  | "config"
-  | "sessions"
-  | "credentials"
-  | "queues"
-  | "backups"
-  | "audit"
-  | "cron"
-  | "device"
-  | "device-auth"
-  | "node-host"
-  | "device-pairing"
-  | "device-pair-notify"
-  | "node-pairing"
-  | "exec-approvals"
-  | "restart-sentinel"
-  | "subagents"
-  | "workspace"
-  | "nostr-bus"
-  | "nostr-profile"
-  | "discord-bindings"
-  | "discord-model-picker"
-  | "telegram-offset"
-  | "telegram-sticker-cache"
-  | "update-check"
-  | "voicewake"
-  | "matrix-storage"
-  | "channel-local"
-  | "channel-pairing"
-  | "phone-control";
-
-export const LCX_IDENTITY_WRITER_NAMES: readonly LcxIdentityWriterName[] = [
-  "config",
-  "sessions",
-  "credentials",
-  "queues",
-  "backups",
-  "audit",
-  "cron",
-  "device",
-  "device-auth",
-  "node-host",
-  "device-pairing",
-  "device-pair-notify",
-  "node-pairing",
-  "exec-approvals",
-  "restart-sentinel",
-  "subagents",
-  "workspace",
-  "nostr-bus",
-  "nostr-profile",
-  "discord-bindings",
-  "discord-model-picker",
-  "telegram-offset",
-  "telegram-sticker-cache",
-  "update-check",
-  "voicewake",
-  "matrix-storage",
-  "channel-local",
-  "channel-pairing",
-  "phone-control",
-];
+export {
+  LCX_IDENTITY_MIGRATION_INVENTORY,
+  LCX_IDENTITY_WRITER_NAMES,
+  type LcxIdentityMigrationCompletionMarker,
+  type LcxIdentityWriterName,
+} from "./identity-migration-inventory.js";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;

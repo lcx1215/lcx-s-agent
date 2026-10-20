@@ -63,9 +63,13 @@ function readStoreDetailed(filePath: string): DeviceAuthStoreRead {
     // A format we do not understand may still hold tokens we would be destroying.
     return { status: "unreadable", detail: "unrecognised-version" };
   }
-  if (typeof parsed.deviceId !== "string" || !parsed.tokens || typeof parsed.tokens !== "object") {
-    // Recognised format, and nothing in it we would lose — same as starting fresh.
-    return { status: "absent" };
+  if (
+    typeof parsed.deviceId !== "string" ||
+    !parsed.tokens ||
+    typeof parsed.tokens !== "object" ||
+    Array.isArray(parsed.tokens)
+  ) {
+    return { status: "unreadable", detail: "invalid-shape" };
   }
   return { status: "ok", store: parsed };
 }

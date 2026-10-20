@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { CANONICAL_CONFIG_FILENAME, CANONICAL_STATE_DIRNAME } from "../infra/canonical-identity.js";
 import { expandHomePrefix, resolveRequiredHomeDir } from "../infra/home-dir.js";
+import {
+  LCX_IDENTITY_MIGRATION_INVENTORY,
+  LCX_IDENTITY_WRITER_NAMES,
+} from "./identity-migration-inventory.js";
 import type { OpenClawConfig } from "./types.js";
 
 /**
@@ -277,12 +281,11 @@ export function isLcxIdentityMigrationComplete(
       path.resolve(marker.canonicalStateDir) === path.resolve(canonicalStateDir) &&
       typeof marker.completedAt === "string" &&
       marker.completedAt.length > 0 &&
-      marker.inventory === "lcx-identity-writer-inventory-v1" &&
+      marker.inventory === LCX_IDENTITY_MIGRATION_INVENTORY &&
       Array.isArray(marker.targetKeys) &&
-      // The v1 inventory covers the 31 registered writer families. Keep this
-      // lower bound here so a hand-written marker cannot activate the root
-      // with a single caller-selected target.
-      marker.targetKeys.length >= 31 &&
+      // Share the receipt writer's inventory lower bound; an incomplete marker
+      // must not activate the root, and a complete writer manifest must be usable.
+      marker.targetKeys.length >= LCX_IDENTITY_WRITER_NAMES.length &&
       marker.targetKeys.every(
         (targetKey) => typeof targetKey === "string" && targetKey.length > 0,
       ) &&
