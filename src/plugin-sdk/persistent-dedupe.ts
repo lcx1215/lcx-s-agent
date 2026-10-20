@@ -248,9 +248,22 @@ export async function withPersistentDedupeStateLock<T>(
     return path.join(await fs.realpath(path.dirname(resolved)), path.basename(resolved));
   });
   const previous = fileQueues.get(canonical) ?? Promise.resolve();
-  const work = previous.then(() =>
-    withFileLock(canonical, lockOptions, () => operation(canonical)),
-  );
+  const work = previous.then(async () => {
+    let acquired = false;
+    try {
+      return await withFileLock(canonical, lockOptions, () => {
+        acquired = true;
+        return operation(canonical);
+      });
+    } catch (error) {
+      if (!acquired) {
+        throw new ProtectedDedupeStateError("persistent dedupe lock could not be acquired", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  });
   const tail = work.then(
     () => {},
     () => {},

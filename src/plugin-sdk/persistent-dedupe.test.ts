@@ -20,6 +20,27 @@ afterEach(async () => {
 });
 
 describe("createPersistentDedupe", () => {
+  it("refuses compatibility admission while an absent state file is actively locked", async () => {
+    const root = await makeTmpRoot();
+    const filePath = path.join(root, "dedupe.json");
+    await fs.writeFile(
+      `${filePath}.lock`,
+      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+    );
+    const compatibility = createPersistentDedupe({
+      ttlMs: 10_000,
+      memoryMaxSize: 100,
+      fileMaxEntries: 100,
+      resolveFilePath: () => filePath,
+      lockOptions: {
+        retries: { retries: 0, factor: 1, minTimeout: 1, maxTimeout: 1, randomize: false },
+      },
+    });
+    await expect(compatibility.checkAndRecord("not-dispatched")).rejects.toThrow();
+    await expect(fs.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await fs.unlink(`${filePath}.lock`);
+    expect(await compatibility.checkAndRecord("not-dispatched")).toBe(true);
+  });
   it("blocks compatibility admission when existing protected state cannot be locked", async () => {
     const root = await makeTmpRoot();
     const filePath = path.join(root, "dedupe.json");
