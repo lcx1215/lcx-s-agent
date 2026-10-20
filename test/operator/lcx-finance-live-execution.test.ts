@@ -8,7 +8,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildFinanceLiveExecutionPayload as buildWithoutController,
   formatFinanceLiveExecutionPayload,
@@ -31,10 +31,16 @@ const buildFinanceLiveExecutionPayload = (input: Options) =>
   buildWithoutController(input, { createSafetyContext: syntheticSafetyContext });
 
 /** Safely in the past, so the ledger's future-observation guard is never what a test measures. */
-const AS_OF = new Date(Date.now() - 1_000).toISOString();
-const MARK_AT = new Date(Date.now() - 500).toISOString();
+let AS_OF: string;
+let MARK_AT: string;
 
 const directories: string[] = [];
+
+// Timestamp each case when it starts; worker queue time is not quote age.
+beforeEach(() => {
+  AS_OF = new Date(Date.now() - 1_000).toISOString();
+  MARK_AT = new Date(Date.now() - 500).toISOString();
+});
 
 async function storeDirectory(): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-live-execution-"));
@@ -96,7 +102,10 @@ describe("finance live execution operator entry", () => {
     const directory = await storeDirectory();
     const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.durableLedger.written).toBe(false);
     expect(payload.durableLedger.reason).toBe(
       "pass --write-ledger to append this run to the durable book",
@@ -236,7 +245,10 @@ describe("finance live execution entry allowlist translation", () => {
     const directory = await storeDirectory();
     const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.riskBudget.allowedInstruments).toEqual([FINANCE_RISK_BUDGET_ANY_INSTRUMENT]);
     // The raw flag was empty. Reporting the flag here would contradict the placement that just
     // succeeded, so the payload must report what the adapter actually declares.
@@ -276,7 +288,10 @@ describe("finance live execution entry allowlist translation", () => {
       }),
     );
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.nodes.order_placement.refusalReasons).toEqual([]);
     expect(payload.riskBudget.allowedInstruments).toEqual(["AAPL"]);
     expect(payload.nodes.declared_execution_adapter.declaredInstruments).toEqual(["AAPL"]);
@@ -366,7 +381,10 @@ describe("finance live execution unattended ceiling gate", () => {
       }),
     );
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
   });
 

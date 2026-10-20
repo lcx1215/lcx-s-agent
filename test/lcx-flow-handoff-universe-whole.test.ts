@@ -23,7 +23,19 @@ async function probe(fault?: UniverseWholeFault) {
 describe("original universe phases with private actual IO", () => {
   it("runs the unchanged CLI and captures original main consumers without inventing a serial map", async () => {
     const result = await probe();
-    expect(result.cli?.ok).toBe(true);
+    expect(
+      result.cli?.ok,
+      JSON.stringify({
+        ownerDeadline: result.cli?.ownerDeadline,
+        trackedInventory: result.cli?.repo.trackedInventory,
+        gitStatusInventory: result.cli?.repo.gitStatusInventory,
+        visibleInventory: result.cli?.repo.visibleInventory,
+        changeImpact: result.cli?.ownerCoverage.changeImpact,
+        governanceStatus: result.cli?.ownerCoverage.governanceCoverage.status,
+        missingRouteOwners:
+          result.cli?.ownerCoverage.governanceCoverage.routeOwnerValidation.missing,
+      }),
+    ).toBe(true);
     const impact = result.calls.find((call) => call.owner === "changeImpactCoverage")!;
     const mapping = result.calls.find((call) => call.owner === "buildRepoGovernanceCoverage")!;
     expect(impact.args[0]).toEqual(["test/changed.test.ts"]);
