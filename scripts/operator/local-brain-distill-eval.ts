@@ -15,6 +15,8 @@ import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   GENERALIZATION_CASE_SCHEMA_VERSION,
+  LEGACY_GENERALIZATION_CASE_SCHEMA_VERSION,
+  LEGACY_GENERALIZATION_GENERATOR_VERSION,
   GENERALIZATION_GENERATOR_ID,
   GENERALIZATION_GENERATOR_VERSION,
   isFeatureSignatureHeldOut,
@@ -96,6 +98,7 @@ type EvalCase = {
   userAsk: string;
   sourceSummary: string;
   prerequisiteCaseIds?: string[];
+  requiredTaskFamily?: string;
   requiredModules: string[];
   forbiddenModules?: string[];
   minModuleMatches: number;
@@ -3762,6 +3765,7 @@ type GeneratedCaseFileRead = {
   fileSha256: string;
   fileBytes: number;
   provenanceVerified: true;
+  taskFamilyVerified: boolean;
 };
 
 function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
@@ -3824,10 +3828,15 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
       seed: rawProvenance.seed,
       holdoutFraction: rawProvenance.holdoutFraction,
     };
+    const legacyV2 =
+      provenance.schemaVersion === LEGACY_GENERALIZATION_CASE_SCHEMA_VERSION &&
+      provenance.generatorVersion === LEGACY_GENERALIZATION_GENERATOR_VERSION;
+    const currentV3 =
+      provenance.schemaVersion === GENERALIZATION_CASE_SCHEMA_VERSION &&
+      provenance.generatorVersion === GENERALIZATION_GENERATOR_VERSION;
     if (
-      provenance.schemaVersion !== GENERALIZATION_CASE_SCHEMA_VERSION ||
+      (!legacyV2 && !currentV3) ||
       provenance.generator !== GENERALIZATION_GENERATOR_ID ||
-      provenance.generatorVersion !== GENERALIZATION_GENERATOR_VERSION ||
       provenance.split !== "holdout" ||
       typeof provenance.seed !== "number" ||
       !Number.isInteger(provenance.seed) ||
@@ -3872,7 +3881,11 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
         `generated case ${id} does not match generator replay at ${filePath}:${index + 1}`,
       );
     }
-    if (!isDeepStrictEqual(target, replayed.target)) {
+    // v2 replays its original module/data/risk target. Rendering and split
+    // signatures are unchanged; the v3 family requirement is not retroactively
+    // certified for legacy files, and the receipt states that explicitly.
+    const { requiredTaskFamily, ...legacyTarget } = replayed.target;
+    if (!isDeepStrictEqual(target, legacyV2 ? legacyTarget : replayed.target)) {
       throw new Error(
         `generated case ${id} target does not match generator replay at ${filePath}:${index + 1}`,
       );
@@ -3920,6 +3933,7 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
       userAsk,
       // Generated labels remain scorer-side metadata. Blind prompts never use this summary.
       sourceSummary: "generated held-out case; target labels remain outside the prompt",
+      ...(!legacyV2 ? { requiredTaskFamily } : {}),
       requiredModules,
       forbiddenModules,
       minModuleMatches,
@@ -3938,6 +3952,7 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
     fileSha256: createHash("sha256").update(raw, "utf8").digest("hex"),
     fileBytes: Buffer.byteLength(raw, "utf8"),
     provenanceVerified: true,
+    taskFamilyVerified: fileProvenance.schemaVersion === GENERALIZATION_CASE_SCHEMA_VERSION,
   };
 }
 
@@ -5414,6 +5429,7 @@ function evaluate(
   return {
     ok:
       missingKeys.length === 0 &&
+      (!evalCase.requiredTaskFamily || output.task_family === evalCase.requiredTaskFamily) &&
       boundaryOk &&
       oldContextRejected &&
       matchedFinanceModules.length >= evalCase.minModuleMatches &&
@@ -6045,6 +6061,7 @@ const result = {
   caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
   caseFileBytes: generatedCaseFile?.fileBytes ?? null,
   caseFileProvenance: generatedCaseFile?.provenance ?? null,
+  generatedHoldoutTaskFamilyVerified: generatedCaseFile?.taskFamilyVerified === true,
   trainingSliceIdentity: trainingSliceIdentity ?? null,
   evaluationMode: options.contractOnly
     ? "contract_only"
@@ -6159,6 +6176,12 @@ if (options.receiptPath) {
       blindRawContract: options.blind,
       generatedHoldoutProvenanceVerified: generatedCaseFile?.provenanceVerified === true,
       generatedHoldoutVerificationBasis: generatedCaseFile ? "generator_rule_replay" : null,
+      generatedHoldoutTaskFamilyVerified: generatedCaseFile?.taskFamilyVerified === true,
+      generatedHoldoutTaskFamilyContract: generatedCaseFile
+        ? generatedCaseFile.taskFamilyVerified
+          ? "feature_derived_v3"
+          : "legacy_v2_not_verified"
+        : null,
       generatedHoldoutSamplingSeedVerified: false,
       caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
       caseFileProvenance: generatedCaseFile?.provenance ?? null,

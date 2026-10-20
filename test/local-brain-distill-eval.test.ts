@@ -3,11 +3,16 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import vm from "node:vm";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import * as generator from "../scripts/operator/local-brain-generalization-generator.js";
 import {
   oraclePlan,
   type GeneratedCase,
 } from "../scripts/operator/local-brain-generalization-generator.js";
+import { LOCAL_BRAIN_MODULE_TAXONOMY } from "../scripts/operator/local-brain-taxonomy.js";
 
 type EmittedCase = Pick<
   GeneratedCase,
@@ -16,6 +21,7 @@ type EmittedCase = Pick<
   provenance: Record<string, unknown>;
   target: Pick<
     GeneratedCase,
+    | "requiredTaskFamily"
     | "requiredModules"
     | "forbiddenModules"
     | "minModuleMatches"
@@ -1333,6 +1339,74 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
     }
   });
 
+  it("keeps legacy v2 replay separate from v3 task-family verification without running a model", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "lcx-family-provenance-"));
+    try {
+      const source = readFileSync(
+        path.resolve(__dirname, "../scripts/operator/local-brain-distill-eval.ts"),
+        "utf8",
+      );
+      const ast = ts.createSourceFile("eval.ts", source, ts.ScriptTarget.Latest, true);
+      const names = new Set([
+        "readGeneratedCaseFile",
+        "evaluate",
+        "asStringArray",
+        "canonicalContractToken",
+        "includesCanonicalContractToken",
+      ]);
+      const nodes = ast.statements.filter(
+        (node) =>
+          (ts.isFunctionDeclaration(node) && node.name && names.has(node.name.text)) ||
+          (ts.isVariableStatement(node) &&
+            node.declarationList.declarations.some(
+              (item) => ts.isIdentifier(item.name) && item.name.text === "REQUIRED_KEYS",
+            )),
+      );
+      expect(nodes).toHaveLength(6);
+      const dependencies = {
+        ...generator,
+        readFileSync,
+        createHash,
+        isDeepStrictEqual,
+        EVAL_CASE_BY_ID: new Map(),
+        LOCAL_BRAIN_MODULE_TAXONOMY,
+      };
+      const code = ts.transpile(nodes.map((node) => node.getText(ast)).join("\n"), {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.None,
+      });
+      const original = vm.compileFunction(
+        code + "\nreturn {readGeneratedCaseFile, evaluate};",
+        Object.keys(dependencies),
+      )(...Object.values(dependencies));
+      const [current] = emitHoldoutRows(1);
+      for (const legacy of [false, true]) {
+        const row = structuredClone(current);
+        if (legacy) {
+          row.provenance.schemaVersion = "lcx_generalization_case_v2";
+          row.provenance.generatorVersion = "feature-signature-v2-replay";
+          delete (row.target as Partial<typeof row.target>).requiredTaskFamily;
+        }
+        const file = path.join(root, `cases-${legacy}.jsonl`);
+        writeFileSync(file, JSON.stringify(row) + "\n");
+        const loaded = original.readGeneratedCaseFile(file);
+        expect(loaded.taskFamilyVerified).toBe(!legacy);
+        expect(loaded.provenance.schemaVersion).toBe(row.provenance.schemaVersion);
+        const correct = oraclePlan({
+          ...current,
+          ...current.target,
+          sourceSummary: "offline original contract fixture",
+        });
+        expect(original.evaluate(correct, loaded.cases[0]).ok).toBe(true);
+        expect(
+          original.evaluate({ ...correct, task_family: "wrong_family" }, loaded.cases[0]).ok,
+        ).toBe(legacy);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("scores generated held-out rows through a neutral prompt without label leakage", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-heldout-"));
     const fakePython = path.join(tempDir, "python");
@@ -1406,9 +1480,9 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         caseFileSha256: expect.any(String),
         caseFileBytes: expect.any(Number),
         caseFileProvenance: {
-          schemaVersion: "lcx_generalization_case_v2",
+          schemaVersion: "lcx_generalization_case_v3",
           generator: "local-brain-generalization-harness",
-          generatorVersion: "feature-signature-v2-replay",
+          generatorVersion: "feature-signature-v3-task-family",
           split: "holdout",
           seed: 20260830,
           holdoutFraction: 0.2,
@@ -1578,9 +1652,9 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         `${JSON.stringify({
           ...baseCase,
           provenance: {
-            schemaVersion: "lcx_generalization_case_v2",
+            schemaVersion: "lcx_generalization_case_v3",
             generator: "local-brain-generalization-harness",
-            generatorVersion: "feature-signature-v2-replay",
+            generatorVersion: "feature-signature-v3-task-family",
             split: "train",
             seed: 20260830,
             holdoutFraction: 0.2,

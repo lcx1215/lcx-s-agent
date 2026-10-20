@@ -71,6 +71,7 @@ export type GeneratedCase = {
   features: TaskFeatures;
   renderSeed: number;
   // Same shape the eval scorer consumes:
+  requiredTaskFamily: string;
   requiredModules: string[];
   forbiddenModules: string[];
   minModuleMatches: number;
@@ -112,6 +113,7 @@ const ASSET_CLASS_MISSING_DATA: Partial<Record<AssetClass, string[]>> = {
 };
 
 type DerivedLabel = {
+  requiredTaskFamily: string;
   requiredModules: string[];
   forbiddenModules: string[];
   requiredMissingData: string[];
@@ -121,6 +123,19 @@ type DerivedLabel = {
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].toSorted();
+}
+
+// Families describe the requested work, independent of module-count labels.
+export function deriveTaskFamily(features: TaskFeatures): string {
+  if (features.abstractionTransfer) {
+    return "abstraction_transfer_repair_protocol";
+  }
+  if (features.learningRequest) {
+    return features.sourceSupplied
+      ? "learning_external_source"
+      : "learning_external_source_missing_source";
+  }
+  return features.assetClasses.length > 0 ? "finance_research_planning" : "general_task_planning";
 }
 
 // The deterministic feature -> label function. This is the "rule" we want the
@@ -271,6 +286,7 @@ export function deriveLabel(features: TaskFeatures): DerivedLabel {
   );
 
   return {
+    requiredTaskFamily: deriveTaskFamily(features),
     requiredModules,
     // A learning-source audit (no source yet) must NOT fan out into finance
     // modules — forbid them, mirroring external_source_missing_url cases.
@@ -420,18 +436,27 @@ function hashUnit(text: string): number {
   return (hash >>> 0) / 4294967296;
 }
 
-export const GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v2";
+export const LEGACY_GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v2";
+export const LEGACY_GENERALIZATION_GENERATOR_VERSION = "feature-signature-v2-replay";
+export const GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v3";
 export const GENERALIZATION_GENERATOR_ID = "local-brain-generalization-harness";
-export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v2-replay";
+export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v3-task-family";
 
 export type GeneralizationCaseProvenance = {
-  schemaVersion: typeof GENERALIZATION_CASE_SCHEMA_VERSION;
   generator: typeof GENERALIZATION_GENERATOR_ID;
-  generatorVersion: typeof GENERALIZATION_GENERATOR_VERSION;
   split: "train" | "holdout";
   seed: number;
   holdoutFraction: number;
-};
+} & (
+  | {
+      schemaVersion: typeof GENERALIZATION_CASE_SCHEMA_VERSION;
+      generatorVersion: typeof GENERALIZATION_GENERATOR_VERSION;
+    }
+  | {
+      schemaVersion: typeof LEGACY_GENERALIZATION_CASE_SCHEMA_VERSION;
+      generatorVersion: typeof LEGACY_GENERALIZATION_GENERATOR_VERSION;
+    }
+);
 
 export function isFeatureSignatureHeldOut(signature: string, holdoutFraction: number): boolean {
   return hashUnit(signature) < holdoutFraction;
@@ -547,6 +572,7 @@ export function generateCase(features: TaskFeatures, rng: () => number): Generat
     sourceSummary: `generated case for feature signature ${signature}`,
     features,
     renderSeed,
+    requiredTaskFamily: label.requiredTaskFamily,
     requiredModules: label.requiredModules,
     forbiddenModules: label.forbiddenModules,
     minModuleMatches: label.minModuleMatches,
@@ -697,6 +723,10 @@ export function scorePlan(
   if (missingKeys.length > 0) {
     reasons.push(`missing_keys:${missingKeys.join(",")}`);
   }
+  const expectedFamily = deriveTaskFamily(target.features);
+  if (output.task_family !== expectedFamily) {
+    reasons.push(`task_family_mismatch:${expectedFamily}`);
+  }
   const modules = new Set([
     ...asStringArray(output.primary_modules),
     ...asStringArray(output.supporting_modules),
@@ -735,7 +765,7 @@ export function scorePlan(
 // generated cases are internally satisfiable, and as the ceiling for scoring.
 export function oraclePlan(target: GeneratedCase): PlanOutput {
   return {
-    task_family: "generated_router_task",
+    task_family: deriveTaskFamily(target.features),
     primary_modules: target.requiredModules.slice(0, 8),
     supporting_modules: target.requiredModules.slice(8, 14),
     required_tools: target.requiredModules.slice(14, 20),
@@ -765,6 +795,9 @@ export type DatasetRow = {
   prompt: string;
   completion: string;
   meta: {
+    caseSchemaVersion: typeof GENERALIZATION_CASE_SCHEMA_VERSION;
+    generatorVersion: typeof GENERALIZATION_GENERATOR_VERSION;
+    sourceKind: "generalization_generator";
     source: "generalization_generator";
     featureSignature: string;
     id: string;
@@ -803,7 +836,7 @@ function buildDatasetPrompt(userAsk: string, sourceSummary: string): string {
 function buildDatasetCompletion(target: GeneratedCase): string {
   const packed = packLocalBrainModuleFields(target.requiredModules, [], []);
   const plan = {
-    task_family: "finance_research_planning",
+    task_family: deriveTaskFamily(target.features),
     primary_modules: packed.primary_modules,
     supporting_modules: packed.supporting_modules,
     required_tools: packed.required_tools,
@@ -820,6 +853,9 @@ export function toDatasetRow(target: GeneratedCase): DatasetRow {
     prompt: buildDatasetPrompt(target.userAsk, target.sourceSummary),
     completion: buildDatasetCompletion(target),
     meta: {
+      caseSchemaVersion: GENERALIZATION_CASE_SCHEMA_VERSION,
+      generatorVersion: GENERALIZATION_GENERATOR_VERSION,
+      sourceKind: "generalization_generator",
       source: "generalization_generator",
       featureSignature: target.featureSignature,
       id: target.id,

@@ -88,6 +88,7 @@ function emit(cases: GeneratedCase[], provenance: GeneralizationCaseProvenance):
         featureSignature: c.featureSignature,
         provenance,
         target: {
+          requiredTaskFamily: c.requiredTaskFamily,
           requiredModules: c.requiredModules,
           forbiddenModules: c.forbiddenModules,
           minModuleMatches: c.minModuleMatches,
