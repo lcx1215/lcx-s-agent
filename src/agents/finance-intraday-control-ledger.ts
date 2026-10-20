@@ -850,6 +850,18 @@ export function initializeFinanceIntradayControlLedger(directory: string): void 
   }
 }
 
+/** Release a directory's cached connection after its ledger operations have finished. */
+export function closeFinanceIntradayControlLedger(directory: string): void {
+  const filename = financeIntradayControlLedgerPath(directory);
+  const cached = connections.get(filename);
+  if (!cached) {
+    return;
+  }
+  cached.db.close();
+  connections.delete(filename);
+  verifiedHeads.delete(cached.db);
+}
+
 function decodeDecision(row: {
   ref?: unknown;
   body?: unknown;

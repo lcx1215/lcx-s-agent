@@ -11,6 +11,7 @@ import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js"
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
+  closeFinanceIntradayControlLedger,
   initializeFinanceIntradayControlLedger,
   readFinanceIntradayExecutionCoverage,
   readFinanceIntradayAccountHistory,
@@ -24,7 +25,10 @@ import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 const temporary: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
+    temporary.splice(0).map((item) => {
+      closeFinanceIntradayControlLedger(item);
+      return fs.rm(item, { recursive: true, force: true });
+    }),
   );
 });
 
@@ -1169,6 +1173,24 @@ it("authenticates every history progress field against the original durable ledg
     ).toMatchObject({ status: "unavailable" });
   } finally {
     vi.useRealTimers();
+  }
+});
+
+it("closes a cached ledger and reopens its retained records", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-control-close-"));
+  temporary.push(directory);
+  const decision = await appendFinanceIntradayDecision(directory, input);
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  try {
+    closeFinanceIntradayControlLedger(directory);
+    closeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(await readFinanceIntradayDecisions(directory)).toEqual([decision.record]);
+    closeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    close.mockRestore();
   }
 });
 

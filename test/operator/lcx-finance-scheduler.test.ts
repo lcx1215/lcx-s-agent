@@ -36,7 +36,10 @@ import {
 } from "../../src/agents/finance-bar-ledger.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import { latestCompletedWeekdaySessionDate } from "../../src/agents/finance-cycle-schedule.js";
-import { initializeFinanceIntradayControlLedger } from "../../src/agents/finance-intraday-control-ledger.js";
+import {
+  closeFinanceIntradayControlLedger,
+  initializeFinanceIntradayControlLedger,
+} from "../../src/agents/finance-intraday-control-ledger.js";
 import {
   appendFinanceIntradayBars,
   readFinanceIntradayLedger,
@@ -508,6 +511,7 @@ afterEach(() => {
   expect(process.listenerCount("SIGTERM")).toBe(originalTermListeners);
   expect(process.listenerCount("SIGINT")).toBe(originalIntListeners);
   closeFinanceBarLedger(directory);
+  closeFinanceIntradayControlLedger(directory);
   fs.rmSync(directory, { recursive: true, force: true });
   vi.useRealTimers();
   vi.unstubAllEnvs();
