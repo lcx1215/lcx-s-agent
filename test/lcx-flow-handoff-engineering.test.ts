@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { auditWorkflowHandoffs } from "../scripts/operator/lcx-flow-graph.js";
+import { splitShellArgs } from "../src/utils/shell-argv.js";
 import {
   engineeringCli,
   engineeringLockArgs,
@@ -52,8 +53,9 @@ describe("original engineering handoffs (private Git/lease, no automation or own
       repairContext: { worktree: cwd, decisionId: "guard_failed_after_latest_start" },
     });
     const lease = path.join(root, "private.lock");
-    const command = `${String(selected!.nextCommand)} --lock '${lease.replaceAll("'", "'\\''")}'`;
-    const native = await promisify(execFile)("/bin/zsh", ["-f", "-c", command], {
+    const command = splitShellArgs(String(selected!.nextCommand));
+    expect(command?.shift()).toBe("node");
+    const native = await promisify(execFile)(process.execPath, [...command!, "--lock", lease], {
       cwd: path.resolve(import.meta.dirname, ".."),
       timeout: 10_000,
       env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(cwd) },

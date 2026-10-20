@@ -73,7 +73,7 @@ describe("actual self-repair candidate content -> original quality owner -> boun
     expect(result.persistedReview).toEqual(result.reviewed);
     expect(result.reviewWriter.owner).toBe("writeSelfRepairContentReviewReceipt");
     expect(result.reviewWriter.receiptPath).toContain(
-      "state/lcx-self-repair-content-review-latest.json",
+      path.join("state", "lcx-self-repair-content-review-latest.json"),
     );
     const reader = JSON.parse(result.safeReader!.stdout);
     expect(reader.contentReview).toMatchObject({

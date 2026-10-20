@@ -143,7 +143,7 @@ async function originalFinanceSourceAudit(overrides: Record<string, string> = {}
       repoRoot: ".",
       fs: {
         readFile: (file: string) => {
-          const relative = path.normalize(file);
+          const relative = path.normalize(file).split(path.sep).join("/");
           return overrides[relative] === undefined
             ? fs.readFile(file, "utf8")
             : Promise.resolve(overrides[relative]);

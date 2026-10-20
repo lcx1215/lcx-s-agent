@@ -3,7 +3,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { closeFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
 import type { FetchImpl } from "../src/agents/finance-live-market-source.js";
+import { closeFinancePositionLedger } from "../src/agents/finance-position-ledger.js";
 import { probeOriginalFinanceDayOperator } from "./fixtures/lcx-waterflow-finance-day-operator-probe.js";
 
 const seam = vi.hoisted(() => ({ fetchImpl: undefined as FetchImpl | undefined }));
@@ -28,6 +30,9 @@ vi.mock("../src/agents/finance-free-market-collection-adapters.js", async (impor
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0)) {
+    const book = path.join(root, "native-producer", "finance-book");
+    closeFinanceBarLedger(book);
+    closeFinancePositionLedger(book);
     await fs.rm(root, { recursive: true, force: true });
   }
   seam.fetchImpl = undefined;

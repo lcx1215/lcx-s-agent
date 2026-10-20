@@ -2389,11 +2389,11 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   const researchArgv = mocks.runCycle.mock.calls[0][0].argv as string[];
   const evidencePath = researchArgv[researchArgv.indexOf("--controller-evidence") + 1];
   const frozenContextPath = researchArgv[researchArgv.indexOf("--portfolio-context") + 1];
-  expect(evidencePath).toMatch(
-    /^.*\/day-research-controller-evidence-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
+  expect(path.basename(evidencePath)).toMatch(
+    /^day-research-controller-evidence-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
   );
-  expect(frozenContextPath).toMatch(
-    /^.*\/day-research-portfolio-context-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
+  expect(path.basename(frozenContextPath)).toMatch(
+    /^day-research-portfolio-context-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
   );
   expect(frozenContextPath).not.toBe(context);
   expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(

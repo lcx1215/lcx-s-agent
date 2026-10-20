@@ -93,6 +93,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
         { ...options, timeout: timeoutMs, encoding: "utf8" },
         (error, stdout, stderr) => {
           if (error) {
+            error.message += `\nprivate_process_stderr=${stderr.slice(-2000)}`;
             reject(Object.assign(error, { stdout, stderr }));
           } else {
             resolve({ stdout, stderr });
@@ -232,10 +233,28 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
     "skills",
     "extensions/external",
   ];
+  // Copy original indexed source, not ignored dependency trees or private fixture outputs.
+  const listed = await execute("git", ["ls-files", "-z", "--", ...sourceAreas], {
+    cwd: sourceRoot,
+  });
+  const indexedFiles = listed.stdout.split("\0").filter(Boolean);
+  const sourceEntries = new Set(indexedFiles);
+  for (const file of indexedFiles) {
+    let parent = path.posix.dirname(file);
+    while (parent !== ".") {
+      sourceEntries.add(parent);
+      parent = path.posix.dirname(parent);
+    }
+  }
   const existingAreas: string[] = [];
   for (const area of sourceAreas) {
     if (fsSync.existsSync(path.join(sourceRoot, area))) {
-      await fs.cp(path.join(sourceRoot, area), path.join(repo, area), { recursive: true });
+      await fs.cp(path.join(sourceRoot, area), path.join(repo, area), {
+        recursive: true,
+        verbatimSymlinks: true,
+        filter: (source) =>
+          sourceEntries.has(path.relative(sourceRoot, source).split(path.sep).join("/")),
+      });
       existingAreas.push(area);
     }
   }
