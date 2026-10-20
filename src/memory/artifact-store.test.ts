@@ -240,12 +240,12 @@ describe("owner artifacts in the existing memory database", () => {
     }
   });
 
-  function openWithLegacySpelling(readOnly: boolean) {
+  function openWithLegacySpelling(readOnly: boolean, suffix = ".") {
     // Model Windows JS realpath retaining a short spelling while native IO
     // returns the canonical long name. Both spellings still name this directory.
     const nativeRealpath = fsSync.realpathSync.native;
     const canonical = nativeRealpath(root);
-    const legacy = `${canonical}${path.sep}.`;
+    const legacy = `${canonical}${path.sep}${suffix}`;
     const resolve = vi.spyOn(fsSync, "realpathSync").mockReturnValue(legacy);
     Object.assign(resolve, { native: nativeRealpath });
     try {
@@ -264,6 +264,40 @@ describe("owner artifacts in the existing memory database", () => {
       expect((await reader.read(base.id)).text).toBe("native workspace evidence");
     } finally {
       reader.close();
+    }
+  });
+
+  it("rejects a cursor from a different legacy workspace namespace", async () => {
+    for (const id of ["a", "b", "c"]) {
+      const relativePath = `state/runs/${id}.json`;
+      await write(relativePath, "namespacecursor");
+      await store.register({ ...base, id, relativePath, summary: "namespacecursor" });
+    }
+    const canonical = fsSync.realpathSync.native(root);
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(dbPath);
+    db.prepare("UPDATE owner_artifacts SET workspace_root=? WHERE id=?").run(
+      `${canonical}${path.sep}.`,
+      "b",
+    );
+    db.prepare("UPDATE owner_artifacts SET workspace_root=? WHERE id=?").run(
+      `${canonical}${path.sep}.${path.sep}.`,
+      "c",
+    );
+    const first = openWithLegacySpelling(true);
+    const second = openWithLegacySpelling(true, `.${path.sep}.`);
+    try {
+      const args = { query: "namespacecursor", limit: 1 };
+      const cursor = first.search(args).nextCursor!;
+      expect(first.search({ ...args, cursor }).artifacts.map((entry) => entry.id)).toEqual(["b"]);
+      expect(
+        second.search({ query: "namespacecursor" }).artifacts.map((entry) => entry.id),
+      ).toEqual(["a", "c"]);
+      expect(() => second.search({ ...args, cursor })).toThrowError("artifact_cursor_invalid");
+    } finally {
+      first.close();
+      second.close();
+      db.close();
     }
   });
 

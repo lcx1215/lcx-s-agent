@@ -514,7 +514,9 @@ export class ArtifactStore {
       !/[\p{L}\p{N}]/u.test(query);
     const backend = !query ? "browse" : !substring && this.ftsAvailable ? "fts" : "like";
     const scope = createHash("sha256")
-      .update(JSON.stringify([this.workspaceDir, query, owner, asOf, backend]))
+      .update(
+        JSON.stringify([this.workspaceDir, this.legacyWorkspaceDir, query, owner, asOf, backend]),
+      )
       .digest("base64url");
     const cursor = params.cursor === undefined ? undefined : decodeCursor(params.cursor, scope);
     const filters =
