@@ -26,6 +26,7 @@ import {
   retireFinancePaperExecutionClaim,
   withFinanceExecutionSafety,
 } from "./finance-execution-safety.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -1985,4 +1986,74 @@ it("distinguishes daily continuation from retry while consuming prior fills at t
   );
   expect(held).toBe(8);
   expect(brokerIds.size).toBe(4);
+});
+
+it("holds the execution lock and reserved claim until cancelled adapter cleanup settles", async () => {
+  const f = await fixture();
+  const caller = new AbortController();
+  let entered!: () => void;
+  let finishCleanup!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const cleanup = new Promise<void>((resolve) => {
+    finishCleanup = resolve;
+  });
+  const cleanupError = new FinanceHttpBodyAbortError("confirmed");
+  const execute = vi.fn(async () => {
+    entered();
+    await cleanup;
+    throw new AlpacaOrderUncertainError("fixture-client", undefined, cleanupError);
+  });
+  const adapter = { ...f.adapter, execute };
+  let settled = false;
+  const pending = placeFinanceOrder({
+    ...f.request,
+    signal: caller.signal,
+    adapters: [adapter],
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  }).catch((error: unknown) => {
+    settled = true;
+    return error;
+  });
+  await started;
+  const lockName = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".lock"));
+  expect(lockName).toBeDefined();
+  caller.abort();
+  const secondIntent = { ...f.request.intent, intentId: "after-cancel" };
+  let secondSettled = false;
+  const second = placeFinanceOrder({
+    ...f.request,
+    intent: secondIntent,
+    adapters: [adapter],
+    safetyContext: createFinanceExecutionSafetyContext({ ...f.input, intent: secondIntent }),
+  }).then((result) => {
+    secondSettled = true;
+    return result;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(settled).toBe(false);
+  expect(secondSettled).toBe(false);
+  await expect(fs.stat(path.join(f.input.stateDir, lockName!))).resolves.toBeDefined();
+  const claims = () =>
+    readFinanceExecutionSafetyClaims({
+      stateDir: f.input.stateDir,
+      accountId: f.input.accountId,
+      venue: f.input.venue,
+    });
+  expect((await claims()).at(-1)?.status).toBe("reserved");
+  finishCleanup();
+  expect(await pending).toMatchObject({
+    code: "finance_execution_safety_unknown",
+    cause: { code: "alpaca_order_uncertain", cause: cleanupError },
+    attempt: { phase: "execute", disposition: "outcome_unresolved" },
+  });
+  expect((await second).refusalReasons).toContain(
+    "execution_safety_account_requires_reconciliation",
+  );
+  expect((await claims()).at(-1)?.status).toBe("unknown");
+  expect(execute).toHaveBeenCalledOnce();
+  await expect(fs.stat(path.join(f.input.stateDir, lockName!))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });

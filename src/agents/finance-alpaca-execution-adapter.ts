@@ -34,6 +34,7 @@ import {
   FinanceExecutionSafetyDispatchError,
   type FinanceExecutionSafetyFacts,
 } from "./finance-execution-safety.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
 import { executeFinanceProtectedReduction } from "./finance-protection-coordination.js";
 import {
@@ -215,6 +216,53 @@ function bounded<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
       })
       .then(resolve, reject)
       .finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+/** Join transport cancellation before settling the write to the adapter caller.
+ * The body owner has 1.5s to clean up; an injected transport may never settle.
+ * Settlement alone is not proof that its body was cleaned up.
+ */
+function boundedWrite<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+    const abort = () => {
+      timer = setTimeout(() => {
+        finish();
+        reject(new FinanceHttpBodyAbortError("unconfirmed"));
+      }, 1_600);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return run();
+      })
+      .then(
+        (result) => {
+          finish();
+          if (signal.aborted) {
+            reject(new FinanceHttpBodyAbortError("unconfirmed"));
+          } else {
+            resolve(result);
+          }
+        },
+        (error: unknown) => {
+          finish();
+          reject(
+            signal.aborted && !(error instanceof FinanceHttpBodyAbortError)
+              ? Object.assign(new FinanceHttpBodyAbortError("unconfirmed"), { cause: error })
+              : error,
+          );
+        },
+      );
   });
 }
 
@@ -531,7 +579,7 @@ export async function restoreAlpacaPaperProtection(options: {
   let response = await lookup();
   if (response.status === 404) {
     try {
-      response = await bounded(
+      response = await boundedWrite(
         () =>
           options.postJson(`${PAPER_HOST}/v2/orders`, {
             headers,
@@ -549,7 +597,10 @@ export async function restoreAlpacaPaperProtection(options: {
           }),
         signal,
       );
-    } catch {
+    } catch (error) {
+      if (signal.aborted) {
+        throw error;
+      }
       response = await lookup();
     }
     if (response.status === 409 || response.status === 422) {
@@ -817,7 +868,7 @@ export function createAlpacaExecutionAdapter(
             };
           },
           cancelStop: async () => {
-            const response = await bounded(
+            const response = await boundedWrite(
               () =>
                 options.cancelOrder!(
                   `${PAPER_HOST}/v2/orders/${encodeURIComponent(protection.id)}`,
@@ -1073,6 +1124,9 @@ export function createAlpacaExecutionAdapter(
           options.statusFetch ??
           createFinanceUncachedFetch({ directory: options.credentialStateDirectory });
         async function recover(cause: unknown): Promise<AlpacaOrderResponse> {
+          if (signal.aborted) {
+            throw new AlpacaOrderUncertainError(clientOrderId, knownOrderId, cause);
+          }
           try {
             const response = await bounded(
               () =>
@@ -1126,6 +1180,13 @@ export function createAlpacaExecutionAdapter(
             matchesCryptoProtection(candidate, protection);
 
           const recoverProtection = async (cause: unknown): Promise<AlpacaOrderResponse> => {
+            if (signal.aborted) {
+              throw new AlpacaProtectionUncertainError(
+                protectionClientOrderId,
+                knownProtectionOrderId,
+                cause,
+              );
+            }
             try {
               const response = await bounded(
                 () =>
@@ -1156,7 +1217,7 @@ export function createAlpacaExecutionAdapter(
             let payload: AlpacaOrderResponse;
             let response: { status: number; body: string };
             try {
-              response = await bounded(
+              response = await boundedWrite(
                 () =>
                   options.postJson!(`${host}/v2/orders`, {
                     headers,
@@ -1220,7 +1281,7 @@ export function createAlpacaExecutionAdapter(
         let payload: AlpacaOrderResponse;
         let response: { status: number; body: string };
         try {
-          response = await bounded(() => {
+          response = await boundedWrite(() => {
             submitted = true;
             return options.postJson!(`${host}/v2/orders`, {
               headers,

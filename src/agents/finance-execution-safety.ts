@@ -29,6 +29,7 @@ import type {
   FinanceOrderSide,
   FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
+import { FinanceHttpBodyAbortError } from "./finance-http-body.js";
 import {
   FinanceProtectedReductionError,
   type FinanceProtectedReductionDiagnostic,
@@ -638,11 +639,27 @@ async function appendJournal(file: string, claim: FinanceExecutionSafetyClaim): 
     await directory.close();
   }
 }
-function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+function bounded<T>(promise: Promise<T>, signal: AbortSignal, executionCleanupMs = 0): Promise<T> {
   return new Promise((resolve, reject) => {
-    const abort = () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
       signal.removeEventListener("abort", abort);
-      reject(signal.reason ?? new Error("execution safety cancelled"));
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+    const abort = () => {
+      if (executionCleanupMs > 0) {
+        // Keep the account lock while the adapter joins its write/body cleanup.
+        // Noncooperative adapters still terminate with an unresolved claim.
+        timer = setTimeout(() => {
+          finish();
+          reject(new FinanceHttpBodyAbortError("unconfirmed"));
+        }, executionCleanupMs);
+      } else {
+        finish();
+        reject(signal.reason ?? new Error("execution safety cancelled"));
+      }
     };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) {
@@ -650,11 +667,15 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     }
     promise.then(
       (value) => {
-        signal.removeEventListener("abort", abort);
-        resolve(value);
+        finish();
+        if (executionCleanupMs > 0 && signal.aborted) {
+          reject(new FinanceHttpBodyAbortError("unconfirmed"));
+        } else {
+          resolve(value);
+        }
       },
       (error) => {
-        signal.removeEventListener("abort", abort);
+        finish();
         reject(error);
       },
     );
@@ -1100,6 +1121,8 @@ export async function withFinanceExecutionSafety(params: {
             return params.execute(signal, facts);
           }),
           signal,
+          // Alpaca joins body cleanup for 1.5s and a noncooperative write for 1.6s.
+          1_700,
         );
         if (params.adapterKind === "venue" && !fill.terminalOrderIdentity?.terminal) {
           throw new Error("venue terminal order identity not observed");

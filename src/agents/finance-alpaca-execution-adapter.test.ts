@@ -1614,3 +1614,33 @@ it.each([{ qty: true }, { stop_price: true }, { filled_qty: false }])(
     ).rejects.toThrow("remaining protection identity or state mismatch");
   },
 );
+
+it("bounds noncooperative write cancellation and preserves unknown cleanup without retrying", async () => {
+  vi.useFakeTimers();
+  try {
+    const postJson = vi.fn(() => new Promise<{ status: number; body: string }>(() => {}));
+    const statusFetch = vi.fn();
+    const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson, statusFetch });
+    const caller = new AbortController();
+    const pending = adapter.execute(baseIntent, caller.signal);
+    let settled = false;
+    const check = expect(pending).rejects.toMatchObject({
+      code: "alpaca_order_uncertain",
+      cause: { cleanupStatus: "unconfirmed" },
+    });
+    void pending.catch(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    caller.abort();
+    await vi.advanceTimersByTimeAsync(1599);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await check;
+    expect(settled).toBe(true);
+    expect(postJson).toHaveBeenCalledOnce();
+    expect(statusFetch).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
