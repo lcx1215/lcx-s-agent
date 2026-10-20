@@ -3231,7 +3231,7 @@ describe("finance research runner", () => {
     }
   });
 
-  it.each([false, true, "formatting"] as const)(
+  it.each([false, true, "formatting", "signed_cursor"] as const)(
     "allows an optional host-ledger read when module execution is disabled (coverage gap=%s)",
     async (coverageGap) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-ledger-without-modules-"));
@@ -3276,6 +3276,19 @@ describe("finance research runner", () => {
       } finally {
         vi.useRealTimers();
       }
+      const originalPage =
+        coverageGap === "signed_cursor"
+          ? await readFinanceIntradayAccountHistory(directory, {
+              accountId: "history-account",
+              asOf: AS_OF,
+            })
+          : undefined;
+      const signedCursor =
+        originalPage && "pageCursor" in originalPage ? originalPage.pageCursor : undefined;
+      if (coverageGap === "signed_cursor") {
+        expect(signedCursor).toEqual(expect.any(String));
+        expect(signedCursor?.length).toBeLessThanOrEqual(1024);
+      }
       let qualityEvidence: readonly { id: string; text: string }[] = [];
       let retainedFeedbackRef: string | undefined;
       const invoker = async (request: unknown) => {
@@ -3294,7 +3307,12 @@ describe("finance research runner", () => {
           if (payload.stage === "draft") {
             artifactOutput.artifact.supportingAnalysis.financeLedgerReadRequests = [
               { tool: "finance_thesis_ledger_read", thesisId: "existing-thesis" },
-              { tool: "finance_intraday_account_history", signalIds: ["older-original-feedback"] },
+              {
+                tool: "finance_intraday_account_history",
+                ...(signedCursor
+                  ? { cursor: signedCursor }
+                  : { signalIds: ["older-original-feedback"] }),
+              },
             ];
           }
           const native = payload.evidence?.find((item) =>
@@ -3355,7 +3373,7 @@ describe("finance research runner", () => {
                 },
               ],
             }
-          : coverageGap
+          : coverageGap === true
             ? {
                 ...routing,
                 adapters: [
@@ -3415,8 +3433,10 @@ describe("finance research runner", () => {
         expect(historyEvidence?.text).toContain("older-original-feedback");
         expect(historyEvidence?.text).toContain("historical_account_read_failed");
         expect(historyEvidence?.text).toContain('"status":"observed"');
-        expect(historyEvidence?.text).toContain('"missingSignalIndexes":[]');
-        if (coverageGap) {
+        if (!signedCursor) {
+          expect(historyEvidence?.text).toContain('"missingSignalIndexes":[]');
+        }
+        if (coverageGap && coverageGap !== "signed_cursor") {
           expect(result.intradayFeedbackReview).toMatchObject({
             inputCount: 1,
             respondedCount: 0,

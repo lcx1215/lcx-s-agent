@@ -1470,25 +1470,20 @@ export async function readFinanceScheduledIntradayHistory(params: {
       const accepted = phase.ok === true;
       const canAdvance = accepted && pendingCount === 0;
       let cursor = canAdvance ? (history.resumeCursor ?? history.nextCursor) : history.pageCursor;
+      let legacyProgressReplay = false;
       if (canAdvance && cursor === null) {
-        // Receipts written before resumeCursor still retain the original scoped page token.
-        // Preserve completed old history while recovering all post-window observations.
-        if (typeof history.pageCursor !== "string" || typeof history.historyAsOf !== "string") {
-          throw new Error("scheduled_history_terminal_progress_unverified");
+        legacyProgressReplay = true;
+        cursor = undefined;
+      } else if (typeof cursor === "string") {
+        const prior = object(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
+        if (prior.v === undefined && typeof prior.scope === "string") {
+          // A verified old host receipt may trigger conservative replay, never
+          // authentication or advancement of its unsigned progress fields.
+          legacyProgressReplay = true;
+          cursor = undefined;
         }
-        const prior = object(
-          JSON.parse(Buffer.from(history.pageCursor, "base64url").toString("utf8")),
-        );
-        cursor = Buffer.from(
-          JSON.stringify({
-            ...prior,
-            historicalDone: true,
-            freshAt: history.historyAsOf,
-            freshSequence: 0,
-          }),
-        ).toString("base64url");
       }
-      if (cursor !== null && typeof cursor !== "string") {
+      if (!legacyProgressReplay && cursor !== null && typeof cursor !== "string") {
         return {
           ...(await read()),
           continuation: {
@@ -1505,13 +1500,18 @@ export async function readFinanceScheduledIntradayHistory(params: {
           status:
             current.status !== "observed"
               ? "unavailable"
-              : canAdvance
-                ? history.nextCursor === null
-                  ? "historical_window_complete"
-                  : "resumed"
-                : accepted
-                  ? "retrying_unaddressed_feedback_page"
-                  : "retrying_failed_research_page",
+              : legacyProgressReplay
+                ? "legacy_progress_replayed_untrusted"
+                : canAdvance
+                  ? history.nextCursor === null
+                    ? "historical_window_complete"
+                    : "resumed"
+                  : accepted
+                    ? "retrying_unaddressed_feedback_page"
+                    : "retrying_failed_research_page",
+          ...(legacyProgressReplay
+            ? { reason: "unsigned_or_missing_resume_progress_not_trusted" }
+            : {}),
           pendingFeedbackCount: pendingCount,
           reasonsRetainedIn: "original_hashed_research_receipt",
           sourceRunId: run.runId,

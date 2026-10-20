@@ -2751,7 +2751,7 @@ it("resumes original hashed research history across day/night and retries a fail
     }
     expect(page).toMatchObject({ status: "observed", entries: [], nextCursor: null });
     expect("resumeCursor" in page && page.resumeCursor).toEqual(expect.any(String));
-    // A pre-resumeCursor terminal receipt must migrate without replaying old history.
+    // Unsigned/missing completion proof can only replay conservatively, never grant coverage.
     await save("night", { ...page, resumeCursor: undefined }, page.asOf, true);
     expect(
       await readFinanceScheduledIntradayHistory({
@@ -2760,7 +2760,10 @@ it("resumes original hashed research history across day/night and retries a fail
         asOf: "2026-09-22T19:00:00.000Z",
         researchWorkspaceDir: directory,
       }),
-    ).toMatchObject({ status: "observed", entries: [], nextCursor: null });
+    ).toMatchObject({
+      status: "observed",
+      continuation: { status: "legacy_progress_replayed_untrusted" },
+    });
     commitFinanceSchedulerDatabaseState(
       directory,
       "{}",

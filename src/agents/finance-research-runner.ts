@@ -24,7 +24,10 @@ import {
   type FinanceStrategyStage,
 } from "./finance-decision-policy.js";
 import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
-import { readFinanceIntradayAccountHistory } from "./finance-intraday-control-ledger.js";
+import {
+  readFinanceIntradayAccountHistory,
+  FINANCE_INTRADAY_HISTORY_CURSOR_MAX_LENGTH,
+} from "./finance-intraday-control-ledger.js";
 import {
   createFinanceMarketCollectionRegistry,
   FINANCE_EOD_HISTORY_MAX_RECORDS,
@@ -1851,7 +1854,8 @@ function financeLedgerReadRequestsFromCommittee(
       if (
         Object.keys(value).some((key) => !["tool", "cursor", "signalIds"].includes(key)) ||
         (value.cursor !== undefined &&
-          (typeof value.cursor !== "string" || value.cursor.length > 512)) ||
+          (typeof value.cursor !== "string" ||
+            value.cursor.length > FINANCE_INTRADAY_HISTORY_CURSOR_MAX_LENGTH)) ||
         (value.signalIds !== undefined &&
           (!Array.isArray(value.signalIds) ||
             value.signalIds.length < 1 ||

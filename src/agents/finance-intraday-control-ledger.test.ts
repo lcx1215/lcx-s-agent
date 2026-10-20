@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1023,7 +1024,7 @@ it("retains terminal history and drains multiple fresh outcomes across natural c
       throw new Error("missing initial resume");
     }
     let cursor = initial.resumeCursor;
-    expect(cursor.length).toBeLessThanOrEqual(512);
+    expect(cursor.length).toBeLessThanOrEqual(1024);
     const token = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
       scope: string;
       at: string;
@@ -1038,7 +1039,7 @@ it("retains terminal history and drains multiple fresh outcomes across natural c
         asOf: cutoff,
         cursor: legacy,
       }),
-    ).toMatchObject({ status: "observed" });
+    ).toMatchObject({ status: "unavailable" });
     const recoveredOld = new Set(initial.entries.map((entry) => entry.signalId));
     // Same-time outcomes exercise the sequence tie-breaker of the ascending fresh watermark.
     for (let index = 0; index < 11; index++) {
@@ -1087,5 +1088,120 @@ it("retains terminal history and drains multiple fresh outcomes across natural c
     expect(renewed.entries.map((entry) => entry.signalId)).toEqual(["fresh-after-terminal"]);
   } finally {
     vi.useRealTimers();
+  }
+});
+
+it("authenticates every history progress field against the original durable ledger", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-auth-"));
+  const foreign = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-foreign-"));
+  temporary.push(directory, foreign);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T14:00:00.000Z"));
+  try {
+    for (const root of [directory, foreign]) {
+      for (let index = 0; index < 2; index++) {
+        const signalId = `auth-${index}`;
+        await appendFinanceIntradayDecision(root, { ...input, signalId });
+        await appendFinanceIntradayOutcome(root, {
+          signalId,
+          status: "refused",
+          reasons: ["retained"],
+          executionScope: { accountId: "account", venue: "alpaca:paper" },
+        });
+      }
+    }
+    const params = { accountId: "account", asOf: "2026-09-22T15:00:00.000Z" };
+    const initial = await readFinanceIntradayAccountHistory(directory, params);
+    if (!("resumeCursor" in initial) || !initial.resumeCursor) {
+      throw new Error("missing authenticated cursor");
+    }
+    const cursor = initial.resumeCursor;
+    // Every read opens a fresh read-only connection and reloads the persisted identity.
+    expect(await readFinanceIntradayAccountHistory(directory, { ...params, cursor })).toMatchObject(
+      { status: "observed" },
+    );
+    const childCode = `import { readFinanceIntradayAccountHistory } from ${JSON.stringify(new URL("./finance-intraday-control-ledger.ts", import.meta.url).href)};
+      const result = await readFinanceIntradayAccountHistory(${JSON.stringify(directory)}, ${JSON.stringify({ ...params, cursor })});
+      console.log(JSON.stringify({status:result.status}));`;
+    expect(
+      JSON.parse(
+        execFileSync(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "-e", childCode],
+          { encoding: "utf8", timeout: 15_000, env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+        ),
+      ),
+    ).toEqual({ status: "observed" });
+    const raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    const tampering = {
+      v: 1,
+      ledgerId: "0".repeat(32),
+      scope: "0".repeat(64),
+      asOf: "2026-09-22T14:59:00.000Z",
+      at: "2026-09-22T13:59:00.000Z",
+      sequence: 42,
+      historicalDone: !raw.historicalDone,
+      freshAt: new Date(Date.parse(raw.freshAt) + 1).toISOString(),
+      freshSequence: 42,
+      mac: "0".repeat(64),
+    };
+    for (const [field, value] of Object.entries(tampering)) {
+      const forged = Buffer.from(JSON.stringify({ ...raw, [field]: value })).toString("base64url");
+      expect(
+        await readFinanceIntradayAccountHistory(directory, {
+          ...params,
+          asOf: "2026-09-22T16:00:00.000Z",
+          cursor: forged,
+        }),
+      ).toMatchObject({ status: "unavailable", entries: [] });
+    }
+    expect(await readFinanceIntradayAccountHistory(foreign, { ...params, cursor })).toMatchObject({
+      status: "unavailable",
+      reason: "intraday_history_cursor_authentication_failed",
+    });
+    expect(
+      await readFinanceIntradayAccountHistory(directory, {
+        ...params,
+        accountId: "foreign",
+        cursor,
+      }),
+    ).toMatchObject({ status: "unavailable" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not initialize cursor authentication during old-ledger history reads", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-old-ledger-"));
+  temporary.push(directory);
+  await appendFinanceIntradayDecision(directory, input);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+  try {
+    db.exec(
+      "DROP TRIGGER finance_intraday_cursor_auth_no_update; DROP TRIGGER finance_intraday_cursor_auth_no_delete; DROP TABLE finance_intraday_cursor_auth; DELETE FROM finance_intraday_control_migrations WHERE version=5",
+    );
+    const before = db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all();
+    const observed = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-10-21T15:00:00.000Z",
+    });
+    expect(observed).toMatchObject({
+      status: "unavailable",
+      reason: "intraday_history_cursor_auth_uninitialized",
+    });
+    expect(db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
+    await appendFinanceIntradayDecision(directory, { ...input, signalId: "new-writer-upgrade" });
+    expect(
+      db.prepare("SELECT count(*) AS count FROM finance_intraday_cursor_auth").get()?.count,
+    ).toBe(1);
+    expect(
+      await readFinanceIntradayAccountHistory(directory, {
+        accountId: "account",
+        asOf: "2026-10-21T15:00:00.000Z",
+      }),
+    ).toMatchObject({ status: "observed" });
+  } finally {
+    db.close();
   }
 });

@@ -1,3 +1,4 @@
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { z } from "zod";
@@ -46,6 +47,7 @@ import {
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
 const Iso = z.string().datetime();
+export const FINANCE_INTRADAY_HISTORY_CURSOR_MAX_LENGTH = 1024;
 const ReadFailureSchema = z
   .object({
     code: z.string().max(259),
@@ -487,6 +489,18 @@ const MIGRATIONS: readonly SqliteMigration[] = [
   },
 ];
 
+// Additive authentication metadata owned by the existing writer. Old readers can
+// continue reading original rows; history reads never initialize or migrate keys.
+const CURSOR_AUTH_MIGRATION: SqliteMigration = {
+  version: 5,
+  description: "immutable ledger identity and authenticated history progress",
+  sql: `CREATE TABLE finance_intraday_cursor_auth (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1), ledger_id TEXT NOT NULL, key_hex TEXT NOT NULL
+  );
+  CREATE TRIGGER finance_intraday_cursor_auth_no_update BEFORE UPDATE ON finance_intraday_cursor_auth BEGIN SELECT RAISE(ABORT,'cursor identity is immutable'); END;
+  CREATE TRIGGER finance_intraday_cursor_auth_no_delete BEFORE DELETE ON finance_intraday_cursor_auth BEGIN SELECT RAISE(ABORT,'cursor identity is immutable'); END;`,
+};
+
 const FinanceIntradayOutcomeBase = z
   .object({
     signalId: Text,
@@ -606,7 +620,7 @@ export async function appendFinanceIntradayOutcome(
   if ((input.status === "placed") !== Boolean(input.receiptId)) {
     throw new Error("placed intraday outcome requires one receiptId and non-placed forbids it");
   }
-  const db = open(directory);
+  const db = open(directory, true);
   try {
     const existing = db
       .prepare("SELECT body FROM finance_intraday_outcomes WHERE signal_id=?")
@@ -736,7 +750,49 @@ function releaseDatabase(db: Database): void {
   }
 }
 
-function open(directory: string): Database {
+function initializeCursorAuth(db: Database): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    applySqliteMigrations({
+      db,
+      ledgerTable: "finance_intraday_control_migrations",
+      migrations: [...MIGRATIONS, CURSOR_AUTH_MIGRATION],
+    });
+    db.prepare(
+      "INSERT OR IGNORE INTO finance_intraday_cursor_auth(singleton,ledger_id,key_hex) VALUES (1,?,?)",
+    ).run(randomBytes(16).toString("hex"), randomBytes(32).toString("hex"));
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function readCursorAuth(db: Database): { ledgerId: string; key: Buffer } {
+  if (
+    !db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='finance_intraday_cursor_auth'",
+      )
+      .get()
+  ) {
+    throw new Error("intraday_history_cursor_auth_uninitialized");
+  }
+  const row = db
+    .prepare("SELECT ledger_id,key_hex FROM finance_intraday_cursor_auth WHERE singleton=1")
+    .get();
+  if (
+    typeof row?.ledger_id !== "string" ||
+    !/^[a-f0-9]{32}$/u.test(row.ledger_id) ||
+    typeof row.key_hex !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(row.key_hex)
+  ) {
+    throw new Error("intraday_history_cursor_auth_uninitialized");
+  }
+  return { ledgerId: row.ledger_id, key: Buffer.from(row.key_hex, "hex") };
+}
+
+function open(directory: string, writer = false): Database {
   const { DatabaseSync } = requireNodeSqlite();
   mkdirSync(directory, { recursive: true });
   chmodSync(directory, 0o700);
@@ -747,6 +803,9 @@ function open(directory: string): Database {
     connections.delete(filename);
     if (stat && stat.dev === cached.dev && stat.ino === cached.ino) {
       connections.set(filename, cached);
+      if (writer) {
+        initializeCursorAuth(cached.db);
+      }
       return cached.db;
     }
     cached.db.close();
@@ -760,6 +819,9 @@ function open(directory: string): Database {
       ledgerTable: "finance_intraday_control_migrations",
       migrations: MIGRATIONS,
     });
+    if (writer) {
+      initializeCursorAuth(db);
+    }
     const stat = statSync(filename);
     connections.set(filename, { db, dev: stat.dev, ino: stat.ino });
     if (connections.size > MAX_CONNECTIONS) {
@@ -828,7 +890,7 @@ export async function appendFinanceIntradayDecision(
   rawInput: FinanceIntradayDecisionInput,
 ): Promise<Readonly<{ record: FinanceIntradayDecisionRecord; appended: boolean }>> {
   const input = FinanceIntradayDecisionInput.parse(rawInput);
-  const db = open(directory);
+  const db = open(directory, true);
   try {
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -1107,18 +1169,24 @@ export async function readFinanceIntradayAccountHistory(
         ? undefined
         : z
             .object({
+              v: z.literal(2),
+              ledgerId: z.string().regex(/^[a-f0-9]{32}$/u),
+              mac: Hash,
               scope: z.string().regex(/^[a-f0-9]{64}$/u),
-              asOf: Iso.optional(),
-              historicalDone: z.boolean().optional(),
-              freshAt: Iso.optional(),
-              freshSequence: z.number().int().nonnegative().optional(),
+              asOf: Iso,
+              historicalDone: z.boolean(),
+              freshAt: Iso,
+              freshSequence: z.number().int().nonnegative(),
               at: Iso,
               sequence: z.number().int().positive(),
             })
             .strict()
             .parse(
               JSON.parse(
-                Buffer.from(z.string().max(512).parse(params.cursor), "base64url").toString("utf8"),
+                Buffer.from(
+                  z.string().max(FINANCE_INTRADAY_HISTORY_CURSOR_MAX_LENGTH).parse(params.cursor),
+                  "base64url",
+                ).toString("utf8"),
               ),
             );
     // New cursors freeze the historical window across later natural cycles;
@@ -1133,14 +1201,6 @@ export async function readFinanceIntradayAccountHistory(
     if (Date.parse(freshAt) < Date.parse(historyAsOf) || Date.parse(freshAt) > Date.parse(asOf)) {
       throw new Error("intraday history fresh watermark scope mismatch");
     }
-    const encodeCursor = (
-      at: string,
-      sequence: number,
-      progress: { historicalDone: boolean; freshAt: string; freshSequence: number },
-    ) =>
-      Buffer.from(JSON.stringify({ scope, asOf: historyAsOf, at, sequence, ...progress })).toString(
-        "base64url",
-      );
     const signalIds =
       params.signalIds === undefined
         ? undefined
@@ -1163,9 +1223,53 @@ export async function readFinanceIntradayAccountHistory(
       }
       throw error;
     }
-    const db = open(directory);
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(financeIntradayControlLedgerPath(directory), { readOnly: true });
     try {
-      db.exec("BEGIN");
+      db.exec("PRAGMA query_only=ON; PRAGMA busy_timeout=5000; BEGIN");
+      const auth = readCursorAuth(db);
+      const sign = (value: Record<string, unknown>) =>
+        createHmac("sha256", auth.key)
+          .update("finance_intraday_account_history_v2\0")
+          .update(JSON.stringify(value))
+          .digest("hex");
+      const payload = (value: {
+        scope: string;
+        asOf: string;
+        at: string;
+        sequence: number;
+        historicalDone: boolean;
+        freshAt: string;
+        freshSequence: number;
+      }) => ({
+        v: 2,
+        ledgerId: auth.ledgerId,
+        scope: value.scope,
+        asOf: value.asOf,
+        at: value.at,
+        sequence: value.sequence,
+        historicalDone: value.historicalDone,
+        freshAt: value.freshAt,
+        freshSequence: value.freshSequence,
+      });
+      if (
+        cursor &&
+        (cursor.ledgerId !== auth.ledgerId ||
+          !timingSafeEqual(
+            Buffer.from(cursor.mac, "hex"),
+            Buffer.from(sign(payload(cursor)), "hex"),
+          ))
+      ) {
+        throw new Error("intraday_history_cursor_authentication_failed");
+      }
+      const encodeCursor = (
+        at: string,
+        sequence: number,
+        progress: { historicalDone: boolean; freshAt: string; freshSequence: number },
+      ) => {
+        const value = payload({ scope, asOf: historyAsOf, at, sequence, ...progress });
+        return Buffer.from(JSON.stringify({ ...value, mac: sign(value) })).toString("base64url");
+      };
       verifyDecisionHead(db);
       const historicalRows = db
         .prepare(`SELECT d.ref, d.body, d.sequence, o.body AS outcome, o.recorded_at
@@ -1430,13 +1534,17 @@ export async function readFinanceIntradayAccountHistory(
       }
       return result;
     } finally {
-      releaseDatabase(db);
+      db.close();
     }
-  } catch {
+  } catch (error) {
     return {
       ...base,
       status: "unavailable" as const,
-      reason: "intraday_account_history_unverified",
+      reason:
+        error instanceof Error &&
+        /^intraday_history_cursor_auth(?:entication_failed|_uninitialized)$/u.test(error.message)
+          ? error.message
+          : "intraday_account_history_unverified",
       entries: [],
     };
   }
