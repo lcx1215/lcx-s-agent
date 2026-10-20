@@ -408,7 +408,7 @@ export async function probeOriginalFinanceLiveCaller(params: {
                 lateResult.enqueueRejected = true;
               }
               completeLate?.();
-            }, 250);
+            }, 3_000);
           },
           cancel() {
             lateResult.cancelled = true;
@@ -437,6 +437,11 @@ export async function probeOriginalFinanceLiveCaller(params: {
   const originalRunner = runner.runFinanceResearchRun;
   vi.spyOn(runner, "runFinanceResearchRun").mockImplementation(async (options) => {
     actualRunnerInputs.push(structuredClone(options.input));
+    if (params.fault === "run_timeout") {
+      // Exercise setup latency without making platform speed choose whether the
+      // deadline case reaches its intended late HTTP body and cleanup phase.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
     return originalRunner(options);
   });
   let privateDayFetch: Parameters<
@@ -478,7 +483,7 @@ export async function probeOriginalFinanceLiveCaller(params: {
       }
       options.sourceTimeoutMs = 30;
       options.totalTimeoutMs = 2_000;
-      options.runTimeoutMs = params.fault === "run_timeout" ? 100 : 10_000;
+      options.runTimeoutMs = params.fault === "run_timeout" ? 2_000 : 10_000;
       try {
         const nativeProducer = await probeOriginalFinanceModuleMain({
           directory: path.join(params.directory, "current-research"),

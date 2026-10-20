@@ -1151,14 +1151,21 @@ describe("explicit original four-task daily batch", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network forbidden")));
     try {
       const prepared = await prepareBatch(workspace, 64, 192);
-      const result = await executeDirectedDailyResearchBatch(prepared.options);
+      // This positive case runs four complete owners; Windows exceeded the
+      // former 10s fixture budget before the final owner could finish.
+      const result = await executeDirectedDailyResearchBatch({
+        ...prepared.options,
+        timeoutMs: 30_000,
+      });
       await saveBatchProof("four-native-tasks", workspace, {
         result,
         sourceCalls: prepared.native.prepared.sourceCalls,
         committeeRequests: prepared.native.prepared.committeeRequests,
         qualityRequests: prepared.native.prepared.qualityRequests,
       });
-      expect(result.batchExecution.status).toBe("completed");
+      expect(result.batchExecution.status, JSON.stringify(result.batchExecution.tasks)).toBe(
+        "completed",
+      );
       expect(result.batchExecution.tasks.map((task) => task.status)).toEqual([
         "executed",
         "executed",

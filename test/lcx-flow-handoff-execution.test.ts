@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { auditWorkflowHandoffs } from "../scripts/operator/lcx-flow-graph.js";
+import { closeFinancePositionLedger } from "../src/agents/finance-position-ledger.js";
 import { probeOriginalExecution } from "./fixtures/lcx-waterflow-execution-probe.js";
 
 async function audit(result: Awaited<ReturnType<typeof probeOriginalExecution>>) {
@@ -46,6 +47,8 @@ describe("whole original execution owner, isolated paper seam and actual ledger 
       expect(first.originalBinding?.intent.quantity).toBe(2);
       expect(changed.originalBinding?.intent.quantity).toBe(3);
     } finally {
+      closeFinancePositionLedger(path.join(root, "two", "book"));
+      closeFinancePositionLedger(path.join(root, "three", "book"));
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -90,6 +93,7 @@ describe("whole original execution owner, isolated paper seam and actual ledger 
       expect(result.payload.nodes.execution_receipt?.quantity).toBe(2);
       expect(result.independentReadback.ledger.positions[0].quantity).toBe(2);
     } finally {
+      closeFinancePositionLedger(path.join(root, "book"));
       await fs.rm(root, { recursive: true, force: true });
     }
   });

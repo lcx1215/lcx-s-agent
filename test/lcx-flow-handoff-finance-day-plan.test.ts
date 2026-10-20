@@ -34,6 +34,7 @@ const roots: string[] = [];
 afterEach(async () => {
   for (const dir of roots.splice(0)) {
     closeFinanceBarLedger(path.join(dir, "finance-book"));
+    closeFinanceBarLedger(path.join(dir, "native-producer", "finance-book"));
     closeFinancePositionLedger(path.join(dir, "finance-book"));
     await fs.rm(dir, { recursive: true, force: true });
   }
