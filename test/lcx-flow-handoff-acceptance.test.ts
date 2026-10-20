@@ -263,7 +263,7 @@ describe("original acceptance collector to native gate offline handoff", () => {
       if (fault === "failed_training") {
         expect(sample.collected.trainingPlan?.commandSucceeded).toBe(false);
         expect(gate?.evidence.payloadFailedReason).toBe("offline_training_source_unavailable");
-        expect(gate?.evidence.error).toContain("offline training child returned nonzero");
+        expect(gate?.evidence.error).toBe("owner_reported_failure");
       } else if (fault === "missing_training_state") {
         expect(gate?.evidence.missingStateFields).toEqual(["overlappingHeavyEval"]);
       } else {
