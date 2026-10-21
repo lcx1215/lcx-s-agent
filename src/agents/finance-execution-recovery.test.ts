@@ -533,3 +533,88 @@ it("keeps a newer original mark when restoring an older confirmed receipt", asyn
   expect(after.receipts).toEqual([f.receipt]);
   expect(after.marks).toEqual([mark]);
 });
+
+const validProtection = { id: "original-stop", quantity: 5, stopPrice: 90 };
+it.each([
+  { protectiveOrders: [{ ...validProtection, quantity: null }], positionQuantity: 5 },
+  { protectiveOrders: [{ id: "original-stop", stopPrice: 90 }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, quantity: false }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, quantity: "5" }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, quantity: 0 }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, quantity: -1 }], positionQuantity: 5 },
+  { protectiveOrders: [null], positionQuantity: 5 },
+  { protectiveOrders: {}, positionQuantity: 5 },
+  { protectiveOrders: null, positionQuantity: 5 },
+  { protectiveOrders: [validProtection] },
+  { protectiveOrders: [validProtection], positionQuantity: "5" },
+  { protectiveOrders: [validProtection], positionQuantity: null },
+  { protectiveOrders: [validProtection], positionQuantity: 4 },
+  { protectiveOrders: [{ ...validProtection, id: " " }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, stopPrice: null }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, orderType: "market" }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, limitPrice: 89 }], positionQuantity: 5 },
+  { protectiveOrders: [{ ...validProtection, orderType: "stop_limit" }], positionQuantity: 5 },
+  {
+    protectiveOrders: [{ ...validProtection, orderType: "stop_limit", limitPrice: 91 }],
+    positionQuantity: 5,
+  },
+  {
+    protectiveOrders: [
+      { ...validProtection, quantity: 2 },
+      { ...validProtection, quantity: 2 },
+    ],
+    positionQuantity: 5,
+  },
+])("keeps malformed persisted protection unresolved before any resolver: %j", async (metadata) => {
+  const f = await runConfirmed();
+  const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+  const pending = {
+    ...first,
+    status: "unknown",
+    binding: { ...first.binding, intent: { ...first.binding.intent, side: "sell" }, ...metadata },
+  };
+  const raw = JSON.stringify(pending) + "\n";
+  await fs.writeFile(f.journal, raw);
+  const resolvePending = vi.fn(async () => ({
+    ...f.receipt.fill,
+    terminalOrderIdentity: { orderId: "broker-original", terminal: true as const },
+  }));
+  const recovered = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+  expect(recovered.pendingReconciliation).toEqual([first.id]);
+  expect(recovered.replayed).toEqual([]);
+  expect(resolvePending).not.toHaveBeenCalled();
+  expect(await fs.readFile(f.journal, "utf8")).toBe(raw);
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toEqual([]);
+});
+it.each(
+  [
+    [],
+    [validProtection],
+    [{ ...validProtection, orderType: "stop" }],
+    [{ ...validProtection, orderType: "stop_limit", limitPrice: 89 }],
+    [{ ...validProtection, id: "partial-stop", quantity: 2 }],
+  ].map((protectiveOrders) => ({ protectiveOrders })),
+)("preserves valid persisted protection resolver bindings: %j", async ({ protectiveOrders }) => {
+  const f = await runConfirmed();
+  const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+  const pending = {
+    ...first,
+    status: "unknown",
+    binding: {
+      ...first.binding,
+      intent: { ...first.binding.intent, side: "sell" },
+      protectiveOrders,
+      positionQuantity: 5,
+    },
+  };
+  await fs.writeFile(f.journal, JSON.stringify(pending) + "\n");
+  const resolvePending = vi.fn(async () => ({
+    ...f.receipt.fill,
+    terminalOrderIdentity: { orderId: "broker-original", terminal: true as const },
+  }));
+  const recovered = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+  expect(recovered.failures).toEqual([]);
+  expect(recovered.pendingReconciliation).toEqual([]);
+  expect(recovered.replayed).toHaveLength(1);
+  expect(resolvePending).toHaveBeenCalledTimes(1);
+});

@@ -21,6 +21,9 @@ async function probe(name: string, fault?: SelfRepairContentReviewFault) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-self-repair-review-"));
   roots.push(directory);
   const result = await probeOriginalSelfRepairContentReview({ directory, fault });
+  expect(result.reviewed.receipt.path).toBe(
+    result.produced.receiptRef.path.split(path.sep).join("/"),
+  );
   const retained = process.env.LCX_SELF_REPAIR_CONTENT_REVIEW_PROOF_DIR;
   if (retained) {
     await fs.mkdir(retained, { recursive: true });
@@ -54,7 +57,10 @@ describe("actual self-repair candidate content -> original quality owner -> boun
         inputFingerprint: result.reviewed.inputFingerprint,
         selfRepairReviewScope: {
           scope: result.produced.scope,
-          receipt: result.produced.receiptRef,
+          receipt: {
+            ...result.produced.receiptRef,
+            path: result.produced.receiptRef.path.split(path.sep).join("/"),
+          },
         },
       });
     }
@@ -98,6 +104,21 @@ describe("actual self-repair candidate content -> original quality owner -> boun
     const source = await fs.readFile(
       new URL("../src/agents/self-repair-candidate-review.ts", import.meta.url),
       "utf8",
+    );
+    const receiptStart = source.indexOf("const receiptRef = reference.parse(");
+    const receiptEnd = source.indexOf("const read =", receiptStart);
+    expect(receiptStart).toBeGreaterThan(0);
+    expect(receiptEnd).toBeGreaterThan(receiptStart);
+    const normalizeReceipt = (receiptPath: string, nativePath: typeof path.win32) =>
+      vm.runInNewContext(`${source.slice(receiptStart, receiptEnd)}; receiptRef.path`, {
+        path: nativePath,
+        reference: { parse: (value: unknown) => value },
+        options: { receipt: { path: receiptPath, sha256: "a".repeat(64) } },
+      }) as string;
+    expect(normalizeReceipt(String.raw`state\receipt.json`, path.win32)).toBe("state/receipt.json");
+    expect(normalizeReceipt("state/receipt.json", path.win32)).toBe("state/receipt.json");
+    expect(normalizeReceipt(String.raw`state\receipt.json`, path.posix)).toBe(
+      String.raw`state\receipt.json`,
     );
     const first = source.indexOf("const relativePath =");
     const last = source.indexOf("const text = await read(relativePath)", first);
