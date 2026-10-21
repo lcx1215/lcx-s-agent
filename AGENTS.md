@@ -5,6 +5,24 @@ Historical runtime identifiers are compatibility-only; upstream is lineage, not
 another source or release authority. Global collaboration rules apply; this file
 adds project contracts. Keep volatile commands, models and incidents in runbooks.
 
+## Product ownership and value
+
+- Treat LCX as a software-company team responsibility: own architecture,
+  implementation, independent review, verification, delivery and operational
+  recovery across the system. Scale role separation and process to actual risk.
+- Target a system product value above CNY 100,000. Support that goal with useful
+  capabilities, reliable autonomous operation, maintainability, reproducible
+  delivery, operating costs and measurable user or business outcomes. This is a
+  product goal; a present valuation, revenue or trading profit requires evidence.
+- Keep every repair aligned with one outcome: dependable autonomous operation with
+  a verified feedback-to-decision loop and safe fault recovery. Link each change
+  to a demonstrated failure, its canonical owner and an end-to-end benefit; verify
+  interactions and natural adoption before closing the system goal. Defer unrelated
+  changes rather than collecting isolated local passes.
+- Prioritize verified system bottlenecks and user value. Counts of fixes, tests,
+  agents or review comments do not establish product quality or value. Preserve
+  existing authorization boundaries and financial execution gates.
+
 ## Finance authority and outcomes
 
 - `research_only` is the compatibility default; `strategy_candidate` and
@@ -66,6 +84,10 @@ adds project contracts. Keep volatile commands, models and incidents in runbooks
   strict types, avoid `any`/`@ts-nocheck`, follow formatting and do not hand-edit
   generated output/node_modules. Source/tests: `src/`; extensions: `extensions/`;
   docs: `docs/`.
+- Validate only as much as the change needs. Reduce unnecessary boundary tests,
+  reruns and checks; do not delay delivery out of fear. Reuse unchanged valid
+  results; expand only for concrete failures, relevant changes or unresolved
+  questions. Preserve targeted permission, trading, side-effect and recovery checks.
 - Lazy CLI help and package entry names do not establish runtime wiring; inspect
   registration/argument parsing and scoped execution when that behavior is at issue.
 - For a new window continuing complex LCX work, use `lcx-context-recovery-exam`

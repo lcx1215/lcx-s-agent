@@ -1,15 +1,20 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { AlpacaSafetyQuoteReadError } from "./finance-alpaca-safety-provider.js";
 import type { AlpacaSafetyAccountArithmeticDiagnostic } from "./finance-alpaca-safety-provider.js";
+import * as fingerprints from "./finance-caseflow.js";
 import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
+  closeFinanceIntradayControlLedger,
+  initializeFinanceIntradayControlLedger,
   readFinanceIntradayExecutionCoverage,
+  readFinanceIntradayAccountHistory,
   readFinanceIntradayDecisions,
   readFinanceIntradayOutcome,
   readFinanceIntradayOutcomes,
@@ -20,7 +25,10 @@ import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 const temporary: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
+    temporary.splice(0).map((item) => {
+      closeFinanceIntradayControlLedger(item);
+      return fs.rm(item, { recursive: true, force: true });
+    }),
   );
 });
 
@@ -661,5 +669,605 @@ it("persists exact future-quote timing without accepting contradictory arithmeti
     ).rejects.toThrow();
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("does not rehash the verified decision prefix for each resident append or scoped read", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-incremental-"));
+  temporary.push(directory);
+  for (let i = 0; i < 120; i++) {
+    await appendFinanceIntradayDecision(directory, { ...input, signalId: `prefix-${i}` });
+  }
+  const hash = vi.spyOn(fingerprints, "caseflowFingerprint");
+  try {
+    await appendFinanceIntradayDecision(directory, {
+      ...input,
+      signalId: "selected",
+      instrument: "QQQ",
+    });
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: "selected",
+      status: "refused",
+      reasons: ["fixture"],
+    });
+    const selected = await readFinanceIntradayDecisions(directory, { instrument: "QQQ" });
+    expect(selected.map((r) => r.input.signalId)).toEqual(["selected"]);
+    expect(hash.mock.calls.length).toBeLessThan(10);
+  } finally {
+    hash.mockRestore();
+  }
+});
+
+it.each(["body", "chain", "index"] as const)(
+  "invalidates the resident proof on external %s corruption even outside the selected scope",
+  async (mode) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-external-"));
+    temporary.push(directory);
+    await appendFinanceIntradayDecision(directory, input);
+    await appendFinanceIntradayDecision(directory, {
+      ...input,
+      signalId: "other",
+      instrument: "QQQ",
+    });
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+    try {
+      db.exec("DROP TRIGGER finance_intraday_decisions_no_update");
+      if (mode === "index") {
+        db.prepare(
+          "UPDATE finance_intraday_decisions SET signal_id='wrong' WHERE sequence=1",
+        ).run();
+      } else {
+        const row = db
+          .prepare("SELECT body FROM finance_intraday_decisions WHERE sequence=1")
+          .get();
+        const body = JSON.parse(String(row?.body));
+        if (mode === "body") {
+          body.input.reason = "tampered";
+          db.prepare("UPDATE finance_intraday_decisions SET body=? WHERE sequence=1").run(
+            JSON.stringify(body),
+          );
+        } else {
+          body.previousRef = "f".repeat(64);
+          db.prepare("UPDATE finance_intraday_decisions SET body=?,ref=? WHERE sequence=1").run(
+            JSON.stringify(body),
+            fingerprints.caseflowFingerprint(body),
+          );
+        }
+      }
+    } finally {
+      db.close();
+    }
+    await expect(readFinanceIntradayDecisions(directory, { instrument: "QQQ" })).rejects.toThrow(
+      /intraday decision/,
+    );
+    await expect(
+      appendFinanceIntradayDecision(directory, { ...input, signalId: "must-not-append" }),
+    ).rejects.toThrow(/intraday decision/);
+  },
+);
+
+it("revalidates a second writer and chains the next resident append to its committed decision", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-second-writer-"));
+  temporary.push(directory);
+  const first = await appendFinanceIntradayDecision(directory, input);
+  const second = {
+    schemaVersion: "lcx_finance_intraday_decision_v1",
+    sequence: 2,
+    previousRef: first.record.ref,
+    recordedAt: new Date().toISOString(),
+    input: { ...input, signalId: "external", instrument: "QQQ" },
+  };
+  const secondRef = fingerprints.caseflowFingerprint(second);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+  try {
+    db.prepare(
+      "INSERT INTO finance_intraday_decisions(ref,signal_id,sequence,body) VALUES (?,?,?,?)",
+    ).run(secondRef, "external", 2, JSON.stringify(second));
+  } finally {
+    db.close();
+  }
+  const third = await appendFinanceIntradayDecision(directory, { ...input, signalId: "third" });
+  expect(third.record.sequence).toBe(3);
+  expect(third.record.previousRef).toBe(secondRef);
+  const selected = await readFinanceIntradayDecisions(directory, { instrument: "QQQ" });
+  expect(selected.map((r) => r.ref)).toEqual([secondRef]);
+  expect((await appendFinanceIntradayDecision(directory, second.input)).appended).toBe(false);
+});
+
+it("reopens an evicted ledger with a full proof and does not retain caller-mutated records", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-reopen-"));
+  temporary.push(directory);
+  const first = await appendFinanceIntradayDecision(directory, input);
+  first.record.input.instrument = "MUTATED";
+  for (let i = 0; i < 9; i++) {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-evict-"));
+    temporary.push(other);
+    await appendFinanceIntradayDecision(other, input);
+  }
+  const hash = vi.spyOn(fingerprints, "caseflowFingerprint");
+  try {
+    const rows = await readFinanceIntradayDecisions(directory);
+    expect(rows[0].input.instrument).toBe("SPY");
+    expect(hash.mock.calls.length).toBeGreaterThanOrEqual(2);
+  } finally {
+    hash.mockRestore();
+  }
+});
+
+it("uses the migrated scope index and preserves schema-normalized legacy instruments", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-scope-index-"));
+  temporary.push(directory);
+  const first = await appendFinanceIntradayDecision(directory, input);
+  const { ref: _ref, ...record } = first.record;
+  const legacy = { ...record, input: { ...record.input, instrument: " SPY " } };
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+  try {
+    const plan = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT ref,body FROM finance_intraday_decisions WHERE trim(json_extract(body,'$.input.instrument'))=? ORDER BY sequence",
+      )
+      .all("SPY");
+    expect(JSON.stringify(plan)).toContain("USING INDEX finance_intraday_decisions_instrument");
+    db.exec("DROP TRIGGER finance_intraday_decisions_no_update");
+    db.prepare("UPDATE finance_intraday_decisions SET body=?,ref=? WHERE sequence=1").run(
+      JSON.stringify(legacy),
+      fingerprints.caseflowFingerprint(legacy),
+    );
+  } finally {
+    db.close();
+  }
+  const rows = await readFinanceIntradayDecisions(directory, { instrument: "SPY" });
+  expect(rows).toHaveLength(1);
+  expect(rows[0].input.instrument).toBe("SPY");
+});
+
+it("persists the original account request failure without accepting provider secrets", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "account-request-diagnostic-"));
+  temporary.push(directory);
+  const outcome = {
+    signalId: "account-request-failure",
+    status: "refused" as const,
+    reasons: ["intraday_execution_unexpected_error"],
+    executionFailure: {
+      stage: "account_book" as const,
+      category: "unexpected" as const,
+      elapsedMs: 4000,
+      account: {
+        stage: "broker_reconciliation" as const,
+        code: "ECONNRESET",
+        elapsedMs: 3900,
+        request: {
+          endpoint: "positions" as const,
+          phase: "request" as const,
+          code: "ECONNRESET",
+          elapsedMs: 3000,
+        },
+      },
+    },
+  };
+  await appendFinanceIntradayOutcome(directory, outcome);
+  expect(await readFinanceIntradayOutcome(directory, outcome.signalId)).toEqual(outcome);
+  for (const request of [
+    { ...outcome.executionFailure.account.request, url: "private-provider-content" },
+    { ...outcome.executionFailure.account.request, code: "private-provider-content" },
+  ]) {
+    await expect(
+      appendFinanceIntradayOutcome(directory, {
+        ...outcome,
+        signalId: "unsafe-request",
+        executionFailure: {
+          ...outcome.executionFailure,
+          account: { ...outcome.executionFailure.account, request },
+        },
+      } as never),
+    ).rejects.toThrow();
+  }
+});
+
+it("recovers bounded account outcomes across sessions without attributing anonymous or foreign failures", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-account-history-"));
+  temporary.push(directory);
+  vi.useFakeTimers();
+  const start = Date.parse("2026-09-18T18:00:00.000Z");
+  for (let index = 0; index < 30; index++) {
+    vi.setSystemTime(start + index * 1000);
+    const signalId = `history-${index}`;
+    await appendFinanceIntradayDecision(directory, {
+      ...input,
+      signalId,
+      instrument: index === 0 ? "IWM" : "SPY",
+    });
+    await appendFinanceIntradayOutcome(directory, {
+      signalId,
+      status: index === 0 ? "uncertain" : "refused",
+      reasons:
+        index === 10 ? ["\u0001".repeat(240), "\u0002".repeat(240)] : ["account_read_failed"],
+      ...(index === 28
+        ? {}
+        : {
+            executionScope: {
+              accountId: index === 29 ? "foreign" : "selected",
+              venue: "alpaca:paper" as const,
+            },
+          }),
+    });
+  }
+  const asOf = "2026-09-21T13:00:00.000Z";
+  const history = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf,
+  });
+  expect(history).toMatchObject({
+    status: "observed",
+    scannedOutcomes: 24,
+    earlierHistoryMayBeOmitted: true,
+    omittedEntries: 16,
+  });
+  expect(history.entries).toHaveLength(8);
+  expect(history.entries[0]).toMatchObject({
+    signalId: "history-27",
+    status: "refused",
+    reviewStatus: "not_observed",
+    decision: "unknown",
+    reasons: ["account_read_failed"],
+    decisionRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    outcomeRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+  // A bounded recent snapshot must still permit recovery of an older original.
+  const recovered = new Set(history.entries.map((entry) => entry.signalId));
+  let cursor = "nextCursor" in history ? history.nextCursor : null;
+  let pageCount = 0;
+  while (typeof cursor === "string") {
+    expect(pageCount++).toBeLessThan(20);
+    const page = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "selected",
+      asOf,
+      cursor,
+      maximumEntries: 2,
+    });
+    expect(page.status).toBe("observed");
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(4_000);
+    if (page.entries.some((entry) => entry.signalId === "history-10")) {
+      expect(page.entries.find((entry) => entry.signalId === "history-10")?.detailGap).toContain(
+        "oversize_entry_details_omitted",
+      );
+    }
+    expect(page.entries.length).toBeLessThanOrEqual(8);
+    page.entries.forEach((entry) => recovered.add(entry.signalId));
+    cursor = "nextCursor" in page ? page.nextCursor : null;
+  }
+  expect(recovered.size).toBe(28);
+  expect(recovered.has("history-0")).toBe(true);
+  const initialCursor = "nextCursor" in history ? history.nextCursor : undefined;
+  if (typeof initialCursor !== "string") {
+    throw new Error("missing historical continuation");
+  }
+  expect(
+    await readFinanceIntradayAccountHistory(directory, {
+      accountId: "foreign",
+      asOf,
+      cursor: initialCursor,
+    }),
+  ).toMatchObject({ status: "unavailable" });
+  expect(
+    await readFinanceIntradayAccountHistory(directory, {
+      accountId: "selected",
+      asOf: "2026-09-20T13:00:00.000Z",
+      cursor: initialCursor,
+    }),
+  ).toMatchObject({ status: "unavailable" });
+  vi.setSystemTime(new Date("2026-09-21T14:00:00.000Z"));
+  await appendFinanceIntradayDecision(directory, {
+    ...input,
+    signalId: "new-after-history-cutoff",
+  });
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: "new-after-history-cutoff",
+    status: "refused",
+    reasons: ["new observation"],
+    executionScope: { accountId: "selected", venue: "alpaca:paper" },
+  });
+  const resumed = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf: "2026-09-22T13:00:00.000Z",
+    cursor: initialCursor,
+  });
+  expect(resumed.status).toBe("observed");
+  expect(resumed).toMatchObject({ historyAsOf: asOf, latestOutcomeRefreshed: true });
+  expect(resumed.entries[0].signalId).toBe("new-after-history-cutoff");
+  expect(resumed.entries.some((entry) => entry.signalId === "history-26")).toBe(true);
+  const exact = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf,
+    signalIds: ["history-0", "history-29"],
+  });
+  expect(exact.entries.map((entry) => entry.signalId)).toEqual(["history-0"]);
+  expect(exact).toMatchObject({ missingSignalIndexes: [1], nextCursor: null });
+  // Reopen the same original book after a weekend; no in-memory feedback cache is needed.
+  expect(
+    await readFinanceIntradayAccountHistory(directory, { accountId: "selected", asOf }),
+  ).toEqual(history);
+  const earlier = await readFinanceIntradayAccountHistory(directory, {
+    accountId: "selected",
+    asOf: "2026-09-18T18:00:02.000Z",
+  });
+  expect(earlier.entries.map((entry) => entry.signalId)).toEqual(["history-1", "history-0"]);
+  expect(earlier.entries.find((entry) => entry.status === "uncertain")?.status).toBe("uncertain");
+  expect(history.scopeLimitation).toContain("without_native_account_identity");
+});
+
+it("retains terminal history and drains multiple fresh outcomes across natural cutoffs", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-two-stream-history-"));
+  temporary.push(directory);
+  vi.useFakeTimers();
+  try {
+    const append = async (signalId: string, at: string) => {
+      vi.setSystemTime(new Date(at));
+      await appendFinanceIntradayDecision(directory, { ...input, signalId });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId,
+        status: "refused",
+        reasons: ["original scoped outcome"],
+        executionScope: { accountId: "account", venue: "alpaca:paper" },
+      });
+    };
+    for (let index = 0; index < 18; index++) {
+      await append(
+        `old-${index}`,
+        new Date(Date.parse("2026-09-18T18:00:00Z") + index * 1000).toISOString(),
+      );
+    }
+    const cutoff = "2026-09-18T19:00:00.000Z";
+    const initial = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: cutoff,
+    });
+    if (!("resumeCursor" in initial) || !initial.resumeCursor) {
+      throw new Error("missing initial resume");
+    }
+    let cursor = initial.resumeCursor;
+    expect(cursor.length).toBeLessThanOrEqual(1024);
+    const token = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      scope: string;
+      at: string;
+      sequence: number;
+    };
+    const legacy = Buffer.from(
+      JSON.stringify({ scope: token.scope, at: token.at, sequence: token.sequence }),
+    ).toString("base64url");
+    expect(
+      await readFinanceIntradayAccountHistory(directory, {
+        accountId: "account",
+        asOf: cutoff,
+        cursor: legacy,
+      }),
+    ).toMatchObject({ status: "unavailable" });
+    const recoveredOld = new Set(initial.entries.map((entry) => entry.signalId));
+    // Same-time outcomes exercise the sequence tie-breaker of the ascending fresh watermark.
+    for (let index = 0; index < 11; index++) {
+      await append(`fresh-${index}`, cutoff);
+    }
+    const recoveredFresh = new Set<string>();
+    let terminal: Awaited<ReturnType<typeof readFinanceIntradayAccountHistory>> = initial;
+    for (let round = 0; round < 6; round++) {
+      const page = await readFinanceIntradayAccountHistory(directory, {
+        accountId: "account",
+        asOf: new Date(Date.parse(cutoff) + (round + 1) * 60_000).toISOString(),
+        cursor,
+      });
+      expect(page.status).toBe("observed");
+      expect(page.entries.length).toBeLessThanOrEqual(8);
+      expect("scannedOutcomes" in page ? page.scannedOutcomes : Infinity).toBeLessThanOrEqual(24);
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(12_000);
+      for (const entry of page.entries) {
+        (entry.signalId.startsWith("old-") ? recoveredOld : recoveredFresh).add(entry.signalId);
+      }
+      if (!("resumeCursor" in page) || !page.resumeCursor) {
+        throw new Error("missing resume cursor");
+      }
+      cursor = page.resumeCursor;
+      terminal = page;
+      if ("nextCursor" in page && page.nextCursor === null) {
+        break;
+      }
+    }
+    expect(recoveredOld.size).toBe(18);
+    expect(recoveredFresh.size).toBe(11);
+    expect(terminal).toMatchObject({ historicalWindowComplete: true, nextCursor: null });
+    const quiet = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-09-19T19:00:00.000Z",
+      cursor,
+    });
+    expect(quiet).toMatchObject({ status: "observed", entries: [], nextCursor: null });
+    await append("fresh-after-terminal", "2026-09-19T19:01:00.000Z");
+    const renewed = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-09-19T19:02:00.000Z",
+      cursor,
+    });
+    expect(renewed.status).toBe("observed");
+    expect(renewed.entries.map((entry) => entry.signalId)).toEqual(["fresh-after-terminal"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("authenticates every history progress field against the original durable ledger", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-auth-"));
+  const foreign = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-foreign-"));
+  temporary.push(directory, foreign);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T14:00:00.000Z"));
+  try {
+    for (const root of [directory, foreign]) {
+      for (let index = 0; index < 2; index++) {
+        const signalId = `auth-${index}`;
+        await appendFinanceIntradayDecision(root, { ...input, signalId });
+        await appendFinanceIntradayOutcome(root, {
+          signalId,
+          status: "refused",
+          reasons: ["retained"],
+          executionScope: { accountId: "account", venue: "alpaca:paper" },
+        });
+      }
+    }
+    const params = { accountId: "account", asOf: "2026-09-22T15:00:00.000Z" };
+    const initial = await readFinanceIntradayAccountHistory(directory, params);
+    if (!("resumeCursor" in initial) || !initial.resumeCursor) {
+      throw new Error("missing authenticated cursor");
+    }
+    const cursor = initial.resumeCursor;
+    // Every read opens a fresh read-only connection and reloads the persisted identity.
+    expect(await readFinanceIntradayAccountHistory(directory, { ...params, cursor })).toMatchObject(
+      { status: "observed" },
+    );
+    const childCode = `import { readFinanceIntradayAccountHistory } from ${JSON.stringify(new URL("./finance-intraday-control-ledger.ts", import.meta.url).href)};
+      const result = await readFinanceIntradayAccountHistory(${JSON.stringify(directory)}, ${JSON.stringify({ ...params, cursor })});
+      console.log(JSON.stringify({status:result.status}));`;
+    expect(
+      JSON.parse(
+        execFileSync(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "-e", childCode],
+          { encoding: "utf8", timeout: 15_000, env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+        ),
+      ),
+    ).toEqual({ status: "observed" });
+    const raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    const tampering = {
+      v: 1,
+      ledgerId: "0".repeat(32),
+      scope: "0".repeat(64),
+      asOf: "2026-09-22T14:59:00.000Z",
+      at: "2026-09-22T13:59:00.000Z",
+      sequence: 42,
+      historicalDone: !raw.historicalDone,
+      freshAt: new Date(Date.parse(raw.freshAt) + 1).toISOString(),
+      freshSequence: 42,
+      mac: "0".repeat(64),
+    };
+    for (const [field, value] of Object.entries(tampering)) {
+      const forged = Buffer.from(JSON.stringify({ ...raw, [field]: value })).toString("base64url");
+      expect(
+        await readFinanceIntradayAccountHistory(directory, {
+          ...params,
+          asOf: "2026-09-22T16:00:00.000Z",
+          cursor: forged,
+        }),
+      ).toMatchObject({ status: "unavailable", entries: [] });
+    }
+    expect(await readFinanceIntradayAccountHistory(foreign, { ...params, cursor })).toMatchObject({
+      status: "unavailable",
+      reason: "intraday_history_cursor_authentication_failed",
+    });
+    expect(
+      await readFinanceIntradayAccountHistory(directory, {
+        ...params,
+        accountId: "foreign",
+        cursor,
+      }),
+    ).toMatchObject({ status: "unavailable" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("closes a cached ledger and reopens its retained records", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-control-close-"));
+  temporary.push(directory);
+  const decision = await appendFinanceIntradayDecision(directory, input);
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  try {
+    closeFinanceIntradayControlLedger(directory);
+    closeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(await readFinanceIntradayDecisions(directory)).toEqual([decision.record]);
+    closeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    close.mockRestore();
+  }
+});
+
+it("releases fresh cursor initializer connections while preserving the stored identity", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-startup-"));
+  temporary.push(directory);
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  const readIdentity = () => {
+    const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+    try {
+      return db.prepare("SELECT ledger_id FROM finance_intraday_cursor_auth").get();
+    } finally {
+      db.close();
+    }
+  };
+  try {
+    initializeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(1);
+    const identity = readIdentity();
+    initializeFinanceIntradayControlLedger(directory);
+    expect(close).toHaveBeenCalledTimes(3);
+    expect(readIdentity()).toEqual(identity);
+  } finally {
+    close.mockRestore();
+  }
+});
+
+it("does not initialize cursor authentication during old-ledger history reads", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-cursor-old-ledger-"));
+  temporary.push(directory);
+  await appendFinanceIntradayDecision(directory, input);
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: input.signalId,
+    status: "refused",
+    reasons: ["retained before upgrade"],
+    executionScope: { accountId: "account", venue: "alpaca:paper" },
+  });
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(directory));
+  try {
+    db.exec(
+      "DROP TRIGGER finance_intraday_cursor_auth_no_update; DROP TRIGGER finance_intraday_cursor_auth_no_delete; DROP TABLE finance_intraday_cursor_auth; DELETE FROM finance_intraday_control_migrations WHERE version=5",
+    );
+    const before = db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all();
+    const observed = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-10-21T15:00:00.000Z",
+    });
+    expect(observed).toMatchObject({
+      status: "observed",
+      cursorStatus: "unavailable_until_original_writer_upgrade",
+      continuationGap: "intraday_history_cursor_auth_uninitialized",
+      pageCursor: null,
+      nextCursor: null,
+      resumeCursor: null,
+    });
+    expect(observed.entries.map((entry) => entry.signalId)).toEqual([input.signalId]);
+    expect(db.prepare("SELECT sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
+    const retainedDecisions = db.prepare("SELECT * FROM finance_intraday_decisions").all();
+    const retainedOutcomes = db.prepare("SELECT * FROM finance_intraday_outcomes").all();
+    initializeFinanceIntradayControlLedger(directory);
+    const cursorIdentity = db.prepare("SELECT * FROM finance_intraday_cursor_auth").all();
+    initializeFinanceIntradayControlLedger(directory);
+    expect(db.prepare("SELECT * FROM finance_intraday_cursor_auth").all()).toEqual(cursorIdentity);
+    expect(db.prepare("SELECT * FROM finance_intraday_decisions").all()).toEqual(retainedDecisions);
+    expect(db.prepare("SELECT * FROM finance_intraday_outcomes").all()).toEqual(retainedOutcomes);
+    expect(
+      db.prepare("SELECT count(*) AS count FROM finance_intraday_cursor_auth").get()?.count,
+    ).toBe(1);
+    const upgraded = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf: "2026-10-21T15:00:00.000Z",
+    });
+    expect(upgraded).toMatchObject({ status: "observed", pageCursor: expect.any(String) });
+    expect(upgraded.entries.map((entry) => entry.signalId)).toEqual([input.signalId]);
+  } finally {
+    db.close();
   }
 });

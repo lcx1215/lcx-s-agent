@@ -55,6 +55,20 @@ describe("US equity regular close clock", () => {
 });
 
 describe("latest completed weekday session", () => {
+  it.each([
+    ["2026-09-08T15:00:00.000Z", "2026-09-04"],
+    ["2026-09-07T22:00:00.000Z", "2026-09-04"],
+    ["2026-07-05T22:00:00.000Z", "2026-07-02"],
+    ["2025-01-09T22:00:00.000Z", "2025-01-08"],
+    ["2026-01-02T15:00:00.000Z", "2025-12-31"],
+  ])("skips exchange closures at %s", (asOf, expected) => {
+    expect(latestCompletedWeekdaySessionDate(asOf)).toBe(expected);
+  });
+
+  it("refuses an unverified calendar year", () => {
+    expect(() => latestCompletedWeekdaySessionDate("2029-06-05T22:00:00Z")).toThrow("calendar");
+  });
+
   it("uses the previous weekday before close and the current weekday after close", () => {
     expect(latestCompletedWeekdaySessionDate("2026-09-24T19:59:00.000Z")).toBe("2026-09-23");
     expect(latestCompletedWeekdaySessionDate("2026-09-24T20:01:00.000Z")).toBe("2026-09-24");

@@ -13,6 +13,7 @@ import {
   executeDirectedDailyResearchTask,
   inspectDirectedContentReview,
 } from "../../scripts/operator/lcx-directed-daily-research-brief.js";
+import { resolveExternalChannelTruth } from "../../scripts/operator/lcx-external-channel-status.js";
 import type { FinanceMarketCollectionAdapter } from "../../src/agents/finance-market-collection-registry.js";
 import type { QualityHarnessModelRequest } from "../../src/agents/quality-harness-contract.js";
 import {
@@ -65,7 +66,12 @@ async function nativeFunctions(file: string, names?: readonly string[]) {
         (!names || names.includes(node.name!.text)),
     )
     .map((node) => node.getText(ast));
-  const context = vm.createContext({ createHash, inspectDirectedContentReview, exports: {} });
+  const context = vm.createContext({
+    createHash,
+    inspectDirectedContentReview,
+    resolveExternalChannelTruth,
+    exports: {},
+  });
   vm.runInContext(
     ts.transpileModule(functions.join("\n"), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -230,7 +236,10 @@ export async function prepareNativeDirectedTask(
         collectionAdapters: [collection],
         maxSourcesPerJob: 2,
         maxConcurrency: 1,
-        sourceTimeoutMs: 20,
+        // The tiny deadline belongs to the deliberate never-returning source
+        // fault. Healthy sources retain the original owner's default, still
+        // bounded by this fixture's unchanged 2s total source budget.
+        ...(fault === "source_timeout" ? { sourceTimeoutMs: 20 } : {}),
         totalTimeoutMs: 2000,
       },
     },

@@ -473,6 +473,7 @@ export async function runTui(opts: TuiOptions) {
 
   const client = new GatewayChatClient({
     url: opts.url,
+    tlsFingerprint: opts.tlsFingerprint,
     token: opts.token,
     password: opts.password,
   });

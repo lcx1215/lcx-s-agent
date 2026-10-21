@@ -9,6 +9,19 @@ export const FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS = 5 * 60_000;
 export const FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS = 2_147_483_647;
 
 export type FinanceSourceHeartbeatStatus = "healthy" | "degraded" | "unhealthy" | "unknown";
+export type FinanceSourceAccessScope = Readonly<{ version: 1; fingerprint: string }>;
+
+export function isFinanceSourceAccessScope(value: unknown): value is FinanceSourceAccessScope {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const scope = value as Record<string, unknown>;
+  return (
+    scope.version === 1 &&
+    typeof scope.fingerprint === "string" &&
+    /^[a-f0-9]{64}$/u.test(scope.fingerprint)
+  );
+}
 
 export type FinanceSourceHeartbeatReason =
   | "ok"
@@ -39,6 +52,7 @@ export type FinanceSourceHeartbeatRecord = Readonly<{
   transportError?: string;
   retryAfterMs?: number;
   consecutiveFailures?: number;
+  accessScope?: FinanceSourceAccessScope;
   collectionWrite?: {
     status: "stored" | "failed" | "empty";
     snapshotId?: string;
@@ -147,19 +161,33 @@ function parseState(value: unknown): FinanceSourceHeartbeatState | undefined {
   ) {
     return undefined;
   }
+  const scopedRecord = (record: FinanceSourceHeartbeatRecord): FinanceSourceHeartbeatRecord => {
+    const { accessScope, ...legacy } = record;
+    return isFinanceSourceAccessScope(accessScope) ? { ...legacy, accessScope } : legacy;
+  };
   return {
     ...(endpointRecords
       ? {
-          endpointRecords: Object.freeze({ ...endpointRecords }) as Readonly<
-            Record<string, FinanceSourceHeartbeatRecord>
-          >,
+          endpointRecords: Object.freeze(
+            Object.fromEntries(
+              Object.entries(endpointRecords).map(([id, record]) => [
+                id,
+                scopedRecord(record as FinanceSourceHeartbeatRecord),
+              ]),
+            ),
+          ),
         }
       : {}),
     schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
     updatedAt: state.updatedAt,
-    records: Object.freeze({ ...records }) as Readonly<
-      Record<string, FinanceSourceHeartbeatRecord>
-    >,
+    records: Object.freeze(
+      Object.fromEntries(
+        Object.entries(records).map(([id, record]) => [
+          id,
+          scopedRecord(record as FinanceSourceHeartbeatRecord),
+        ]),
+      ),
+    ),
   };
 }
 

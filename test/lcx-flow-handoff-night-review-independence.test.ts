@@ -15,7 +15,11 @@ import {
   buildFinanceNightReviewEvidence,
   writeFinanceNightReviewEvidence,
 } from "../src/agents/finance-night-review-context.js";
-import { appendFinanceExecutionReceipt } from "../src/agents/finance-position-ledger.js";
+import { FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME } from "../src/agents/finance-portfolio-composition.js";
+import {
+  appendFinanceExecutionReceipt,
+  closeFinancePositionLedger,
+} from "../src/agents/finance-position-ledger.js";
 import { financeResearchPortfolioAbstentionSchema } from "../src/agents/finance-research-portfolio-plan.js";
 import { FINANCE_SCHEDULER_LOCK } from "../src/agents/finance-scheduler-lock.js";
 import { runFinanceCycleProcess } from "../src/agents/finance-scheduler-process.js";
@@ -114,6 +118,7 @@ afterEach(async () => {
   transport.run = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  closeFinancePositionLedger(directory);
   await fsp.rm(directory, { recursive: true, force: true });
 });
 
@@ -153,6 +158,10 @@ async function probe(
   const blockedOwner = vi.fn(() => {
     throw new Error("unrelated owner must remain blocked");
   });
+  const independentUniverseRefresh = vi.fn(async () => ({
+    status: "unavailable",
+    reason: "private_fixture_no_universe_evidence",
+  }));
   const filename = financeResearchSamplesPath(directory);
   // Original ledger writer records synthetic private inventory. A crypto symbol is
   // outside the equity EOD refresh's scope; no source adapter/provider is needed.
@@ -187,6 +196,13 @@ async function probe(
     await fsp.writeFile(filename, "{not json}\n");
   }
   await fsp.mkdir(path.join(directory, FINANCE_SCHEDULER_LOCK));
+  if (fault === "timeout") {
+    // This fault withholds stdout after the real owner has produced its body.
+    // Let actual private filesystem work settle before expiring the original
+    // 5ms process timer, rather than racing disk latency against that timer.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(new Date(asOf));
+  }
   transport.run = async (argv, child) => {
     const index = argv.indexOf("--controller-evidence");
     if (index >= 0) {
@@ -236,6 +252,11 @@ async function probe(
     }
     calls.push({ argv, payload: mutated });
     if (fault === "timeout") {
+      expect(transport.children).toHaveLength(1);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(5);
+      // The original process owner also waits killGraceMs + 10 after close.
+      await vi.advanceTimersByTimeAsync(10);
       return;
     }
     if (fault === "cancelled") {
@@ -273,7 +294,7 @@ async function probe(
     Date,
     process: {
       pid: process.pid,
-      env: {},
+      env: { OPENCLAW_WORKSPACE_DIR: path.join(directory, "workspace") },
       stdout: { write: () => true },
       stderr: { write: () => true },
     },
@@ -282,6 +303,7 @@ async function probe(
     RESEARCH_SCRIPT: path.join(repo, "scripts/operator/lcx-finance-research-run.ts"),
     RUNS_LOG: FINANCE_DAILY_CYCLE_RUNS_FILENAME,
     FINANCE_SCHEDULER_LOCK,
+    FINANCE_RESEARCH_PORTFOLIO_PLAN_FILENAME,
     FINANCE_RESEARCH_SAMPLES_FILENAME,
     readFinanceSchedulerState,
     writeFinanceSchedulerState,
@@ -298,7 +320,7 @@ async function probe(
     },
     writeFinanceNightReviewEvidence,
     captureFinanceIntradayCloseBars: blockedOwner,
-    refreshFinanceUniverseSelection: blockedOwner,
+    refreshFinanceUniverseSelection: independentUniverseRefresh,
     runNightTuning: blockedOwner,
   });
   const code = ts.transpileModule(`${declarations.join("\n")}\nglobalThis.nativeFire=fire;`, {
@@ -363,7 +385,10 @@ describe("original independent night review under a failed forecast source", () 
       expect(proof.terminal?.nightReview).toMatchObject({ ok: false, receiptPersisted: false });
       expect(proof.terminal?.tuningLifecycle).toBeUndefined();
       expect(proof.terminal?.intradayCloseCapture).toBeUndefined();
-      expect(proof.terminal?.universeSelection).toBeUndefined();
+      expect(proof.terminal?.universeSelection).toMatchObject({
+        status: "unavailable",
+        reason: "private_fixture_no_universe_evidence",
+      });
     },
   );
   it.each([

@@ -48,6 +48,8 @@ export type ApiCallReceipt = Readonly<{
   finishedAt: string;
   /** Set only after all quota/queue waits and caller budget approval, immediately before dispatch. */
   dispatchedAt?: string;
+  /** Identifies provider-owned quota refusals; an untagged budget refusal cannot permit backfill. */
+  budgetOrigin?: "provider_quota";
   /** Reuse is a data read, never a new HTTP dispatch or fresh source verification. */
   dataAccess?: { kind: "network" | "cache"; fetchedAt: string; ageMs: number };
   latencyMs: number;
@@ -89,6 +91,8 @@ export type ApiTransportOptions = {
   idempotencyKey?: string;
   circuitBreaker?: ApiCircuitBreaker;
   rateLimiter?: ApiRateLimiter;
+  /** Adapter minimum applied in addition to the caller-owned source limiter. */
+  additionalRateLimiter?: ApiRateLimiter;
   onReceipt?: (receipt: ApiCallReceipt) => void;
   /** Synchronous reservation immediately before each actual HTTP attempt. */
   beforeHttpDispatch?: () => void;
@@ -222,6 +226,7 @@ export class ApiCallError extends Error {
     readonly httpStatus?: number,
     readonly retryAfterMs?: number,
     readonly networkCode?: ApiNetworkCode,
+    readonly budgetOrigin?: "provider_quota",
   ) {
     super(httpStatus === undefined ? `API ${kind}` : `API http status ${httpStatus}`);
     this.name = "ApiCallError";
@@ -479,6 +484,11 @@ async function boundedCall<T>(
       error.retryAfterMs >= 0
         ? { retryAfterMs: error.retryAfterMs }
         : {}),
+      ...(error instanceof ApiCallError &&
+      kind === "budget_exhausted" &&
+      error.budgetOrigin === "provider_quota"
+        ? { budgetOrigin: error.budgetOrigin }
+        : {}),
       ...(kind ? { transportError: kind } : {}),
       ...(kind === "rate_limited" ? { rateLimited: true } : {}),
       ...(error instanceof ApiCallError && error.networkCode
@@ -638,9 +648,17 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                   let response: ApiFetchResponse;
                   let body: string;
                   let permit: ApiRateLimiterPermit | undefined;
+                  let additionalPermit: ApiRateLimiterPermit | undefined;
                   try {
                     permit = await scope.rateLimiter?.acquire(attemptSignal);
-                    details.throttleWaitMs = permit?.waitMs ?? 0;
+                    if (
+                      scope.additionalRateLimiter &&
+                      scope.additionalRateLimiter !== scope.rateLimiter
+                    ) {
+                      additionalPermit = await scope.additionalRateLimiter.acquire(attemptSignal);
+                    }
+                    details.throttleWaitMs =
+                      (permit?.waitMs ?? 0) + (additionalPermit?.waitMs ?? 0);
                     assertApiCallActive(attemptSignal);
                     const dispatchInit = {
                       ...init,
@@ -725,6 +743,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                       safeNetworkCode(error),
                     );
                   } finally {
+                    additionalPermit?.release();
                     permit?.release();
                   }
                   if (!response.ok) {

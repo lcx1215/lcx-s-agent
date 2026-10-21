@@ -26,6 +26,8 @@ export type GuardedFetchOptions = {
   fetchImpl?: FetchLike;
   init?: RequestInit;
   maxRedirects?: number;
+  /** Caller-owned credential headers to remove when a redirect changes origin. */
+  additionalSensitiveHeaders?: readonly string[];
   timeoutMs?: number;
   signal?: AbortSignal;
   policy?: SsrFPolicy;
@@ -96,12 +98,18 @@ function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
-function stripSensitiveHeadersForCrossOriginRedirect(init?: RequestInit): RequestInit | undefined {
+function stripSensitiveHeadersForCrossOriginRedirect(
+  init?: RequestInit,
+  additionalSensitiveHeaders: readonly string[] = [],
+): RequestInit | undefined {
   if (!init?.headers) {
     return init;
   }
   const headers = new Headers(init.headers);
-  for (const header of CROSS_ORIGIN_REDIRECT_SENSITIVE_HEADERS) {
+  for (const header of [
+    ...CROSS_ORIGIN_REDIRECT_SENSITIVE_HEADERS,
+    ...additionalSensitiveHeaders,
+  ]) {
     headers.delete(header);
   }
   return { ...init, headers };
@@ -236,7 +244,10 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
           throw new Error("Redirect loop detected");
         }
         if (nextParsedUrl.origin !== parsedUrl.origin) {
-          currentInit = stripSensitiveHeadersForCrossOriginRedirect(currentInit);
+          currentInit = stripSensitiveHeadersForCrossOriginRedirect(
+            currentInit,
+            params.additionalSensitiveHeaders,
+          );
         }
         visited.add(nextUrl);
         void response.body?.cancel();

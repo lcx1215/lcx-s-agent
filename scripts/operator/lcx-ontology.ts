@@ -197,8 +197,25 @@ const INTEGRATION_SURFACES: readonly IntegrationSurface[] = [
     ],
   },
   {
-    path: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    path: "src/agents/commercial-answer-pipeline.ts",
     terms: ["LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS"],
+    importsFrom: [
+      {
+        source: "../shared/lcx-ontology.js",
+        names: ["LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS"],
+      },
+    ],
+  },
+  {
+    path: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    terms: ['export * from "../../src/agents/commercial-answer-pipeline.js"'],
+    importsFrom: [
+      {
+        source: "../../src/agents/commercial-answer-pipeline.js",
+        names: ["buildPipelineResult", "runScenarioSuite"],
+      },
+    ],
+    calls: ["buildPipelineResult", "runScenarioSuite"],
   },
   {
     path: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",

@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { auditWorkflowHandoffs } from "../scripts/operator/lcx-flow-graph.js";
+import { splitShellArgs } from "../src/utils/shell-argv.js";
 import {
   engineeringCli,
   engineeringLockArgs,
@@ -52,8 +53,9 @@ describe("original engineering handoffs (private Git/lease, no automation or own
       repairContext: { worktree: cwd, decisionId: "guard_failed_after_latest_start" },
     });
     const lease = path.join(root, "private.lock");
-    const command = `${String(selected!.nextCommand)} --lock '${lease.replaceAll("'", "'\\''")}'`;
-    const native = await promisify(execFile)("/bin/zsh", ["-f", "-c", command], {
+    const command = splitShellArgs(String(selected!.nextCommand));
+    expect(command?.shift()).toBe("node");
+    const native = await promisify(execFile)(process.execPath, [...command!, "--lock", lease], {
       cwd: path.resolve(import.meta.dirname, ".."),
       timeout: 10_000,
       env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(cwd) },
@@ -410,27 +412,33 @@ describe("original engineering handoffs (private Git/lease, no automation or own
   });
 
   it.each([false, true])(
-    "confirms the private doctor child is closed after ignored TERM and never adopts a late success: %s",
+    "confirms the private doctor child is closed after timeout and never adopts a late success: %s",
     async (lateOutputOnTerm) => {
       const root = await fixture(
         lateOutputOnTerm ? "doctor-ignored-term-late-body" : "doctor-ignored-term",
       );
       const result = await originalDoctorCancellation(root, lateOutputOnTerm);
       await persistEngineering(root, "result.json", result);
-      expect(result.termIgnored).toBe("term_ignored");
+      const termHandlerSupported = process.platform !== "win32";
+      expect(result.termIgnored).toBe(termHandlerSupported ? "term_ignored" : undefined);
       expect(result.check).toMatchObject({
         ok: false,
-        summary: { cleanupStatus: "local_child_closed", timeoutMs: 400, signal: "SIGKILL" },
+        summary: { cleanupStatus: "local_child_closed", timeoutMs: 400 },
       });
+      expect(result.check.summary.signal).toBe(result.nativeExitAtReturn?.signal);
       expect(result.check.error).toContain("timed out");
       expect(result.closedAtReturn).toBe(true);
       expect(result.aliveAtReturn).toBe(false);
       expect(result.cleanupByFixture).toBe(false);
-      expect(result.lateResultWritten).toBe(lateOutputOnTerm);
-      if (lateOutputOnTerm) {
+      expect(result.lateResultWritten).toBe(termHandlerSupported && lateOutputOnTerm);
+      if (termHandlerSupported && lateOutputOnTerm) {
         expect(result.check.summary.stdoutTail).toContain('"ok":true');
       }
-      expect(result.signals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(result.signals[0]).toBe("SIGTERM");
+      if (termHandlerSupported) {
+        expect(result.signals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(result.check.summary.signal).toBe("SIGKILL");
+      }
       const tail = await originalDoctorTail(result.check);
       expect(JSON.parse(tail.stdout)).toMatchObject({ ok: false, summary: { failed: 1 } });
       expect(tail.stderr).toContain("timed out");

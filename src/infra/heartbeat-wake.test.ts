@@ -72,6 +72,25 @@ describe("heartbeat-wake", () => {
     });
   });
 
+  it("does not replay a failed turn automatically and accepts the next explicit wake", async () => {
+    vi.useFakeTimers();
+    const handler = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "failed", reason: "fixture model unavailable" })
+      .mockResolvedValueOnce({ status: "ran", durationMs: 1 });
+    setHeartbeatWakeHandler(handler);
+    requestHeartbeatNow({ reason: "cron:fixture", coalesceMs: 0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(hasPendingHeartbeatWake()).toBe(false);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(handler).toHaveBeenCalledTimes(1);
+    requestHeartbeatNow({ reason: "cron:fixture", coalesceMs: 0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(hasPendingHeartbeatWake()).toBe(false);
+  });
+
   it("keeps retry cooldown even when a sooner request arrives", async () => {
     vi.useFakeTimers();
     const handler = vi

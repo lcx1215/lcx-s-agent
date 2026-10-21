@@ -184,6 +184,7 @@ function evaluateSeries(
   breadthThreshold: number,
   costRate: number,
   method: MethodName,
+  evaluationStartIndex = 0,
 ): EvaluatedSeries {
   const rows = rowsBySymbol[symbol];
   if (!rows || rows.length !== dates.length) {
@@ -206,7 +207,8 @@ function evaluateSeries(
   });
   const dailyReturns: number[] = [];
   const positions: number[] = [0];
-  for (let index = 1; index < closes.length; index += 1) {
+  // Warmup supplies signals only; capital starts flat at the evaluation boundary.
+  for (let index = Math.max(1, evaluationStartIndex + 1); index < closes.length; index += 1) {
     // A signal formed at close t is first tradable on the following session;
     // with close-only data, apply it to the next complete close-to-close bar.
     const signalIndex = index - 2;
@@ -216,7 +218,7 @@ function evaluateSeries(
       closes[signalIndex] > mean(closes.slice(signalIndex - lookback + 1, signalIndex + 1));
     const position =
       method === "buy_hold" ? 1 : signalIndex >= 0 && trend && breadth[signalIndex] ? 1 : 0;
-    const previousPosition = positions[index - 1] ?? 0;
+    const previousPosition = positions.at(-1) ?? 0;
     const grossReturn = closes[index] / closes[index - 1] - 1;
     const transactionCost = Math.abs(position - previousPosition) * costRate;
     dailyReturns.push(position * grossReturn - transactionCost);
@@ -225,16 +227,6 @@ function evaluateSeries(
   if (positions.at(-1) === 1) {
     dailyReturns[dailyReturns.length - 1] = (dailyReturns.at(-1) ?? 0) - costRate;
   }
-  return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
-}
-
-function sliceEvaluationSeries(
-  series: EvaluatedSeries,
-  evaluationStartIndex: number,
-): EvaluatedSeries {
-  const start = Math.max(0, evaluationStartIndex);
-  const dailyReturns = series.dailyReturns.slice(start);
-  const positions = series.positions.slice(start);
   return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
 }
 
@@ -341,6 +333,7 @@ function evaluateStressMatrix(
   }>;
 }> {
   const variants = buildStressVariants();
+  const evaluationDates = dates.slice(evaluationStartIndex);
   const results = variants.map((variant) => {
     const costRate = variant.costBps / 10_000;
     const evaluated = Object.fromEntries(
@@ -348,16 +341,14 @@ function evaluateStressMatrix(
         method,
         aggregateSeries(
           Object.keys(rowsBySymbol).map((symbol) =>
-            sliceEvaluationSeries(
-              evaluateSeries(
-                symbol,
-                rowsBySymbol,
-                dates,
-                variant.lookback,
-                variant.breadth,
-                costRate,
-                method as MethodName,
-              ),
+            evaluateSeries(
+              symbol,
+              rowsBySymbol,
+              dates,
+              variant.lookback,
+              variant.breadth,
+              costRate,
+              method as MethodName,
               evaluationStartIndex,
             ),
           ),
@@ -371,8 +362,8 @@ function evaluateStressMatrix(
       ...variant,
       baseline,
       enriched,
-      baselinePeriods: periodMetrics(evaluated.buy_hold, dates),
-      enrichedPeriods: periodMetrics(evaluated.trend_breadth_gate, dates),
+      baselinePeriods: periodMetrics(evaluated.buy_hold, evaluationDates),
+      enrichedPeriods: periodMetrics(evaluated.trend_breadth_gate, evaluationDates),
       cagrDeltaPp: (enriched.cagr - baseline.cagr) * 100,
       maxDrawdownDeltaPp: (enriched.maxDrawdown - baseline.maxDrawdown) * 100,
       totalReturnDeltaPp: (enriched.totalReturn - baseline.totalReturn) * 100,
@@ -497,16 +488,14 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       Object.fromEntries(
         options.symbols.map((symbol) => [
           symbol,
-          sliceEvaluationSeries(
-            evaluateSeries(
-              symbol,
-              rowsBySymbol,
-              dates,
-              options.lookback,
-              options.breadth,
-              costRate,
-              method,
-            ),
+          evaluateSeries(
+            symbol,
+            rowsBySymbol,
+            dates,
+            options.lookback,
+            options.breadth,
+            costRate,
+            method,
             evaluationStartIndex,
           ),
         ]),

@@ -7,6 +7,7 @@ import {
   buildDirectedDailyResearchBrief,
   inspectDirectedContentReview,
 } from "./lcx-directed-daily-research-brief.ts";
+import { resolveExternalChannelTruth } from "./lcx-external-channel-status.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
@@ -717,28 +718,23 @@ function externalChannelStatusGate(
   bindingSnapshot: OwnerSnapshot | undefined,
 ): AcceptanceGate {
   const binding = recordValue(bindingSnapshot?.payload?.externalChannelBinding);
-  const bindingStatus = stringValue(binding?.status);
-  const bindingChannelBound =
-    bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
-    bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
-  const bindingUserVisibleObserved = booleanValue(binding?.userVisibleObserved) === true;
-  if (!snapshot?.payload && !bindingChannelBound) {
-    return ownerUnavailableGate("lcx-external-channel-status", snapshot);
-  }
   const operatorStatus = recordValue(snapshot?.payload?.operatorStatus);
   const externalChannelStatus = recordValue(snapshot?.payload?.externalChannelStatus);
   const visibleProof = recordValue(snapshot?.payload?.visibleProof);
   const devLiveDrift = recordValue(snapshot?.payload?.devLiveDrift);
   const legacyLiveRuntimeUpdated = booleanValue(operatorStatus?.liveRuntimeUpdated) === true;
   const legacyLiveUserSeen = booleanValue(operatorStatus?.liveUserSeen) === true;
-  const externalChannelBound =
-    bindingChannelBound ||
-    booleanValue(externalChannelStatus?.externalChannelBound) === true ||
-    legacyLiveRuntimeUpdated;
-  const userVisibleObserved =
-    bindingUserVisibleObserved ||
-    booleanValue(externalChannelStatus?.userVisibleObserved) === true ||
-    legacyLiveUserSeen;
+  const { externalChannelBound, userVisibleObserved } = resolveExternalChannelTruth({
+    binding,
+    bindingOwnerAvailable: bindingSnapshot
+      ? bindingSnapshot.commandSucceeded !== false && binding !== undefined
+      : undefined,
+    legacyExternalChannelStatus: externalChannelStatus,
+    visibleProof,
+  });
+  if (!snapshot?.payload && !externalChannelBound) {
+    return ownerUnavailableGate("lcx-external-channel-status", snapshot);
+  }
   const externalChannelEvidence = {
     channel: "external",
     role: "owner_agent_communication_medium",

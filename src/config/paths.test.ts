@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { LCX_IDENTITY_WRITER_NAMES } from "./identity-migration-inventory.js";
 import {
+  isLcxIdentityMigrationComplete,
   resolveDefaultConfigCandidates,
   resolveConfigPathCandidate,
   resolveConfigPath,
@@ -17,7 +19,7 @@ import {
   resolveStateDir,
 } from "./paths.js";
 
-const completeTargetKeys = Array.from({ length: 31 }, (_, index) => `target-${index}`);
+const completeTargetKeys = LCX_IDENTITY_WRITER_NAMES.map((_, index) => `target-${index}`);
 
 describe("oauth paths", () => {
   it("prefers OPENCLAW_OAUTH_DIR over OPENCLAW_STATE_DIR", () => {
@@ -136,6 +138,28 @@ describe("state + config path candidates", () => {
       expect(resolveStateDirForProfile("work", {} as NodeJS.ProcessEnv, () => root)).toBe(
         canonicalStateDir,
       );
+    });
+  });
+
+  it.each([
+    { name: "incomplete inventory", targetKeys: completeTargetKeys.slice(0, -1) },
+    { name: "duplicate targets", targetKeys: completeTargetKeys.map(() => "same-target") },
+  ])("rejects a completion marker with $name", async ({ targetKeys }) => {
+    await withTempRoot("lcx-incomplete-marker-", async (root) => {
+      const canonicalStateDir = path.join(root, ".lcx");
+      await fs.mkdir(canonicalStateDir, { recursive: true });
+      await fs.writeFile(
+        resolveLcxIdentityMigrationCompletionPath(canonicalStateDir),
+        JSON.stringify({
+          schemaVersion: 1,
+          canonicalStateDir,
+          completedAt: "2026-09-07T00:00:00.000Z",
+          inventory: "lcx-identity-writer-inventory-v1",
+          targetKeys,
+        }),
+        "utf8",
+      );
+      expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(false);
     });
   });
 

@@ -1,38 +1,80 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
 import { createGeospatialSourceRefreshTool } from "./geospatial-source-refresh-tool.js";
 
+afterEach(() => vi.useRealTimers());
+
 describe("geospatial_source_refresh tool", () => {
-  it("does not dispatch or write a receipt after caller cancellation", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "geospatial-cancelled-"));
-    let fetchCalls = 0;
-    const fetchImpl: FetchImpl = async () => {
-      fetchCalls += 1;
-      return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+  it("keeps Nominatim dispatch spacing across tool executions", async () => {
+    vi.useFakeTimers();
+    const times: number[] = [];
+    const fetchImpl: FetchImpl = async (url) => {
+      const nominatim = url.includes("nominatim");
+      if (nominatim) {
+        times.push(Date.now());
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(
+            nominatim
+              ? [{ lat: "31.2", lon: "121.5", display_name: "Shanghai" }]
+              : { results: [{ name: "Shanghai", latitude: 31.2, longitude: 121.5 }] },
+          ),
+      };
     };
-    const controller = new AbortController();
-    controller.abort(new Error("platform cancelled"));
-    try {
-      const tool = createGeospatialSourceRefreshTool({ workspaceDir, fetchImpl });
-      await expect(
-        tool.execute(
-          "cancelled",
-          {
-            kind: "weather",
-            query: "31.2,121.5",
-            liveFetch: true,
-            writeReceipt: true,
-          },
-          controller.signal,
-        ),
-      ).rejects.toThrow("platform cancelled");
-      expect(fetchCalls).toBe(0);
-      await expect(fs.stat(path.join(workspaceDir, "memory"))).rejects.toThrow();
-    } finally {
-      await fs.rm(workspaceDir, { recursive: true, force: true });
-    }
+    const tool = createGeospatialSourceRefreshTool({ fetchImpl });
+    const params = { kind: "geocode", query: "Shanghai", liveFetch: true };
+    await tool.execute("first", params);
+    const pending = tool.execute("second", params);
+    await vi.advanceTimersByTimeAsync(1099);
+    expect(times).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(times).toHaveLength(2);
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(1100);
   });
+
+  it.each(["before", "during"] as const)(
+    "preserves %s caller cancellation without writing a receipt",
+    async (timing) => {
+      const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "geospatial-cancelled-"));
+      const controller = new AbortController();
+      const cancellation = new Error("platform cancelled");
+      let fetchCalls = 0;
+      const fetchImpl: FetchImpl = async () => {
+        fetchCalls += 1;
+        if (timing === "during") {
+          controller.abort(cancellation);
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+      };
+      if (timing === "before") {
+        controller.abort(cancellation);
+      }
+      try {
+        const tool = createGeospatialSourceRefreshTool({ workspaceDir, fetchImpl });
+        await expect(
+          tool.execute(
+            "cancelled",
+            {
+              kind: "weather",
+              query: "31.2,121.5",
+              liveFetch: true,
+              writeReceipt: true,
+            },
+            controller.signal,
+          ),
+        ).rejects.toBe(cancellation);
+        expect(fetchCalls).toBe(timing === "before" ? 0 : 1);
+        await expect(fs.stat(path.join(workspaceDir, "memory"))).rejects.toThrow();
+      } finally {
+        await fs.rm(workspaceDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

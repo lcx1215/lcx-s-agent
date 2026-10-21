@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   complexityDegree,
   deriveLabel,
+  deriveTaskFamily,
+  generateCase,
   generateCases,
   generateCasesWithPrerequisites,
   isHeldOut,
@@ -107,6 +109,31 @@ describe("deriveLabel (deterministic feature -> label rule)", () => {
       expect(label.minModuleMatches).toBeLessThanOrEqual(label.requiredModules.length || 2);
     }
   });
+});
+
+it.each([
+  [{ learningRequest: true, sourceSupplied: false }, "learning_external_source_missing_source"],
+  [{ learningRequest: true, sourceSupplied: true }, "learning_external_source"],
+  [{ abstractionTransfer: true, learningRequest: true }, "abstraction_transfer_repair_protocol"],
+  [{ assetClasses: ["us_equity"] }, "finance_research_planning"],
+  [{}, "general_task_planning"],
+] as const)("derives and grades the generated family %s", (overrides, family) => {
+  const features = baseFeatures({
+    ...overrides,
+    assetClasses: "assetClasses" in overrides ? [...overrides.assetClasses] : [],
+  });
+  const target = generateCase(features, makeRng(11));
+  const row = toDatasetRow(target);
+  const completion = JSON.parse(row.completion) as PlanOutput;
+  expect(deriveTaskFamily(features)).toBe(family);
+  expect(target.requiredTaskFamily).toBe(family);
+  expect(completion.task_family).toBe(family);
+  expect(oraclePlan(target).task_family).toBe(family);
+  expect(row.meta.sourceKind).toBe("generalization_generator");
+  expect(scorePlan(completion, target).ok).toBe(true);
+  expect(scorePlan({ ...completion, task_family: "wrong_family" }, target).reasons).toContain(
+    `task_family_mismatch:${family}`,
+  );
 });
 
 describe("held-out split", () => {

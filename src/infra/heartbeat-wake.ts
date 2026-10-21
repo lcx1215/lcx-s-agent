@@ -175,7 +175,7 @@ function schedule(coalesceMs: number, kind: WakeTimerKind = "normal") {
       schedule(DEFAULT_RETRY_MS, "retry");
     } finally {
       running = false;
-      if (pendingWakes.size > 0 || scheduled) {
+      if (!timer && (pendingWakes.size > 0 || scheduled)) {
         schedule(delay, "normal");
       }
     }

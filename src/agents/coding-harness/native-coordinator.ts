@@ -189,11 +189,14 @@ export async function runNativeCodingHarness(
       base,
       Object.keys(source.manifest),
       signal,
+      { inheritedManifest: source.manifest },
     );
     if (nativeManifestDigest(copied) !== nativeManifestDigest(source.manifest)) {
       throw new Error("source changed during snapshot");
     }
-    await snapshotNativeTree(base, taskWorkspace, undefined, signal);
+    await snapshotNativeTree(base, taskWorkspace, undefined, signal, {
+      inheritedManifest: source.manifest,
+    });
     const editor = await allocate(taskWorkspace);
     signal.throwIfAborted();
     const agentId = resolveAgentIdFromSessionKey(input.requesterSessionKey);
@@ -235,6 +238,7 @@ export async function runNativeCodingHarness(
       receipt.artifactDir,
       undefined,
       signal,
+      { inheritedManifest: source.manifest },
     );
     receipt.artifactDigest = nativeManifestDigest(artifact);
     receipt.changedPaths = [...new Set([...Object.keys(source.manifest), ...Object.keys(artifact)])]
@@ -277,6 +281,9 @@ export async function runNativeCodingHarness(
       .join("\n");
     await fs.writeFile(receipt.patchPath, normalizedPatch, { flag: "wx", mode: 0o600 });
     for (const [relative, entry] of Object.entries(artifact)) {
+      if (entry.mode === 0o120000) {
+        continue;
+      }
       await fs.chmod(path.join(receipt.artifactDir, relative), entry.mode & 0o111 ? 0o555 : 0o444);
     }
     await event("workspace/observed", {
@@ -303,6 +310,7 @@ export async function runNativeCodingHarness(
         verifierWorkspace,
         undefined,
         signal,
+        { inheritedManifest: artifact },
       );
       if (nativeManifestDigest(copy) !== receipt.artifactDigest) {
         throw new Error("artifact changed before verification");
@@ -339,8 +347,11 @@ export async function runNativeCodingHarness(
         artifactDigest: receipt.artifactDigest,
       };
       if (
-        nativeManifestDigest(await snapshotNativeTree(receipt.artifactDir)) !==
-        receipt.artifactDigest
+        nativeManifestDigest(
+          await snapshotNativeTree(receipt.artifactDir, undefined, undefined, undefined, {
+            inheritedManifest: artifact,
+          }),
+        ) !== receipt.artifactDigest
       ) {
         throw new Error("immutable artifact changed during verification");
       }

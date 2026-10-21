@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import {
   appendFinanceBars,
+  closeFinanceBarLedger,
   collapseRepeatedBars,
   FINANCE_BAR_DERIVATIONS,
   FINANCE_BAR_RECORD_SCHEMA,
@@ -60,6 +61,27 @@ function pointInput(overrides: Partial<PointInput> = {}): PointInput {
   };
 }
 
+it("releases a bar writer through an equivalent directory spelling", async () => {
+  const directory = await storeDirectory();
+  const alias = path.join(path.dirname(directory), path.basename(directory).toUpperCase());
+  const directoryAlias = await fs.stat(alias).then(
+    () => alias,
+    () => directory,
+  );
+  const { DatabaseSync } = requireNodeSqlite();
+  const close = vi.spyOn(DatabaseSync.prototype, "close");
+  try {
+    await appendFinanceBars(directory, ohlcvInput());
+    close.mockClear();
+    closeFinanceBarLedger(directoryAlias);
+    expect(close).toHaveBeenCalledTimes(1);
+    await fs.rm(directory, { recursive: true });
+  } finally {
+    close.mockRestore();
+    closeFinanceBarLedger(directory);
+  }
+});
+
 /** Older writers filed repeats; build that valid, immutable history without the new write dedupe. */
 function appendLegacyRecord(
   directory: string,
@@ -114,14 +136,47 @@ function corruptStoredRecord(directory: string, record: FinanceBarRecord, corrup
 }
 
 afterAll(async () => {
+  for (const directory of directories) {
+    closeFinanceBarLedger(directory);
+  }
   await Promise.all(
     directories.map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
 describe("finance-bar-ledger", () => {
+  it("closes an idle cached writer and reopens the unchanged durable ledger", async () => {
+    const directory = await storeDirectory();
+    const first = await appendFinanceBars(directory, ohlcvInput());
+    const { DatabaseSync } = requireNodeSqlite();
+    const close = vi.spyOn(DatabaseSync.prototype, "close");
+    try {
+      closeFinanceBarLedger(directory);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
+    const replay = await appendFinanceBars(directory, ohlcvInput());
+    expect(replay.appended).toBe(false);
+    expect(replay.headRef).toBe(first.headRef);
+    expect((await readFinanceBarLedger(directory)).bars).toHaveLength(1);
+  });
+
   it("exposes both derivations and no others", () => {
     expect([...FINANCE_BAR_DERIVATIONS]).toEqual(["ohlcv", "point_derived"]);
+  });
+
+  it("closes the database when initialization rejects a corrupt ledger", async () => {
+    const directory = await storeDirectory();
+    await fs.writeFile(financeBarLedgerPath(directory), "not a sqlite database");
+    const { DatabaseSync } = requireNodeSqlite();
+    const close = vi.spyOn(DatabaseSync.prototype, "close");
+    try {
+      await expect(appendFinanceBars(directory, ohlcvInput())).rejects.toThrow();
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
   });
 
   it("appends a real OHLCV batch and replays it as a no-op", async () => {
@@ -139,6 +194,84 @@ describe("finance-bar-ledger", () => {
     expect(ledger.bars[0]?.close).toBe(102);
     // A vendor bar carries a real range, so there is nothing to count.
     expect(ledger.bars[0]?.sampleCount).toBeNull();
+  });
+
+  it("avoids warm chain scans and preserves the latest legacy replay holder", async () => {
+    const directory = await storeDirectory();
+    const first = await appendFinanceBars(directory, ohlcvInput());
+    const holder = appendLegacyRecord(directory, first.record, first.record.body);
+    const tail = appendLegacyRecord(directory, holder, {
+      ...first.record.body,
+      instrument: "BBB",
+      bars: first.record.body.bars.map((bar) => ({ ...bar, instrument: "BBB" })),
+    });
+    const { DatabaseSync } = requireNodeSqlite();
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    try {
+      const replay = await appendFinanceBars(directory, ohlcvInput());
+      expect(replay).toMatchObject({ appended: false, recordCount: 3, headRef: tail.ref });
+      expect(replay.record.ref).toBe(holder.ref);
+      prepare.mockClear();
+      const next = await appendFinanceBars(directory, ohlcvInput({ instrument: "CCC" }));
+      expect(next).toMatchObject({ appended: true, recordCount: 4, headRef: next.record.ref });
+      expect(next.record.previousRef).toBe(tail.ref);
+      expect(
+        prepare.mock.calls.filter(
+          ([sql]) =>
+            sql === "SELECT ref, sequence, body FROM finance_bar_records ORDER BY sequence",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  it("rebuilds a warm writer after database replacement and pool eviction", async () => {
+    const directory = await storeDirectory();
+    await appendFinanceBars(directory, ohlcvInput());
+    const original = financeBarLedgerPath(directory);
+    // Move the complete SQLite file set while the idle writer still holds its old inode.
+    for (const suffix of ["", "-wal", "-shm"]) {
+      await fs
+        .rename(original + suffix, original + ".old" + suffix)
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") {
+            throw error;
+          }
+        });
+    }
+    const replacement = await appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" }));
+    expect(replacement.record.sequence).toBe(1);
+    expect(replacement.record.previousRef).toBeNull();
+    for (let i = 0; i < 9; i++) {
+      await appendFinanceBars(await storeDirectory(), ohlcvInput());
+    }
+    const replay = await appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" }));
+    expect(replay.appended).toBe(false);
+    expect(replay.record.ref).toBe(replacement.record.ref);
+    expect(replay.recordCount).toBe(1);
+  });
+
+  it("rejects external SQL sequence damage and recovers after a verified repair", async () => {
+    const directory = await storeDirectory();
+    const first = await appendFinanceBars(directory, ohlcvInput());
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(financeBarLedgerPath(directory));
+    try {
+      db.prepare("UPDATE finance_bar_records SET sequence = 99 WHERE ref = ?").run(
+        first.record.ref,
+      );
+      await expect(appendFinanceBars(directory, ohlcvInput())).rejects.toThrow(/chain mismatch/);
+      db.prepare("UPDATE finance_bar_records SET sequence = 1 WHERE ref = ?").run(first.record.ref);
+      const replay = await appendFinanceBars(directory, ohlcvInput());
+      expect(replay.appended).toBe(false);
+      expect(replay.record.ref).toBe(first.record.ref);
+      const next = await appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" }));
+      expect(next.record.sequence).toBe(2);
+      expect(next.record.previousRef).toBe(first.record.ref);
+    } finally {
+      db.close();
+    }
   });
 
   it("files only the days that are new when a full history is re-collected", async () => {
@@ -400,6 +533,7 @@ describe("finance-bar-ledger", () => {
     [
       { scope: "as-of", options: { asOf: "2026-09-01T00:00:00Z" } },
       { scope: "instrument", options: { instrument: "AAA" } },
+      { scope: "instruments", options: { instruments: ["AAA", "CCC"] } },
     ].flatMap(({ scope, options }) =>
       corruptions.map((corruption) => ({ scope, options, corruption })),
     ),
@@ -440,13 +574,13 @@ describe("finance-bar-ledger", () => {
       const db = new DatabaseSync(financeBarLedgerPath(directory), { readOnly: true });
       try {
         const before = db
-          .prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence")
+          .prepare("SELECT ref, sequence, body FROM finance_bar_records ORDER BY sequence")
           .all();
         await expect(appendFinanceBars(directory, ohlcvInput())).rejects.toThrow(
           corruption === "hash" ? /integrity mismatch/ : /chain mismatch/,
         );
         expect(
-          db.prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence").all(),
+          db.prepare("SELECT ref, sequence, body FROM finance_bar_records ORDER BY sequence").all(),
         ).toEqual(before);
       } finally {
         db.close();
@@ -785,4 +919,86 @@ describe("finance-bar-ledger", () => {
     expect(appended.record.schemaVersion).toBe(FINANCE_BAR_RECORD_SCHEMA);
     expect(appended.record.previousRef).toBeNull();
   });
+});
+
+it("yields during full-chain reads without mixing a concurrent append into the snapshot", async () => {
+  const directory = await storeDirectory();
+  let tail = (await appendFinanceBars(directory, ohlcvInput())).record;
+  for (let i = 1; i < 80; i++) {
+    tail = appendLegacyRecord(directory, tail, tail.body);
+  }
+  let interleaved = false;
+  let mutationTurn: ReturnType<typeof setImmediate> | undefined;
+  let appended: ReturnType<typeof appendFinanceBars> | undefined;
+  const { DatabaseSync } = requireNodeSqlite();
+  // oxlint-disable-next-line typescript/unbound-method -- called below with its native database receiver.
+  const original = DatabaseSync.prototype.prepare;
+  const spy = vi
+    .spyOn(DatabaseSync.prototype, "prepare")
+    .mockImplementation(function (this: InstanceType<typeof DatabaseSync>, sql) {
+      if (
+        sql === "SELECT ref, sequence, body FROM finance_bar_records ORDER BY sequence" &&
+        !mutationTurn
+      ) {
+        mutationTurn = setImmediate(() => {
+          if (!interleaved) {
+            interleaved = true;
+            appended = appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" }));
+          }
+        });
+      }
+      return original.call(this, sql);
+    });
+  try {
+    const snapshot = await readFinanceBarLedger(directory);
+    expect(interleaved).toBe(true);
+    expect(snapshot.recordCount).toBe(80);
+    expect(snapshot.headRef).toBe(tail.ref);
+    await appended;
+    expect((await readFinanceBarLedger(directory)).recordCount).toBe(81);
+  } finally {
+    spy.mockRestore();
+    if (mutationTurn) {
+      clearImmediate(mutationTurn);
+    }
+  }
+});
+
+it("keeps cold writers leased under pool pressure and serializes alias appends", async () => {
+  const stores: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const directory = await storeDirectory();
+    stores.push(directory);
+    let tail = (await appendFinanceBars(directory, ohlcvInput())).record;
+    for (let row = 1; row < 80; row++) {
+      tail = appendLegacyRecord(directory, tail, tail.body);
+    }
+  }
+  const alias = path.join(await storeDirectory(), "alias");
+  await fs.symlink(stores[0], alias);
+  let yielded = false;
+  const turn = setImmediate(() => {
+    yielded = true;
+  });
+  try {
+    const writes = stores.map((directory) =>
+      appendFinanceBars(directory, ohlcvInput({ instrument: "BBB" })),
+    );
+    writes.push(appendFinanceBars(alias, ohlcvInput({ instrument: "BBB" })));
+    const results = await Promise.all(writes);
+    expect(yielded).toBe(true);
+    expect(
+      results.slice(0, 10).every((result) => result.appended && result.recordCount === 81),
+    ).toBe(true);
+    expect(results[10]).toMatchObject({
+      appended: false,
+      recordCount: 81,
+      headRef: results[0].headRef,
+    });
+    for (const directory of stores) {
+      expect((await readFinanceBarLedger(directory)).recordCount).toBe(81);
+    }
+  } finally {
+    clearImmediate(turn);
+  }
 });

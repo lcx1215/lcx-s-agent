@@ -73,6 +73,19 @@ describe("thread bindings: a file that cannot be read must not be overwritten", 
     expect(fs.readFileSync(resolveThreadBindingsPath(), "utf8")).toBe(CORRUPT);
   });
 
+  it.each([null, [], { version: 2, bindings: {} }, { version: 1 }, { version: 1, bindings: [] }])(
+    "preserves unsupported or incomplete persisted bindings: %j",
+    (value) => {
+      fs.mkdirSync(path.dirname(resolveThreadBindingsPath()), { recursive: true });
+      const original = JSON.stringify(value);
+      fs.writeFileSync(resolveThreadBindingsPath(), original, "utf8");
+      ensureBindingsLoaded();
+      setBindingRecord(makeRecord("new-thread"));
+      saveBindingsToDisk({ force: true });
+      expect(fs.readFileSync(resolveThreadBindingsPath(), "utf8")).toBe(original);
+    },
+  );
+
   it("persists again once the file is readable", () => {
     fs.mkdirSync(path.dirname(resolveThreadBindingsPath()), { recursive: true });
     fs.writeFileSync(resolveThreadBindingsPath(), CORRUPT, "utf8");

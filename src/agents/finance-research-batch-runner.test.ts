@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createApiSourceGovernanceRegistry } from "./api-call-contract.js";
+import { ApiCallError, createApiSourceGovernanceRegistry } from "./api-call-contract.js";
 import { buildFinanceCommitteeContext } from "./finance-agent-committee.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { appendFinanceFundamentalSnapshot } from "./finance-fundamental-store.js";
@@ -17,6 +17,7 @@ import {
   runFinanceResearchBatch,
   type FinanceResearchBatchOptions,
 } from "./finance-research-batch-runner.js";
+import { createFinanceQuotaGuard } from "./finance-source-quota.js";
 
 const AS_OF = "2026-09-08T12:00:00.000Z";
 const FRESH = "2026-09-08T11:59:00.000Z";
@@ -877,4 +878,155 @@ describe("durable macro collection reuse", () => {
     expect(collect).toHaveBeenCalledOnce();
     expect(result.jobs[0]?.sourceReuse).toBeUndefined();
   });
+});
+
+it("retains completed evidence and defers queued jobs when wall time expires before timers run", async () => {
+  vi.useFakeTimers();
+  const started = Date.now();
+  const base = options();
+  const adapter = collection(fixtureFetch);
+  const calls: string[] = [];
+  const packet = await runFinanceResearchBatch({
+    ...base,
+    maxConcurrency: 1,
+    totalTimeoutMs: 1000,
+    sourceTimeoutMs: 500,
+    realtimeAdapters: [],
+    targets: ["SPY", "QQQ", "IWM"].map((instrument) => ({
+      id: instrument,
+      instrument,
+      assetClass: "us_equity",
+      realtime: false,
+      collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+    })),
+    collectionAdapters: [
+      {
+        ...adapter,
+        collect: async (request, signal) => {
+          calls.push(request.instrument);
+          const result = await adapter.collect(request, signal);
+          if (request.instrument === "QQQ") {
+            vi.setSystemTime(started + 60_000);
+          }
+          return result;
+        },
+      },
+    ],
+  });
+  expect(calls).toEqual(["SPY", "QQQ"]);
+  expect(packet.status).toBe("timed_out");
+  expect(packet.jobs.map((job) => job.status)).toEqual(["ready", "timed_out", "timed_out"]);
+  expect(packet.jobs[2].missingEvidence).toContain("job_not_dispatched");
+  const { buildFinanceSourceRecoveryPlan } = await import("./finance-source-recovery.js");
+  const recovery = buildFinanceSourceRecoveryPlan(
+    packet,
+    new Date(Date.parse(AS_OF) + 60_000).toISOString(),
+  );
+  // A successful HTTP read followed by a late adapter result still requires evidence review.
+  expect(recovery.entries.map((entry) => entry.action)).toEqual([
+    "preserve",
+    "review_evidence",
+    "retry",
+  ]);
+  expect(packet.budget.httpDispatchCount).toBe(2);
+});
+
+it("adopts realtime backup evidence while retaining a non-selected preflight refusal", async () => {
+  const base = options();
+  const blocked = {
+    ...base.realtimeAdapters![0],
+    id: "blocked",
+    priority: 0,
+    unavailableForRequest: async () => new ApiCallError("http_error", 402, 60_000),
+    collect: vi.fn(),
+  };
+  const packet = await runFinanceResearchBatch({
+    ...base,
+    targets: [{ ...base.targets[1], collections: [] }],
+    realtimeAdapters: [blocked, ...base.realtimeAdapters!],
+    maxSourcesPerJob: 2,
+  });
+  expect(packet.jobs[0].status).toBe("ready");
+  expect(blocked.collect).not.toHaveBeenCalled();
+  expect(
+    packet.jobs[0].receipt?.sourceAttempts.find((attempt) => attempt.adapterId === "blocked")
+      ?.status,
+  ).toBe("failed");
+  expect(
+    JSON.parse(packet.committeeEvidence.find((item) => item.id === packet.jobs[0].jobId)!.text)
+      .data,
+  ).toBeDefined();
+});
+
+it("backfills the losing concurrent quota reservation without exceeding HTTP or source budgets", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "research-quota-race-"));
+  snapshotDirectories.push(directory);
+  const limitedNetwork = vi.fn(async () => response({}));
+  const guard = createFinanceQuotaGuard({
+    stateDir: directory,
+    policies: [
+      {
+        id: "limited",
+        provider: "limited",
+        hosts: ["limited.test"],
+        minIntervalMs: 0,
+        windows: [{ limit: 1, durationMs: 86400000 }],
+        basis: "conservative_unknown",
+      },
+    ],
+  });
+  const limited = resolveFinanceFetch(guard.wrap(limitedNetwork));
+  const backupNetwork = vi.fn(async () => response({}));
+  const backup = resolveFinanceFetch(backupNetwork);
+  const make = (
+    id: string,
+    role: FinanceRealtimeSourceAdapter["providerRole"],
+    priority: number,
+    fetch: FetchImpl,
+  ): FinanceRealtimeSourceAdapter => ({
+    id,
+    providerName: id,
+    providerRole: role,
+    priority,
+    supports: () => true,
+    collect: async (request, signal) => {
+      await fetch(
+        `https://${id === "limited" ? "limited.test" : "backup.test"}/${request.instrument}`,
+        { signal },
+      );
+      return quote(id, role);
+    },
+  });
+  const base = options();
+  const packet = await runFinanceResearchBatch({
+    ...base,
+    targets: base.targets.map((target) => ({ ...target, collections: [] })),
+    realtimeAdapters: [
+      make("limited", "primary_market_data", 0, limited),
+      make("backup", "primary_market_data", 1, backup),
+      make(
+        "cross",
+        "cross_check_market_data",
+        2,
+        resolveFinanceFetch(async () => response({})),
+      ),
+    ],
+    maxSourcesPerJob: 2,
+    maxConcurrency: 2,
+    maxApiCalls: 4,
+    retry: { attempts: 1 },
+  });
+  expect(packet.jobs.map((job) => job.status)).toEqual(["ready", "ready"]);
+  expect(limitedNetwork).toHaveBeenCalledTimes(1);
+  expect(backupNetwork).toHaveBeenCalledTimes(1);
+  expect(packet.budget.httpDispatchCount).toBe(4);
+  expect(packet.budget.reservedCallBudget).toBe(4);
+  expect(packet.jobs.every((job) => job.receipt!.selectedSourceIds.length === 2)).toBe(true);
+  expect(
+    packet.jobs.some((job) =>
+      job.receipt!.sourceAttempts.some(
+        (attempt) => attempt.adapterId === "limited" && attempt.status === "failed",
+      ),
+    ),
+  ).toBe(true);
 });

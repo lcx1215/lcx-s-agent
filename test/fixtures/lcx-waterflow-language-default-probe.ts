@@ -136,9 +136,34 @@ export async function probeOriginalDefaultLanguageReply(
     channelRuntime: runtime as unknown as ExternalWebhookTarget["channelRuntime"],
     statusSink: (patch) => statusPatches.push(patch),
   };
+  const replayGuard = createExternalReplayGuard({ stateDir: directory });
+  const claimMessage = replayGuard.claimMessage.bind(replayGuard);
+  replayGuard.claimMessage = async (key) => {
+    const claim = await claimMessage(key);
+    if (!claim) {
+      return undefined;
+    }
+    let settled: () => void = () => {};
+    pending.push(
+      new Promise<void>((resolve) => {
+        settled = resolve;
+      }),
+    );
+    return {
+      settle: async (outcome) => {
+        try {
+          await claim.settle(outcome);
+        } finally {
+          // Observe the post-ack chain's error logging after its awaited settlement,
+          // before assertions or removal of the private replay-state directory.
+          setImmediate(settled);
+        }
+      },
+    };
+  };
   const handler = createExternalWebhookRequestHandler({
     targetsByPath: new Map([[account.webhookPath, [target]]]),
-    replayGuard: createExternalReplayGuard({ stateDir: directory }),
+    replayGuard,
     processMessage: (message, selected) => {
       const execution = processExternalMessage(message, selected);
       pending.push(execution.catch(() => {}));

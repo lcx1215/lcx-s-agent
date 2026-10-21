@@ -29,6 +29,7 @@ import {
   FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
   persistFinanceSourceHeartbeat,
   readFinanceSourceHeartbeat,
+  isFinanceSourceAccessScope,
   type FinanceSourceHeartbeatReason,
   type FinanceSourceHeartbeatRecord,
   type FinanceSourceHeartbeatState,
@@ -231,12 +232,24 @@ function selectCandidates(
   asOf: string,
   realtimeAdapters: readonly FinanceRealtimeSourceAdapter[],
   collectionAdapters: readonly FinanceMarketCollectionAdapter[],
+  adapterId?: string,
   history: Readonly<Record<string, FinanceSourceHeartbeatRecord>> = {},
   checkedAt = Date.parse(asOf),
 ): Candidate[] {
+  const requested = adapterId?.trim();
+  if (
+    requested &&
+    ![...realtimeAdapters, ...collectionAdapters].some((adapter) => adapter.id === requested)
+  ) {
+    throw new Error(`unknown heartbeat adapter: ${requested}`);
+  }
   const candidates = [
-    ...realtimeAdapters.map((adapter) => candidateForAdapter(adapter, "realtime", asOf)),
-    ...collectionAdapters.map((adapter) => candidateForAdapter(adapter, "collection", asOf)),
+    ...realtimeAdapters
+      .filter((adapter) => !requested || adapter.id === requested)
+      .map((adapter) => candidateForAdapter(adapter, "realtime", asOf)),
+    ...collectionAdapters
+      .filter((adapter) => !requested || adapter.id === requested)
+      .map((adapter) => candidateForAdapter(adapter, "collection", asOf)),
   ]
     .filter((candidate): candidate is Candidate => candidate !== undefined)
     .toSorted(
@@ -248,6 +261,9 @@ function selectCandidates(
         left.adapter.priority - right.adapter.priority ||
         left.adapterId.localeCompare(right.adapterId),
     );
+  if (requested && candidates.length === 0) {
+    throw new Error(`heartbeat adapter has no supported probe: ${requested}`);
+  }
   const selected = new Map<string, Candidate>();
   for (const candidate of candidates) {
     if (!selected.has(candidate.provider)) {
@@ -257,13 +273,6 @@ function selectCandidates(
   return [...selected.values()].toSorted((left, right) =>
     left.provider.localeCompare(right.provider),
   );
-}
-
-function filterCandidatesByAdapterId(candidates: Candidate[], adapterId?: string): Candidate[] {
-  const requested = adapterId?.trim();
-  return requested
-    ? candidates.filter((candidate) => candidate.adapterId === requested)
-    : candidates;
 }
 
 function latestNetworkReceipt(receipts: readonly ApiCallReceipt[]): ApiCallReceipt | undefined {
@@ -323,6 +332,25 @@ function resultFromReceipts(
       ? Math.min(retryAfterMs, FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS)
       : 0;
   const nextCheckMs = checkedAt + Math.max(baseCheckDelayMs, boundedRetryAfterMs);
+  let accessScope: FinanceSourceHeartbeatRecord["accessScope"];
+  if (receipt?.dispatchedAt && [401, 402, 403].includes(httpStatus ?? 0)) {
+    try {
+      const fingerprint =
+        candidate.kind === "collection"
+          ? (candidate.adapter as FinanceMarketCollectionAdapter).accessScopeForRequest?.(
+              candidate.request as FinanceMarketCollectionRequest,
+            )
+          : (candidate.adapter as FinanceRealtimeSourceAdapter).accessScopeForRequest?.(
+              candidate.request as FinanceRealtimeSourceRequest,
+            );
+      const scope = { version: 1, fingerprint };
+      if (isFinanceSourceAccessScope(scope)) {
+        accessScope = scope;
+      }
+    } catch {
+      // Unknown request identity must not create a durable access denial.
+    }
+  }
   return {
     provider: candidate.provider,
     providerName: candidate.providerName,
@@ -333,6 +361,7 @@ function resultFromReceipts(
     reason,
     latencyMs,
     attempts: Math.max(0, ...receipts.map((item) => item.attempt)),
+    ...(accessScope ? { accessScope } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),
     ...(networkCode ? { networkCode } : {}),
     ...(transportError ? { transportError } : {}),
@@ -383,8 +412,10 @@ export function planFinanceSourceHeartbeat(
     options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime);
   const collectionAdapters =
     options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection);
-  const candidates = filterCandidatesByAdapterId(
-    selectCandidates(asOf, realtimeAdapters, collectionAdapters),
+  const candidates = selectCandidates(
+    asOf,
+    realtimeAdapters,
+    collectionAdapters,
     options.adapterId,
   );
   return {
@@ -445,10 +476,7 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
     options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime);
   const collectionAdapters =
     options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection);
-  let candidates = filterCandidatesByAdapterId(
-    selectCandidates(asOf, realtimeAdapters, collectionAdapters),
-    options.adapterId,
-  );
+  let candidates = selectCandidates(asOf, realtimeAdapters, collectionAdapters, options.adapterId);
   const requestedConcurrency = options.maxSourceConcurrency ?? 4;
   if (
     !Number.isSafeInteger(requestedConcurrency) ||
@@ -477,9 +505,13 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
       ),
       ...previous.endpointRecords,
     };
-    candidates = filterCandidatesByAdapterId(
-      selectCandidates(asOf, realtimeAdapters, collectionAdapters, endpointRecords, checkedAt),
+    candidates = selectCandidates(
+      asOf,
+      realtimeAdapters,
+      collectionAdapters,
       options.adapterId,
+      endpointRecords,
+      checkedAt,
     );
     const collectionWrites: {
       adapterId: string;

@@ -4,7 +4,10 @@ import {
   annualisedVol,
   FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
 } from "./finance-daily-strategy.js";
-import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import {
+  createBlsMacroSeriesCollectionAdapter,
+  type FinanceMarketCollectionItem,
+} from "./finance-market-collection-registry.js";
 import { summarizeFinanceOptionsChain } from "./finance-options-evidence.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
 import {
@@ -98,17 +101,41 @@ describe("deterministic monthly trend evidence", () => {
     ).toHaveLength(1);
   });
 
-  it("refuses duplicate supported monthly rules as ambiguous", () => {
-    const [activeRulesEvidence, eodEvidence] = monthlyTrendEvidence([
+  it("compares distinct monthly methods without discarding their separate horizons", () => {
+    const [active, history] = monthlyTrendEvidence([
+      ["2024-08-30", 80],
       ["2025-08-29", 100],
       ["2026-08-31", 110],
     ]);
-    const payload = JSON.parse(activeRulesEvidence.text) as { activeRules: unknown[] };
-    payload.activeRules.push(monthlyTrendRule("another-trend-rule"));
-
+    const second = {
+      ...monthlyTrendRule("two-year"),
+      body: { frozenRule: { lookbackMonths: 24 } },
+    };
+    const evidence = [
+      { ...active, text: JSON.stringify({ activeRules: [monthlyTrendRule(), second] }) },
+      history,
+    ];
+    const derived = buildFinanceMonthlyTrendDerivedEvidence(evidence, monthlyTrendAsOf);
+    expect(derived).toHaveLength(2);
+    expect(derived[0].id).toContain("trend-rule:SPY");
+    expect(derived[0].text).toContain("+10.0%");
+    expect(derived[1].id).toContain("two-year:SPY");
+    expect(derived[1].text).toContain("+37.5%");
+  });
+  it("refuses duplicate rule identities rather than choosing one horizon", () => {
+    const [active, history] = monthlyTrendEvidence([
+      ["2025-08-29", 100],
+      ["2026-08-31", 110],
+    ]);
     expect(
       buildFinanceMonthlyTrendDerivedEvidence(
-        [{ ...activeRulesEvidence, text: JSON.stringify(payload) }, eodEvidence],
+        [
+          {
+            ...active,
+            text: JSON.stringify({ activeRules: [monthlyTrendRule(), monthlyTrendRule()] }),
+          },
+          history,
+        ],
         monthlyTrendAsOf,
       ),
     ).toEqual([]);
@@ -988,6 +1015,36 @@ describe("finance price arithmetic before model prompting", () => {
     expect(text).toContain("previous=3.1 (2026-07-31)");
   });
 
+  it.each(["overlapping", "disjoint"] as const)(
+    "keeps %s provider observations out of another macro series history",
+    (periods) => {
+      const first = [
+        macroRecord("2026-07-31", undefined, "3.1", "CPI"),
+        macroRecord("2026-08-31", undefined, "3.2", "CPI"),
+      ].map((record) => ({ ...record, providerName: "provider-a" }));
+      const second = [
+        macroRecord("2026-06-30", undefined, "90", "CPI"),
+        macroRecord(
+          periods === "overlapping" ? "2026-08-31" : "2026-07-15",
+          undefined,
+          "99",
+          "CPI",
+        ),
+      ].map((record) => ({ ...record, providerName: "provider-b" }));
+      const text =
+        buildFinanceResearchModelEvidence(macroPacket([...first, ...second])).at(-1)?.text ?? "";
+      expect(text).not.toContain("same observation date has conflicting values");
+      expect(text).toContain(
+        "latest value=3.2, observation period=2026-08-31; previous=3.1 (2026-07-31)",
+      );
+      expect(text).toContain(
+        `latest value=99, observation period=${periods === "overlapping" ? "2026-08-31" : "2026-07-15"}; previous=90 (2026-06-30)`,
+      );
+      expect(text).toContain("provider-a");
+      expect(text).toContain("provider-b");
+    },
+  );
+
   it("reports conflicting values for one macro series on the same date", () => {
     const packet = macroPacket([
       macroRecord("2026-08-31", "United States Savings Securities", "3.145"),
@@ -1034,6 +1091,75 @@ describe("finance price arithmetic before model prompting", () => {
     expect(text).not.toContain("observation period=2026-09-09");
     expect(text).toContain("publication time=unverified");
   });
+
+  it.each([false, true])(
+    "orders captured BLS periods across years and separates frequencies (mixed=%s)",
+    async (mixed) => {
+      const adapter = createBlsMacroSeriesCollectionAdapter({
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              status: "REQUEST_SUCCEEDED",
+              Results: {
+                series: [
+                  {
+                    seriesID: "CUUR0000SA0",
+                    data: [
+                      { year: "2026", period: "M01", value: "310" },
+                      { year: "2025", period: "M12", value: "300" },
+                      { year: "2025", period: "M01", value: "290" },
+                      ...(mixed
+                        ? [
+                            { year: "2025", period: "M13", value: "250" },
+                            { year: "2025", period: "Q04", value: "280" },
+                            { year: "2026", period: "Q01", value: "320" },
+                          ]
+                        : []),
+                    ],
+                  },
+                ],
+              },
+            }),
+        }),
+      });
+      const records = await adapter.collect(
+        {
+          instrument: "CPI",
+          assetClass: "macro",
+          collection: "macro_series",
+          seriesId: "CUUR0000SA0",
+          asOf: "2026-09-10T00:00:00Z",
+          limit: 100,
+        },
+        new AbortController().signal,
+      );
+      const text = buildFinanceResearchModelEvidence(macroPacket([...records])).at(-1)?.text ?? "";
+      expect(text).toContain(
+        "latest value=310, observation period=2026-01-01; previous=300 (2025-12-01)",
+      );
+      expect(text).not.toContain("same observation date has conflicting values");
+      expect(text).not.toContain("observation period=M");
+      if (mixed) {
+        const lines = text.split("\n");
+        expect(lines).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining('"observationFrequency":"monthly"'),
+            expect.stringContaining('"observationFrequency":"quarterly"'),
+            expect.stringContaining('"observationFrequency":"annual_average"'),
+            expect.stringContaining(
+              "latest value=250, observation period=2025-12-31; previous=unknown (unknown)",
+            ),
+            expect.stringContaining(
+              "latest value=320, observation period=2026-01-01; previous=280 (2025-10-01)",
+            ),
+          ]),
+        );
+      }
+      expect(records.find((record) => record.data.period === "M12")?.data.year).toBe("2025");
+    },
+  );
 
   function macroPacket(records: FinanceMarketCollectionItem[]): FinanceResearchBatchEvidencePacket {
     return {

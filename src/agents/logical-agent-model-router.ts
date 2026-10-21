@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import {
+  ChildMemoryBudgetError,
+  type ChildMemoryObservation,
+} from "../process/child-memory-budget.js";
 import type {
   LogicalAgentCapabilities,
   LogicalAgentId,
@@ -45,6 +49,8 @@ export type ModelCallRequest = Readonly<{
   payload: unknown;
   /** Host-owned wall deadline, never a value supplied by model output. */
   deadlineAtMs?: number;
+  /** Host-owned local process budget; model output cannot select or increase it. */
+  memoryBudgetMb?: number;
 }>;
 
 /** Observation is obtained by the adapter's transport observer, never from model output. */
@@ -59,6 +65,7 @@ export type ModelCallObservation = Readonly<{
   reasoningEffort?: "low" | "high" | "max";
   /** Adapter-authored evidence coverage for the exact request boundary. */
   evidenceCoverage?: ModelEvidenceCoverage;
+  memory?: ChildMemoryObservation;
 }>;
 
 export type ModelEvidenceCoverage = Readonly<{
@@ -78,6 +85,8 @@ export type LogicalAgentModelAdapter = Readonly<{
   capabilities: readonly string[];
   requiredTools: readonly string[];
   requiredSideEffects: readonly LogicalAgentSideEffect[];
+  /** Owned local processes settle only after cancellation has joined their cleanup. */
+  cancellationSettlement?: "owned_process";
   /** Explicitly bounded specialists cannot become general fallbacks. */
   roleScope?: readonly LogicalAgentId[];
   /** Read-only preflight; a rejected adapter is not dispatched or charged a model call. */
@@ -156,6 +165,7 @@ export type ModelCallReceipt = Readonly<{
   credentialSource?: "configuration" | "environment" | "auth_profile";
   reasoningEffort?: "low" | "high" | "max";
   evidenceCoverage?: ModelEvidenceCoverage;
+  memory?: ChildMemoryObservation;
   workload?: string;
   outputContractRevision?: string;
   qualificationId?: string;
@@ -172,6 +182,7 @@ export type ModelCallReceipt = Readonly<{
     | "output_contract"
     | "adapter_error"
     | ModelAdapterError["code"]
+    | ChildMemoryBudgetError["code"]
     | "cancelled"
     | "deadline";
 }>;
@@ -344,6 +355,7 @@ export class LogicalAgentModelRouter {
     signal: AbortSignal;
     /** A caller task can expire before an individual role's timeout. */
     deadlineAtMs?: number;
+    memoryBudgetMb?: number;
     /** Host-owned classifier for an inherited task deadline's abort reason. */
     isDeadlineAbort?: (reason: unknown) => boolean;
     dispatch: Dispatch;
@@ -524,7 +536,9 @@ export class LogicalAgentModelRouter {
             () => {
               outcome = reason === "deadline" ? "timed_out" : "aborted";
               reason ??= "cancelled";
-              reject(new Error("model call cancelled or timed out"));
+              if (adapter.cancellationSettlement !== "owned_process") {
+                reject(new Error("model call cancelled or timed out"));
+              }
             },
             { once: true },
           );
@@ -536,17 +550,22 @@ export class LogicalAgentModelRouter {
           },
           Math.max(0, deadlineAtMs - Date.now()),
         );
-        const result = await Promise.race([
-          params.dispatch(async () => {
-            assertActive();
-            adapterInvoked = true;
-            return adapter.invoke(
-              Object.freeze({ ...identity, payload, deadlineAtMs }),
-              controller.signal,
-            );
-          }, controller.signal),
-          cancelled,
-        ]);
+        const dispatched = params.dispatch(async () => {
+          assertActive();
+          adapterInvoked = true;
+          return adapter.invoke(
+            Object.freeze({
+              ...identity,
+              payload,
+              deadlineAtMs,
+              memoryBudgetMb: params.memoryBudgetMb,
+            }),
+            controller.signal,
+          );
+        }, controller.signal);
+        const result = await (adapter.cancellationSettlement === "owned_process"
+          ? dispatched
+          : Promise.race([dispatched, cancelled]));
         assertActive();
         if (policy.outputContract) {
           let accepted = false;
@@ -574,7 +593,10 @@ export class LogicalAgentModelRouter {
         if (error instanceof ModelAdapterError && error.code === "runtime_timeout") {
           outcome = "timed_out";
         }
-        reason ??= error instanceof ModelAdapterError ? error.code : "adapter_error";
+        reason ??=
+          error instanceof ModelAdapterError || error instanceof ChildMemoryBudgetError
+            ? error.code
+            : "adapter_error";
         const retryContract =
           reason === "output_contract" && policy.retryOutputContractOnce && !contractRepairUsed;
         const retryTruncatedAffinity =
@@ -668,6 +690,7 @@ export class LogicalAgentModelRouter {
               ...(observation?.outputNormalization
                 ? { outputNormalization: observation.outputNormalization }
                 : {}),
+              ...(observation?.memory ? { memory: observation.memory } : {}),
               ...(observation?.evidenceCoverage
                 ? { evidenceCoverage: observation.evidenceCoverage }
                 : {}),

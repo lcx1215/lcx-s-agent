@@ -25,6 +25,7 @@ import {
 import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
+  parseFinanceDecisionCandidateContext,
   FINANCE_DECISION_MODES,
   type FinanceDecisionCandidateContext,
   type FinanceDecisionMode,
@@ -39,6 +40,7 @@ type CliOptions = {
   ask?: string;
   candidateAnswer?: string;
   financeDecisionMode?: FinanceDecisionMode;
+  candidateContextPath?: string;
   providerEvidencePath?: string;
   providerMessageId?: string;
   providerEvidenceSha256?: string;
@@ -590,6 +592,7 @@ function usage(): never {
       "",
       "Without --ask, runs the built-in commercial answer pipeline diagnostic scenarios.",
       "Bind completed council claims to an original artifact with --provider-evidence FILE --provider-message-id ID; optionally pin --provider-evidence-sha256 HASH.",
+      "Use --candidate-context FILE to load evidence/claims/supportingAnalysis JSON; shape validation does not establish evidence truth or authorize execution.",
       "Use --finance-mode conditional_trade_candidate to allow an evidence-bound buy/sell candidate; this never grants execution authority.",
       "This is local-only: it audits candidate answer adoption rules and never calls providers, external channel sender, or MLX.",
     ].join("\n"),
@@ -621,6 +624,8 @@ export function parseArgs(args: string[]): CliOptions {
       }
       options.financeDecisionMode = value as FinanceDecisionMode;
       index += 1;
+    } else if (arg === "--candidate-context") {
+      options.candidateContextPath = readValue(args, index++);
     } else if (arg === "--provider-evidence") {
       options.providerEvidencePath = readValue(args, index++);
     } else if (arg === "--provider-message-id") {
@@ -638,6 +643,9 @@ export function parseArgs(args: string[]): CliOptions {
   if ((options.ask && !options.candidateAnswer) || (!options.ask && options.candidateAnswer)) {
     usage();
   }
+  if (options.candidateContextPath && (!options.ask || !options.candidateAnswer)) {
+    usage();
+  }
   if (
     (options.providerEvidencePath && (!options.ask || !options.providerMessageId)) ||
     (!options.providerEvidencePath && (options.providerMessageId || options.providerEvidenceSha256))
@@ -649,6 +657,19 @@ export function parseArgs(args: string[]): CliOptions {
 
 function includesPattern(text: string, pattern: RegExp): boolean {
   return pattern.test(text);
+}
+
+export async function readFinanceCandidateContext(
+  filePath: string,
+): Promise<FinanceDecisionCandidateContext> {
+  const text = await readFile(filePath, "utf8");
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("Candidate context file must contain valid JSON");
+  }
+  return parseFinanceDecisionCandidateContext(value);
 }
 
 export async function readProviderCouncilEvidence(

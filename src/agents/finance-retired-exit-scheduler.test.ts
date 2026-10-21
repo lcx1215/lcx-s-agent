@@ -143,7 +143,19 @@ it.each(["sell", "buy"] as const)(
       mocks.record.mockClear();
       mocks.execute.mockResolvedValue({ status: "already_terminal", outcome });
       await runFinanceRetiredIntradayExitTick(context);
-      expect(mocks.record).not.toHaveBeenCalled();
+      expect(mocks.record).toHaveBeenCalledOnce();
+      mocks.record.mockClear();
+      mocks.execute.mockClear();
+      mocks.monitor.mockResolvedValue({
+        status: "sell_already_terminal",
+        decision: { input: { action } },
+        outcome,
+      });
+      mocks.record.mockResolvedValue({ status: "registered" });
+      await runFinanceRetiredIntradayExitTick(context);
+      expect(mocks.record).toHaveBeenCalledOnce();
+      expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ outcome }));
+      expect(mocks.execute).not.toHaveBeenCalled();
     }
 
     mocks.monitor.mockClear();

@@ -13,9 +13,10 @@ import {
   executionQuoteIssue,
   recordCycleFill,
   type FinanceDailyCycleParams,
-  type FinanceDailyAccountBook,
   type FinanceDailyCycleExecutionQuote,
 } from "./finance-daily-cycle.js";
+import { readFinanceDailyDecisionHistory } from "./finance-daily-decision-history.js";
+import { freshExecutionCapacity } from "./finance-execution-capacity.js";
 import {
   financeExecutionGrossExposureIssue,
   FinanceExecutionSafetyFactsError,
@@ -171,56 +172,6 @@ function waitForPreparation<T>(
       reject(error);
     }
   });
-}
-
-function freshExecutionCapacity(
-  account: FinanceDailyAccountBook,
-  accountId: string,
-  asOfMs: number,
-): NonNullable<FinanceDailyAccountBook["executionCapacity"]> | undefined {
-  const capacity = account.executionCapacity;
-  const reconciliation = account.reconciliation;
-  if (
-    !capacity ||
-    !reconciliation ||
-    !Number.isFinite(asOfMs) ||
-    !Array.isArray(reconciliation.quarantinedInstruments) ||
-    capacity.source !== "controller_account_safety_facts" ||
-    capacity.accountId !== accountId ||
-    account.accountId !== accountId ||
-    capacity.venue !== account.venue ||
-    account.venue !== "alpaca:paper" ||
-    capacity.observedAt !== account.observedAt ||
-    capacity.expiresAt !== account.expiresAt ||
-    !Number.isFinite(Date.parse(account.observedAt)) ||
-    !Number.isFinite(Date.parse(account.expiresAt)) ||
-    Date.parse(account.observedAt) > asOfMs ||
-    Date.parse(account.expiresAt) <= asOfMs ||
-    typeof capacity.policyPlanId !== "string" ||
-    !capacity.policyPlanId.trim() ||
-    typeof capacity.policyRevision !== "string" ||
-    !capacity.policyRevision.trim() ||
-    !Number.isFinite(capacity.grossExposure) ||
-    capacity.grossExposure < 0 ||
-    !Number.isFinite(capacity.maxGrossExposure) ||
-    capacity.maxGrossExposure <= 0 ||
-    !Number.isFinite(capacity.uncertaintyReserve) ||
-    capacity.uncertaintyReserve < 0 ||
-    (capacity.availableCash !== undefined &&
-      (!Number.isFinite(capacity.availableCash) || capacity.availableCash < 0)) ||
-    capacity.uncertaintyReserve !== reconciliation.uncertaintyReserve ||
-    (reconciliation.status === "ready"
-      ? reconciliation.historyStatus !== "reconciled" ||
-        capacity.uncertaintyReserve !== 0 ||
-        reconciliation.quarantinedInstruments.length !== 0
-      : reconciliation.status !== "restricted" ||
-        reconciliation.historyStatus !== "unresolved" ||
-        capacity.uncertaintyReserve <= 0 ||
-        reconciliation.quarantinedInstruments.length === 0)
-  ) {
-    return undefined;
-  }
-  return capacity;
 }
 
 function reviewedQuoteComparison(
@@ -541,6 +492,11 @@ export async function executeFinanceIntradayDecision(params: {
   if (prior) {
     return Object.freeze({ status: "already_terminal" as const, outcome: prior });
   }
+  const appendOutcome = (outcome: FinanceIntradayOutcomeInput) =>
+    appendFinanceIntradayOutcome(params.directory, {
+      ...outcome,
+      executionScope: { accountId: params.controller.accountId, venue: "alpaca:paper" },
+    });
   const input = params.decision.input;
   // A supplied caller owns the total budget. Only the legacy default is a total deadline.
   const signal = params.signal ?? AbortSignal.timeout(120_000);
@@ -606,7 +562,7 @@ export async function executeFinanceIntradayDecision(params: {
         receipt.accountId === params.controller.accountId,
     );
     if (recoveredReceipt) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "placed",
         receiptId: recoveredReceipt.receiptId,
@@ -628,7 +584,7 @@ export async function executeFinanceIntradayDecision(params: {
       }),
     );
     if (safetyClaims.some((claim) => claim.status === "reserved" || claim.status === "unknown")) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: ["account_execution_safety_claim_pending_before_model_review"],
@@ -645,7 +601,7 @@ export async function executeFinanceIntradayDecision(params: {
       ),
     );
     if (typeof strategyIssue === "string") {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [strategyIssue],
@@ -669,7 +625,7 @@ export async function executeFinanceIntradayDecision(params: {
       (reconciliation?.status === "restricted" &&
         reconciliation.quarantinedInstruments.includes(input.instrument.toUpperCase()))
     ) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [
@@ -700,7 +656,7 @@ export async function executeFinanceIntradayDecision(params: {
       (input.action === "sell" &&
         (sellQuantity <= 0 || sellQuantity > owned || sellQuantity > brokerHeld));
     if (positionRefused) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [
@@ -727,8 +683,17 @@ export async function executeFinanceIntradayDecision(params: {
           const decisions = await waitForPreparation(signal, () =>
             readFinanceIntradayDecisions(params.directory),
           );
+          // The allocation is for the whole strategy, not a fresh allowance per symbol.
+          // Keep the instrument-scoped ownedBook above for exits and duplicate-position checks.
+          const capitalBook = await waitForPreparation(signal, () =>
+            readFinanceIntradayOwnedPositions({
+              directory: params.directory,
+              accountId: params.controller.accountId,
+              receipts: positionRecords.receipts,
+            }),
+          );
           let committedNotional = 0;
-          for (const lot of ownedBook.openLots) {
+          for (const lot of capitalBook.openLots) {
             const entry = decisions.find(
               (d) =>
                 `intent:${d.input.signalId}` === lot.intentId &&
@@ -764,7 +729,7 @@ export async function executeFinanceIntradayDecision(params: {
           });
           portfolioPlanRef = capitalBudget.planRef;
           if (capitalBudget.availableNotional <= 0) {
-            const outcome = await appendFinanceIntradayOutcome(params.directory, {
+            const outcome = await appendOutcome({
               signalId: input.signalId,
               status: "refused",
               reasons: ["strategy_capital_budget_exhausted", `planRef=${capitalBudget.planRef}`],
@@ -777,7 +742,7 @@ export async function executeFinanceIntradayDecision(params: {
         if (error instanceof PreparationDeadlineError) {
           throw error;
         }
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: ["strategy_capital_budget_unavailable", capitalBudgetFailure],
@@ -807,6 +772,14 @@ export async function executeFinanceIntradayDecision(params: {
           ),
         )
       : undefined;
+    const decisionHistory = !protectiveExit
+      ? readFinanceDailyDecisionHistory({
+          directory: params.directory,
+          accountId: params.controller.accountId,
+          instruments: [input.instrument],
+          asOf: new Date(now()).toISOString(),
+        })
+      : undefined;
     setStage("initial_quote");
     let quote = {
       ...(await waitForPreparation(signal, (signal) =>
@@ -823,7 +796,7 @@ export async function executeFinanceIntradayDecision(params: {
     const observedAtMs = now();
     const quoteIssue = executionQuoteIssue(quote, observedAtMs);
     if (quoteIssue !== null) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [`execution quote gate refused model review: ${quoteIssue}`],
@@ -927,7 +900,7 @@ export async function executeFinanceIntradayDecision(params: {
     // The venue path recompiles with the final quote and still owns all safety reservations.
     const preflight = compileFinanceAlpacaOrderIntent(orderRequest(referencePrice));
     if (!preflight.ok) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [
@@ -958,7 +931,7 @@ export async function executeFinanceIntradayDecision(params: {
             : undefined;
         const capacityIssue = issue ?? fundingIssue;
         if (capacityIssue) {
-          const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          const outcome = await appendOutcome({
             signalId: input.signalId,
             status: "refused",
             reasons: [
@@ -1000,7 +973,7 @@ export async function executeFinanceIntradayDecision(params: {
       const reviewAtMs = now();
       const reviewQuoteIssue = executionQuoteIssue(quote, reviewAtMs);
       if (reviewQuoteIssue !== null) {
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: [
@@ -1025,6 +998,7 @@ export async function executeFinanceIntradayDecision(params: {
         ...(strategyFeedback ? { strategyFeedback } : {}),
         ...(brokerExitFeedback ? { brokerExitFeedback } : {}),
         ...(accountEconomics ? { accountEconomics } : {}),
+        ...(decisionHistory ? { decisionHistory } : {}),
         asOf: new Date(reviewAtMs).toISOString(),
         signalAnchor: input.signalId,
         ruleIds: [input.strategyRule],
@@ -1193,7 +1167,7 @@ export async function executeFinanceIntradayDecision(params: {
       const reviewResult = tradeDecisionReview!;
       const reviewedDecision = reviewResult.decision;
       if ((strategyFeedback || brokerExitFeedback) && reviewResult.status === "failed") {
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: [
@@ -1217,7 +1191,7 @@ export async function executeFinanceIntradayDecision(params: {
         (reviewResult.status === "completed" && !reviewedDecision) ||
         signal.aborted
       ) {
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: [
@@ -1237,7 +1211,7 @@ export async function executeFinanceIntradayDecision(params: {
         });
       }
       if (reviewedDecision?.decision === "veto") {
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: [`intraday model veto: ${reviewedDecision.rationale}`],
@@ -1291,7 +1265,7 @@ export async function executeFinanceIntradayDecision(params: {
       !Number.isFinite(referencePrice) ||
       referencePrice <= 0
     ) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [`intraday execution quote refused: ${finalQuoteIssue ?? "missing side price"}`],
@@ -1391,7 +1365,7 @@ export async function executeFinanceIntradayDecision(params: {
             }
           }
         }
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: [refusal],
@@ -1414,7 +1388,7 @@ export async function executeFinanceIntradayDecision(params: {
         !finalPreflight.ok ||
         (!protectiveExit && finalPreflight.intent.quantity !== preflight.intent.quantity)
       ) {
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: finalPreflight.ok
@@ -1454,7 +1428,7 @@ export async function executeFinanceIntradayDecision(params: {
       remainingReviewMs,
     );
     if (typeof finalCalendarIssue === "string") {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [finalCalendarIssue],
@@ -1492,7 +1466,7 @@ export async function executeFinanceIntradayDecision(params: {
         planIssue = true;
       }
       if (planIssue) {
-        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        const outcome = await appendOutcome({
           signalId: input.signalId,
           status: "refused",
           reasons: ["strategy_capital_budget_changed_or_unavailable"],
@@ -1510,7 +1484,7 @@ export async function executeFinanceIntradayDecision(params: {
     setStage("order_dispatch");
     const result = await (params.runOrder ?? runFinanceAlpacaOrder)(orderRequest(referencePrice));
     if (!result.ok) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "refused",
         reasons: [...result.refusals],
@@ -1531,7 +1505,7 @@ export async function executeFinanceIntradayDecision(params: {
       receipt: result.receipt,
     });
     if (!recorded.recorded || !recorded.marked || recorded.refusal) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+      const outcome = await appendOutcome({
         signalId: input.signalId,
         status: "uncertain",
         reasons: [recorded.refusal ?? "fill did not reach a complete local ledger projection"],
@@ -1545,7 +1519,7 @@ export async function executeFinanceIntradayDecision(params: {
         ...reviewHistory(),
       });
     }
-    const outcome = await appendFinanceIntradayOutcome(params.directory, {
+    const outcome = await appendOutcome({
       signalId: input.signalId,
       status: "placed",
       receiptId: result.receipt.receiptId,
@@ -1583,7 +1557,7 @@ export async function executeFinanceIntradayDecision(params: {
         : undefined;
     const preparationFailure = !factsFailure && !attempt ? executionFailure(error) : undefined;
     const quoteFailure = preparationFailure?.quote;
-    const outcome = await appendFinanceIntradayOutcome(params.directory, {
+    const outcome = await appendOutcome({
       signalId: input.signalId,
       status: uncertain ? "uncertain" : "refused",
       reasons: [

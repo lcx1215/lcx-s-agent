@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createApiSourceGovernanceRegistry } from "./api-call-contract.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
 import { createNwsCurrentWeatherAdapter } from "./geospatial-official-source-adapters.js";
 import {
@@ -10,6 +11,87 @@ import {
 } from "./geospatial-source-registry.js";
 
 const AS_OF = "2026-09-07T10:45:00.000Z";
+
+afterEach(() => vi.useRealTimers());
+
+describe("Nominatim dispatch scheduling", () => {
+  const request = { kind: "geocode" as const, query: "Shanghai", asOf: AS_OF };
+  const result = () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify([{ lat: "31.2", lon: "121.5", display_name: "Shanghai" }]),
+  });
+  it("spaces concurrent calls instead of waking all waiters together", async () => {
+    vi.useFakeTimers();
+    const times: number[] = [];
+    const adapter = createNominatimGeocodingAdapter({
+      fetchImpl: async () => {
+        times.push(Date.now());
+        return result();
+      },
+    });
+    const signal = new AbortController().signal;
+    await adapter.collect(request, signal);
+    const pending = Promise.all([
+      adapter.collect(request, signal),
+      adapter.collect(request, signal),
+    ]);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(times).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1100);
+    await pending;
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(1100);
+    expect(times[2] - times[1]).toBeGreaterThanOrEqual(1100);
+  });
+
+  it("preserves a stricter caller-owned source limiter", async () => {
+    vi.useFakeTimers();
+    const times: number[] = [];
+    const adapter = createNominatimGeocodingAdapter({
+      fetchImpl: async () => {
+        times.push(Date.now());
+        return result();
+      },
+    });
+    const sourceGovernance = createApiSourceGovernanceRegistry({
+      minIntervalMs: 5000,
+      maxConcurrent: 1,
+    });
+    const run = () => runGeospatialRefresh({ request, adapters: [adapter], sourceGovernance });
+    await run();
+    const pending = run();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(times).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(3900);
+    await pending;
+    expect(times).toHaveLength(2);
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(5000);
+  });
+
+  it("removes a cancelled queued call without HTTP dispatch", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const adapter = createNominatimGeocodingAdapter({
+      fetchImpl: async () => {
+        calls += 1;
+        return result();
+      },
+    });
+    await adapter.collect(request, new AbortController().signal);
+    const controller = new AbortController();
+    const pending = adapter.collect(request, controller.signal).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(await pending).toBeInstanceOf(Error);
+    expect(String(await pending)).toMatch(/cancel/iu);
+    expect(calls).toBe(1);
+    await adapter.collect(request, new AbortController().signal);
+    expect(calls).toBe(2);
+  });
+});
 
 describe("geospatial source registry", () => {
   it("cross-checks Open-Meteo and Nominatim geocoding with actual response shapes", async () => {
@@ -172,7 +254,7 @@ describe("geospatial source registry", () => {
     expect(adapter.sourceFamily).toBe("geospatial_reference");
   });
 
-  it("selects fresh official fields when a preferred feed is stale", async () => {
+  it("keeps stale MSL visible when fresh station observations cover other fields", async () => {
     const fetchImpl: FetchImpl = async (url) => ({
       ok: true,
       status: 200,
@@ -223,15 +305,16 @@ describe("geospatial source registry", () => {
       retry: { attempts: 1 },
     });
 
-    expect(receipt.status).toBe("ready");
-    expect(receipt.freshnessWarnings).toEqual([]);
+    expect(receipt.status).toBe("needs_review");
+    expect(receipt.freshnessWarnings).toEqual(["pressure_msl from open-meteo-weather is 120m old"]);
     expect(receipt.staleSourceWarnings).toEqual(
       expect.arrayContaining(["temperature_2m from open-meteo-weather is 120m old"]),
     );
     expect(receipt.normalizedFields).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "temperature_2m", value: 20 }),
-        expect.objectContaining({ name: "pressure_msl", value: 1015 }),
+        expect.objectContaining({ name: "barometric_pressure", value: 1015 }),
+        expect.objectContaining({ name: "pressure_msl", value: 1000 }),
       ]),
     );
     expect(receipt.conflicts).toEqual([]);

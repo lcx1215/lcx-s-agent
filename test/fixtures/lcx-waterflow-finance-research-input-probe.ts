@@ -10,7 +10,10 @@ import {
   buildFinanceBrokerAccountResearchEvidence,
   writeFinanceNightReviewEvidence,
 } from "../../src/agents/finance-night-review-context.js";
-import { financeResearchPortfolioContextSchema } from "../../src/agents/finance-research-portfolio-plan.js";
+import {
+  financeResearchPortfolioContextSchema,
+  financeScheduledResearchHandoffSchema,
+} from "../../src/agents/finance-research-portfolio-plan.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -98,7 +101,10 @@ export async function probeOriginalResearchInput(params: {
   const context = vm.createContext({
     fs,
     path,
-    process: { env: {} },
+    createHash,
+    Buffer,
+    financeScheduledResearchHandoffSchema,
+    process: { env: { OPENCLAW_WORKSPACE_DIR: workspace } },
     URL,
     REPO_ROOT: repo,
     RESEARCH_SCRIPT: path.join(repo, "scripts/operator/lcx-finance-research-run.ts"),

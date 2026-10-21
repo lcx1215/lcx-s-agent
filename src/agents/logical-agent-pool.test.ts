@@ -385,6 +385,47 @@ describe("logical agent pool", () => {
     },
   );
 
+  it.each([undefined, false, true])(
+    "requires provider opt-in with the default grant (allowProviderCalls=%s)",
+    async (allowProviderCalls) => {
+      const invoke = vi.fn(async () => ({ ok: true }));
+      const pool = new LogicalAgentPool({
+        allowProviderCalls,
+        modelRouting: {
+          revision: "provider-opt-in-test",
+          adapters: [
+            {
+              id: "remote",
+              provider: "fixture",
+              modelId: "remote",
+              mode: "adapter",
+              capabilities: ["json"],
+              requiredTools: [],
+              requiredSideEffects: ["provider_call"],
+              invoke,
+            },
+          ],
+          defaultPolicy: {
+            primary: "remote",
+            requiredCapabilities: ["json"],
+            maxInputBytes: 10000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [{ id: "provider-opt-in", agentId: "financial_extraction", input: {} }],
+        executor: async ({ modelSlot, signal }) => ({
+          output: await modelSlot.invoke({}, signal),
+          sideEffects: ["provider_call"],
+        }),
+      });
+      expect(invoke).toHaveBeenCalledTimes(allowProviderCalls === true ? 1 : 0);
+      expect(result.status).toBe(allowProviderCalls === true ? "completed" : "failed");
+    },
+  );
+
   it("blocks descendants after a failed role without running them", async () => {
     const plan = buildDefaultLogicalAgentPlan({ ask: "失败传播测试" });
     const executed: string[] = [];
@@ -1092,8 +1133,9 @@ describe("logical agent pool", () => {
     );
   });
 
-  it("admits every declared side effect under the open default grant", async () => {
+  it("admits every declared side effect with explicit provider opt-in", async () => {
     const result = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({ allowProviderCalls: true }),
       tasks: [{ id: "unrestricted", agentId: "risk_check", input: { ask: "x" } }],
       executor: () =>
         ({
@@ -1110,6 +1152,41 @@ describe("logical agent pool", () => {
       "provider_call",
     ]);
   });
+
+  it.each(["legacy-base", "explicit-opt-in"] as const)(
+    "refuses non-router provider checkpoint reuse after grant changes (%s)",
+    async (kind) => {
+      const checkpointStore = createInMemoryLogicalAgentCheckpointStore<string>();
+      const tasks = [{ id: "provider-checkpoint", agentId: "risk_check" as const, input: {} }];
+      const runId = `provider-checkpoint-${kind}`;
+      const initial = await runLogicalAgentPlan({
+        tasks,
+        runId,
+        checkpointStore,
+        pool: new LogicalAgentPool<unknown, string>({ allowProviderCalls: true }),
+        executor: () => ({ output: "previous", sideEffects: ["provider_call"] as const }),
+      });
+      expect(initial.status).toBe("completed");
+      if (kind === "legacy-base") {
+        checkpointStore.save({
+          ...checkpointStore.load(runId)!,
+          planFingerprint: fingerprintLogicalAgentPlan(tasks, [], "provider-checkpoint", {}),
+        });
+      }
+      const executor = vi.fn(() => ({ output: "next", sideEffects: [] }));
+      await expect(
+        runLogicalAgentPlan({
+          tasks,
+          runId,
+          checkpointStore,
+          resume: true,
+          pool: new LogicalAgentPool<unknown, string>(),
+          executor,
+        }),
+      ).rejects.toThrow("fingerprint mismatch");
+      expect(executor).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects undeclared side effects at the capability boundary", async () => {
     // The default grant is open, so the boundary is only observable on a narrowed pool.
@@ -1278,7 +1355,7 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("exceeded memory budget");
-    expect(result.pool.memoryBudgetEnforcement).toBe("measured_invocation_delta");
+    expect(result.pool.memoryBudgetEnforcement).toBe("node_invocation_delta");
     expect(result.pool.activeModelInvocations).toBe(0);
   });
 
@@ -1295,6 +1372,7 @@ describe("logical agent pool", () => {
   it("emits a trace, checkpoints completed work, and resumes only the unfinished suffix", async () => {
     const store = createInMemoryLogicalAgentCheckpointStore<string>();
     const events: string[] = [];
+    const publishedCursors: Array<{ sequence: number; persisted: number | undefined }> = [];
     let rootRuns = 0;
     let specialistRuns = 0;
     const tasks: Array<LogicalAgentTask<{ ask: string }>> = [
@@ -1330,7 +1408,13 @@ describe("logical agent pool", () => {
       tasks,
       executor,
       checkpointStore: store,
-      eventSink: (event) => events.push(event.kind),
+      eventSink: (event) => {
+        events.push(event.kind);
+        publishedCursors.push({
+          sequence: event.sequence,
+          persisted: store.load("recoverable-run")?.lastEventSequence,
+        });
+      },
       handoffs: [
         {
           fromTaskId: "root",
@@ -1350,9 +1434,13 @@ describe("logical agent pool", () => {
       completedTaskIds: ["root"],
     });
     const firstCheckpoint = store.load("recoverable-run");
-    expect(firstCheckpoint?.lastEventSequence).toBe(
-      first.events.find((event) => event.kind === "checkpoint_saved")?.sequence,
-    );
+    expect(firstCheckpoint?.lastEventSequence).toBe(first.events.at(-1)?.sequence);
+    expect(publishedCursors[0].persisted).toBeUndefined();
+    expect(
+      publishedCursors
+        .filter((entry) => entry.persisted !== undefined)
+        .every((entry) => entry.sequence === entry.persisted),
+    ).toBe(true);
 
     const resumed = await runLogicalAgentPlan({
       runId: "recoverable-run",
@@ -1376,6 +1464,8 @@ describe("logical agent pool", () => {
     expect(resumed.resumed).toBe(true);
     expect(resumed.events[0]?.kind).toBe("run_resumed");
     expect(resumed.events[0]?.sequence).toBe((firstCheckpoint?.lastEventSequence ?? 0) + 1);
+    const combinedEvents = [...first.events, ...resumed.events];
+    expect(new Set(combinedEvents.map((event) => event.eventId)).size).toBe(combinedEvents.length);
     expect(rootRuns).toBe(1);
     expect(specialistRuns).toBe(2);
     expect(events).toContain("run_completed");

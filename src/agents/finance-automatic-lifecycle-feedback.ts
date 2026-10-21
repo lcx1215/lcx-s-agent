@@ -14,6 +14,7 @@ import {
 import {
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
+  withFinanceBrokerHistorySnapshot,
 } from "./finance-position-ledger.js";
 import { readFinancePositionManagementFeedback } from "./finance-position-management-feedback.js";
 import { readFinanceRuleReadinessState } from "./finance-rule-readiness-state.js";
@@ -507,6 +508,22 @@ export async function buildFinanceAutomaticLifecycleFeedback(
   const state = params.directory
     ? { directory: params.directory, source: "explicit" as const }
     : resolveFinanceStateDir();
+  try {
+    return await withFinanceBrokerHistorySnapshot(state.directory, () =>
+      buildLifecycleObservation(state, observedAt),
+    );
+  } catch {
+    // A shared snapshot is an optimization, never permission to skip validation.
+    // Preserve the original readers' local gaps and other usable evidence when
+    // its full-chain verification fails; those readers still reject the bad chain.
+    return buildLifecycleObservation(state, observedAt);
+  }
+}
+
+async function buildLifecycleObservation(
+  state: ReturnType<typeof resolveFinanceStateDir>,
+  observedAt: string,
+) {
   // Each reader verifies the original chain once for this call. Lazy promises preserve
   // the consumers' own failure handling and expire with this observation.
   let positions: ReturnType<typeof readFinancePositionLedger> | undefined;
@@ -631,7 +648,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
           ),
       ),
     );
-    const economicFeedback =
+    const buildEconomicFeedback = (compact = false) =>
       profitFeedback.accounts !== undefined
         ? {
             status: profitFeedback.status,
@@ -693,6 +710,62 @@ export async function buildFinanceAutomaticLifecycleFeedback(
                   omittedStrategies: Math.max(0, strategyAttribution.strategies.length - 3),
                 },
               };
+              if (compact) {
+                const economic = summary.accountEconomics;
+                // Account coverage precedes optional method/strategy detail. The source
+                // reference retains access to the original, unabridged economic evidence.
+                const compactEconomics =
+                  economic && economic.status !== "unavailable"
+                    ? {
+                        status: economic.status,
+                        sourceRef: economic.sourceRef,
+                        from: economic.from,
+                        through: economic.through,
+                        accountEquityChange: economic.accountEquityChange,
+                        inheritedGrossPnl: economic.inheritedGrossPnl,
+                        inheritedExitDecisionGrossPnl: economic.inheritedExitDecisionGrossPnl,
+                        newDecisionGrossPnl: economic.newDecisionGrossPnl,
+                        unlinkedGrossPnl: economic.unlinkedGrossPnl,
+                        unallocatedPnl: economic.unallocatedPnl,
+                        historicalCashFees: economic.historicalCashFees,
+                        historicalAssetFeeValue: economic.historicalAssetFeeValue,
+                        periodConfirmedCashFees: economic.periodConfirmedCashFees,
+                        periodFeeTimingUnknownCount: economic.periodFeeTimingUnknownCount,
+                        pendingFees: economic.pendingFees,
+                        modelBill: economic.modelBill,
+                        reconciliationRef: economic.reconciliationRef,
+                        reconciliationAt: economic.reconciliationAt,
+                        reconciliationStatus: economic.reconciliationStatus,
+                        latestCashDifference: economic.latestCashDifference,
+                        latestFeeCash: economic.latestFeeCash,
+                      }
+                    : economic;
+                return {
+                  accountId: summary.accountId,
+                  venue: summary.venue,
+                  status: summary.status,
+                  ...(economic && economic.status !== "unavailable"
+                    ? {}
+                    : {
+                        snapshotRef: summary.snapshotRef,
+                        observedAt: summary.observedAt,
+                        freshness: summary.freshness,
+                        basis: summary.basis,
+                        positionManagementMatched: summary.positionManagementMatched,
+                        issues: summary.issues,
+                        omittedIssues: summary.omittedIssues,
+                        strategyAttribution: {
+                          attributedFillCount: summary.strategyAttribution.attributedFillCount,
+                          unattributedFillCount: summary.strategyAttribution.unattributedFillCount,
+                          omittedStrategies: strategyAttribution.strategies.length,
+                        },
+                        netMatchedPnl: summary.netMatchedPnl,
+                        omittedMethods: account.methodPerformance.methods.length,
+                      }),
+                  accountEconomics: compactEconomics,
+                  omittedAccountDetails: true,
+                };
+              }
               if (summary.accountEconomics && summary.accountEconomics.status !== "unavailable") {
                 // Keep current account consequences and one exact method cohort in the same 2KB budget.
                 return {
@@ -720,6 +793,10 @@ export async function buildFinanceAutomaticLifecycleFeedback(
             executionAuthority: "none",
             reason: boundedText(profitFeedback.reason, 160),
           };
+    let economicFeedback = buildEconomicFeedback();
+    if (Buffer.byteLength(JSON.stringify(economicFeedback), "utf8") > 2000) {
+      economicFeedback = buildEconomicFeedback(true);
+    }
     if (economicFeedback.accounts !== undefined) {
       while (
         Buffer.byteLength(JSON.stringify(economicFeedback), "utf8") > 2000 &&

@@ -28,10 +28,10 @@ const policy: FinanceQuotaPolicy = {
   basis: "conservative_unknown",
 };
 
-async function setup() {
+async function setup(now: () => number = Date.now, overrides: Partial<FinanceQuotaPolicy> = {}) {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-quota-lane-"));
   roots.push(stateDir);
-  const options = { stateDir, policies: [policy], now: () => Date.now() };
+  const options = { stateDir, policies: [{ ...policy, ...overrides }], now };
   const native = vi.fn<ApiFetch>(async () => ({
     status: 200,
     ok: true,
@@ -68,6 +68,41 @@ describe("finance quota allocation by purpose", () => {
       await expect(fixture.call("production")).resolves.toBeDefined();
     }
     await expect(fixture.call("production")).rejects.toMatchObject({ kind: "budget_exhausted" });
+  });
+
+  it.each(["diagnostics", "calibration"] as const)(
+    "protects production when %s starts before the first production call",
+    async (lane) => {
+      const fixture = await setup();
+      const allowed = lane === "diagnostics" ? 6 : 8;
+      for (let index = 0; index < allowed; index += 1) {
+        await fixture.call(lane);
+      }
+      await expect(fixture.call(lane)).rejects.toThrow(/protected shares retained/u);
+      // Each call opens the original durable guard again: protection survives reopen.
+      for (let index = 0; index < 10; index += 1) {
+        await expect(fixture.call("production")).resolves.toBeDefined();
+      }
+      expect(fixture.native).toHaveBeenCalledTimes(allowed + 10);
+      expect((await fixture.readState()).events.filter((event) => event.fromReserve)).toHaveLength(
+        4,
+      );
+    },
+  );
+
+  it("recovers the full production allowance when the original day window expires", async () => {
+    let time = Date.now();
+    const fixture = await setup(() => time);
+    for (let index = 0; index < 6; index += 1) {
+      await fixture.call("diagnostics");
+    }
+    await expect(fixture.call("diagnostics")).rejects.toMatchObject({ kind: "budget_exhausted" });
+    time += day + 1;
+    for (let index = 0; index < DAY_LIMIT; index += 1) {
+      await fixture.call("production");
+    }
+    await expect(fixture.call("production")).rejects.toMatchObject({ kind: "budget_exhausted" });
+    expect(fixture.native).toHaveBeenCalledTimes(6 + DAY_LIMIT);
   });
 
   it("caps a sweep at its own share plus the shared reserve so it cannot spend production's", async () => {
@@ -151,6 +186,94 @@ describe("finance quota allocation by purpose", () => {
     const state = await fixture.readState();
     const imported = state.events.find((event) => event.source === "shared_adapter");
     expect(imported).toMatchObject({ lane: "diagnostics" });
+  });
+
+  it("charges imported probe overages to the same reserve used by calibration", async () => {
+    const time = Date.now();
+    const fixture = await setup(() => time);
+    const probeDir = financeQuotaProbesDir(fixture.stateDir);
+    await fs.mkdir(probeDir, { recursive: true });
+    await fs.writeFile(
+      path.join(probeDir, "imported-shared.json"),
+      JSON.stringify({
+        schemaVersion: "lcx_finance_quota_probe_v1",
+        provider: "shared",
+        adapterId: "shared_adapter",
+        observations: [
+          {
+            calls: Array.from({ length: 3 }, (_, index) => ({
+              operation: "http_get",
+              callId: `imported-${index}`,
+              startedAt: new Date(time - 60_000).toISOString(),
+            })),
+          },
+        ],
+      }),
+    );
+    for (let index = 0; index < 7; index += 1) {
+      await fixture.call("calibration");
+    }
+    await expect(fixture.call("calibration")).rejects.toMatchObject({ kind: "budget_exhausted" });
+    const report = await fixture.inspect();
+    expect(report.lanes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ lane: "production", remaining: 10, reserveAvailable: 0 }),
+      ]),
+    );
+    for (let index = 0; index < 10; index += 1) {
+      await fixture.call("production");
+    }
+    expect((await fixture.readState()).events).toHaveLength(DAY_LIMIT);
+    expect(fixture.native).toHaveBeenCalledTimes(17);
+  });
+
+  it.each(["rolling", "utc_day"] as const)(
+    "reports the actual %s lane expiry and recovers after reopening without a reset",
+    async (alignment) => {
+      let time = Date.parse("2026-10-19T23:59:59.000Z");
+      const fixture = await setup(() => time, {
+        windows: [
+          { limit: DAY_LIMIT, durationMs: day, ...(alignment === "utc_day" ? { alignment } : {}) },
+        ],
+      });
+      for (let index = 0; index < 6; index += 1) {
+        await fixture.call("diagnostics");
+      }
+      const delay = alignment === "rolling" ? day + 1 : 1_000;
+      await expect(fixture.call("diagnostics")).rejects.toMatchObject({
+        kind: "budget_exhausted",
+        retryAfterMs: delay,
+      });
+      time += delay - 2;
+      await expect(fixture.call("diagnostics")).rejects.toMatchObject({
+        kind: "budget_exhausted",
+        retryAfterMs: 2,
+      });
+      time += 2;
+      await fixture.call("diagnostics");
+      expect(fixture.native).toHaveBeenCalledTimes(7);
+    },
+  );
+
+  it("waits for an expiry that actually frees lane or reserve capacity", async () => {
+    let time = Date.now();
+    const fixture = await setup(() => time);
+    for (let index = 0; index < 4; index += 1) {
+      await fixture.call("calibration");
+    }
+    time += 1_000;
+    await fixture.call("production");
+    for (let index = 0; index < 6; index += 1) {
+      await fixture.call("diagnostics");
+    }
+    time += 1_000;
+    await expect(fixture.call("diagnostics")).rejects.toMatchObject({ retryAfterMs: day - 999 });
+    time += day - 1_999;
+    // Calibration's own credits expired, but diagnostics still owns the whole shared reserve.
+    await expect(fixture.call("diagnostics")).rejects.toMatchObject({ retryAfterMs: 1_000 });
+    time += 1_000;
+    await fixture.call("diagnostics");
+    expect(fixture.native).toHaveBeenCalledTimes(12);
   });
 
   it("reports each lane's share, spend and remaining budget", async () => {

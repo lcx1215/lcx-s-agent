@@ -85,10 +85,11 @@ export async function readSelfRepairMemoryRecall(options: {
   ) {
     throw new Error("self_repair_memory_scope_mismatch");
   }
-  const oldPath = path.relative(
-    path.resolve(options.workspaceDir),
-    path.resolve(previous.hands.memoryCleaner.path),
-  );
+  // Recall references use workspace-relative POSIX paths on every host.
+  const oldPath = path
+    .relative(path.resolve(options.workspaceDir), path.resolve(previous.hands.memoryCleaner.path))
+    .split(path.sep)
+    .join("/");
   if (
     oldPath !== request.correction.path ||
     !/^memory\/self-repair\/correction-downrank\/[^/]+\.md$/u.test(oldPath)

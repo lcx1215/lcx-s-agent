@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   createApiSourceGovernanceRegistry,
+  ApiCallError,
   type ApiCallReceipt,
 } from "../../src/agents/api-call-contract.ts";
 import type { FinanceDecisionMode } from "../../src/agents/finance-decision-policy.ts";
@@ -13,29 +14,26 @@ import {
   createFinanceMarketCollectionRegistry,
   resolveFinanceMarketCollectionRegistryOptionsFromEnv,
   type FinanceMarketCollectionAdapter,
+  type FinanceMarketCollectionRequest,
 } from "../../src/agents/finance-market-collection-registry.ts";
 import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
 import {
-  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
-  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
-  FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS,
-  FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
-  assertFinanceNightResearchAsOf,
-  financeNightResearchHoldingBasisSchema,
+  parseControllerResearchScope,
   readFinanceActiveStrategyResearchScope,
   readFinanceNightReviewResearchScope,
   type FinanceNightResearchInstrument,
-  type FinanceNightResearchScope,
 } from "../../src/agents/finance-night-review-context.ts";
 import {
   createFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   type FinanceRealtimeSourceAdapter,
+  type FinanceRealtimeSourceRequest,
 } from "../../src/agents/finance-realtime-source-registry.ts";
 import {
   financeScheduledResearchHandoffSchema,
   type FinanceResearchControllerHandoff,
   assertFinanceResearchRuleUse,
+  financeResearchPortfolioAbstentionSchema,
   type FinanceResearchControllerRuleUse,
 } from "../../src/agents/finance-research-portfolio-plan.js";
 import {
@@ -59,10 +57,12 @@ import {
   recordFinanceResearchResult,
   type FinanceResultRecordingHost,
 } from "../../src/agents/finance-result-recording.ts";
+import { isFinanceSourceAccessScope } from "../../src/agents/finance-source-heartbeat-state.ts";
 import {
   readFinanceSourceHeartbeat,
   type FinanceSourceHeartbeatRecord,
 } from "../../src/agents/finance-source-heartbeat.ts";
+import { withFinanceQuotaStateDir } from "../../src/agents/finance-source-quota.ts";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.ts";
 import {
   createLocalQualityHarnessAdapter,
@@ -434,170 +434,7 @@ export function assertResearchAsk(value: string): string {
   return normalized;
 }
 
-export function parseControllerResearchScope(
-  evidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>,
-  asOf: string,
-): FinanceNightResearchScope {
-  assertFinanceNightResearchAsOf(asOf);
-  const matching = evidence.filter(
-    (item) =>
-      item.id === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
-      item.source === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
-  );
-  if (
-    matching.length !== 1 ||
-    matching[0]?.id !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
-    matching[0]?.source !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE
-  ) {
-    throw new Error("--controller-research-scope requires exactly one canonical night scope item");
-  }
-  if (matching[0].timestamp !== asOf) {
-    throw new Error("controller night research scope evidence timestamp does not match --as-of");
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(matching[0].text);
-  } catch {
-    throw new Error("controller night research scope is not valid JSON");
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error("controller night research scope must be an object");
-  }
-  const scope = raw as Record<string, unknown>;
-  if (
-    scope.schemaVersion !== FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION ||
-    scope.asOf !== asOf ||
-    !Array.isArray(scope.activeStrategyIds) ||
-    scope.activeStrategyIds.some((id) => typeof id !== "string" || !id.trim()) ||
-    new Set(scope.activeStrategyIds).size !== scope.activeStrategyIds.length ||
-    !Array.isArray(scope.instruments) ||
-    scope.instruments.length === 0 ||
-    scope.instruments.length > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS
-  ) {
-    throw new Error("controller night research scope is invalid or does not match --as-of");
-  }
-  const seen = new Set<string>();
-  const isSupportedIdentity = (instrument: string, assetClass: unknown) =>
-    assetClass === "crypto"
-      ? /^[A-Z0-9]{2,12}\/USD$/u.test(instrument)
-      : assetClass === "us_equity"
-        ? /^[A-Z]{1,5}(?:\.[A-Z])?$/u.test(instrument)
-        : false;
-  const instruments = scope.instruments.map((value, index) => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      throw new Error(`controller night research scope instrument ${index} must be an object`);
-    }
-    const item = value as Record<string, unknown>;
-    if (
-      typeof item.instrument !== "string" ||
-      typeof item.assetClass !== "string" ||
-      (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
-      !Array.isArray(item.reasons) ||
-      item.reasons.length === 0 ||
-      item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy")
-    ) {
-      throw new Error(`controller night research scope instrument ${index} is malformed`);
-    }
-    const instrument = item.instrument.trim().toUpperCase();
-    if (!isSupportedIdentity(instrument, item.assetClass)) {
-      throw new Error(
-        `controller night research scope has unsupported instrument identity: ${instrument}`,
-      );
-    }
-    const key = `${item.assetClass}:${instrument}`;
-    if (!instrument || seen.has(key)) {
-      throw new Error(
-        `controller night research scope has empty or duplicate instrument: ${instrument}`,
-      );
-    }
-    seen.add(key);
-    return Object.freeze({
-      instrument,
-      assetClass: item.assetClass,
-      reasons: Object.freeze(
-        [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
-      ) as FinanceNightResearchInstrument["reasons"],
-    }) as FinanceNightResearchInstrument;
-  });
-  let coverage: FinanceNightResearchScope["coverage"];
-  if (scope.coverage !== undefined) {
-    if (
-      typeof scope.coverage !== "object" ||
-      scope.coverage === null ||
-      Array.isArray(scope.coverage)
-    ) {
-      throw new Error("controller night research scope coverage is malformed");
-    }
-    const rawCoverage = scope.coverage as Record<string, unknown>;
-    if (
-      !Number.isSafeInteger(rawCoverage.totalInstrumentCount) ||
-      (rawCoverage.totalInstrumentCount as number) <= instruments.length ||
-      rawCoverage.selectionMethod !== "held_priority_et_date_rotation_v1" ||
-      !Array.isArray(rawCoverage.deferredInstruments) ||
-      rawCoverage.deferredInstruments.length === 0 ||
-      (rawCoverage.totalInstrumentCount as number) !==
-        instruments.length + rawCoverage.deferredInstruments.length
-    ) {
-      throw new Error("controller night research scope coverage is invalid");
-    }
-    const deferredInstruments = rawCoverage.deferredInstruments.map((value, index) => {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw new Error(
-          `controller night research scope deferred instrument ${index} is malformed`,
-        );
-      }
-      const item = value as Record<string, unknown>;
-      if (
-        typeof item.instrument !== "string" ||
-        typeof item.assetClass !== "string" ||
-        (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
-        !Array.isArray(item.reasons) ||
-        item.reasons.length === 0 ||
-        item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy") ||
-        new Set(item.reasons).size !== item.reasons.length
-      ) {
-        throw new Error(
-          `controller night research scope deferred instrument ${index} is malformed`,
-        );
-      }
-      const instrument = item.instrument.trim().toUpperCase();
-      if (!isSupportedIdentity(instrument, item.assetClass)) {
-        throw new Error(
-          `controller night research scope has unsupported instrument identity: ${instrument}`,
-        );
-      }
-      const key = `${item.assetClass}:${instrument}`;
-      if (!instrument || seen.has(key)) {
-        throw new Error(
-          `controller night research scope has empty or duplicate instrument: ${instrument}`,
-        );
-      }
-      seen.add(key);
-      return Object.freeze({
-        instrument,
-        assetClass: item.assetClass,
-        reasons: Object.freeze(
-          [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
-        ) as FinanceNightResearchInstrument["reasons"],
-      }) as FinanceNightResearchInstrument;
-    });
-    coverage = Object.freeze({
-      totalInstrumentCount: rawCoverage.totalInstrumentCount as number,
-      deferredInstruments: Object.freeze(deferredInstruments),
-      selectionMethod: "held_priority_et_date_rotation_v1",
-    });
-  }
-  return Object.freeze({
-    schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
-    asOf,
-    activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
-    instruments: Object.freeze(instruments),
-    ...(scope.holdingBasis === undefined
-      ? {}
-      : { holdingBasis: financeNightResearchHoldingBasisSchema.parse(scope.holdingBasis) }),
-    ...(coverage ? { coverage } : {}),
-  });
-}
+export { parseControllerResearchScope } from "../../src/agents/finance-night-review-context.ts";
 
 export function buildControllerNightResearchTargets(params: {
   ask: string;
@@ -703,6 +540,9 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
     ...(receipt.controllerHandoff ? { controllerHandoff: receipt.controllerHandoff } : {}),
     ...(receipt.controllerRuleUse ? { controllerRuleUse: receipt.controllerRuleUse } : {}),
     ...(receipt.portfolioAbstention ? { portfolioAbstention: receipt.portfolioAbstention } : {}),
+    ...(receipt.intradayFeedbackReview
+      ? { intradayFeedbackReview: receipt.intradayFeedbackReview }
+      : {}),
     plan: {
       asOf: receipt.plan.asOf,
       expectedJobCount: receipt.plan.expectedJobCount,
@@ -805,8 +645,20 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
 }
 
 async function writePrivateReceipt(filePath: string, serialized: string): Promise<void> {
-  await fs.writeFile(filePath, serialized, { encoding: "utf8", mode: 0o600 });
-  await fs.chmod(filePath, 0o600);
+  const temporary = path.join(path.dirname(filePath), `.lcx-receipt-${randomUUID()}.tmp`);
+  const handle = await fs.open(temporary, "wx", 0o600);
+  try {
+    try {
+      await handle.writeFile(serialized, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    // Replace the path itself, never truncate/chmod a pre-existing link target.
+    await fs.rename(temporary, filePath);
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function probePrivateReceiptPath(filePath: string): Promise<void> {
@@ -816,7 +668,6 @@ async function probePrivateReceiptPath(filePath: string): Promise<void> {
   } finally {
     await handle.close();
   }
-  await fs.chmod(filePath, 0o600);
 }
 
 export async function preflightFinanceResearchReceiptDestination(
@@ -830,8 +681,10 @@ export async function preflightFinanceResearchReceiptDestination(
   await fs.mkdir(runDir, { recursive: true });
   await fs.mkdir(stateDir, { recursive: true });
   try {
-    const handle = await fs.open(latestPath, "r+");
-    await handle.close();
+    const stat = await fs.lstat(latestPath);
+    if (!stat.isFile() && !stat.isSymbolicLink()) {
+      throw new Error("research receipt destination is not a replaceable file");
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -876,7 +729,7 @@ export async function writeReceipt(
   // `memory/` is tracked, so a run archive dropped there becomes repository content.
   const runDir = path.join(root, "state", "finance-research-runs", asOf.slice(0, 10));
   const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
-  const datedPath = path.join(runDir, `${stamp}__finance-research-run.json`);
+  const datedPath = path.join(runDir, `${stamp}__${randomUUID()}__finance-research-run.json`);
   const latestPath = path.join(stateDir, "lcx-finance-research-run-latest.json");
   await fs.mkdir(runDir, { recursive: true });
   await fs.mkdir(stateDir, { recursive: true });
@@ -958,41 +811,104 @@ export function prioritizeFinanceResearchAdaptersByHeartbeat<
   }));
 }
 
-async function financeResearchAdaptersWithFreshHealth(params: {
+export async function financeResearchAdaptersWithFreshHealth(params: {
   includeYahooPublicSources: boolean;
   financeStateDir?: string;
   workspaceDir: string;
   observedAt: string;
+  registryOptions?: ReturnType<typeof buildFinanceResearchRegistryOptions>;
 }): Promise<{
   realtimeAdapters: FinanceRealtimeSourceAdapter[];
   collectionAdapters: FinanceMarketCollectionAdapter[];
 }> {
   const { realtimeRegistryOptions, collectionRegistryOptions } =
-    buildFinanceResearchRegistryOptions(params.includeYahooPublicSources);
+    params.registryOptions ?? buildFinanceResearchRegistryOptions(params.includeYahooPublicSources);
   const stateDirectory = resolveFinanceStateDir({
     ...(params.financeStateDir ? { directory: params.financeStateDir } : {}),
     workspaceDir: params.workspaceDir,
   }).directory;
-  let endpointRecords: Readonly<
-    Record<string, Pick<FinanceSourceHeartbeatRecord, "checkedAt" | "status">>
-  > = {};
+  let endpointRecords: Readonly<Record<string, FinanceSourceHeartbeatRecord>> = {};
   try {
     const heartbeat = await readFinanceSourceHeartbeat({ directory: stateDirectory });
     endpointRecords = heartbeat.endpointRecords ?? {};
   } catch {
     // Unavailable health history preserves the configured source priority.
   }
+  const checkAccess = (adapterId: string, scope: () => string | undefined) => {
+    const record = endpointRecords[adapterId];
+    const now = Date.now();
+    if (
+      !record ||
+      record.adapterId !== adapterId ||
+      !["degraded", "unhealthy"].includes(record.status) ||
+      !["http_error", "forbidden"].includes(record.reason) ||
+      ![401, 402, 403].includes(record.httpStatus ?? 0) ||
+      record.attempts < 1 ||
+      !isFinanceSourceAccessScope(record.accessScope)
+    ) {
+      return;
+    }
+    const checkedAt = Date.parse(record.checkedAt);
+    const nextCheckAt = Date.parse(record.nextCheckAt);
+    if (
+      !Number.isFinite(checkedAt) ||
+      !Number.isFinite(nextCheckAt) ||
+      checkedAt > now ||
+      now - checkedAt > FINANCE_SOURCE_HEALTH_MAX_AGE_MS ||
+      nextCheckAt <= now
+    ) {
+      return;
+    }
+    let fingerprint: string | undefined;
+    try {
+      fingerprint = scope();
+    } catch {
+      return;
+    }
+    if (fingerprint === record.accessScope.fingerprint) {
+      // The original collect owner records this failure without reserving or dispatching HTTP.
+      return new ApiCallError(
+        record.httpStatus === 403 ? "forbidden" : "http_error",
+        record.httpStatus,
+        nextCheckAt - now,
+      );
+    }
+  };
   return {
     realtimeAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
       createFinanceRealtimeSourceRegistry(realtimeRegistryOptions),
       endpointRecords,
       params.observedAt,
-    ),
+    ).map((adapter) => ({
+      ...adapter,
+      unavailableForRequest: async (request: FinanceRealtimeSourceRequest, signal: AbortSignal) =>
+        (await adapter.unavailableForRequest?.(request, signal)) ??
+        checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request)),
+      collect: (request: FinanceRealtimeSourceRequest, signal: AbortSignal) => {
+        const error = checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        if (error) {
+          throw error;
+        }
+        return withFinanceQuotaStateDir(stateDirectory, () => adapter.collect(request, signal));
+      },
+    })),
     collectionAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
       createFinanceMarketCollectionRegistry(collectionRegistryOptions),
       endpointRecords,
       params.observedAt,
-    ),
+    ).map((adapter) => ({
+      ...adapter,
+      unavailableForRequest: async (request: FinanceMarketCollectionRequest, signal: AbortSignal) =>
+        (await adapter.unavailableForRequest?.(request, signal)) ??
+        checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request)),
+      collect: (request: FinanceMarketCollectionRequest, signal: AbortSignal) => {
+        const error = checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        if (error) {
+          throw error;
+        }
+        return withFinanceQuotaStateDir(stateDirectory, () => adapter.collect(request, signal));
+      },
+    })),
   };
 }
 
@@ -1023,6 +939,69 @@ async function writeVerifiedPortfolioPlan(
     accountId: parsed.accountId,
     venue: parsed.venue,
   };
+}
+
+/** Publish a reviewed abstention through the same capital-plan owner as positive allocations.
+ * Zero budgets withhold new entries; they do not liquidate owned positions. */
+export async function writeResearchCapitalDecision(
+  filePath: string,
+  params: {
+    asOf: string;
+    context: NonNullable<FinanceResearchRunInput["portfolioContext"]>;
+    researchReceiptId: string;
+    abstention: NonNullable<FinanceResearchRunReceipt["portfolioAbstention"]>;
+  },
+): Promise<FinancePortfolioPlanWrite> {
+  const context = financeResearchPortfolioContextSchema.parse(params.context);
+  const abstention = financeResearchPortfolioAbstentionSchema.parse(params.abstention);
+  return writeVerifiedPortfolioPlan(filePath, {
+    asOf: params.asOf,
+    validUntil: new Date(Date.parse(params.asOf) + context.validityMinutes * 60_000).toISOString(),
+    accountId: context.accountId,
+    venue: context.venue,
+    conflictPolicy: context.conflictPolicy,
+    allocations: context.activeStrategyIds.map((strategyId) => ({
+      strategyId,
+      budgetFraction: 0,
+      evidenceIds: abstention.evidenceIds,
+    })),
+    candidates: [],
+    provenance: {
+      kind: "finance_research_allocation",
+      receiptId: params.researchReceiptId,
+      evidenceIds: abstention.evidenceIds,
+    },
+  });
+}
+
+/** The original operator publishes only quality-accepted capital decisions. */
+export async function publishResearchCapitalOutcome(
+  filePath: string,
+  receipt: FinanceResearchRunReceipt,
+): Promise<FinancePortfolioPlanWrite | undefined> {
+  if (
+    receipt.status !== "candidate" ||
+    !receipt.gates.every((gate) => gate.passed) ||
+    receipt.quality?.status !== "verified" ||
+    !receipt.quality.quality.passed
+  ) {
+    return undefined;
+  }
+  if (receipt.portfolioPlan && receipt.portfolioAbstention) {
+    throw new Error("conflicting research capital outcomes");
+  }
+  if (receipt.portfolioPlan) {
+    return writeVerifiedPortfolioPlan(filePath, receipt.portfolioPlan);
+  }
+  if (receipt.portfolioAbstention && receipt.plan.portfolioContext) {
+    return writeResearchCapitalDecision(filePath, {
+      asOf: receipt.plan.asOf,
+      context: receipt.plan.portfolioContext,
+      researchReceiptId: `quality:${receipt.quality.runId}`,
+      abstention: receipt.portfolioAbstention,
+    });
+  }
+  return undefined;
 }
 
 /** Read once, bind original bytes, then reuse the parsed controller inputs. */
@@ -1236,6 +1215,7 @@ export async function run(options: Options): Promise<{
       : {}),
     ...(controllerResearchScope
       ? {
+          controllerNightResearchScope: controllerResearchScope,
           targets: buildControllerNightResearchTargets({
             ask,
             horizonMonths: options.horizonMonths,
@@ -1261,6 +1241,7 @@ export async function run(options: Options): Promise<{
         ...(options.financeStateDir ? { financeStateDir: options.financeStateDir } : {}),
         workspaceDir: WORKSPACE_DIR(),
         observedAt: new Date().toISOString(),
+        registryOptions: { realtimeRegistryOptions, collectionRegistryOptions },
       })
     : undefined;
   const batchOptions = {
@@ -1412,10 +1393,9 @@ export async function run(options: Options): Promise<{
       };
     }
   }
-  const portfolioPlanWrite =
-    options.portfolioPlanOut && receipt.portfolioPlan
-      ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
-      : undefined;
+  const portfolioPlanWrite = options.portfolioPlanOut
+    ? await publishResearchCapitalOutcome(options.portfolioPlanOut, receipt)
+    : undefined;
   return {
     receipt,
     ...(written === undefined ? {} : { written }),
@@ -1440,6 +1420,7 @@ export function compactFinanceResearchSummary(
     portfolioAbstention?: FinanceResearchRunReceipt["portfolioAbstention"];
     controllerHandoff?: FinanceResearchControllerHandoff;
     controllerRuleUse?: FinanceResearchControllerRuleUse;
+    intradayFeedbackReview?: FinanceResearchRunReceipt["intradayFeedbackReview"];
   },
 ) {
   return {
@@ -1455,6 +1436,21 @@ export function compactFinanceResearchSummary(
     ...(summary.portfolioAbstention ? { portfolioAbstention: summary.portfolioAbstention } : {}),
     ...(summary.controllerHandoff ? { controllerHandoff: summary.controllerHandoff } : {}),
     ...(summary.controllerRuleUse ? { controllerRuleUse: summary.controllerRuleUse } : {}),
+    ...(summary.intradayFeedbackReview
+      ? {
+          intradayFeedbackReview: {
+            boundary: summary.intradayFeedbackReview.boundary,
+            inputCount: summary.intradayFeedbackReview.inputCount,
+            respondedCount: summary.intradayFeedbackReview.respondedCount,
+            unaddressedCount:
+              summary.intradayFeedbackReview.inputCount -
+              summary.intradayFeedbackReview.respondedCount,
+            researchAccepted: summary.intradayFeedbackReview.researchAccepted,
+            gapCount: summary.intradayFeedbackReview.gaps.length,
+            details: "original_written_research_receipt",
+          },
+        }
+      : {}),
   };
 }
 

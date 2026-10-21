@@ -28,7 +28,8 @@ import {
 
 const refreshAlpacaCollect = vi.hoisted(() => vi.fn());
 const refreshChinaCollect = vi.hoisted(() => vi.fn());
-vi.mock("./finance-market-collection-registry.js", () => ({
+vi.mock("./finance-market-collection-registry.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./finance-market-collection-registry.js")>()),
   createFinanceMarketCollectionRegistry: () => [
     { id: "alpaca_daily_history", collect: refreshAlpacaCollect },
     { id: "china_reachable_us_eod_history", collect: refreshChinaCollect },

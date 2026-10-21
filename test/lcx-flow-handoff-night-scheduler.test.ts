@@ -136,6 +136,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  barLedger.closeFinanceBarLedger(path.join(directory, "default-book"));
+  barLedger.closeFinanceBarLedger(path.join(directory, "workspace", "state", "finance"));
   if (!process.env.LCX_NIGHT_SCHEDULER_PROOF_DIR) {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -539,8 +541,10 @@ describe("original scheduler night caller → actual settlement → original cal
         sampleSource: { status: sampleSource },
         scoredFiled: { appended: 0 },
       });
-      expect(result.children).toHaveLength(1);
-      expect(result.children[0]?.exitCode).toBe(2);
+      expect(result.children).toHaveLength(2);
+      expect(result.children[0]).toMatchObject({ kind: "night", exitCode: 2 });
+      expect(result.children[1]).toMatchObject({ kind: "universe", exitCode: 2 });
+      expect(result.record.universeSelection?.status).toBe("failed");
       expect(result.record.tuningLifecycle).toBeUndefined();
       expect(result.sourceReads).toEqual([]);
       expect(transport.seriesReads).toBe(0);

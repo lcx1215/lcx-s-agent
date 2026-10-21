@@ -8,6 +8,7 @@ import {
   clearAgentRunContext,
   resetAgentRunContextForTest,
 } from "../../infra/agent-events.js";
+import * as authProfiles from "../auth-profiles.js";
 import { buildFinanceHistoricalResearchFeedback } from "../finance-research-evidence.js";
 import { runFinanceResearchRun } from "../finance-research-runner.js";
 import { createFinanceResearchRunTool } from "./finance-research-run-tool.js";
@@ -57,7 +58,7 @@ describe("platform-independent finance workflow tool", () => {
     let native: Awaited<ReturnType<typeof probeOriginalCaseflow>> | undefined;
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () => {
       if (native) {
-        throw new Error("Another research call is not justified by a Quality closure gap");
+        throw new Error("Another research call is not justified by a Quality contradiction");
       }
       native = await probeOriginalCaseflow({
         directory: root,
@@ -142,7 +143,7 @@ describe("platform-independent finance workflow tool", () => {
     });
     expect(Buffer.byteLength(JSON.stringify(feedback))).toBeLessThanOrEqual(2048);
     const gaps = feedback.qualityFeedback as string[];
-    const concrete = gaps.find((gap) => gap.includes("closure_missing_or_invalid"));
+    const concrete = gaps.find((gap) => gap.includes("offline_quality_contradiction"));
     expect(concrete).toBeDefined();
     const refs = feedback.qualityFeedbackRefs as { pointer: string; truncated: boolean }[];
     const stored = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
@@ -168,15 +169,17 @@ describe("platform-independent finance workflow tool", () => {
     expect(text.text.indexOf('"reviewFeedback"')).toBeLessThan(
       text.text.indexOf('"moduleCatalog"'),
     );
-    // Explicit offline consumer: a closure problem does not justify another research module call.
+    // Consume the native critical finding; repeated closure bookkeeping may be truncated.
     const nextDecision = {
       action: concrete ? "stop" : "diagnostic_unobserved",
       reason: concrete,
-      requiredRepair: "Repair the original Quality finding closure evidence before adoption.",
+      requiredRepair: "Resolve the original Quality contradiction before adoption.",
       sourceSha256: returned.reviewFeedback.sourceSha256,
     };
     expect(nextDecision.action).toBe("stop");
-    expect(nextDecision.reason).toContain("closure_missing_or_invalid");
+    expect(nextDecision.reason).toBe(
+      "offline_quality_contradiction: supplied evidence does not justify the draft",
+    );
     expect(nextDecision.sourceSha256).toBe(receiptSha256);
     expect(executeResearch).toHaveBeenCalledTimes(1);
     expect(network).not.toHaveBeenCalled();
@@ -291,6 +294,84 @@ describe("platform-independent finance workflow tool", () => {
     );
     expect(request.modelRouting).toBe(request.qualityModelRouting);
   });
+
+  it.each([true, false])(
+    "uses only the trusted host agent directory (present=%s) for research authentication",
+    async (hasHostDirectory) => {
+      const root = await workspace();
+      const agentDir = path.join(root, "named-agent");
+      const store = {
+        version: 1,
+        profiles: {
+          "provider:named": {
+            type: "api_key" as const,
+            provider: "provider",
+            key: "named-fixture-key",
+          },
+        },
+      };
+      const before = JSON.stringify(store);
+      const loader = vi
+        .spyOn(authProfiles, "loadAuthProfileStoreForSecretsRuntime")
+        .mockImplementation((directory) =>
+          directory === agentDir ? store : { version: 1, profiles: {} },
+        );
+      const http = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response("", { status: 401 }));
+      const executeResearch = vi.fn<typeof runFinanceResearchRun>(async (request) => {
+        const adapter = request.modelRouting?.adapters.find((entry) => entry.modelId === "current");
+        if (!adapter) {
+          throw new Error("configured research adapter missing");
+        }
+        await expect(
+          adapter.invoke(
+            {
+              callId: "named-auth",
+              correlationId: "named-auth-run",
+              taskId: "draft",
+              role: "research_draft",
+              attempt: 1,
+              provider: "provider",
+              modelId: "current",
+              payload: {
+                schemaVersion: 1,
+                runId: "named-auth-run",
+                attempt: 1,
+                stage: "draft",
+                agentId: "research_draft",
+                task: "Compare supplied evidence",
+                evidence: [],
+                sharedContext: {},
+                dependencyOutputs: {},
+                repairFeedback: [],
+                instructions: "Retain gaps",
+              },
+            },
+            new AbortController().signal,
+          ),
+        ).rejects.toMatchObject({ code: "provider_auth" });
+        return runFinanceResearchRun({ input });
+      });
+      // Parameters from the model must not select an auth directory.
+      const tool = createFinanceResearchRunTool({
+        workspaceDir: root,
+        config: fixtureConfig,
+        agentDir: hasHostDirectory ? agentDir : undefined,
+        executeResearch,
+      });
+      await tool.execute("named-auth-tool", { ...input, live: true, agentDir });
+      expect(loader).toHaveBeenCalledExactlyOnceWith(hasHostDirectory ? agentDir : undefined);
+      if (hasHostDirectory) {
+        expect(http).toHaveBeenCalledOnce();
+        const init = http.mock.calls[0]?.[1];
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer named-fixture-key");
+      } else {
+        expect(http).not.toHaveBeenCalled();
+      }
+      expect(JSON.stringify(store)).toBe(before);
+    },
+  );
 
   it("requires live evidence before dispatching module tools", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>

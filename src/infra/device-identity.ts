@@ -106,6 +106,7 @@ export function loadOrCreateDeviceIdentity(
           privateKeyPem: parsed.privateKeyPem,
         };
       }
+      throw new Error("unsupported or incomplete device identity");
     }
   } catch (err) {
     // "There is a file and I could not look inside it" is not the same as "there is no file".

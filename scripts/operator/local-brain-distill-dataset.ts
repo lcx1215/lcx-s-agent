@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { generateCases, scorePlan, toDatasetRow } from "./local-brain-generalization-generator.js";
 import {
@@ -18,6 +20,11 @@ export type DistillExample = {
     sourcePath: string;
     sourceKind: string;
     generatedAt?: string;
+    // Optional for legacy rows; never infer an absent generator contract.
+    caseSchemaVersion?: string;
+    generatorVersion?: string;
+    featureSignature?: string;
+    id?: string;
   };
 };
 
@@ -85,7 +92,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--mix-generated N] [--generated-seed N] [--generated-holdout-fraction F] [--include-blind] [--inspect] [--json]",
       "",
       "Builds MLX-LM prompt/completion JSONL for a local auxiliary thought-flow model.",
-      "--inspect reads the existing manifest and split presence without generating or writing data.",
+      "--inspect validates existing JSONL splits against the manifest without generating or writing data.",
       "",
       "--include-blind mirrors each assisted sample with a blind-format twin (bare user/task, no case hints) so a retrained adapter can pass the guard's strict --hardened --blind promotion gate.",
     ].join("\n"),
@@ -170,6 +177,27 @@ function sourceKindCounts(examples: DistillExample[]): Record<string, number> {
     acc[example.meta.sourceKind] = (acc[example.meta.sourceKind] ?? 0) + 1;
     return acc;
   }, {});
+}
+
+export function generatedProvenanceSummary(examples: DistillExample[]) {
+  const generated = examples.filter(
+    (example) => example.meta.sourceKind === "generalization_generator",
+  );
+  const counts = (field: "caseSchemaVersion" | "generatorVersion") =>
+    generated.reduce<Record<string, number>>((result, example) => {
+      const value = example.meta[field]?.trim() || "not_recorded";
+      result[value] = (result[value] ?? 0) + 1;
+      return result;
+    }, {});
+  return {
+    boundary: "declared_host_generator_metadata_not_replay_verification_or_model_learning",
+    caseSchemaVersions: counts("caseSchemaVersion"),
+    generatorVersions: counts("generatorVersion"),
+    incompleteProvenanceRows: generated.filter(
+      ({ meta }) =>
+        !meta.caseSchemaVersion || !meta.generatorVersion || !meta.featureSignature || !meta.id,
+    ).length,
+  };
 }
 
 function trustTierCounts(examples: DistillExample[]): Record<string, number> {
@@ -2650,8 +2678,8 @@ export function buildGeneratedExamples(
       prompt: row.prompt,
       completion: row.completion,
       meta: {
+        ...row.meta,
         sourcePath: `generalization-generator/${generated.id}.json`,
-        sourceKind: "generalization_generator",
       },
     });
   }
@@ -2701,10 +2729,46 @@ async function main(): Promise<void> {
         throw new Error("invalid dataset manifest");
       }
       const stored = manifest as Record<string, unknown>;
+      const counts = stored.counts as Record<string, unknown> | undefined;
       for (const split of ["train", "valid", "test"]) {
-        const stat = await fs.stat(path.join(options.outDir, `${split}.jsonl`));
+        const filename = path.join(options.outDir, `${split}.jsonl`);
+        const stat = await fs.stat(filename);
         if (!stat.isFile()) {
-          throw new Error("dataset split is not a file");
+          throw new Error("dataset_split_not_file");
+        }
+        const expected = counts?.[split];
+        if (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 0) {
+          throw new Error("dataset_split_count_invalid");
+        }
+        let observed = 0;
+        const stream = createReadStream(filename, { encoding: "utf8" });
+        const lines = createInterface({ input: stream, crlfDelay: Infinity });
+        try {
+          for await (const line of lines) {
+            if (!line.trim()) {
+              continue;
+            }
+            let row: unknown;
+            try {
+              row = JSON.parse(line);
+            } catch {
+              throw new Error("dataset_split_invalid_json");
+            }
+            if (!row || typeof row !== "object" || Array.isArray(row)) {
+              throw new Error("dataset_split_invalid_row");
+            }
+            const sample = row as Record<string, unknown>;
+            if (typeof sample.prompt !== "string" || typeof sample.completion !== "string") {
+              throw new Error("dataset_split_invalid_row");
+            }
+            observed++;
+          }
+        } finally {
+          lines.close();
+          stream.destroy();
+        }
+        if (observed !== expected) {
+          throw new Error("dataset_split_count_mismatch");
         }
       }
       summary = {
@@ -2715,11 +2779,21 @@ async function main(): Promise<void> {
         sourceKinds: stored.sourceKinds,
         outDir: options.outDir,
       };
-    } catch {
+    } catch (error) {
+      const known = new Set([
+        "dataset_split_not_file",
+        "dataset_split_count_invalid",
+        "dataset_split_invalid_json",
+        "dataset_split_invalid_row",
+        "dataset_split_count_mismatch",
+      ]);
       summary = {
         ok: false,
         mode: "inspect",
-        reason: "dataset_missing_or_unreadable",
+        reason:
+          error instanceof Error && known.has(error.message)
+            ? error.message
+            : "dataset_missing_or_unreadable",
         outDir: options.outDir,
       };
     }
@@ -2802,6 +2876,7 @@ async function main(): Promise<void> {
       boundary: "synthetic_rule_generated_train_only",
       requested: options.mixGenerated,
       admitted: generatedExamples.length,
+      provenance: generatedProvenanceSummary(generatedExamples),
       seed: options.generatedSeed,
       holdoutFraction: options.generatedHoldoutFraction,
       split: "train",

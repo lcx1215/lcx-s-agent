@@ -317,6 +317,78 @@ it("names oversized bar-source comparisons instead of exceeding the existing rea
   expect(bounded.report.injectedBytes).toBeLessThanOrEqual(12000);
 });
 
+it("carries a snapshot-only holdings cursor through backlog into the next decision", async () => {
+  const nextCursor = "cursor-".repeat(60);
+  const brokerSnapshot = {
+    status: "present",
+    accounts: [
+      {
+        accountId: "fixture",
+        snapshotRef: "a".repeat(64),
+        observedAt: perception.observedAt,
+        holdings: Array.from({ length: 4 }, (_, index) => ({
+          instrument: `FIX${index}`,
+          sourceNote: "retained-".repeat(30),
+        })),
+        holdingsPage: { nextCursor, complete: false },
+      },
+    ],
+  };
+  const spec: CentralToolSpec = {
+    ownerId: "finance_position_ledger_read",
+    name: "fixture",
+    label: "fixture",
+    description: "fixture",
+    boundary: [],
+    allowedSideEffects: [],
+    approve: () => ({ ok: true }),
+    execute: async () => ({
+      schemaVersion: "lcx_finance_position_ledger_read_v2",
+      status: "present",
+      brokerSnapshotOnly: true,
+      brokerSnapshot,
+    }),
+  };
+  const receipt = await runCentralHarnessCycle({
+    perception,
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async () => ({
+        kind: "proposed",
+        provider: "fixture",
+        modelId: "fixture",
+        plan: {
+          actions: [
+            {
+              ownerId: spec.ownerId,
+              args: { brokerAccountId: "fixture", brokerSnapshotOnly: true },
+            },
+          ],
+          note: "read missing holdings",
+        },
+      }),
+    },
+  });
+  const backlog = compactReceipts([receipt], 10);
+  expect(backlog[0].outcomes[0].outcome?.brokerSnapshot).toEqual(brokerSnapshot);
+  const next = await runCentralHarnessCycle({
+    perception: { ...perception, backlog },
+    registry: new Map([[spec.ownerId, spec]]),
+    brain: {
+      propose: async (seen: CentralPerception) => {
+        expect(seen.backlog[0]).toHaveProperty("outcomes.0.outcome.brokerSnapshot", brokerSnapshot);
+        return {
+          kind: "proposed",
+          provider: "fixture",
+          modelId: "fixture",
+          plan: { actions: [], note: "continue exact retained page cursor" },
+        };
+      },
+    },
+  });
+  expect(next.steps).toEqual([]);
+});
+
 it("retains native protection when the same read also requests historical orders", async () => {
   const brokerSnapshot = {
     status: "present",
@@ -513,6 +585,88 @@ describe("executed governance result feedback", () => {
 });
 
 describe("central cycle cancellation and failure closure", () => {
+  it("does not dispatch the brain after wall-clock expiry before timers run", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const propose = vi.fn(brain.propose);
+    const pending = runCentralHarnessCycle({
+      perception,
+      registry: registry(async () => ({})),
+      brain: { propose },
+      deadlineMs,
+    });
+    vi.setSystemTime(deadlineMs + 1);
+    const receipt = await pending;
+    expect(propose).not.toHaveBeenCalled();
+    expect(receipt.brainCall.outcome).toBe("failed");
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("rejects a brain proposal returned after wall-clock expiry without dispatching owners", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const execute = vi.fn(async () => ({ observedOk: true }));
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      registry: registry(execute),
+      brain: {
+        propose: async () => {
+          vi.setSystemTime(deadlineMs + 1);
+          return brain.propose();
+        },
+      },
+      deadlineMs,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(receipt.brainCall.outcome).toBe("failed");
+    expect(receipt.brainCall.reason).toContain("central cycle deadline exceeded");
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("rechecks wall-clock expiry after the gate before dispatching an owner", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const execute = vi.fn(async () => ({ observedOk: true }));
+    const tools = registry(execute);
+    const fixture = tools.get("fixture")!;
+    tools.set("fixture", {
+      ...fixture,
+      approve: () => {
+        vi.setSystemTime(deadlineMs + 1);
+        return { ok: true };
+      },
+    });
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: tools,
+      deadlineMs,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(receipt.steps.every((step) => step.status === "ran_failed")).toBe(true);
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("rejects late owner success and stops subsequent dispatch before timers run", async () => {
+    vi.useFakeTimers();
+    const deadlineMs = Date.now() + 10;
+    const execute = vi.fn(async () => {
+      vi.setSystemTime(deadlineMs + 1);
+      return { observedOk: true, receipt: { value: "late" } };
+    });
+    const receipt = await runCentralHarnessCycle({
+      perception,
+      brain,
+      registry: registry(execute),
+      deadlineMs,
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(receipt.steps.map((step) => step.status)).toEqual(["ran_failed", "ran_failed"]);
+    expect(receipt.steps[0].failureReason).toContain("central cycle deadline exceeded");
+    expect(receipt.steps[0].outcome).toBeUndefined();
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
   it("settles a terminal receipt when a brain ignores the deadline signal", async () => {
     vi.useFakeTimers();
     const settle = vi.fn(async () => ({

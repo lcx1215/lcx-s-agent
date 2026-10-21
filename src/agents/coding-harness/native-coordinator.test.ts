@@ -365,7 +365,7 @@ describe("native coding isolation and artifact delivery", () => {
     expect(receipt.status).toBe("cancelled");
     expect(docker.create).not.toHaveBeenCalled();
   });
-  it("blocks unrelated cwd, default branches, dirty source and private tracked files", async () => {
+  it("blocks unrelated cwd, default branches and dirty source while excluding private inputs", async () => {
     const input = await fixture();
     const other = await fixture();
     await expect(inspectNativeSource(other.cwd, input.cwd)).rejects.toThrow(
@@ -390,7 +390,141 @@ describe("native coding isolation and artifact delivery", () => {
       "-m",
       "private",
     ]);
-    await expect(inspectNativeSource(input.cwd, input.cwd)).rejects.toThrow("private output path");
+    const inspected = await inspectNativeSource(input.cwd, input.cwd);
+    expect(inspected.excludedPaths).toEqual([".env"]);
+    expect(inspected.manifest[".env"]).toBeUndefined();
+  });
+
+  it("preserves inherited repository links across editor and verifier snapshots without private inputs", async () => {
+    const input = await fixture();
+    await fs.writeFile(
+      path.join(input.cwd, ".npmrc"),
+      "//registry.invalid/:_authToken=fixture-secret\n",
+    );
+    await fs.writeFile(path.join(input.cwd, "AGENTS.md"), "repository instructions\n");
+    await fs.writeFile(path.join(input.cwd, "bundled.js"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    await fs.mkdir(path.join(input.cwd, "skills"));
+    await fs.writeFile(path.join(input.cwd, "skills", "example.md"), "skill\n");
+    await fs.mkdir(path.join(input.cwd, ".agents"));
+    await fs.symlink("../skills", path.join(input.cwd, ".agents", "skills"));
+    await fs.symlink("./AGENTS.md", path.join(input.cwd, "CLAUDE.md"));
+    await exec("git", ["-C", input.cwd, "add", "."]);
+    await exec("git", [
+      "-C",
+      input.cwd,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      "metadata",
+    ]);
+    const docker = fakeDocker();
+    const runner: NativeCodingRunner = async (args) => {
+      const view = resolveTrustedNativeCodingBinding(args.binding);
+      expect(await fs.readFile(path.join(view.workspaceDir, "CLAUDE.md"), "utf8")).toBe(
+        "repository instructions\n",
+      );
+      expect(
+        await fs.readFile(path.join(view.workspaceDir, ".agents", "skills", "example.md"), "utf8"),
+      ).toBe("skill\n");
+      expect((await fs.stat(path.join(view.workspaceDir, "bundled.js"))).size).toBe(
+        5 * 1024 * 1024 + 1,
+      );
+      await expect(fs.stat(path.join(view.workspaceDir, ".npmrc"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      return edit(args);
+    };
+    const result = await runNativeCodingHarness(
+      { ...input, verification: { argv: trustedArgv, timeoutMs: 1000 } },
+      { docker, runner },
+    );
+    expect(result.verified).toBe(true);
+    expect(result.changedPaths).toEqual(["answer.txt"]);
+    expect(await fs.readlink(path.join(result.artifactDir, "CLAUDE.md"))).toBe("./AGENTS.md");
+    expect(await fs.readlink(path.join(result.artifactDir, ".agents", "skills"))).toBe("../skills");
+    expect(await fs.readFile(result.patchPath, "utf8")).not.toContain("fixture-secret");
+    const baseline = JSON.parse(
+      await fs.readFile(path.join(path.dirname(result.receiptPath), "baseline.json"), "utf8"),
+    );
+    expect(baseline.excludedPaths).toEqual([".npmrc"]);
+  });
+
+  it.each(["new", "modified"])("rejects a %s internal editor symlink", async (kind) => {
+    const input = await fixture();
+    if (kind === "modified") {
+      await fs.symlink("answer.txt", path.join(input.cwd, "inherited"));
+      await exec("git", ["-C", input.cwd, "add", "inherited"]);
+      await exec("git", [
+        "-C",
+        input.cwd,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "link",
+      ]);
+    }
+    const result = await runNativeCodingHarness(input, {
+      docker: fakeDocker(),
+      runner: async (args) => {
+        const view = resolveTrustedNativeCodingBinding(args.binding);
+        const link = path.join(view.workspaceDir, "inherited");
+        if (kind === "modified") {
+          await fs.unlink(link);
+        }
+        await fs.symlink("./answer.txt", link);
+        return edit(args);
+      },
+    });
+    expect(result.verified).toBe(false);
+    expect(result.error).toContain("symlink rejected");
+  });
+  it("still rejects private editor output after excluding private source metadata", async () => {
+    const input = await fixture();
+    const result = await runNativeCodingHarness(input, {
+      docker: fakeDocker(),
+      runner: async (args) => {
+        const view = resolveTrustedNativeCodingBinding(args.binding);
+        await fs.writeFile(path.join(view.workspaceDir, ".npmrc"), "fixture-private-output");
+        return edit(args);
+      },
+    });
+    expect(result.verified).toBe(false);
+    expect(result.error).toContain("private output path rejected");
+  });
+  it("rejects modifications to inherited assets above the editable file limit", async () => {
+    const input = await fixture();
+    await fs.writeFile(path.join(input.cwd, "bundled.js"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    await exec("git", ["-C", input.cwd, "add", "bundled.js"]);
+    await exec("git", [
+      "-C",
+      input.cwd,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      "asset",
+    ]);
+    const result = await runNativeCodingHarness(input, {
+      docker: fakeDocker(),
+      runner: async (args) => {
+        const view = resolveTrustedNativeCodingBinding(args.binding);
+        await fs.writeFile(
+          path.join(view.workspaceDir, "bundled.js"),
+          Buffer.alloc(5 * 1024 * 1024 + 1, 1),
+        );
+        return edit(args);
+      },
+    });
+    expect(result.verified).toBe(false);
+    expect(result.error).toContain("oversized inherited asset changed");
   });
   it("hashes special object-property filenames and rejects oversized files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "native-manifest-"));

@@ -164,6 +164,37 @@ describe("original external webhook to buffered dispatcher and sender", () => {
     expect(run.statusPatches).toEqual([{ lastInboundAt: expect.any(Number) }]);
     expect(run.errors.join(" ")).toContain("offline receiver deadline");
   });
+  it.each([
+    ["cross-origin", "https://other.example/messages", null],
+    ["same-origin", "/next", "offline-token"],
+  ] as const)(
+    "protects configured auth headers on %s redirects",
+    async (_kind, location, expected) => {
+      const run = await probe();
+      const observed: Headers[] = [];
+      await sendExternalMessage({
+        account: {
+          ...run.account,
+          outboundUrl: "https://receiver.example/messages",
+          outboundAuth: "header",
+          outboundTokenHeader: "x-custom-receiver-key",
+          outboundToken: "offline-token",
+        },
+        target: "offline-conversation",
+        text: "offline redirect check",
+        fetchImpl: async (_url, init) => {
+          observed.push(new Headers(init?.headers));
+          return observed.length === 1
+            ? new Response(null, { status: 307, headers: { location } })
+            : new Response(null, { status: 200 });
+        },
+      });
+      expect(observed).toHaveLength(2);
+      expect(observed[0].get("x-custom-receiver-key")).toBe("offline-token");
+      expect(observed[1].get("x-custom-receiver-key")).toBe(expected);
+    },
+  );
+
   it("releases an unread successful receiver body before returning delivery acknowledgement", async () => {
     const cancel = vi.fn();
     const run = await probe();

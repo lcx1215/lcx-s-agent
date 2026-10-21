@@ -12,7 +12,10 @@ import {
   registerSubagentRun,
   resetSubagentRegistryForTests,
 } from "./subagent-registry.js";
-import { loadSubagentRegistryFromDisk } from "./subagent-registry.store.js";
+import {
+  loadSubagentRegistryFromDisk,
+  saveSubagentRegistryToDisk,
+} from "./subagent-registry.store.js";
 
 const { announceSpy } = vi.hoisted(() => ({
   announceSpy: vi.fn(async () => true),
@@ -310,7 +313,9 @@ describe("subagent registry persistence", () => {
     expect(entry?.requesterOrigin?.accountId).toBe("legacy-account");
 
     const after = JSON.parse(await fs.readFile(registryPath, "utf8")) as { version?: number };
-    expect(after.version).toBe(2);
+    expect(after.version).toBe(1); // Loading is read-only. Migration happens in an explicit write.
+    expect(saveSubagentRegistryToDisk(runs, new Map(runs))).toBe(true);
+    expect(JSON.parse(await fs.readFile(registryPath, "utf8")).version).toBe(2);
   });
 
   it("retries cleanup announce after a failed announce", async () => {

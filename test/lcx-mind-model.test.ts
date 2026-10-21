@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -7,7 +8,8 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
-const lcxUserHome = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
+// This local integration exam reads the account profile, not the unit-test HOME.
+const lcxUserHome = process.env.LCX_USER_HOME ?? os.userInfo().homedir;
 const localOperatorPath = path.join(lcxUserHome, ".openclaw", "bin", "lcx-local-operator-loop.sh");
 
 async function runJsonScript(script: string) {
@@ -270,10 +272,18 @@ describe("LCX mind model god-view architecture check", () => {
     if (localOperator) {
       expect(localOperator).toContain("mind_file");
       expect(localOperator).toContain("governance_file");
-      expect(localOperator).toContain("governanceAutopilot");
       expect(localOperator).toContain("context_recovery_file");
-      expect(localOperator).toContain("mindModel");
-      expect(localOperator).toContain("contextRecovery");
+      expect(localOperator).toContain("scripts/operator/lcx-local-operator-receipt-writer.cjs");
+      expect(localOperator).toContain('NODE_GOVERNANCE_FILE="$governance_file"');
+      expect(localOperator).toContain('NODE_MIND_FILE="$mind_file"');
+      expect(localOperator).toContain('NODE_CONTEXT_RECOVERY_FILE="$context_recovery_file"');
+      const receiptWriter = await fs.readFile(
+        path.join(repoRoot, "scripts/operator/lcx-local-operator-receipt-writer.cjs"),
+        "utf8",
+      );
+      expect(receiptWriter).toContain("governanceAutopilot");
+      expect(receiptWriter).toContain("mindModel");
+      expect(receiptWriter).toContain("contextRecovery");
       expect(localOperator).toContain("scripts/operator/lcx-system-doctor.ts");
       expect(localOperator).toContain("scripts/operator/lcx-governance-autopilot.ts");
       expect(localOperator).toContain("LCX_LOCAL_OPERATOR_SKIP_CLEANUP");

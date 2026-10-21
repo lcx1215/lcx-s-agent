@@ -225,7 +225,9 @@ export const sendHandlers: GatewayRequestHandlers = {
               channel,
               agentId: effectiveAgentId,
               accountId,
-              target: resolved.to,
+              // External delivery resolution returns an opaque raw conversation ID.
+              // Keep the caller's routing kind for session derivation, decode it once.
+              target: channel === "external" ? to : resolved.to,
               threadId,
             })
           : null;

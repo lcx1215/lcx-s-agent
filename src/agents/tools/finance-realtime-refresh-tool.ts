@@ -6,6 +6,7 @@ import type { FetchImpl } from "../finance-live-market-source.js";
 import {
   createFinanceRealtimeSourceRegistry,
   inspectFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   runFinanceRealtimeRefresh,
   type FinanceRealtimeSourceRequest,
 } from "../finance-realtime-source-registry.js";
@@ -86,6 +87,7 @@ export function createFinanceRealtimeRefreshTool(options?: {
   alpacaFeed?: string;
   finnhubApiKey?: string;
   twelveDataApiKey?: string;
+  includeYahooPublicSource?: boolean;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
@@ -130,6 +132,9 @@ export function createFinanceRealtimeRefreshTool(options?: {
           alpacaFeed: options?.alpacaFeed,
           finnhubApiKey: options?.finnhubApiKey,
           twelveDataApiKey: options?.twelveDataApiKey,
+          includeYahooPublicSource:
+            options?.includeYahooPublicSource ??
+            resolveFinanceRealtimeSourceRegistryOptionsFromEnv().includeYahooPublicSource,
         });
         const selectedSourceIds = params.sourceIds?.map((sourceId) => sourceId.trim());
         const adapters = selectedSourceIds

@@ -13,7 +13,7 @@ export type FinanceAccountTradingBook = Readonly<{
   schemaVersion: typeof FINANCE_ACCOUNT_TRADING_BOOK_SCHEMA;
   accountId: string;
   venue: string;
-  /** The source allowed to describe the current account book. */
+  /** The source of this historical book; current holdings require fresh broker reconciliation. */
   baselineSource: "broker_history" | "execution_receipts" | "unavailable";
   /** A position projection is never an execution receipt. */
   positions: FinancePositionLedger["positions"] | FinanceBrokerHistoryReconciliation["positions"];
@@ -53,22 +53,28 @@ export async function readFinanceAccountTradingBook(params: {
   accountId: string;
   venue: string;
   signal?: AbortSignal;
+  /** Required lower bound for historical coverage, not an as-of filter. */
+  requiredThrough?: string;
 }): Promise<FinanceAccountTradingBook> {
   params.signal?.throwIfAborted();
   // This book's broker adapter is Paper-only; never relabel its positions as another venue.
   if (params.venue !== "alpaca:paper") {
     throw new Error("account trading book requires the exact Alpaca paper venue");
   }
-  const execution = await readFinanceAccountPositionLedger(params.directory, {
-    accountId: params.accountId,
-    venue: params.venue,
-  });
+  const execution = await readFinanceAccountPositionLedger(
+    params.directory,
+    {
+      accountId: params.accountId,
+      venue: params.venue,
+    },
+    { signal: params.signal },
+  );
   params.signal?.throwIfAborted();
   const brokerHistory = await reconcileFinanceBrokerHistory(
     params.directory,
     params.accountId,
     undefined,
-    { signal: params.signal },
+    { signal: params.signal, requiredThrough: params.requiredThrough },
   );
   params.signal?.throwIfAborted();
   const orderIds = receiptOrderIds(execution.receipts);

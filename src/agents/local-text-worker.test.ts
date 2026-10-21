@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as childMemory from "../process/child-memory-budget.js";
 import { LocalTextWorker, readLocalTextWorkerSnapshot } from "./local-text-worker.js";
 const workers: LocalTextWorker[] = [];
 afterEach(async () => {
@@ -85,6 +86,11 @@ runpy.run_path(worker_path, run_name='__main__')`;
   });
   it("reads an absent host worker without assembling one", () => {
     expect(readLocalTextWorkerSnapshot()).toBeUndefined();
+  });
+  it("does not retain busy state after a synchronous spawn failure", async () => {
+    const w = new LocalTextWorker("\0", []);
+    await expect(w.invoke("dummy", 10, 2000, new AbortController().signal)).rejects.toThrow();
+    expect(w.snapshot()).toMatchObject({ pid: null, busy: false });
   });
   it("distinguishes protocol readiness from loaded weights and inference evidence", async () => {
     const w = worker();
@@ -270,4 +276,121 @@ runpy.run_path(worker_path, run_name='__main__')`;
     await w.stop();
     expect(w.snapshot().lastFailure?.code).toBe("local_worker_timeout");
   });
+
+  it("joins cancellation cleanup when aborted during the final memory sample", async () => {
+    const originalGuard = childMemory.guardChildMemory;
+    const originalRelease = childMemory.waitForChildMemoryRelease;
+    let finishSample!: (bytes: number) => void;
+    let finishCleanup!: () => void;
+    let sampled!: () => void;
+    let cleaning!: () => void;
+    const finalSample = new Promise<number>((resolve) => {
+      finishSample = resolve;
+    });
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    const sampleStarted = new Promise<void>((resolve) => {
+      sampled = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      cleaning = resolve;
+    });
+    const guardSpy = vi
+      .spyOn(childMemory, "guardChildMemory")
+      .mockImplementation((child, options) => {
+        let finalizing = false;
+        const guard = originalGuard(child, {
+          ...options,
+          readBytes: async () => {
+            if (!finalizing) {
+              return 1024;
+            }
+            sampled();
+            return finalSample;
+          },
+        });
+        return {
+          ...guard,
+          stop: () => {
+            finalizing = true;
+            return guard.stop();
+          },
+        };
+      });
+    const releaseSpy = vi
+      .spyOn(childMemory, "waitForChildMemoryRelease")
+      .mockImplementation(async (child) => {
+        cleaning();
+        await cleanup;
+        await originalRelease(child);
+      });
+    const w = worker();
+    const abort = new AbortController();
+    let settled = false;
+    try {
+      w.start();
+      await vi.waitFor(() => expect(w.snapshot().protocolReady).toBe(true));
+      const pending = w.invoke("final-sample", 10, 2000, abort.signal);
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      const rejection = expect(pending).rejects.toThrow("local_worker_cancelled");
+      await sampleStarted;
+      expect(w.snapshot()).toMatchObject({ busy: true, lastInferenceSucceededAt: null });
+      abort.abort();
+      await cleanupStarted;
+      finishSample(1024);
+      // Drain the final sample's promise chain while process cleanup remains held.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(w.snapshot().busy).toBe(true);
+      await expect(w.invoke("another", 10, 2000, new AbortController().signal)).rejects.toThrow(
+        "busy",
+      );
+      finishCleanup();
+      await rejection;
+      expect(w.snapshot()).toMatchObject({
+        pid: null,
+        busy: false,
+        lastInferenceSucceededAt: null,
+        lastFailure: { code: "local_worker_cancelled" },
+      });
+    } finally {
+      finishSample(1024);
+      finishCleanup();
+      await w.stop();
+      guardSpy.mockRestore();
+      releaseSpy.mockRestore();
+    }
+  });
+});
+
+it("checks already-resident Python memory before dispatching another request", async () => {
+  const script = `import json, sys
+allocation = bytearray(16 * 1024 * 1024)
+allocation[::4096] = bytes([1]) * (len(allocation) // 4096)
+print(json.dumps({'ready': True, 'weightsLoaded': True}), flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({'id': request['id'], 'text': '{}', 'weightsLoaded': True}), flush=True)
+`;
+  const w = new LocalTextWorker("python3", ["-u", "-c", script]);
+  workers.push(w);
+  const first = await w.invoke("first", 10, 2000, new AbortController().signal, 64);
+  expect(first.memory).toMatchObject({
+    mode: "sampled_process_tree_rss",
+    budgetBytes: 64 * 1024 * 1024,
+  });
+  expect(first.memory.peakBytes).toBeGreaterThan(16 * 1024 * 1024);
+  await expect(w.invoke("second", 10, 2000, new AbortController().signal, 4)).rejects.toThrow(
+    "memory_budget_exceeded",
+  );
+  expect(w.snapshot().pid).toBeNull();
+  expect(w.snapshot().lastInferenceSucceededAt).toBeNull();
 });

@@ -924,14 +924,42 @@ export function buildFinanceRuleReadiness(
   const conflictedKeys = new Set(
     barConflicts.map((conflict) => `${conflict.instrument.toUpperCase()}@${dayOf(conflict.at)}`),
   );
-  const bars = (options.bars ?? []).filter(
-    (bar) => !conflictedKeys.has(`${bar.instrument.toUpperCase()}@${dayOf(bar.at)}`),
-  );
+  const bars =
+    conflictedKeys.size === 0
+      ? (options.bars ?? [])
+      : (options.bars ?? []).filter(
+          (bar) => !conflictedKeys.has(`${bar.instrument.toUpperCase()}@${dayOf(bar.at)}`),
+        );
+  // Scope once per observation. Each rule still applies its own time window,
+  // validity checks and adversity calculations to the original evidence.
+  const wanted = new Set(options.rules.flatMap((rule) => rule.instruments));
+  const barsByInstrument = new Map<string, FinanceReadinessBar[]>();
+  const marksByInstrument = new Map<string, FinancePositionMark[]>();
+  if (wanted.size > 0) {
+    for (const bar of bars) {
+      if (wanted.has(bar.instrument)) {
+        const group = barsByInstrument.get(bar.instrument) ?? [];
+        group.push(bar);
+        barsByInstrument.set(bar.instrument, group);
+      }
+    }
+    for (const mark of options.marks) {
+      if (wanted.has(mark.instrument)) {
+        const group = marksByInstrument.get(mark.instrument) ?? [];
+        group.push(mark);
+        marksByInstrument.set(mark.instrument, group);
+      }
+    }
+  }
   const rules = options.rules.map((rule) =>
     buildEntry(
       rule,
-      options.marks,
-      bars,
+      [...new Set(rule.instruments)].flatMap(
+        (instrument) => marksByInstrument.get(instrument) ?? [],
+      ),
+      [...new Set(rule.instruments)].flatMap(
+        (instrument) => barsByInstrument.get(instrument) ?? [],
+      ),
       options.asOf,
       thresholds,
       minObservations,

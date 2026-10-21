@@ -10,13 +10,18 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   GENERALIZATION_CASE_SCHEMA_VERSION,
+  LEGACY_GENERALIZATION_CASE_SCHEMA_VERSION,
+  LEGACY_GENERALIZATION_GENERATOR_VERSION,
   GENERALIZATION_GENERATOR_ID,
   GENERALIZATION_GENERATOR_VERSION,
   isFeatureSignatureHeldOut,
+  isTaskFeatures,
+  replayGeneratedCase,
   type GeneralizationCaseProvenance,
 } from "./local-brain-generalization-generator.js";
 import {
@@ -93,6 +98,7 @@ type EvalCase = {
   userAsk: string;
   sourceSummary: string;
   prerequisiteCaseIds?: string[];
+  requiredTaskFamily?: string;
   requiredModules: string[];
   forbiddenModules?: string[];
   minModuleMatches: number;
@@ -266,7 +272,7 @@ function usage(): never {
       "The strict neutral promotion gate never applies hardening, retries, recovery, or case labels; it only changes the gate decision.",
       "Use --case-file only with --blind; rows must be generalization-harness JSONL and labels stay scorer-side.",
       "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
-      "Checkpoint resume is fail-closed when the model, adapter, case set, prompt mode, or contract flags change.",
+      "Checkpoint resume is fail-closed when the model, adapter, Python command, timeout, case set, prompt mode, or contract flags change.",
     ].join("\n"),
   );
 }
@@ -3758,6 +3764,8 @@ type GeneratedCaseFileRead = {
   provenance: GeneralizationCaseProvenance;
   fileSha256: string;
   fileBytes: number;
+  provenanceVerified: true;
+  taskFamilyVerified: boolean;
 };
 
 function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
@@ -3820,10 +3828,15 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
       seed: rawProvenance.seed,
       holdoutFraction: rawProvenance.holdoutFraction,
     };
+    const legacyV2 =
+      provenance.schemaVersion === LEGACY_GENERALIZATION_CASE_SCHEMA_VERSION &&
+      provenance.generatorVersion === LEGACY_GENERALIZATION_GENERATOR_VERSION;
+    const currentV3 =
+      provenance.schemaVersion === GENERALIZATION_CASE_SCHEMA_VERSION &&
+      provenance.generatorVersion === GENERALIZATION_GENERATOR_VERSION;
     if (
-      provenance.schemaVersion !== GENERALIZATION_CASE_SCHEMA_VERSION ||
+      (!legacyV2 && !currentV3) ||
       provenance.generator !== GENERALIZATION_GENERATOR_ID ||
-      provenance.generatorVersion !== GENERALIZATION_GENERATOR_VERSION ||
       provenance.split !== "holdout" ||
       typeof provenance.seed !== "number" ||
       !Number.isInteger(provenance.seed) ||
@@ -3846,6 +3859,35 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
     if (!isFeatureSignatureHeldOut(signature, typedProvenance.holdoutFraction)) {
       throw new Error(
         `generated case ${id || "<unknown>"} featureSignature is not in the declared holdout split at ${filePath}:${index + 1}`,
+      );
+    }
+    // Verify generator-rule consistency, including features omitted from the
+    // split signature. Declared sampling seed and file origin are not authenticated.
+    if (
+      !isTaskFeatures(record.features) ||
+      typeof record.renderSeed !== "number" ||
+      !Number.isInteger(record.renderSeed) ||
+      record.renderSeed < 0 ||
+      record.renderSeed > 0xffffffff
+    ) {
+      throw new Error(`generated case ${id} has invalid replay inputs at ${filePath}:${index + 1}`);
+    }
+    const replayed = replayGeneratedCase(record.features, record.renderSeed);
+    if (
+      record.featureSignature !== replayed.featureSignature ||
+      record.userAsk !== replayed.userAsk
+    ) {
+      throw new Error(
+        `generated case ${id} does not match generator replay at ${filePath}:${index + 1}`,
+      );
+    }
+    // v2 replays its original module/data/risk target. Rendering and split
+    // signatures are unchanged; the v3 family requirement is not retroactively
+    // certified for legacy files, and the receipt states that explicitly.
+    const { requiredTaskFamily, ...legacyTarget } = replayed.target;
+    if (!isDeepStrictEqual(target, legacyV2 ? legacyTarget : replayed.target)) {
+      throw new Error(
+        `generated case ${id} target does not match generator replay at ${filePath}:${index + 1}`,
       );
     }
     if (seen.has(id) || EVAL_CASE_BY_ID.has(id)) {
@@ -3891,6 +3933,7 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
       userAsk,
       // Generated labels remain scorer-side metadata. Blind prompts never use this summary.
       sourceSummary: "generated held-out case; target labels remain outside the prompt",
+      ...(!legacyV2 ? { requiredTaskFamily } : {}),
       requiredModules,
       forbiddenModules,
       minModuleMatches,
@@ -3908,6 +3951,8 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
     provenance: fileProvenance,
     fileSha256: createHash("sha256").update(raw, "utf8").digest("hex"),
     fileBytes: Buffer.byteLength(raw, "utf8"),
+    provenanceVerified: true,
+    taskFamilyVerified: fileProvenance.schemaVersion === GENERALIZATION_CASE_SCHEMA_VERSION,
   };
 }
 
@@ -5384,6 +5429,7 @@ function evaluate(
   return {
     ok:
       missingKeys.length === 0 &&
+      (!evalCase.requiredTaskFamily || output.task_family === evalCase.requiredTaskFamily) &&
       boundaryOk &&
       oldContextRejected &&
       matchedFinanceModules.length >= evalCase.minModuleMatches &&
@@ -5592,6 +5638,8 @@ const checkpointPath =
 const shardFingerprint = hashText(
   JSON.stringify({
     model: options.model,
+    pythonBin: options.pythonBin,
+    timeoutMs: options.timeoutMs,
     adapterPath: resolvedOptions.adapterPath ?? null,
     requestedCaseIds,
     evalCaseIds: evalCases.map((evalCase) => evalCase.id),
@@ -5623,7 +5671,7 @@ if (options.resume) {
     checkpoint.fingerprint !== shardFingerprint
   ) {
     throw new Error(
-      "eval checkpoint fingerprint mismatch; refuse to mix model, adapter, case set, prompt mode, or contract flags",
+      "eval checkpoint fingerprint mismatch; refuse to mix model, adapter, Python command, timeout, case set, prompt mode, or contract flags",
     );
   }
   const expectedCaseIds = evalCases.map((evalCase) => evalCase.id);
@@ -5975,6 +6023,18 @@ const failedCaseDiagnostics = failedCases.map((entry) => ({
   boundaryOk: entry.acceptance.boundaryOk,
   oldContextRejected: entry.acceptance.oldContextRejected,
 }));
+// Invocation mode alone cannot prove a generation outcome. Require a complete
+// observed case set whose first unassisted responses all passed strict JSON parsing.
+const modelSelfStartedJson = options.blind
+  ? !options.responsePrefill &&
+    !options.contractOnly &&
+    caseResults.length > 0 &&
+    caseResults.length === evalCases.length &&
+    caseResults.every((entry) => entry.initialGenerationStatus === "valid_json") &&
+    parseRecoveredCases.length === 0 &&
+    parseRetryCases.length === 0 &&
+    timeoutRetryCases.length === 0
+  : null;
 const result = {
   ok: failedCases.length === 0,
   boundary: "local_auxiliary_thought_flow_only",
@@ -5995,14 +6055,13 @@ const result = {
       ? "structural_prefill"
       : "unassisted"
     : null,
-  // This is invocation configuration, not an outcome. Per-case initialGenerationStatus
-  // and strict raw parsing decide whether the model actually produced JSON.
-  modelSelfStartedJson: options.blind ? !options.responsePrefill : null,
+  modelSelfStartedJson,
   caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
   caseFile: options.caseFile ?? null,
   caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
   caseFileBytes: generatedCaseFile?.fileBytes ?? null,
   caseFileProvenance: generatedCaseFile?.provenance ?? null,
+  generatedHoldoutTaskFamilyVerified: generatedCaseFile?.taskFamilyVerified === true,
   trainingSliceIdentity: trainingSliceIdentity ?? null,
   evaluationMode: options.contractOnly
     ? "contract_only"
@@ -6115,7 +6174,15 @@ if (options.receiptPath) {
     proof: {
       subsetEval: true,
       blindRawContract: options.blind,
-      generatedHoldoutProvenanceVerified: Boolean(generatedCaseFile),
+      generatedHoldoutProvenanceVerified: generatedCaseFile?.provenanceVerified === true,
+      generatedHoldoutVerificationBasis: generatedCaseFile ? "generator_rule_replay" : null,
+      generatedHoldoutTaskFamilyVerified: generatedCaseFile?.taskFamilyVerified === true,
+      generatedHoldoutTaskFamilyContract: generatedCaseFile
+        ? generatedCaseFile.taskFamilyVerified
+          ? "feature_derived_v3"
+          : "legacy_v2_not_verified"
+        : null,
+      generatedHoldoutSamplingSeedVerified: false,
       caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
       caseFileProvenance: generatedCaseFile?.provenance ?? null,
       trainingSliceRef: trainingSliceIdentity?.ref ?? null,

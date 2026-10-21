@@ -55,9 +55,10 @@ describe("createOpenClawTools plugin context", () => {
     );
   });
 
-  it("forwards configured model-fleet slots to the core research tool", () => {
+  it("forwards configured model-fleet slots and trusted agent directory to the core research tool", () => {
     financeResearchOptionsMock.mockClear();
     createOpenClawTools({
+      agentDir: "/tmp/finance-named-agent",
       config: {
         plugins: {
           entries: {
@@ -78,6 +79,7 @@ describe("createOpenClawTools plugin context", () => {
 
     expect(financeResearchOptionsMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        agentDir: "/tmp/finance-named-agent",
         slotModels: {
           fast: "provider/fast",
           reasoning: "provider/reasoning",

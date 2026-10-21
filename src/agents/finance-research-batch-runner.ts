@@ -592,6 +592,11 @@ export async function runFinanceResearchBatch(
     : controller.signal;
   const timer = setTimeout(() => controller.abort(new ApiCallError("timeout")), totalTimeoutMs);
   const startedAt = Date.now();
+  const checkDeadline = () => {
+    if (!signal.aborted && Date.now() - startedAt >= totalTimeoutMs) {
+      controller.abort(new ApiCallError("timeout"));
+    }
+  };
   const jobs: FinanceResearchBatchJob[] = [];
   const reusedJobIds: string[] = [];
   const uncertainJobIds: string[] = [];
@@ -616,6 +621,7 @@ export async function runFinanceResearchBatch(
         conflictAssessment: "not_assessed" as const,
         missingEvidence: [],
       };
+      checkDeadline();
       if (signal.aborted) {
         jobs[index] = { ...base, status: abortStatus(), missingEvidence: ["job_not_dispatched"] };
         continue;
@@ -702,13 +708,18 @@ export async function runFinanceResearchBatch(
         const transport = {
           maxSources: maxSourcesPerJob,
           maxSourceConcurrency,
-          timeoutMs: sourceTimeoutMs,
+          timeoutMs: Math.min(
+            sourceTimeoutMs,
+            Math.max(1, totalTimeoutMs - (Date.now() - startedAt)),
+          ),
           cacheMaxAgeMs: job.freshnessMaxMinutes * 60_000,
           signal,
           correlationId: job.correlationId,
           retry: { ...options.retry, attempts: retryAttempts },
           sourceGovernance: governance,
           beforeHttpDispatch: () => {
+            checkDeadline();
+            signal.throwIfAborted();
             if (
               httpDispatched >= worstCaseJobCalls ||
               (!checkpoint && reservedCallBudget >= maxApiCalls)
@@ -733,6 +744,7 @@ export async function runFinanceResearchBatch(
                 request: job.request,
                 adapters: selectedCollectionAdapters,
               });
+        checkDeadline();
         const apiCalls = receipt.sourceAttempts.flatMap((attempt) => attempt.apiCalls ?? []);
         const assessment = assessReceipt(receipt, job);
         if (options.macroSnapshotDirectory && job.kind === "collection") {
@@ -762,7 +774,11 @@ export async function runFinanceResearchBatch(
           assessment.freshnessWarnings.length > 0 ||
           assessment.conflicts.length > 0 ||
           (job.kind === "realtime" &&
-            receipt.sourceAttempts.some((attempt) => attempt.status === "failed"));
+            receipt.sourceAttempts.some(
+              (attempt) =>
+                attempt.status === "failed" &&
+                receipt.selectedSourceIds.includes(attempt.adapterId),
+            ));
         jobs[index] = {
           ...base,
           receipt,

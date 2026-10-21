@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as accountBook from "../finance-account-trading-book.js";
 import {
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   type FinanceExecutionReceipt,
@@ -12,6 +13,7 @@ import {
   appendFinancePositionMark,
   readFinancePositionLedger,
 } from "../finance-position-ledger.js";
+import * as positionStore from "../finance-position-ledger.js";
 import {
   FINANCE_STATE_DIR_ENV,
   financeBehaviourThresholdsPath,
@@ -38,6 +40,40 @@ async function storeDirectory(): Promise<string> {
   directories.push(directory);
   return directory;
 }
+
+it("rejects a cancelled ledger read before touching the filesystem", async () => {
+  const controller = new AbortController();
+  const reason = new Error("ledger cancelled before access");
+  controller.abort(reason);
+  const access = vi.spyOn(fs, "access");
+  try {
+    await expect(
+      createFinancePositionLedgerReadTool({ workspaceDir: "/unused-fixture" }).execute(
+        "cancel",
+        {},
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+    expect(access).not.toHaveBeenCalled();
+  } finally {
+    access.mockRestore();
+  }
+});
+
+it("skips the duplicate raw-record scan when curve and receipt history are not requested", async () => {
+  const directory = await storeDirectory();
+  await appendFinancePositionMark(directory, { instrument: "SPY", at: PAST, price: 100 });
+  const raw = vi.spyOn(positionStore, "readFinancePositionRecords");
+  try {
+    const result = await createFinancePositionLedgerReadTool().execute("default-read", {
+      directory,
+    });
+    expect(result.details).toMatchObject({ ok: true, recordCount: 1 });
+    expect(raw).not.toHaveBeenCalled();
+  } finally {
+    raw.mockRestore();
+  }
+});
 
 let sequence = 0;
 
@@ -126,6 +162,71 @@ type ReadPayload = {
     };
   };
 };
+
+it.each([
+  { brokerSnapshotOnly: true },
+  { brokerSnapshotCursor: "cursor" },
+  { brokerAccountId: "fixture", brokerSnapshotOnly: true, initialCapital: 100 },
+  { brokerAccountId: "fixture", brokerSnapshotOnly: true, includeBehaviour: true },
+])("rejects incompatible snapshot-only arguments before opening the book: %j", async (args) => {
+  const access = vi.spyOn(fs, "access");
+  try {
+    const result = await createFinancePositionLedgerReadTool().execute("invalid-snapshot", args);
+    expect(result.details).toMatchObject({ ok: false, status: "invalid_scope" });
+    expect(access).not.toHaveBeenCalled();
+  } finally {
+    access.mockRestore();
+  }
+});
+
+it("reads a retained holdings page without reconstructing unrelated execution history", async () => {
+  const directory = await storeDirectory();
+  const observedAt = new Date().toISOString();
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "page-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${observedAt}`,
+    cursor: "",
+    payload: [
+      {
+        observedAt,
+        positions: Array.from({ length: 9 }, (_, index) => ({ symbol: `FIX${index}`, qty: "1" })),
+        openOrders: [],
+      },
+    ],
+  });
+  const accountRead = vi.spyOn(accountBook, "readFinanceAccountTradingBook");
+  const ledgerRead = vi.spyOn(positionStore, "readFinancePositionLedger");
+  try {
+    const tool = createFinancePositionLedgerReadTool();
+    const result = await tool.execute("snapshot-page", {
+      directory,
+      brokerAccountId: "page-account",
+      brokerSnapshotOnly: true,
+    });
+    const data = result.details as {
+      brokerSnapshot: {
+        accounts: { holdingsPage: { nextCursor: string }; holdings: { instrument: string }[] }[];
+      };
+    };
+    expect(accountRead).not.toHaveBeenCalled();
+    expect(ledgerRead).not.toHaveBeenCalled();
+    expect(data.brokerSnapshot.accounts[0].holdingsPage.nextCursor).toBeTypeOf("string");
+    const next = await tool.execute("snapshot-next", {
+      directory,
+      brokerAccountId: "page-account",
+      brokerSnapshotOnly: true,
+      brokerSnapshotCursor: data.brokerSnapshot.accounts[0].holdingsPage.nextCursor,
+    });
+    expect(
+      (next.details as typeof data).brokerSnapshot.accounts[0].holdings[0].instrument,
+    ).not.toBe(data.brokerSnapshot.accounts[0].holdings[0].instrument);
+  } finally {
+    accountRead.mockRestore();
+    ledgerRead.mockRestore();
+  }
+});
 
 it("reads scoped retained native protection separately from the receipt book", async () => {
   const directory = await storeDirectory();

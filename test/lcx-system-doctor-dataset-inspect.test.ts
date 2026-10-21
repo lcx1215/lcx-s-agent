@@ -57,12 +57,12 @@ describe("doctor dataset inspection", () => {
     const contents: Record<string, string> = {
       "manifest.json": JSON.stringify({
         ok: true,
-        counts: { train: 7 },
-        sourceKinds: { fixture: 7 },
+        counts: { train: 1, valid: 1, test: 1 },
+        sourceKinds: { fixture: 3 },
       }),
-      "train.jsonl": "training sentinel\n",
-      "valid.jsonl": "validation sentinel\n",
-      "test.jsonl": "test sentinel\n",
+      "train.jsonl": JSON.stringify({ prompt: "training question", completion: "answer" }) + "\n",
+      "valid.jsonl": JSON.stringify({ prompt: "validation question", completion: "answer" }) + "\n",
+      "test.jsonl": JSON.stringify({ prompt: "test question", completion: "answer" }) + "\n",
     };
     for (const [name, text] of Object.entries(contents)) {
       fs.writeFileSync(path.join(out, name), text);
@@ -74,7 +74,7 @@ describe("doctor dataset inspection", () => {
       ok: true,
       mode: "inspect",
       storedSnapshot: true,
-      counts: { train: 7 },
+      counts: { train: 1, valid: 1, test: 1 },
     });
     expect(fs.readdirSync(out).toSorted()).toEqual(Object.keys(contents).toSorted());
     for (const [name, text] of Object.entries(contents)) {

@@ -15,6 +15,9 @@ import { resetSystemEventsForTest } from "../src/infra/system-events.js";
 import { probeOriginalLanguageReply } from "./fixtures/lcx-waterflow-language-probe.js";
 
 const model = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("../src/agents/pi-embedded-runner/run.js", () => ({
+  runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
+}));
 vi.mock("../src/agents/model-fallback.js", () => ({
   runWithModelFallback: async (params: {
     provider: string;

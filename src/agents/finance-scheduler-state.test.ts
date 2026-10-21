@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import {
+  commitFinanceSchedulerDatabaseState,
   FINANCE_SCHEDULER_DATABASE,
   readFinanceSchedulerDatabaseRuns,
 } from "./finance-scheduler-ledger.js";
@@ -471,4 +472,31 @@ it("distinguishes actual busy account work from the legacy main-cycle idle phase
   expect(inspect({ ...work, observedAt: "2026-09-22T11:55:00.000Z" }).accountWork?.status).toBe(
     "stale",
   );
+});
+
+it("reads day and night feedback from one committed scheduler snapshot", () => {
+  const oldDay = { runId: "old-day", mode: "day", status: "failed" };
+  const oldNight = { runId: "old-night", mode: "night", status: "succeeded" };
+  const nextDay = { runId: "next-day", mode: "day", status: "succeeded" };
+  const nextNight = { runId: "next-night", mode: "night", status: "failed" };
+  const body = JSON.stringify({ lastFired: {}, lastSucceeded: {}, lastStatus: {} });
+  commitFinanceSchedulerDatabaseState(directory, body, [oldDay, oldNight]);
+  const { DatabaseSync } = requireNodeSqlite();
+  // oxlint-disable-next-line typescript/unbound-method -- invoked with the native receiver via call below.
+  const original = DatabaseSync.prototype.prepare;
+  let runReads = 0;
+  const spy = vi
+    .spyOn(DatabaseSync.prototype, "prepare")
+    .mockImplementation(function (this: InstanceType<typeof DatabaseSync>, sql) {
+      if (sql.includes("FROM scheduler_runs WHERE mode=?") && ++runReads === 2) {
+        commitFinanceSchedulerDatabaseState(directory, body, [nextDay, nextNight]);
+      }
+      return original.call(this, sql);
+    });
+  try {
+    expect(readFinanceSchedulerDatabaseRuns(directory)).toEqual({ day: oldDay, night: oldNight });
+  } finally {
+    spy.mockRestore();
+  }
+  expect(readFinanceSchedulerDatabaseRuns(directory)).toEqual({ day: nextDay, night: nextNight });
 });

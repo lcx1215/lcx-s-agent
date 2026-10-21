@@ -163,6 +163,9 @@ export function reconcileQualityFindings(
       supplied && claim && !supplied.artifactQuote
         ? { ...supplied, artifactQuote: claim.text }
         : supplied;
+    const claimEvidenceIds = new Set(claim?.evidenceIds ?? []);
+    const resolutionEvidenceCitedByClaim =
+      resolution?.evidenceIds.every((id) => claimEvidenceIds.has(id)) ?? false;
     const source = reviews.find((entry) => entry.role === finding.role)?.review;
     const resolved =
       valid &&
@@ -174,7 +177,8 @@ export function reconcileQualityFindings(
       resolution.artifactQuote.trim().length > 0 &&
       text.includes(resolution.artifactQuote) &&
       resolution.evidenceIds.length > 0 &&
-      resolution.evidenceIds.every((id) => evidenceIds.has(id));
+      resolution.evidenceIds.every((id) => evidenceIds.has(id)) &&
+      resolutionEvidenceCitedByClaim;
     return {
       ...finding,
       artifactSha256: packet.artifactSha256,
@@ -195,7 +199,9 @@ export function reconcileQualityFindings(
                       : !resolution.evidenceIds.length ||
                           resolution.evidenceIds.some((id) => !evidenceIds.has(id))
                         ? "resolution_evidence_invalid"
-                        : "artifact_quote_not_found",
+                        : !resolutionEvidenceCitedByClaim
+                          ? "resolution_evidence_not_cited_by_claim"
+                          : "artifact_quote_not_found",
           }
         : {}),
       ...(reviewer ? { reviewer } : {}),

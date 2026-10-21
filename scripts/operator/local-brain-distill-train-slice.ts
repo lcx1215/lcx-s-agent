@@ -78,6 +78,7 @@ const NON_REVIEW_SOURCE_KINDS_TO_REPEAT = new Set([
   "module_learning_review_receipt",
 ]);
 const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
+  generalization_generator: "synthetic_rule_generated",
   [CURATED_SOURCE_KIND]: "gold_curated",
   [REVIEW_SOURCE_KIND]: "teacher_distillation_review",
   finance_learning_capability_apply_receipt: "workflow_receipt",

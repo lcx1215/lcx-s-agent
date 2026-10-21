@@ -10,7 +10,7 @@ import {
   CONSOLIDATION_CLUSTERS,
   CONSOLIDATED_ENTRYPOINT_FAMILIES,
   SHARED_ENTRYPOINT_OWNERS,
-} from "./lcx-flow-graph.js";
+} from "./lcx-flow-consolidation-declarations.js";
 
 type PathRule = {
   id: string;
@@ -403,6 +403,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-doctrine-consistency\.ts$/u,
       /^scripts\/operator\/lcx-external-agent-upgrade-radar\.ts$/u,
       /^scripts\/operator\/lcx-flow-graph\.ts$/u,
+      /^scripts\/operator\/lcx-flow-consolidation-declarations\.ts$/u,
       /^scripts\/operator\/lcx-github-cli-capability-inventory\.ts$/u,
       /^scripts\/operator\/lcx-governance-autopilot\.ts$/u,
       /^scripts\/operator\/lcx-head-tail-consistency\.ts$/u,
@@ -634,6 +635,7 @@ const PATH_RULES: PathRule[] = [
     lane: "external_message_visible_reply",
     patterns: [
       /^scripts\/operator\/lcx-commercial-answer-pipeline\.ts$/u,
+      /^src\/agents\/commercial-answer-pipeline\.ts$/u,
       /^scripts\/operator\/lcx-directed-daily-research-brief\.ts$/u,
       /^scripts\/operator\/lcx-external-short-intent-fuzzer\.ts$/u,
       /^scripts\/operator\/lcx-visible-answer-quality-fuzzer\.ts$/u,
@@ -993,6 +995,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/infra\/json-file\.ts$/u,
       /^src\/infra\/device-identity\.ts$/u,
       /^src\/infra\/device-auth-store\.ts$/u,
+      /^src\/discord\/monitor\/thread-bindings\.state\.ts$/u,
       /^src\/infra\/exec-approvals\.ts$/u,
       /^src\/secrets\/shared\.ts$/u,
       /^src\/agents\/pi-model-discovery\.ts$/u,
@@ -1008,6 +1011,7 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["run-changed-tests"],
     commands: [
       "pnpm vitest run src/agents/subagent-registry-store.corrupt-guard.test.ts src/browser/chrome.profile-decoration.unreadable.test.ts src/infra/device-identity.unreadable-guard.test.ts",
+      "pnpm vitest run src/discord/monitor/thread-bindings.corrupt-guard.test.ts src/discord/monitor/thread-bindings.state.identity-migration.test.ts",
       "pnpm vitest run extensions/matrix/src/matrix/credentials.identity-migration.test.ts extensions/zalouser/src/accounts.test.ts",
       "pnpm tsx scripts/operator/lcx-persistence-safety-audit.ts --json",
     ],
@@ -1122,6 +1126,9 @@ const PATH_RULES: PathRule[] = [
     lane: "local_deployment_boundary",
     patterns: [
       /^Dockerfile[\w.-]*$/u,
+      /^deploy\/cloud\/\.env\.example$/u,
+      /^docs\/install\/cloud\.md$/u,
+      /^scripts\/operator\/lcx-cloud-preflight\.ts$/u,
       /^docker-compose\.yml$/u,
       /^docker-setup\.sh$/u,
       /^setup-podman\.sh$/u,
@@ -1604,8 +1611,10 @@ async function readConsolidation(priorWork: PriorWorkResult, deadlineAt: number)
     omittedPriorReadIndices: [] as number[],
     cleanup: undefined as "local_owner_read_cleanup_unconfirmed" | undefined,
     normSource: {
-      path: "scripts/operator/lcx-flow-graph.ts",
+      path: "scripts/operator/lcx-flow-consolidation-declarations.ts",
+      compatibilityExportPath: "scripts/operator/lcx-flow-graph.ts",
       exports: declarationNames,
+      declarationHashMeaning: "sha256_of_json_export_values_not_file_bytes",
       declarationSha256: createHash("sha256")
         .update(
           JSON.stringify([

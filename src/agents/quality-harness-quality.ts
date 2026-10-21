@@ -137,13 +137,40 @@ const DIRECT_TRADE_ACTION_PATTERN =
  * Naming a position cap, or reporting a historical average, is not assigning a weight -- and the
  * risk-triage answer this project asks for is built out of exactly those sentences.
  *
- * So the percentage must sit on the allocation word itself (within 4 characters in Chinese, 10 in
- * English), and a following cap/statistic noun disqualifies it. The noun list is a deliberate
- * blocklist; the alternative -- refusing every answer that mentions a position percentage -- is what
- * was measured.
+ * Keep sizing language blocked by default; a sentence prefix cannot establish its authority.
+ * Only a reporting predicate connected to that specific sizing match distinguishes a third
+ * party's own capital plan or past holding from instructions about the reader's portfolio.
  */
 const POSITION_SIZING_PATTERN =
-  /(?:\b(?:allocate|allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation)|invest)\b[^.!?\n]{0,10}\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%[^.!?\n]{0,40}\b(?:portfolio|position|allocate|allocation)\b|(?:配置|仓位|投入|分配)(?!上限|下限|占比|比例|均值|预算|红线|约束|门槛|区间|范围)[^。！？\n]{0,4}\d+(?:\.\d+)?\s*%)/imu;
+  /\b(?:allocate|allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation)|invest)\b(?:\s+(?:should|must)\s+be)?[^.!?\n]{0,10}\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%[^.!?\n]{0,40}\b(?:portfolio|position|allocate|allocation)\b|\b(?:cap|limit)\s+(?:[A-Z][A-Z0-9.-]{1,9}|(?:(?:your|the)\s+)?(?:position|portfolio|exposure))\s+(?:at|to)\s+\d+(?:\.\d+)?\s*%/giu;
+const REPORTED_SIZING_PREFIX_PATTERN =
+  /^\s*(?:[a-z][a-z0-9.&'-]*\s+){1,8}(?:(?:plans?|intends?)\s+to|held|allocated|invested|kept)\s*$/iu;
+const REPORTED_SIZING_VALUE_PATTERN =
+  /^(?:allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation))\s+(?:was|were|has\s+(?:historically\s+)?averaged|had\s+averaged)\b/iu;
+const CHINESE_POSITION_SIZING_PATTERN =
+  /(?:配置|仓位|投入|分配)(?!上限|下限|占比|比例|均值|预算|红线|约束|门槛|区间|范围)[^。！？\n]{0,4}\d+(?:\.\d+)?\s*%/u;
+
+function hasPositionSizing(answer: string): boolean {
+  return (
+    CHINESE_POSITION_SIZING_PATTERN.test(answer) ||
+    answer.split(/(?<=[.!?;])\s+|(?<=:)\s+(?=[A-Za-z])|\n/u).some((statement) =>
+      [...statement.matchAll(POSITION_SIZING_PATTERN)].some((match) => {
+        if (/\b(?:you|your|should|must|recommend(?:ed)?|suggest(?:ed)?)\b/iu.test(statement)) {
+          return true;
+        }
+        const prefix = statement.slice(0, match.index);
+        const suffix = statement.slice(match.index + match[0].length);
+        const ownedCapital =
+          /\b(?:its|their)\s+(?:capital|budget|portfolio|position)\b/iu.test(match[0]) ||
+          /^\s+(?:of\s+)?(?:its|their)\s+(?:capital|budget|portfolio|position)\b/iu.test(suffix);
+        return (
+          !REPORTED_SIZING_VALUE_PATTERN.test(match[0]) &&
+          !(REPORTED_SIZING_PREFIX_PATTERN.test(prefix) && ownedCapital)
+        );
+      }),
+    )
+  );
+}
 /**
  * The numbers in an answer that are *values*, as opposed to parts of a name or a label.
  *
@@ -180,6 +207,44 @@ const POSITION_SIZING_PATTERN =
 const ISO_DATE_PATTERN =
   /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b/iu;
 const CHINESE_DATE_PATTERN = /\b20\d{2}年\d{1,2}月\d{1,2}日?/u;
+const ENGLISH_MONTHS = [
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+];
+// Require a delimited calendar date, not a year carrying a decimal, percent or currency unit.
+const ENGLISH_DATE_PATTERN = new RegExp(
+  `\\b(${ENGLISH_MONTHS.join("|")})\\s+(\\d{1,2}),?\\s+(20\\d{2})(?!\\.\\d)(?=\\s*(?:[,.;:!?\\n]|$))`,
+  "giu",
+);
+
+function withoutEnglishDateLiterals(text: string): string {
+  return text.replace(
+    ENGLISH_DATE_PATTERN,
+    (literal: string, month: string, day: string, year: string) => {
+      const monthIndex = ENGLISH_MONTHS.indexOf(month.toLowerCase());
+      const date = new Date(Date.UTC(Number(year), monthIndex, Number(day)));
+      return date.getUTCFullYear() === Number(year) &&
+        date.getUTCMonth() === monthIndex &&
+        date.getUTCDate() === Number(day)
+        ? " "
+        : literal;
+    },
+  );
+}
+
+const NUMBER_UNIT_PATTERN =
+  /%|USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元/iu;
+const COMPLETE_NUMBER_UNIT_PATTERN = new RegExp(`^(?:${NUMBER_UNIT_PATTERN.source})?$`, "iu");
 
 function extractDataNumbers(text: string): string[] {
   // A complete standalone UUID is an identity, not a financial quantity. Keep
@@ -188,7 +253,7 @@ function extractDataNumbers(text: string): string[] {
     /(?<![\p{L}\p{N}_$€£¥])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\p{L}\p{N}_]|\.\d|\s*(?:%|USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))/giu,
     " ",
   );
-  const withoutDateLiterals = withoutIdentifiers
+  const withoutDateLiterals = withoutEnglishDateLiterals(withoutIdentifiers)
     .replace(new RegExp(ISO_DATE_PATTERN.source, "giu"), " ")
     .replace(new RegExp(CHINESE_DATE_PATTERN.source, "gu"), " ");
   const withoutNameNumbers = withoutDateLiterals
@@ -206,7 +271,10 @@ function extractDataNumbers(text: string): string[] {
     );
   return (
     withoutNameNumbers.match(
-      /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))?/giu,
+      new RegExp(
+        `(?<!\\d)(?:[$€£¥+-]\\s*)*\\d[\\d,]*(?:\\.\\d+)?(?:\\s*(?:${NUMBER_UNIT_PATTERN.source}))?(?:[$€£¥+-]+(?![$€£¥+\\-\\d]))?`,
+        "giu",
+      ),
     ) ?? []
   ).map((value) => value.replace(/\s+/g, ""));
 }
@@ -228,12 +296,12 @@ function extractDataNumbers(text: string): string[] {
  *   - a unit conversion -- 480 美元 is not 480 元, and 480 港元 is not 480 元;
  *   - dropping a `-` sign -- `+3%` is `3%`, but `-3%` is the opposite direction.
  *
- * So: strip a leading `+` and trailing zeros after the point, and nothing else. Anything beyond
+ * So: strip a leading `+`, integer padding zeros and trailing fractional zeros. Anything beyond
  * this is a claim about the quantity, not about how it was written, and belongs to whoever decides
  * what counts as the same number -- not to a formatter.
  */
 function canonicalNumber(raw: string): string {
-  const unsigned = raw.startsWith("+") ? raw.slice(1) : raw;
+  const unsigned = (raw.startsWith("+") ? raw.slice(1) : raw).replace(/^(-?)0+(?=\d)/u, "$1");
   const point = unsigned.indexOf(".");
   if (point < 0) {
     return unsigned;
@@ -242,10 +310,9 @@ function canonicalNumber(raw: string): string {
   return fraction === "" ? unsigned.slice(0, point) : `${unsigned.slice(0, point)}.${fraction}`;
 }
 
-function normalizedNumber(value: string): string {
-  const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
-  const number = canonicalNumber(compact.match(/[+-]?\d+(?:\.\d+)?/)?.[0] ?? compact);
-  const unit = compact.includes("%")
+function numberUnit(value: string): string {
+  const compact = value.toLowerCase();
+  return compact.includes("%")
     ? "percent"
     : /(?:\$|usd|dollars?|美元)/u.test(compact)
       ? "usd"
@@ -260,13 +327,24 @@ function normalizedNumber(value: string): string {
               : /(?:¥|cny|yuan|人民币|元)/u.test(compact)
                 ? "cny"
                 : "unitless";
-  return `${number}|${unit}`;
+}
+
+function normalizedNumber(value: string): string | undefined {
+  const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
+  const amount = compact.match(/^([+-]?)([$€£¥]?)([+-]?)(\d+(?:\.\d+)?)(.*)$/u);
+  if (!amount || (amount[1] && amount[3]) || !COMPLETE_NUMBER_UNIT_PATTERN.test(amount[5])) {
+    return undefined;
+  }
+  if (amount[2] && amount[5] && numberUnit(amount[2]) !== numberUnit(amount[5])) {
+    return undefined;
+  }
+  return `${canonicalNumber(`${amount[1] || amount[3]}${amount[4]}`)}|${numberUnit(compact)}`;
 }
 
 /**
  * Whether a value in an answer is money, as opposed to a bare count or a percentage.
  *
- * The unit comes from `normalizedNumber`, which is already the single place that decides what unit a
+ * The unit comes from `numberUnit`, the shared place that decides what unit a
  * value carries -- so there is no second currency list here to drift out of step with it.
  *
  * Percentages are deliberately not money for this purpose. A percentage in a finance answer is as
@@ -280,8 +358,8 @@ function normalizedNumber(value: string): string {
  * 480 dollars) -- both still need one of the words in `CURRENT_DATA_PATTERN` to be caught.
  */
 function isMonetaryAmount(value: string): boolean {
-  const unit = normalizedNumber(value).split("|")[1];
-  return unit !== undefined && unit !== "unitless" && unit !== "percent";
+  // A malformed money/percent mixture still needs validation, not a percent exemption.
+  return numberUnit(value.replace(/%/gu, "")) !== "unitless";
 }
 
 /**
@@ -412,7 +490,9 @@ function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): bo
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
   return Boolean(
     evidence.source?.trim() &&
-    (ISO_DATE_PATTERN.test(evidence.text) || CHINESE_DATE_PATTERN.test(evidence.text)),
+    (ISO_DATE_PATTERN.test(evidence.text) ||
+      CHINESE_DATE_PATTERN.test(evidence.text) ||
+      withoutEnglishDateLiterals(evidence.text) !== evidence.text),
   );
 }
 
@@ -421,7 +501,7 @@ function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolea
 const NON_MARKET_QUANTITY = /(?<![\d.])[+-]?\d[\d,]*(?:\.\d+)?\s*(?:测试单位|秒)/gu;
 
 function nonMarketQuantityKey(value: string): string {
-  return `${normalizedNumber(value)}|${value.endsWith("秒") ? "seconds" : "test-units"}`;
+  return `${normalizedNumber(extractDataNumbers(value)[0] ?? value)}|${value.endsWith("秒") ? "seconds" : "test-units"}`;
 }
 
 function withoutGroundedNonMarketQuantities(
@@ -480,8 +560,7 @@ function validateFinanceAnswerSafety(
     request.sharedContext?.decisionMode === "conditional_trade_candidate";
   if (
     !allowsConditionalCandidate &&
-    (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer) ||
-      POSITION_SIZING_PATTERN.test(artifact.answer))
+    (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer) || hasPositionSizing(artifact.answer))
   ) {
     problems.push("final finance answer contains a direct trade action or recommendation");
   }
@@ -489,7 +568,8 @@ function validateFinanceAnswerSafety(
     problems.push("final finance answer contains an execution claim");
   }
 
-  const answerStatesMoney = extractDataNumbers(artifact.answer).some(isMonetaryAmount);
+  const rawAnswerNumbers = extractDataNumbers(artifact.answer);
+  const answerStatesMoney = rawAnswerNumbers.some(isMonetaryAmount);
   if (
     CURRENT_DATA_PATTERN.test(request.task) ||
     CURRENT_DATA_PATTERN.test(artifact.answer) ||
@@ -502,32 +582,89 @@ function validateFinanceAnswerSafety(
     // "480 美元" passed. The adoption gate already treats user-supplied numbers this way; a number
     // the reader supplied is not the answer inventing market data.
     const userSuppliedNumbers = new Set(extractDataNumbers(request.task).map(normalizedNumber));
-    const answerNumbers = extractDataNumbers(
-      withoutGroundedNonMarketQuantities(artifact, request.evidence),
-    ).filter((number) => !userSuppliedNumbers.has(normalizedNumber(number)));
+    const groundedAnswer = withoutGroundedNonMarketQuantities(artifact, request.evidence);
+    const answerAssertions = groundedAnswer
+      .split(/[。！？;；\n]|(?<=\.)\s+/u)
+      .flatMap((assertion) => {
+        const conjunctions = [
+          ...assertion.matchAll(
+            /\b(?:and|while|whereas|but)\b|以及|而|和|与|，|(?<!\d),|,(?!\d)/giu,
+          ),
+        ];
+        const clauses: string[] = [];
+        let start = 0;
+        for (const [index, conjunction] of conjunctions.entries()) {
+          const after = conjunction.index + conjunction[0].length;
+          const left = assertion.slice(start, conjunction.index);
+          const right = assertion.slice(after, conjunctions[index + 1]?.index);
+          // Keep joint subjects attached to their shared value. A new clause
+          // may start with a subject list whose value occurs after another separator.
+          if (
+            extractDataNumbers(left).length > 0 &&
+            extractDataNumbers(assertion.slice(after)).length > 0 &&
+            financeEntities(right).size > 0
+          ) {
+            clauses.push(left);
+            start = after;
+          }
+        }
+        return [...clauses, assertion.slice(start)];
+      })
+      .map((text) => ({
+        entities: [...financeEntities(text)],
+        numbers: new Set(extractDataNumbers(text).map(normalizedNumber)),
+      }));
+    const answerNumbers = [
+      ...new Set([
+        ...rawAnswerNumbers.filter((number) => normalizedNumber(number) === undefined),
+        ...extractDataNumbers(groundedAnswer),
+      ]),
+    ].filter((number) => {
+      const normalized = normalizedNumber(number);
+      return normalized === undefined || !userSuppliedNumbers.has(normalized);
+    });
     if (answerNumbers.length > 0) {
       const evidenceById = new Map(request.evidence.map((entry) => [entry.id, entry]));
       const supportedClaims = artifact.claims.filter((claim) => claim.status === "supported");
       const unsupportedNumbers = answerNumbers.filter((number) => {
         const normalized = normalizedNumber(number);
-        return !supportedClaims.some((claim) => {
-          const claimCarriesNumber = extractDataNumbers(claim.text).some(
-            (value) => normalizedNumber(value) === normalized,
-          );
-          if (!claimCarriesNumber) {
-            return false;
-          }
-          return supportingEvidenceIds(claim)
-            .map((id) => evidenceById.get(id))
-            .filter((entry): entry is QualityHarnessEvidence => entry !== undefined)
-            .some(
-              (entry) =>
-                extractDataNumbers(entry.text).some(
+        if (normalized === undefined) {
+          return true;
+        }
+        const assertions = answerAssertions.filter((assertion) =>
+          assertion.numbers.has(normalized),
+        );
+        // Keep repeated values attached to every answer assertion, rather than
+        // borrowing an unrelated claim about another instrument at the same price.
+        // A formatting break inside a number/unit retains the full context.
+        const contexts =
+          assertions.length > 0 ? assertions : [{ entities: [...financeEntities(groundedAnswer)] }];
+        return contexts.some((context) => {
+          const entities = context.entities;
+          const subjects = entities.length > 0 ? entities : [undefined];
+          return subjects.some(
+            (entity) =>
+              !supportedClaims.some((claim) => {
+                const claimCarriesNumber = extractDataNumbers(claim.text).some(
                   (value) => normalizedNumber(value) === normalized,
-                ) &&
-                hasEvidenceSourceAndTimestamp(entry) &&
-                claimMatchesEvidenceEntity(claim.text, entry.text),
-            );
+                );
+                if (!claimCarriesNumber || (entity && !financeEntities(claim.text).has(entity))) {
+                  return false;
+                }
+                return supportingEvidenceIds(claim)
+                  .map((id) => evidenceById.get(id))
+                  .filter((entry): entry is QualityHarnessEvidence => entry !== undefined)
+                  .some(
+                    (entry) =>
+                      extractDataNumbers(entry.text).some(
+                        (value) => normalizedNumber(value) === normalized,
+                      ) &&
+                      hasEvidenceSourceAndTimestamp(entry) &&
+                      (!entity || financeEntities(entry.text).has(entity)) &&
+                      claimMatchesEvidenceEntity(claim.text, entry.text),
+                  );
+              }),
+          );
         });
       });
       if (unsupportedNumbers.length > 0) {

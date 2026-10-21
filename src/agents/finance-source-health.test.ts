@@ -200,40 +200,52 @@ describe("finance source health evidence envelopes", () => {
   });
 });
 
-it("does not turn cache reads or locally rejected dispatch into recovered provider health", async () => {
-  const health = await setup({
-    old: {
-      ...receipt("gdelt_public_news", "2026-09-09T02:00:00Z"),
-      sourceAttempts: [
-        {
-          adapterId: "gdelt_public_news",
-          status: "failed",
-          apiCalls: [{ dispatchedAt: "2026-09-09T02:00:00Z" }],
-        },
-      ],
-    },
-    cached: {
-      ...receipt("gdelt_public_news"),
-      sourceAttempts: [
-        {
-          adapterId: "gdelt_public_news",
-          status: "succeeded",
-          apiCalls: [
-            {
-              operation: "http_get",
-              status: "succeeded",
-              dataAccess: { kind: "cache", fetchedAt: "2026-09-09T02:00:00Z" },
-            },
-          ],
-        },
-      ],
-    },
-  });
-  expect(health.routes.find((route) => route.id === "gdelt_public_news")?.callState).toBe(
-    "recent_failure",
-  );
-  expect(health.responseReuse.scope).toBe("process_local");
-});
+it.each([
+  { dataAccess: { kind: "cache", fetchedAt: "2026-09-09T02:00:00Z" } },
+  { transportError: "budget_exhausted" },
+  { transportError: "circuit_open" },
+])(
+  "does not turn explicitly undispatched completed receipts into provider health: %j",
+  async (nonDispatch) => {
+    const health = await setup({
+      old: {
+        ...receipt("gdelt_public_news", "2026-09-09T02:00:00Z"),
+        sourceAttempts: [
+          {
+            adapterId: "gdelt_public_news",
+            status: "failed",
+            apiCalls: [{ dispatchedAt: "2026-09-09T02:00:00Z" }],
+          },
+        ],
+      },
+      cached: {
+        ...receipt("gdelt_public_news"),
+        sourceAttempts: [
+          {
+            adapterId: "gdelt_public_news",
+            status: "succeeded",
+            apiCalls: [
+              {
+                operation: "http_get",
+                status: "succeeded",
+                finishedAt: "2026-09-09T03:30:00Z",
+                ...nonDispatch,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(health.routes.find((route) => route.id === "gdelt_public_news")?.callState).toBe(
+      "recent_failure",
+    );
+    expect(health.responseReuse.scope).toBe("process_local");
+    expect(
+      health.routes.find((route) => route.id === "gdelt_public_news")?.lastObservation
+        ?.dispatchedAt,
+    ).toBe("2026-09-09T02:00:00.000Z");
+  },
+);
 
 it("uses verified dispatch time for freshness and rejects success without dispatch proof", async () => {
   const health = await setup({

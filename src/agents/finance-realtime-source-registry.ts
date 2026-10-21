@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  type ApiCallError,
   apiSourceErrorText,
   runApiSourceCall,
   type ApiSourceGovernanceRegistry,
@@ -40,7 +41,10 @@ import {
   quoteToObservation,
   type FetchImpl,
 } from "./finance-live-market-source.js";
-import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
+import {
+  financeSourceQuotaRejectedBeforeDispatch,
+  mapFinanceSourceLanes,
+} from "./finance-source-scheduler.js";
 import {
   createAlpacaUsEquityQuoteAdapter,
   createFinnhubUsEquityQuoteAdapter,
@@ -69,6 +73,13 @@ export type FinanceRealtimeSourceAdapter = Readonly<{
   priority: number;
   /** Provider-specific, non-trading representative used only by bounded liveness probes. */
   sampleRequest?: Pick<FinanceRealtimeSourceRequest, "instrument" | "assetClass">;
+  /** Opaque identity of the actual read endpoint, query and authorization; no raw material. */
+  accessScopeForRequest?: (request: FinanceRealtimeSourceRequest) => string;
+  /** Read-only preflight; dispatch still rechecks the shared quota and access gates. */
+  unavailableForRequest?: (
+    request: FinanceRealtimeSourceRequest,
+    signal: AbortSignal,
+  ) => Promise<ApiCallError | undefined>;
   supports: (request: FinanceRealtimeSourceRequest) => boolean;
   collect: (
     request: FinanceRealtimeSourceRequest,
@@ -317,6 +328,7 @@ async function collectWithTimeout(
   request: FinanceRealtimeSourceRequest,
   options: ApiTransportOptions,
   onCollect: () => void,
+  onUnavailable: () => void,
 ): Promise<FinanceDataGatewayObservationInput> {
   return runApiSourceCall(
     {
@@ -325,7 +337,12 @@ async function collectWithTimeout(
       source: adapter.id,
       operation: "collect",
     },
-    (signal) => {
+    async (signal) => {
+      const unavailable = await adapter.unavailableForRequest?.(request, signal);
+      if (unavailable) {
+        onUnavailable();
+        throw unavailable;
+      }
       onCollect();
       return adapter.collect(request, signal);
     },
@@ -356,95 +373,120 @@ export async function runFinanceRealtimeRefresh(options: {
   if (!Number.isInteger(maxSources) || maxSources <= 0) {
     throw new Error("maxSources must be a positive integer");
   }
-  const selected = selectAdapters(candidates, maxSources, request.requireOfficialReference);
+  const excluded = new Set<string>();
+  const select = () =>
+    selectAdapters(
+      candidates.filter((adapter) => !excluded.has(adapter.id)),
+      maxSources,
+      request.requireOfficialReference,
+    );
+  let selected = select();
   const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
   const observations: FinanceDataGatewayObservationInput[] = [];
 
   let adaptersCalled = false;
   const correlationId = options.correlationId ?? randomUUID();
-  const results = await mapFinanceSourceLanes(
-    selected,
-    async (adapter) => {
-      const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
-      const observations: FinanceDataGatewayObservationInput[] = [];
-      const apiCalls: ApiCallReceipt[] = [];
-      const startedAt = Date.now();
-      try {
-        const observation = await collectWithTimeout(
-          adapter,
-          request,
-          {
-            timeoutMs,
-            cacheMaxAgeMs: Math.min(
-              options.cacheMaxAgeMs ?? Infinity,
-              (request.freshnessMaxMinutes ?? 15) * 60_000,
-            ),
-            signal: options.signal,
-            correlationId,
-            retry: options.retry,
-            beforeHttpDispatch: options.beforeHttpDispatch,
-            ...(() => {
-              const governance = options.sourceGovernance?.forSource(adapter.id);
-              return governance
-                ? {
-                    rateLimiter: governance.rateLimiter,
-                    circuitBreaker: governance.circuitBreaker,
-                  }
-                : {};
-            })(),
-            onReceipt: (receipt) => apiCalls.push(receipt),
-          },
-          () => {
-            adaptersCalled = true;
-          },
-        );
-        const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
-        const timestampedObservation = validateObservationTimestamps(
-          observation,
-          request.asOf,
-          request.asOfMode,
-        );
-        observations.push(
-          reusedAt
-            ? {
-                ...timestampedObservation,
-                observedAt: reusedAt,
-                fields: timestampedObservation.fields.map((field) => ({
-                  ...field,
-                  sourceTimestamp:
-                    field.sourceTimestamp === request.asOf ? reusedAt : field.sourceTimestamp,
-                })),
-              }
-            : timestampedObservation,
-        );
-        sourceAttempts.push({
-          adapterId: adapter.id,
-          providerName: adapter.providerName,
-          providerRole: adapter.providerRole,
-          priority: adapter.priority,
-          status: "succeeded",
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          apiCalls: [...apiCalls],
-        });
-      } catch (error) {
-        sourceAttempts.push({
-          adapterId: adapter.id,
-          providerName: adapter.providerName,
-          providerRole: adapter.providerRole,
-          priority: adapter.priority,
-          status: "failed",
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          apiCalls: [...apiCalls],
-          error: errorText(error),
-        });
+  const attempted = new Set<string>();
+  while (true) {
+    const pending = selected.filter((adapter) => !attempted.has(adapter.id));
+    if (!pending.length) {
+      break;
+    }
+    pending.forEach((adapter) => attempted.add(adapter.id));
+    const results = await mapFinanceSourceLanes(
+      pending,
+      async (adapter) => {
+        const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
+        const observations: FinanceDataGatewayObservationInput[] = [];
+        const apiCalls: ApiCallReceipt[] = [];
+        const startedAt = Date.now();
+        let preflightRejected = false;
+        try {
+          const observation = await collectWithTimeout(
+            adapter,
+            request,
+            {
+              timeoutMs,
+              cacheMaxAgeMs: Math.min(
+                options.cacheMaxAgeMs ?? Infinity,
+                (request.freshnessMaxMinutes ?? 15) * 60_000,
+              ),
+              signal: options.signal,
+              correlationId,
+              retry: options.retry,
+              beforeHttpDispatch: options.beforeHttpDispatch,
+              ...(() => {
+                const governance = options.sourceGovernance?.forSource(adapter.id);
+                return governance
+                  ? {
+                      rateLimiter: governance.rateLimiter,
+                      circuitBreaker: governance.circuitBreaker,
+                    }
+                  : {};
+              })(),
+              onReceipt: (receipt) => apiCalls.push(receipt),
+            },
+            () => {
+              adaptersCalled = true;
+            },
+            () => {
+              preflightRejected = true;
+            },
+          );
+          const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
+          const timestampedObservation = validateObservationTimestamps(
+            observation,
+            request.asOf,
+            request.asOfMode,
+          );
+          observations.push(
+            reusedAt
+              ? {
+                  ...timestampedObservation,
+                  observedAt: reusedAt,
+                  fields: timestampedObservation.fields.map((field) => ({
+                    ...field,
+                    sourceTimestamp:
+                      field.sourceTimestamp === request.asOf ? reusedAt : field.sourceTimestamp,
+                  })),
+                }
+              : timestampedObservation,
+          );
+          sourceAttempts.push({
+            adapterId: adapter.id,
+            providerName: adapter.providerName,
+            providerRole: adapter.providerRole,
+            priority: adapter.priority,
+            status: "succeeded",
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            apiCalls: [...apiCalls],
+          });
+        } catch (error) {
+          sourceAttempts.push({
+            adapterId: adapter.id,
+            providerName: adapter.providerName,
+            providerRole: adapter.providerRole,
+            priority: adapter.priority,
+            status: "failed",
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            apiCalls: [...apiCalls],
+            error: errorText(error),
+          });
+        }
+        return { sourceAttempts, observations, preflightRejected };
+      },
+      options.maxSourceConcurrency,
+    );
+    for (const result of results) {
+      sourceAttempts.push(...result.sourceAttempts);
+      observations.push(...result.observations);
+      for (const attempt of result.sourceAttempts) {
+        if (result.preflightRejected || financeSourceQuotaRejectedBeforeDispatch(attempt)) {
+          excluded.add(attempt.adapterId);
+        }
       }
-      return { sourceAttempts, observations };
-    },
-    options.maxSourceConcurrency,
-  );
-  for (const result of results) {
-    sourceAttempts.push(...result.sourceAttempts);
-    observations.push(...result.observations);
+    }
+    selected = select();
   }
 
   const baseReceipt = {

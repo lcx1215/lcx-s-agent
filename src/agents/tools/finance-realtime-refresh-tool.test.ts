@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
 import { createFinanceRealtimeRefreshTool } from "./finance-realtime-refresh-tool.js";
 
@@ -27,6 +27,52 @@ const fakeFetch: FetchImpl = async () => ({
 });
 
 describe("finance_realtime_source_refresh tool", () => {
+  beforeEach(() => vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCE", "0"));
+
+  it.each([
+    {
+      name: "enabled through the existing environment",
+      env: "1",
+      enabled: undefined,
+      visible: true,
+    },
+    { name: "enabled by the existing caller option", env: "0", enabled: true, visible: true },
+    {
+      name: "explicitly disabled despite environment opt-in",
+      env: "1",
+      enabled: false,
+      visible: false,
+    },
+    { name: "not enabled", env: "0", enabled: undefined, visible: false },
+  ])(
+    "propagates Yahoo's $name without advertising US fallbacks for FX",
+    async ({ env, enabled, visible }) => {
+      vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCE", env);
+      const fetchImpl = vi.fn<FetchImpl>();
+      const result = await createFinanceRealtimeRefreshTool({
+        workspaceDir: "/tmp/lcx-finance-yahoo-contract",
+        fetchImpl,
+        includeYahooPublicSource: enabled,
+      }).execute("yahoo-inspection", {
+        instrument: "EURUSD=X",
+        assetClass: "fx",
+        useCase: "tool_existing_source_opt_in",
+        liveFetch: false,
+        writeReceipt: false,
+      });
+      const details = result.details as {
+        candidateAdapters: Array<{ id: string }>;
+        noNetworkCalled: boolean;
+      };
+      const candidates = details.candidateAdapters.map((adapter) => adapter.id);
+      expect(candidates.includes("yahoo_public_chart")).toBe(visible);
+      expect(candidates).not.toContain("nasdaq_exchange_quote");
+      expect(candidates).not.toContain("stooq_public_daily");
+      expect(details.noNetworkCalled).toBe(true);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
   it("defaults to a no-network source inspection", async () => {
     const tool = createFinanceRealtimeRefreshTool({ workspaceDir: "/tmp/lcx-finance" });
     const result = await tool.execute("dry-1", {

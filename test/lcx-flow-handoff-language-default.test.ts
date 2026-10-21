@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sendExternalMessage } from "../extensions/external/src/send.js";
-import * as commercialOwner from "../scripts/operator/lcx-commercial-answer-pipeline.js";
 import {
   auditWorkflowHandoffs,
   type WorkflowHandoffEvidence,
 } from "../scripts/operator/lcx-flow-graph.js";
+import * as commercialOwner from "../src/agents/commercial-answer-pipeline.js";
 import * as visible from "../src/agents/visible-answer-adoption-gate.js";
 import * as replyHelpers from "../src/auto-reply/reply/agent-runner-helpers.js";
 import * as replyAgentOwner from "../src/auto-reply/reply/agent-runner.js";
@@ -22,6 +22,9 @@ import { resetSystemEventsForTest, peekSystemEvents } from "../src/infra/system-
 import { probeOriginalDefaultLanguageReply } from "./fixtures/lcx-waterflow-language-default-probe.js";
 
 const model = vi.hoisted(() => ({ invoke: vi.fn(), forbidden: [] as string[] }));
+vi.mock("../src/agents/pi-embedded-runner/run.js", () => ({
+  runEmbeddedPiAgent: (params: unknown) => model.invoke(params),
+}));
 vi.mock("../src/agents/model-fallback.js", () => ({
   runWithModelFallback: async (params: {
     provider: string;

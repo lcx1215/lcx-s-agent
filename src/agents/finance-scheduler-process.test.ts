@@ -162,3 +162,22 @@ it("passes an explicit child environment without modifying the parent", async ()
   expect(result.stdout.trim()).toBe("http://127.0.0.1:7897");
   expect(process.env.LCX_FINANCE_HTTP_PROXY).toBe(before);
 });
+
+it("rejects a child completion after wall time expires even before its timer callback", async () => {
+  const started = Date.now();
+  let jumped = false;
+  vi.spyOn(Date, "now").mockImplementation(() => {
+    if (jumped) {
+      return started + 60_000;
+    }
+    jumped = true;
+    return started;
+  });
+  const result = await runFinanceCycleProcess({
+    argv: ["-e", "console.log('late');"],
+    cwd,
+    timeoutMs: 3000,
+    killGraceMs: 10,
+  });
+  expect(result).toMatchObject({ status: "timed_out", ok: false });
+});

@@ -18,9 +18,9 @@
 //   node --import tsx scripts/operator/local-brain-generalization-harness.ts --emit-holdout-dataset 500 > gen-valid.jsonl
 // Add --with-prerequisites to interleave each hard case's simpler prerequisite.
 //
-// Each --emit-*/target JSONL row is {id, userAsk, featureSignature, provenance,
-// target:{requiredModules,...}}. The provenance is required by the neutral
-// evaluator so a hand-written row cannot masquerade as a generated holdout.
+// Each --emit-*/target JSONL row is {id, userAsk, features, renderSeed, featureSignature, provenance,
+// target:{requiredModules,...}}. The neutral evaluator replays each row through
+// the original generator rules; declared sampling seed and file origin are not authenticated.
 // Feed userAsk to Qwen, parse its JSON plan, then score with scorePlan().
 
 import {
@@ -83,9 +83,12 @@ function emit(cases: GeneratedCase[], provenance: GeneralizationCaseProvenance):
       `${JSON.stringify({
         id: c.id,
         userAsk: c.userAsk,
+        features: c.features,
+        renderSeed: c.renderSeed,
         featureSignature: c.featureSignature,
         provenance,
         target: {
+          requiredTaskFamily: c.requiredTaskFamily,
           requiredModules: c.requiredModules,
           forbiddenModules: c.forbiddenModules,
           minModuleMatches: c.minModuleMatches,

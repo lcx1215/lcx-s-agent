@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import {
+  generateCases,
+  toDatasetRow,
+} from "../scripts/operator/local-brain-generalization-generator.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -40,6 +44,43 @@ function line(sourceKind: string, sourcePath: string): string {
     meta: { sourceKind, sourcePath },
   })}\n`;
 }
+
+it("retains generated sourceKind and synthetic trust in the original offline slice", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-generated-source-kind-"));
+  try {
+    const data = path.join(root, "data");
+    const out = path.join(root, "slice");
+    await fs.mkdir(data);
+    const row = JSON.stringify(toDatasetRow(generateCases(1, { seed: 31 })[0])) + "\n";
+    for (const split of ["train", "valid", "test"]) {
+      await fs.writeFile(path.join(data, `${split}.jsonl`), row);
+    }
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-train-slice.ts",
+        "--data",
+        data,
+        "--out",
+        out,
+        "--json",
+      ],
+      { cwd: repoRoot },
+    );
+    const manifest = JSON.parse(stdout);
+    expect(manifest.sourceKinds.generalization_generator).toBe(1);
+    expect(manifest.sampleTrust.sourceTrustTierCounts.synthetic_rule_generated).toBe(1);
+    expect(manifest.sampleTrust.writtenTrustTierCounts.synthetic_rule_generated).toBe(1);
+    expect(
+      JSON.parse((await fs.readFile(path.join(out, "train.jsonl"), "utf8")).trim()).meta.sourceKind,
+    ).toBe("generalization_generator");
+    expect(await fs.readFile(path.join(out, "test.jsonl"), "utf8")).toBe(row);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 describe("local brain distill train slice", () => {
   it("repairs only training targets and preserves held-out data and source provenance", async () => {

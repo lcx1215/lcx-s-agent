@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "owner": "local-brain-training-plan",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "reason": "Separate historical local-adapter failures from current repair eligibility and distinguish unobserved processes from observed idle.",
+  "changes": {
+    "preservedNodesAndEdges": true,
+    "ontology": "No canonical ontology relation or state changes. Existing repair_now, watch and blocked_by_owner_gate retain their meanings.",
+    "additiveOwnerObservations": ["activeProcessObservation", "localModelLaneRelevance"],
+    "historicalEligibility": "Only explicit remote model selections, disabled teacher authority and an observed empty training-process snapshot make old local failures historical. Original failure reasons and promotion verdicts remain unchanged.",
+    "unknownProcessDecision": "The existing migration plan can report blocked_process_observation; skipped or failed process checks never supply idle-only execution commands.",
+    "consumers": [
+      "scripts/operator/lcx-problem-cluster-radar.ts",
+      "scripts/operator/lcx-governance-autopilot.ts"
+    ],
+    "canonicalPredicate": "scripts/operator/local-brain-training-plan.ts#isHistoricalLocalModelLaneSnapshot"
+  },
+  "compatibility": "The existing plan envelope remains readable. Missing, unknown or contradictory relevance fields preserve prior repair and promotion gates. Current local selections and active work never gain a historical exemption. Independent module-learning and Skill signals keep their original owners.",
+  "rollback": "Restore the owner and its two consumers together. Do not rewrite historical evals, account state, bindings or source configuration.",
+  "nonEffects": [
+    "no training, model or provider configuration change",
+    "no external binding, supervisor or restart permission",
+    "no automation, research replay or order dispatch",
+    "no promotion, learned capability or natural adoption claim"
+  ],
+  "verification": [
+    "test/local-brain-training-plan.test.ts",
+    "test/lcx-problem-cluster-radar.test.ts",
+    "test/lcx-governance-autopilot.test.ts"
+  ],
+  "remainingGap": "Natural finance feedback adoption, configuration publication, budget execution, source-timeout recovery and long-running outcomes require original runtime receipts. Legacy external binding applicability is not migrated or approved here."
+}

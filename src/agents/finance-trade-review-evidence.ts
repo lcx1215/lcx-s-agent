@@ -1209,8 +1209,29 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             boundary: brokerFeedbackBoundary,
           };
           try {
-            evidence.summary = summarizeEvidence(output, priority);
-            if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048) {
+            try {
+              evidence.summary = summarizeEvidence(output, priority);
+            } catch {
+              evidence.summary = "";
+            }
+            if (
+              !evidence.summary ||
+              Buffer.byteLength(evidence.summary, "utf8") > 1600 ||
+              Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048
+            ) {
+              // Generic summaries reserve room for optional fields. A complete
+              // required broker projection may still fit the actual envelope:
+              // retain its economics and provenance before dropping the result.
+              const outputKeys = output && typeof output === "object" ? Object.keys(output) : [];
+              evidence.summary = JSON.stringify({
+                result: priority,
+                omittedKeys: outputKeys.filter((key) => !Object.hasOwn(priority, key)),
+              });
+            }
+            if (
+              Buffer.byteLength(evidence.summary, "utf8") > 1600 ||
+              Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048
+            ) {
               throw new Error("broker feedback projection exceeds budget");
             }
           } catch {

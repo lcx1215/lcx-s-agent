@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { assessFinanceHistoryCoverage } from "./finance-history-coverage.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import { runFinanceResearchBatch } from "./finance-research-batch-runner.js";
 const request = {
   instrument: "SPY",
   assetClass: "equity",
@@ -97,17 +98,93 @@ it("requires every UTC day for crypto and does not combine fragmented providers"
   ).toBe("incomplete");
 });
 
-it("excludes the January 9, 2025 mourning closure without hiding adjacent missing sessions", () => {
-  const historical = {
+// NYSE's published exceptional closure supplements its regular holiday calendar.
+it("does not require an equity bar on the 2025 national day of mourning", () => {
+  const window = {
     ...request,
     fromDate: "2025-01-08",
     toDate: "2025-01-10",
     asOf: "2025-01-11T00:00:00Z",
   };
   expect(
-    assessFinanceHistoryCoverage(historical, [row("2025-01-08"), row("2025-01-10")]),
+    assessFinanceHistoryCoverage(window, [row("2025-01-08"), row("2025-01-10")]),
   ).toMatchObject({ status: "complete", expectedDays: 2 });
-  expect(
-    assessFinanceHistoryCoverage(historical, [row("2025-01-10")]).providers[0].missing,
-  ).toEqual(["2025-01-08"]);
+  expect(assessFinanceHistoryCoverage(window, [row("2025-01-08")]).providers[0].missing).toEqual([
+    "2025-01-10",
+  ]);
+});
+
+const julyWindow = {
+  ...request,
+  fromDate: "2026-07-02",
+  toDate: "2026-07-06",
+  asOf: "2026-07-07T00:00:00Z",
+};
+const usHolidayRows = [row("2026-07-02"), row("2026-07-06")];
+
+it.each([
+  { instrument: "HK.00700", assetClass: "equity" },
+  { instrument: "SH.600519", assetClass: "stock" },
+  { instrument: "SZ.000001", assetClass: "common_stock" },
+  { instrument: "0700.HK", assetClass: "equity" },
+  { instrument: "600519.SS", assetClass: "stock" },
+  { instrument: "000001.SZ", assetClass: "common_stock" },
+  { instrument: "300135.SHZ", assetClass: "equity" },
+  { instrument: "VOD.L", assetClass: "equity" },
+])("does not certify a foreign $instrument window using NYSE holidays", (market) => {
+  expect(assessFinanceHistoryCoverage({ ...julyWindow, ...market }, usHolidayRows)).toEqual({
+    status: "unverified",
+    gaps: ["historical_window_coverage_unverified"],
+    expectedDays: 0,
+    providers: [],
+  });
+});
+
+it.each(["AAPL", "BRK.B", "BRK-B", "US.AAPL", "US.BRK.B"])(
+  "retains the existing US calendar for $instrument",
+  (instrument) => {
+    expect(
+      assessFinanceHistoryCoverage({ ...julyWindow, instrument }, usHolidayRows),
+    ).toMatchObject({ status: "complete", expectedDays: 2 });
+  },
+);
+
+it("keeps the original batch job under review when a foreign window lacks calendar authority", async () => {
+  const packet = await runFinanceResearchBatch({
+    asOf: julyWindow.asOf,
+    useCase: "history-calendar-contract",
+    targets: [
+      {
+        id: "hk",
+        instrument: "HK.00700",
+        assetClass: "equity",
+        realtime: false,
+        collections: [
+          {
+            collection: "eod_history",
+            fromDate: julyWindow.fromDate,
+            toDate: julyWindow.toDate,
+            freshnessMaxMinutes: 10_000,
+          },
+        ],
+      },
+    ],
+    realtimeAdapters: [],
+    collectionAdapters: [
+      {
+        id: "history-calendar-fixture",
+        providerName: "fixture",
+        providerRole: "primary_market_data",
+        priority: 1,
+        supports: (request) => request.collection === "eod_history",
+        collect: async () =>
+          usHolidayRows.map((record) => ({ ...record, observedAt: julyWindow.asOf })),
+      },
+    ],
+  });
+  expect(packet.jobs[0]).toMatchObject({
+    status: "needs_review",
+    historyCoverage: { status: "unverified", gaps: ["historical_window_coverage_unverified"] },
+    missingEvidence: expect.arrayContaining(["historical_window_coverage_unverified"]),
+  });
 });

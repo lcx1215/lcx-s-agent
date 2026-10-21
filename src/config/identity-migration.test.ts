@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createLcxIdentityCronStoreMigration,
+  readCronStoreForIdentityMigration,
+  writeCronStoreForIdentityMigration,
+} from "../cron/identity-migration.js";
+import {
   createLcxIdentityMigrationTarget,
   createLcxIdentityWriterPathContract,
   LCX_IDENTITY_WRITER_NAMES,
@@ -14,7 +19,12 @@ import {
   writeLcxIdentityMigrationCompletionMarker,
   writeLcxIdentityWriterRawWithReceipt,
 } from "./identity-migration.js";
-import { resolveLcxIdentityMigrationPlan } from "./paths.js";
+import { createLcxIdentityMigrationConfigIO } from "./io.js";
+import {
+  isLcxIdentityMigrationComplete,
+  resolveLcxIdentityMigrationPlan,
+  resolveStateDir,
+} from "./paths.js";
 import {
   appendSessionTranscriptForIdentityMigration,
   createLcxIdentitySessionMigration,
@@ -56,6 +66,147 @@ function migrationPlan(root: string) {
 }
 
 describe("LCX identity migration writer contract", () => {
+  it("activates the canonical root after genuine receipts cover the registered inventory", async () => {
+    await withTempRoot(async (root) => {
+      const legacyStateDir = path.join(root, ".openclaw");
+      await writeRaw(path.join(legacyStateDir, "openclaw.json"), "{}\n");
+      const plan = migrationPlan(root);
+      const writerReceipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const readName = writer === "config" ? "openclaw.json" : `${writer}.state`;
+          const writeName = writer === "config" ? "lcx.json" : `${writer}.state`;
+          const readPath = path.join(legacyStateDir, readName);
+          const raw = writer === "config" ? "{}\n" : `${writer}: legacy state\n`;
+          await writeRaw(readPath, raw);
+          return writeLcxIdentityWriterRawWithReceipt(
+            createLcxIdentityWriterPathContract({
+              writer,
+              migrationPlan: plan,
+              readPath,
+              writePath: path.join(plan.canonicalStateDir, writeName),
+            }),
+            raw,
+          );
+        }),
+      );
+      expect(resolveStateDir({}, () => root)).toBe(legacyStateDir);
+      const marker = await writeLcxIdentityMigrationCompletionMarker({
+        migrationPlan: plan,
+        requiredTargets: writerReceipts.map(({ pathContract }) =>
+          createLcxIdentityMigrationTarget(pathContract),
+        ),
+        writerReceipts,
+      });
+      expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length);
+      expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(true);
+      expect(resolveStateDir({}, () => root)).toBe(plan.canonicalStateDir);
+    });
+  });
+
+  it.each([
+    {
+      name: "cron entries preserved before an appended job",
+      writer: "cron",
+      source: "{version:1,jobs:[{id:'keep',schedule:{kind:'cron',expr:'0 9 * * 1-5'}}]}",
+      next: '{"version":1,"jobs":[{"id":"keep","schedule":{"kind":"cron","expr":"0 9 * * 1-5"}},{"id":"new"}]}',
+      accepted: true,
+    },
+    {
+      name: "an appended job cannot replace the original cron entry",
+      writer: "cron",
+      source: "{version:1,jobs:[{id:'keep'}]}",
+      next: '{"version":1,"jobs":[{"id":"changed"},{"id":"new"}]}',
+      accepted: false,
+    },
+    {
+      name: "unrelated raw replacement",
+      writer: "config",
+      source: "legacy-source\n",
+      next: "x",
+      accepted: false,
+    },
+    {
+      name: "config normalization and version stamp",
+      writer: "config",
+      source: "{gateway: {mode: 'local'}, meta: {custom: 'keep'}}",
+      next: JSON.stringify({
+        meta: {
+          custom: "keep",
+          lastTouchedAt: "2026-10-20T00:00:00.000Z",
+          lastTouchedVersion: "1.0",
+        },
+        gateway: { mode: "local" },
+      }),
+      accepted: true,
+    },
+    {
+      name: "preserved session entries with a new entry",
+      writer: "sessions",
+      source: '{"old":{"sessionId":"keep","updatedAt":1}}',
+      next: '{"new":{"sessionId":"new"},"old":{"updatedAt":1,"sessionId":"keep"}}',
+      accepted: true,
+    },
+    {
+      name: "discarded session entry",
+      writer: "sessions",
+      source: '{"old":{"sessionId":"keep","updatedAt":1}}',
+      next: '{"new":{"sessionId":"new"}}',
+      accepted: false,
+    },
+    {
+      name: "session transcript append",
+      writer: "sessions",
+      source: '{"type":"session","version":3,"id":"keep"}\n{"type":"message","id":"old"}\n',
+      next: '{"type":"session","version":3,"id":"keep"}\n{"type":"message","id":"old"}\n{"type":"message","id":"new"}\n',
+      accepted: true,
+    },
+  ] as const)(
+    "binds completion to source preservation: $name",
+    async ({ writer: testedWriter, source, next, accepted }) => {
+      await withTempRoot(async (root) => {
+        const plan = migrationPlan(root);
+        const receipts = await Promise.all(
+          LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+            const contract = createLcxIdentityWriterPathContract({
+              writer,
+              migrationPlan: plan,
+              readPath: path.join(root, ".openclaw", `${writer}.state`),
+              writePath: path.join(root, ".lcx", `${writer}.state`),
+            });
+            const oldRaw = writer === testedWriter ? source : `${writer}: legacy\n`;
+            await writeRaw(contract.readPath, oldRaw);
+            return await writeLcxIdentityWriterRawWithReceipt(
+              contract,
+              writer === testedWriter ? next : oldRaw,
+            );
+          }),
+        );
+        const complete = () =>
+          writeLcxIdentityMigrationCompletionMarker({
+            migrationPlan: plan,
+            requiredTargets: receipts.map(({ pathContract }) =>
+              createLcxIdentityMigrationTarget(pathContract),
+            ),
+            writerReceipts: receipts,
+          });
+        if (accepted) {
+          await expect(complete()).resolves.toMatchObject({ schemaVersion: 1 });
+        } else {
+          await expect(complete()).rejects.toMatchObject({
+            code: "LCX_IDENTITY_COMPLETION_SOURCE_UNPRESERVED",
+          });
+          await expect(
+            fs.access(path.join(root, ".lcx", "identity-migration.complete.json")),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+          const receipt = receipts.find((entry) => entry.pathContract.writer === testedWriter)!;
+          expect(await fs.readFile(receipt.pathContract.writePath, "utf8")).toBe(next);
+          await rollbackLcxIdentityWriter(receipt);
+          expect(await fs.readFile(receipt.pathContract.readPath, "utf8")).toBe(source);
+        }
+      });
+    },
+  );
+
   it("writes a canonical completion marker atomically", async () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);
@@ -70,12 +221,12 @@ describe("LCX identity migration writer contract", () => {
             writePath: path.join(root, ".lcx", `${writer}.state`),
           });
           if (writer === "config") {
-            await writeRaw(pathContract.readPath, "legacy-source\n");
+            await writeRaw(pathContract.readPath, raw);
           }
           await writeRaw(pathContract.writePath, raw);
           return {
             pathContract,
-            source: sourceReceipt(pathContract, writer === "config" ? "legacy-source\n" : null),
+            source: sourceReceipt(pathContract, writer === "config" ? raw : null),
             previous: { exists: false, hash: null, bytes: null },
             next: { hash: nextHash, bytes: Buffer.byteLength(raw, "utf8") },
             rollback: {
@@ -112,6 +263,8 @@ describe("LCX identity migration writer contract", () => {
 
   it("accepts config adapter and path-move receipts in the complete manifest", async () => {
     await withTempRoot(async (root) => {
+      // Session path containment resolves the macOS temporary-directory symlink.
+      root = await fs.realpath(root);
       const plan = migrationPlan(root);
       const raw = "adapter-receipt\n";
       const receipts = [];
@@ -128,18 +281,44 @@ describe("LCX identity migration writer contract", () => {
           continue;
         }
         if (writer === "config") {
-          await writeRaw(pathContract.writePath, raw);
-          const hash = crypto.createHash("sha256").update(raw).digest("hex");
-          receipts.push({
-            pathContract,
-            source: sourceReceipt(pathContract, null),
-            previous: { exists: false, hash: null, bytes: null },
-            next: { hash, bytes: Buffer.byteLength(raw, "utf8") },
-            rollback: {
-              path: pathContract.rollbackPath,
-              strategy: "remove-written-target" as const,
-            },
+          await writeRaw(
+            path.join(root, ".openclaw", "openclaw.json"),
+            "{gateway: {mode: 'local'}}",
+          );
+          const io = createLcxIdentityMigrationConfigIO({
+            env: {},
+            homedir: () => root,
+            logger: { warn: () => {}, error: () => {} },
           });
+          receipts.push(
+            await io.writeConfigFileWithReceipt({ gateway: { mode: "local", bind: "loopback" } }),
+          );
+          continue;
+        }
+        if (writer === "sessions") {
+          const migration = createLcxIdentitySessionMigration({ migrationPlan: plan });
+          await writeRaw(
+            path.join(migration.readSessionsDir, "upgrade.jsonl"),
+            '{"type":"session","version":1,"id":"upgrade","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/tmp"}\n' +
+              '{"type":"message","message":{"role":"hookMessage","content":"keep"},"timestamp":"2026-09-04T00:00:01.000Z"}\n',
+          );
+          const { receipt } = await appendSessionTranscriptForIdentityMigration({
+            migration,
+            sessionId: "upgrade",
+            text: "new message",
+          });
+          receipts.push(receipt);
+          continue;
+        }
+        if (writer === "cron") {
+          await writeRaw(
+            path.join(root, ".openclaw", "cron", "jobs.json"),
+            "{version: 1, jobs: [{id: 'keep-scheduled-job'},], // original cron JSON5\n}",
+          );
+          const migration = createLcxIdentityCronStoreMigration({ migrationPlan: plan });
+          expect(migration.readStorePath).not.toBe(migration.writeStorePath);
+          const store = await readCronStoreForIdentityMigration(migration);
+          receipts.push(await writeCronStoreForIdentityMigration(migration, store));
           continue;
         }
         receipts.push(await writeLcxIdentityWriterRawWithReceipt(pathContract, raw));
@@ -300,15 +479,12 @@ describe("LCX identity migration writer contract", () => {
       const receipts = await Promise.all(
         contracts.map(async (pathContract) => {
           if (pathContract.writer === "config") {
-            await writeRaw(pathContract.readPath, "legacy-source\n");
+            await writeRaw(pathContract.readPath, raw);
           }
           await writeRaw(pathContract.writePath, raw);
           return {
             pathContract,
-            source: sourceReceipt(
-              pathContract,
-              pathContract.writer === "config" ? "legacy-source\n" : null,
-            ),
+            source: sourceReceipt(pathContract, pathContract.writer === "config" ? raw : null),
             previous: { exists: false, hash: null, bytes: null },
             next: {
               hash: crypto.createHash("sha256").update(raw).digest("hex"),

@@ -260,6 +260,7 @@ export function createOpenClawTools(options?: {
     createFinanceMarketCollectionRefreshTool({ workspaceDir }),
     createFinanceResearchRunTool({
       workspaceDir,
+      agentDir: options?.agentDir,
       config: options?.config,
       slotModels: resolveFinanceWorkflowSlotModels(options?.config),
       agentRunId: options?.agentRunId,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  ApiCallError,
   apiSourceErrorText,
   runApiSourceCall,
   type ApiSourceGovernanceRegistry,
@@ -16,6 +17,7 @@ import {
   type FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
 import { createDeribitPublicCollectionAdapters } from "./finance-deribit-collection.js";
+import { financeEodSessionDate } from "./finance-eod-session-date.js";
 import {
   createBinancePublicEodHistoryCollectionAdapter,
   createFredPublicIndexHistoryCollectionAdapter,
@@ -30,7 +32,10 @@ import {
 import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 import { assessFinanceNewsEntity } from "./finance-news-entity.js";
-import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
+import {
+  financeSourceQuotaRejectedBeforeDispatch,
+  mapFinanceSourceLanes,
+} from "./finance-source-scheduler.js";
 import { createSecAnnualOperatingStatementsAdapter } from "./finance-us-equity-source-adapters.js";
 
 export {
@@ -111,6 +116,13 @@ export type FinanceMarketCollectionAdapter = Readonly<{
     FinanceMarketCollectionRequest,
     "instrument" | "assetClass" | "collection" | "seriesId"
   >;
+  /** Opaque identity of the actual read endpoint, query and authorization; no raw material. */
+  accessScopeForRequest?: (request: FinanceMarketCollectionRequest) => string;
+  /** Read-only preflight; dispatch still rechecks the shared quota and access gates. */
+  unavailableForRequest?: (
+    request: FinanceMarketCollectionRequest,
+    signal: AbortSignal,
+  ) => Promise<ApiCallError | undefined>;
   supports: (request: FinanceMarketCollectionRequest) => boolean;
   collect: (
     request: FinanceMarketCollectionRequest,
@@ -319,7 +331,14 @@ function collectionRecordInRequestWindow(
   ) {
     return false;
   }
-  const date = new Date(sourceTimestamp).toISOString().slice(0, 10);
+  // Keep source/asOf authenticity checks independent of the daily session's local date.
+  const date =
+    request.collection === "eod_history"
+      ? financeEodSessionDate(sourceTimestamp, record.data.date, record.data.timezoneOffsetMinutes)
+      : new Date(sourceTimestamp).toISOString().slice(0, 10);
+  if (date === undefined) {
+    return false;
+  }
   return (
     (request.fromDate === undefined || date >= request.fromDate) &&
     (request.toDate === undefined || date <= request.toDate)
@@ -396,6 +415,9 @@ async function fetchJson(
   try {
     response = await fetchImpl(url, { headers });
   } catch (error) {
+    if (error instanceof ApiCallError) {
+      throw error;
+    }
     throw new FinanceMarketCollectionAdapterError(
       `source request failed: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -1145,6 +1167,7 @@ async function collectWithTimeout(
   request: FinanceMarketCollectionRequest,
   options: ApiTransportOptions,
   onCollect: () => void,
+  onUnavailable: () => void,
 ): Promise<readonly FinanceMarketCollectionItem[]> {
   return runApiSourceCall(
     {
@@ -1153,7 +1176,12 @@ async function collectWithTimeout(
       source: adapter.id,
       operation: "collect",
     },
-    (signal) => {
+    async (signal) => {
+      const unavailable = await adapter.unavailableForRequest?.(request, signal);
+      if (unavailable) {
+        onUnavailable();
+        throw unavailable;
+      }
       onCollect();
       return adapter.collect(request, signal);
     },
@@ -1186,98 +1214,120 @@ export async function runFinanceMarketCollectionRefresh(options: {
   ) {
     throw new Error("maxSources must be a positive integer");
   }
-  const selected =
-    options.maxSources === undefined ? candidates : candidates.slice(0, options.maxSources);
+  const excluded = new Set<string>();
+  const select = () => {
+    const available = candidates.filter((adapter) => !excluded.has(adapter.id));
+    return options.maxSources === undefined ? available : available.slice(0, options.maxSources);
+  };
+  let selected = select();
   const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
   const records: FinanceMarketCollectionItem[] = [];
   let adaptersCalled = false;
   const correlationId = options.correlationId ?? randomUUID();
-  const results = await mapFinanceSourceLanes(
-    selected,
-    async (adapter) => {
-      const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
-      const records: FinanceMarketCollectionItem[] = [];
-      const apiCalls: ApiCallReceipt[] = [];
-      const startedAt = Date.now();
-      try {
-        const collected = await collectWithTimeout(
-          adapter,
-          request,
-          {
-            timeoutMs,
-            cacheMaxAgeMs: options.cacheMaxAgeMs,
-            signal: options.signal,
-            correlationId,
-            retry: options.retry,
-            beforeHttpDispatch: options.beforeHttpDispatch,
-            ...(() => {
-              const governance = options.sourceGovernance?.forSource(adapter.id);
-              return governance
+  const attempted = new Set<string>();
+  while (true) {
+    const pending = selected.filter((adapter) => !attempted.has(adapter.id));
+    if (!pending.length) {
+      break;
+    }
+    pending.forEach((adapter) => attempted.add(adapter.id));
+    const results = await mapFinanceSourceLanes(
+      pending,
+      async (adapter) => {
+        const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
+        const records: FinanceMarketCollectionItem[] = [];
+        const apiCalls: ApiCallReceipt[] = [];
+        const startedAt = Date.now();
+        let preflightRejected = false;
+        try {
+          const collected = await collectWithTimeout(
+            adapter,
+            request,
+            {
+              timeoutMs,
+              cacheMaxAgeMs: options.cacheMaxAgeMs,
+              signal: options.signal,
+              correlationId,
+              retry: options.retry,
+              beforeHttpDispatch: options.beforeHttpDispatch,
+              ...(() => {
+                const governance = options.sourceGovernance?.forSource(adapter.id);
+                return governance
+                  ? {
+                      rateLimiter: governance.rateLimiter,
+                      circuitBreaker: governance.circuitBreaker,
+                    }
+                  : {};
+              })(),
+              onReceipt: (receipt) => apiCalls.push(receipt),
+            },
+            () => {
+              adaptersCalled = true;
+            },
+            () => {
+              preflightRejected = true;
+            },
+          );
+          const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
+          records.push(
+            ...collected.map((rawItem) => {
+              const item =
+                rawItem.collection === "news"
+                  ? {
+                      ...rawItem,
+                      data: {
+                        ...rawItem.data,
+                        entityMatch: assessFinanceNewsEntity(request.instrument, rawItem.data),
+                      },
+                    }
+                  : rawItem;
+              return reusedAt
                 ? {
-                    rateLimiter: governance.rateLimiter,
-                    circuitBreaker: governance.circuitBreaker,
+                    ...item,
+                    observedAt: reusedAt,
+                    sourceTimestamp:
+                      item.sourceTimestamp === request.asOf ? reusedAt : item.sourceTimestamp,
                   }
-                : {};
-            })(),
-            onReceipt: (receipt) => apiCalls.push(receipt),
-          },
-          () => {
-            adaptersCalled = true;
-          },
-        );
-        const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
-        records.push(
-          ...collected.map((rawItem) => {
-            const item =
-              rawItem.collection === "news"
-                ? {
-                    ...rawItem,
-                    data: {
-                      ...rawItem.data,
-                      entityMatch: assessFinanceNewsEntity(request.instrument, rawItem.data),
-                    },
-                  }
-                : rawItem;
-            return reusedAt
-              ? {
-                  ...item,
-                  observedAt: reusedAt,
-                  sourceTimestamp:
-                    item.sourceTimestamp === request.asOf ? reusedAt : item.sourceTimestamp,
-                }
-              : item;
-          }),
-        );
-        sourceAttempts.push({
-          adapterId: adapter.id,
-          providerName: adapter.providerName,
-          providerRole: adapter.providerRole,
-          priority: adapter.priority,
-          status: "succeeded",
-          recordCount: collected.length,
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          apiCalls: [...apiCalls],
-        });
-      } catch (error) {
-        sourceAttempts.push({
-          adapterId: adapter.id,
-          providerName: adapter.providerName,
-          providerRole: adapter.providerRole,
-          priority: adapter.priority,
-          status: "failed",
-          recordCount: 0,
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          apiCalls: [...apiCalls],
-          error: errorText(error),
-        });
+                : item;
+            }),
+          );
+          sourceAttempts.push({
+            adapterId: adapter.id,
+            providerName: adapter.providerName,
+            providerRole: adapter.providerRole,
+            priority: adapter.priority,
+            status: "succeeded",
+            recordCount: collected.length,
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            apiCalls: [...apiCalls],
+          });
+        } catch (error) {
+          sourceAttempts.push({
+            adapterId: adapter.id,
+            providerName: adapter.providerName,
+            providerRole: adapter.providerRole,
+            priority: adapter.priority,
+            status: "failed",
+            recordCount: 0,
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            apiCalls: [...apiCalls],
+            error: errorText(error),
+          });
+        }
+        return { sourceAttempts, records, preflightRejected };
+      },
+      options.maxSourceConcurrency,
+    );
+    for (const result of results) {
+      sourceAttempts.push(...result.sourceAttempts);
+      records.push(...result.records);
+      for (const attempt of result.sourceAttempts) {
+        if (result.preflightRejected || financeSourceQuotaRejectedBeforeDispatch(attempt)) {
+          excluded.add(attempt.adapterId);
+        }
       }
-      return { sourceAttempts, records };
-    },
-    options.maxSourceConcurrency,
-  );
-  for (const result of results) {
-    sourceAttempts.push(...result.sourceAttempts);
-    records.push(...result.records);
+    }
+    selected = select();
   }
   const failedAttempts = sourceAttempts.filter((attempt) => attempt.status === "failed");
   const invalidRecordCount = records.filter(

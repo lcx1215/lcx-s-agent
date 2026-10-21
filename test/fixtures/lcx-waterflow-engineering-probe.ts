@@ -14,6 +14,7 @@ import {
   type WorkflowFieldRef,
   type WorkflowHandoffEvidence,
 } from "../../scripts/operator/lcx-flow-graph.js";
+import { inspectLocalModelLaneRelevance } from "../../scripts/operator/local-brain-training-plan.js";
 import { parseJsonObjectFromOutput } from "../../scripts/operator/smoke-json-output.js";
 import { buildCentralGovernanceInput } from "../../src/agents/central-harness/governance-input.js";
 import { readFileWithinRoot } from "../../src/infra/fs-safe.js";
@@ -550,6 +551,12 @@ export async function originalTrainingDecisions(cwd: string) {
   );
   const input = {
     activeProcesses: [],
+    processObservationStatus: "observed",
+    localModelLaneRelevance: inspectLocalModelLaneRelevance({
+      configuration: { status: "unavailable", configPath: path.join(cwd, "private-config.json") },
+      processObservation: { status: "observed", processes: [] },
+      teacherEnabled: false,
+    }),
     overlappingHeavyEval: false,
     miniMaxTeacherRuntime: { enabled: false, reason: "offline provider unavailable" },
     guardLogPath: path.join(cwd, "private-guard.jsonl"),

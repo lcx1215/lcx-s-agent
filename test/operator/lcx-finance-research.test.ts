@@ -240,17 +240,19 @@ it("exposes complete source planning and prevents collection flags on read opera
     throw new Error("expected all-source inventory");
   }
   const inventory = result.plan.sourceInventory;
-  // These routes require an explicit date/quarter; discovery must not invent one.
-  const requiresPeriod = inventory.registeredAdapterIds.filter((id) =>
+  // Discovery must not invent a date/quarter or a compatible derivatives asset.
+  const requiresExplicitScope = inventory.registeredAdapterIds.filter((id) =>
     [
       "fmp_eod_bulk",
       "fmp_earning_call_transcript",
       "fmp_institutional_ownership_symbol_positions_summary",
+      "deribit_public_option_summary",
+      "deribit_public_future_summary",
     ].includes(id),
   );
-  expect(inventory.unplannedAdapterIds).toEqual(requiresPeriod);
+  expect(inventory.unplannedAdapterIds).toEqual(requiresExplicitScope);
   expect(result.plan.expectedJobCount).toBe(
-    inventory.registeredAdapterIds.length - requiresPeriod.length,
+    inventory.registeredAdapterIds.length - requiresExplicitScope.length,
   );
   expect(result.batch).toBeUndefined();
   await expect(runFinanceResearchCli([...input, "--sources-only"])).rejects.toThrow(

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ApiCallError } from "./api-call-contract.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
 import {
   createBlsMacroSeriesCollectionAdapter,
@@ -262,6 +263,176 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
 }
 
 describe("finance market collection registry", () => {
+  it("cancels a stalled collection availability hook without entering collect", async () => {
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let aborted = false;
+    let collects = 0;
+    const source = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });
+    const pending = runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      signal: controller.signal,
+      adapters: [
+        {
+          ...source,
+          unavailableForRequest: async (_request, signal) =>
+            new Promise<ApiCallError | undefined>(() => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                },
+                { once: true },
+              );
+              entered();
+            }),
+          collect: async () => {
+            collects++;
+            return [];
+          },
+        },
+      ],
+    });
+    await started;
+    controller.abort();
+    const receipt = await pending;
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({ transportError: "cancelled" }),
+    );
+    expect(aborted).toBe(true);
+    expect(collects).toBe(0);
+  });
+  it("stops at the bounded set when the caller HTTP budget refuses dispatch", async () => {
+    let calls = 0;
+    const primary = createMassiveNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async (url) => {
+        calls++;
+        return fakeFetch(url);
+      },
+    });
+    const backup = createFinnhubNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async (url) => {
+        calls++;
+        return fakeFetch(url);
+      },
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      maxSources: 1,
+      adapters: [primary, backup],
+      beforeHttpDispatch: () => {
+        throw new ApiCallError("budget_exhausted");
+      },
+      retry: { attempts: 1 },
+    });
+    expect(receipt.sourceAttempts).toHaveLength(1);
+    expect(receipt.selectedSourceIds).toEqual([primary.id]);
+    expect(calls).toBe(0);
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({ operation: "http_get", transportError: "budget_exhausted" }),
+    );
+  });
+  it("does not release a source slot after HTTP was dispatched", async () => {
+    let dispatches = 0;
+    let backupCalls = 0;
+    const primary = createMassiveNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async () => {
+        dispatches++;
+        throw new ApiCallError("budget_exhausted");
+      },
+    });
+    const backup = createFinnhubNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async (url) => {
+        backupCalls++;
+        return fakeFetch(url);
+      },
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [primary, backup],
+      maxSources: 1,
+      retry: { attempts: 1 },
+    });
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.selectedSourceIds).toEqual([primary.id]);
+    expect(dispatches).toBe(1);
+    expect(backupCalls).toBe(0);
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({
+        operation: "http_get",
+        dispatchedAt: expect.any(String),
+      }),
+    );
+  });
+  it("backfills a collection source rejected by transport preparation before HTTP", async () => {
+    let dispatches = 0;
+    const limited: FetchImpl = async () => {
+      dispatches++;
+      return fakeFetch("https://massive.com/v2/reference/news");
+    };
+    limited.prepare = async () => {
+      throw new ApiCallError("budget_exhausted", undefined, 60_000, undefined, "provider_quota");
+    };
+    const primary = createMassiveNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: limited });
+    const backup = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [primary, backup],
+      maxSources: 1,
+      retry: { attempts: 1 },
+    });
+    expect(receipt.status).toBe("ready");
+    expect(receipt.selectedSourceIds).toEqual([backup.id]);
+    expect(dispatches).toBe(0);
+    expect(
+      receipt.sourceAttempts.find((attempt) => attempt.adapterId === primary.id)?.apiCalls,
+    ).toContainEqual(
+      expect.objectContaining({ operation: "http_get", transportError: "budget_exhausted" }),
+    );
+  });
+  it("uses the bounded slot for an eligible backup and retains the pre-dispatch quota failure", async () => {
+    let blockedCalls = 0;
+    const backup = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });
+    const blocked = {
+      ...backup,
+      id: "limited-primary",
+      providerRole: "primary_market_data" as const,
+      priority: 0,
+      unavailableForRequest: async () => new ApiCallError("budget_exhausted", undefined, 60_000),
+      collect: async () => {
+        blockedCalls++;
+        return [];
+      },
+    };
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [blocked, backup],
+      maxSources: 1,
+    });
+    expect(receipt.selectedSourceIds).toEqual([backup.id]);
+    expect(receipt.status).toBe("ready");
+    expect(blockedCalls).toBe(0);
+    expect(
+      receipt.sourceAttempts.find((attempt) => attempt.adapterId === blocked.id),
+    ).toMatchObject({
+      status: "failed",
+      apiCalls: [
+        expect.objectContaining({
+          operation: "collect",
+          transportError: "budget_exhausted",
+          retryAfterMs: 60_000,
+        }),
+      ],
+    });
+  });
   it("collects US equity news, options, dividends, and splits with source timestamps", async () => {
     const adapters = [
       createMassiveNewsCollectionAdapter({ apiKey: "massive-secret", fetchImpl: fakeFetch }),
@@ -618,6 +789,203 @@ describe("finance market collection registry", () => {
     expect(receipt.requiredNextSteps).toContain("inspect_out_of_window_collection_records");
   });
 
+  describe("EOD session-date windows", () => {
+    async function refreshSessionRecord(
+      options: {
+        collection?: "eod_history" | "news";
+        instrument?: string;
+        assetClass?: string;
+        data?: Readonly<Record<string, unknown>>;
+        sourceTimestamp?: string;
+        observedAt?: string;
+        asOf?: string;
+        asOfMode?: FinanceMarketCollectionRequest["asOfMode"];
+        fromDate?: string;
+        toDate?: string;
+      } = {},
+    ) {
+      const collection = options.collection ?? "eod_history";
+      return runFinanceMarketCollectionRefresh({
+        request: {
+          instrument: options.instrument ?? "HK.00700",
+          assetClass: options.assetClass ?? "hk_equity",
+          collection,
+          asOf: options.asOf ?? "2026-10-16T12:00:00.000Z",
+          ...(options.asOfMode ? { asOfMode: options.asOfMode } : {}),
+          fromDate: options.fromDate ?? "2026-10-16",
+          toDate: options.toDate ?? "2026-10-16",
+          limit: 1,
+        },
+        adapters: [
+          {
+            id: "session-date-fixture",
+            providerName: "session-date-fixture",
+            providerRole: "primary_market_data",
+            priority: 1,
+            supports: () => true,
+            collect: async () => [
+              {
+                itemId: "session-bar",
+                collection,
+                providerName: "session-date-fixture",
+                providerRole: "primary_market_data",
+                sourceFamily: "market_data_api",
+                sourceTimestamp: options.sourceTimestamp ?? "2026-10-15T16:00:00.000Z",
+                observedAt: options.observedAt ?? "2026-10-19T04:00:00.000Z",
+                delayStatus: "end_of_day",
+                sourceUrlOrArtifact: "fixture://session-bar",
+                data: options.data ?? {
+                  date: "2026-10-16",
+                  timezoneOffsetMinutes: 480,
+                  close: 500,
+                },
+              },
+            ],
+          },
+        ],
+      });
+    }
+
+    it("accepts the HK EOD session date when local midnight is the previous UTC day", async () => {
+      const receipt = await refreshSessionRecord();
+      expect(receipt.status).toBe("ready");
+      expect(receipt.missingEvidence).toEqual([]);
+      expect(receipt.records[0]?.sourceTimestamp).toBe("2026-10-15T16:00:00.000Z");
+      expect(receipt.records[0]?.observedAt).toBe("2026-10-19T04:00:00.000Z");
+      expect(receipt.records[0]?.data.date).toBe("2026-10-16");
+    });
+
+    it("keeps a valid US EOD date in its requested window", async () => {
+      const receipt = await refreshSessionRecord({
+        instrument: "MSFT",
+        assetClass: "us_equity",
+        data: { date: "2026-10-16", timezoneOffsetMinutes: -240, close: 100 },
+        sourceTimestamp: "2026-10-16T20:00:00.000Z",
+        asOf: "2026-10-16T21:00:00.000Z",
+      });
+      expect(receipt.status).toBe("ready");
+    });
+
+    it.each(["2026-10-19", "2026-10-14"])(
+      "rejects an unrelated declared session %s despite an old valid source timestamp",
+      async (date) => {
+        const receipt = await refreshSessionRecord({
+          data: { date, timezoneOffsetMinutes: 480, close: 500 },
+          fromDate: date,
+          toDate: date,
+        });
+        expect(receipt.status).toBe("needs_review");
+        expect(receipt.records[0]?.sourceTimestamp).toBe("2026-10-15T16:00:00.000Z");
+        expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+      },
+    );
+
+    it.each([
+      ["missing", undefined],
+      ["a string", "480"],
+      ["nonfinite", Number.NaN],
+      ["infinite", Number.POSITIVE_INFINITY],
+      ["fractional", 480.5],
+      ["out of range", 1440],
+      ["null", null],
+      ["inconsistent with the declared date", -480],
+    ])("rejects a cross-UTC-day EOD date when its offset is %s", async (_label, offset) => {
+      const receipt = await refreshSessionRecord({
+        data: {
+          date: "2026-10-16",
+          ...(offset === undefined ? {} : { timezoneOffsetMinutes: offset }),
+          close: 500,
+        },
+      });
+      expect(receipt.status).toBe("needs_review");
+      expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+    });
+
+    it("rejects a declared offset that contradicts even a matching UTC session date", async () => {
+      const receipt = await refreshSessionRecord({
+        data: { date: "2026-10-16", timezoneOffsetMinutes: -240, close: 100 },
+        sourceTimestamp: "2026-10-16T01:00:00.000Z",
+      });
+      expect(receipt.status).toBe("needs_review");
+      expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+      expect(receipt.requiredNextSteps).toContain("inspect_out_of_window_collection_records");
+    });
+
+    it("accepts an existing US EOD date without requiring timezone metadata", async () => {
+      const receipt = await refreshSessionRecord({
+        instrument: "MSFT",
+        assetClass: "us_equity",
+        data: { date: "2026-10-16", close: 100 },
+        sourceTimestamp: "2026-10-16T20:00:00.000Z",
+        asOf: "2026-10-16T21:00:00.000Z",
+      });
+      expect(receipt.status).toBe("ready");
+    });
+
+    it("accepts a negative-offset session on the previous UTC day", async () => {
+      const receipt = await refreshSessionRecord({
+        instrument: "MSFT",
+        assetClass: "us_equity",
+        data: { date: "2026-10-16", timezoneOffsetMinutes: -240, close: 100 },
+        sourceTimestamp: "2026-10-17T01:00:00.000Z",
+        asOf: "2026-10-17T02:00:00.000Z",
+      });
+      expect(receipt.status).toBe("ready");
+    });
+
+    it("retains live-now source timing semantics for an authenticated EOD session", async () => {
+      const receipt = await refreshSessionRecord({
+        asOf: "2026-10-15T12:00:00.000Z",
+        asOfMode: "live_now",
+      });
+      expect(receipt.status).toBe("ready");
+    });
+
+    it("retains timestamp windows for EOD adapters without a declared session date", async () => {
+      const receipt = await refreshSessionRecord({
+        data: { close: 100 },
+        sourceTimestamp: "2026-10-16T00:00:00.000Z",
+      });
+      expect(receipt.status).toBe("ready");
+    });
+
+    it.each([
+      ["outside the requested session", "2026-10-15"],
+      ["a rollover day", "2026-02-30"],
+      ["an invalid month", "2026-13-16"],
+      ["a timestamp rather than a date", "2026-10-16T00:00:00Z"],
+      ["a noncanonical date", "2026-10-6"],
+      ["a nonstring date", 20261016],
+    ])("rejects an EOD date that is %s", async (_label, date) => {
+      const receipt = await refreshSessionRecord({
+        data: { date, close: 100 },
+        sourceTimestamp: "2026-10-16T00:00:00.000Z",
+      });
+      expect(receipt.status).toBe("needs_review");
+      expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+    });
+
+    it.each([
+      ["future source timestamp", { sourceTimestamp: "2026-10-16T12:00:01.000Z" }],
+      ["invalid source timestamp", { sourceTimestamp: "invalid" }],
+      ["invalid observation timestamp", { observedAt: "invalid" }],
+      [
+        "future live observation timestamp",
+        { observedAt: "2999-01-01T00:00:00.000Z", asOfMode: "live_now" as const },
+      ],
+    ])("still rejects a valid EOD date with %s", async (_label, options) => {
+      const receipt = await refreshSessionRecord(options);
+      expect(receipt.status).toBe("needs_review");
+      expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+    });
+
+    it("does not apply an EOD session date to a non-EOD collection", async () => {
+      const receipt = await refreshSessionRecord({ collection: "news" });
+      expect(receipt.status).toBe("needs_review");
+      expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+    });
+  });
+
   it("allows bounded post-cutoff records in live-now mode", async () => {
     const receipt = await runFinanceMarketCollectionRefresh({
       request: {
@@ -757,25 +1125,54 @@ describe("market collection API transport governance", () => {
     expect(JSON.stringify(receipt)).not.toContain("fake-private-key");
   });
 
-  it("records HTTP success separately from invalid source data", async () => {
+  it.each([
+    ["timeout", "timed_out"],
+    ["cancelled", "cancelled"],
+  ] as const)("preserves a deterministic HTTP %s through JSON collection", async (kind, status) => {
+    let calls = 0;
     const source = createMassiveNewsCollectionAdapter({
       apiKey: "fake-private-key",
-      fetchImpl: async () => ({ ok: true, status: 200, text: async () => "invalid" }),
+      fetchImpl: async () => {
+        calls++;
+        throw new ApiCallError(kind);
+      },
     });
     const receipt = await runFinanceMarketCollectionRefresh({
       request: EQUITY_REQUEST,
       adapters: [source],
     });
+    expect(calls).toBe(1);
     expect(receipt.status).toBe("blocked");
     expect(receipt.sourceAttempts[0].apiCalls).toEqual([
-      expect.objectContaining({ operation: "http_get", status: "succeeded", httpStatus: 200 }),
-      expect.objectContaining({
-        operation: "collect",
-        status: "failed",
-        transportError: "source_error",
-      }),
+      expect.objectContaining({ operation: "http_get", status, transportError: kind }),
+      expect.objectContaining({ operation: "collect", status, transportError: kind }),
     ]);
+    expect(receipt.sourceAttempts[0].error).toBe(`API ${kind}`);
+    expect(JSON.stringify(receipt)).not.toContain("fake-private-key");
   });
+
+  it.each(["invalid", ""])(
+    "records HTTP success separately from invalid source data %j",
+    async (body) => {
+      const source = createMassiveNewsCollectionAdapter({
+        apiKey: "fake-private-key",
+        fetchImpl: async () => ({ ok: true, status: 200, text: async () => body }),
+      });
+      const receipt = await runFinanceMarketCollectionRefresh({
+        request: EQUITY_REQUEST,
+        adapters: [source],
+      });
+      expect(receipt.status).toBe("blocked");
+      expect(receipt.sourceAttempts[0].apiCalls).toEqual([
+        expect.objectContaining({ operation: "http_get", status: "succeeded", httpStatus: 200 }),
+        expect.objectContaining({
+          operation: "collect",
+          status: "failed",
+          transportError: "source_error",
+        }),
+      ]);
+    },
+  );
 
   it("redacts arbitrary adapter errors and does not enable keyed adapters without keys", async () => {
     expect(

@@ -1,83 +1,25 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import JSON5 from "json5";
+import {
+  LCX_IDENTITY_MIGRATION_INVENTORY,
+  LCX_IDENTITY_WRITER_NAMES,
+  type LcxIdentityMigrationCompletionMarker,
+  type LcxIdentityWriterName,
+} from "./identity-migration-inventory.js";
 import {
   resolveLcxIdentityMigrationCompletionPath,
   type LcxIdentityMigrationPlan,
 } from "./paths.js";
 
-export const LCX_IDENTITY_MIGRATION_INVENTORY = "lcx-identity-writer-inventory-v1" as const;
-
-export type LcxIdentityMigrationCompletionMarker = Readonly<{
-  schemaVersion: 1;
-  canonicalStateDir: string;
-  completedAt: string;
-  inventory: typeof LCX_IDENTITY_MIGRATION_INVENTORY;
-  targetKeys: readonly string[];
-}>;
-
-export type LcxIdentityWriterName =
-  | "config"
-  | "sessions"
-  | "credentials"
-  | "queues"
-  | "backups"
-  | "audit"
-  | "cron"
-  | "device"
-  | "device-auth"
-  | "node-host"
-  | "device-pairing"
-  | "device-pair-notify"
-  | "node-pairing"
-  | "exec-approvals"
-  | "restart-sentinel"
-  | "subagents"
-  | "workspace"
-  | "nostr-bus"
-  | "nostr-profile"
-  | "discord-bindings"
-  | "discord-model-picker"
-  | "telegram-offset"
-  | "telegram-sticker-cache"
-  | "update-check"
-  | "voicewake"
-  | "matrix-storage"
-  | "channel-local"
-  | "channel-pairing"
-  | "phone-control";
-
-export const LCX_IDENTITY_WRITER_NAMES: readonly LcxIdentityWriterName[] = [
-  "config",
-  "sessions",
-  "credentials",
-  "queues",
-  "backups",
-  "audit",
-  "cron",
-  "device",
-  "device-auth",
-  "node-host",
-  "device-pairing",
-  "device-pair-notify",
-  "node-pairing",
-  "exec-approvals",
-  "restart-sentinel",
-  "subagents",
-  "workspace",
-  "nostr-bus",
-  "nostr-profile",
-  "discord-bindings",
-  "discord-model-picker",
-  "telegram-offset",
-  "telegram-sticker-cache",
-  "update-check",
-  "voicewake",
-  "matrix-storage",
-  "channel-local",
-  "channel-pairing",
-  "phone-control",
-];
+export {
+  LCX_IDENTITY_MIGRATION_INVENTORY,
+  LCX_IDENTITY_WRITER_NAMES,
+  type LcxIdentityMigrationCompletionMarker,
+  type LcxIdentityWriterName,
+} from "./identity-migration-inventory.js";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
@@ -551,8 +493,133 @@ function isRawMigrationReceipt(
   return "next" in receipt;
 }
 
+// A normal business write may replace values or remove entries. That receipt is
+// still useful for rollback, but does not by itself prove that legacy state was
+// migrated. Recompute preservation from the actual source and target bytes, so
+// old receipts receive the same checks without trusting a new caller claim.
+async function preservesMigrationSource(
+  writer: LcxIdentityWriterName,
+  sourceRaw: string,
+  nextRaw: string,
+): Promise<boolean> {
+  if (sourceRaw === nextRaw) {
+    return true;
+  }
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  const preservesJson = (source: unknown, next: unknown): boolean => {
+    if (Array.isArray(source) && Array.isArray(next)) {
+      return (
+        next.length >= source.length &&
+        source.every((entry, index) => preservesJson(entry, next[index]))
+      );
+    }
+    if (isRecord(source) && isRecord(next)) {
+      return Object.entries(source).every(
+        ([key, value]) => Object.hasOwn(next, key) && preservesJson(value, next[key]),
+      );
+    }
+    return isDeepStrictEqual(source, next);
+  };
+  const withoutConfigStamp = (value: unknown): unknown => {
+    if (!isRecord(value) || !isRecord(value.meta)) {
+      return value;
+    }
+    const meta = { ...value.meta };
+    delete meta.lastTouchedAt;
+    delete meta.lastTouchedVersion;
+    const result = { ...value };
+    if (Object.keys(meta).length > 0) {
+      result.meta = meta;
+    } else {
+      delete result.meta;
+    }
+    return result;
+  };
+  try {
+    // Config and cron owners parse JSON5 before rewriting JSON; only config
+    // applies the version-stamp exception below.
+    // Other user configuration, session IDs, credentials and array items must
+    // survive; this is not permission for an arbitrary merge/delete patch.
+    const parse: (raw: string) => unknown =
+      writer === "config" || writer === "cron" ? JSON5.parse : JSON.parse;
+    const source = parse(sourceRaw);
+    const next = parse(nextRaw);
+    return writer === "config"
+      ? preservesJson(withoutConfigStamp(source), withoutConfigStamp(next))
+      : preservesJson(source, next);
+  } catch {
+    if (writer !== "sessions") {
+      return false;
+    }
+    try {
+      const records = (raw: string): Record<string, unknown>[] => {
+        const parsed: unknown[] = raw
+          .split("\n")
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line));
+        if (!parsed.every((entry) => isRecord(entry) && typeof entry.type === "string")) {
+          throw new Error("Invalid session transcript record");
+        }
+        return parsed as Record<string, unknown>[];
+      };
+      const sourceEntries = records(sourceRaw);
+      const nextEntries = records(nextRaw);
+      if (
+        sourceEntries.length === 0 ||
+        sourceEntries[0]?.type !== "session" ||
+        nextEntries.length < sourceEntries.length
+      ) {
+        return false;
+      }
+      // Reuse the original session version migration, including role and
+      // compaction changes. It generates random v1 IDs; bind those generated
+      // identities to the actual target prefix before comparing all records.
+      const { migrateSessionEntries } = await import("@mariozechner/pi-coding-agent");
+      const sourceVersion = sourceEntries[0].version ?? 1;
+      // Legacy entries deliberately predate the library's current FileEntry shape;
+      // its migration owns their version conversion, not the caller's cast.
+      migrateSessionEntries(
+        sourceEntries as unknown as Parameters<typeof migrateSessionEntries>[0],
+      );
+      if (typeof sourceVersion === "number" && sourceVersion < 2) {
+        const ids = new Map<string, string>();
+        const usedNextIds = new Set<string>();
+        for (const [index, entry] of sourceEntries.entries()) {
+          if (entry.type === "session") {
+            continue;
+          }
+          const nextId = nextEntries[index]?.id;
+          if (
+            typeof entry.id !== "string" ||
+            typeof nextId !== "string" ||
+            !nextId ||
+            usedNextIds.has(nextId)
+          ) {
+            return false;
+          }
+          ids.set(entry.id, nextId);
+          usedNextIds.add(nextId);
+        }
+        for (const entry of sourceEntries) {
+          for (const key of ["id", "parentId", "firstKeptEntryId"] as const) {
+            const value = entry[key];
+            if (entry.type !== "session" && typeof value === "string" && ids.has(value)) {
+              entry[key] = ids.get(value);
+            }
+          }
+        }
+      }
+      return sourceEntries.every((entry, index) => isDeepStrictEqual(entry, nextEntries[index]));
+    } catch {
+      return false;
+    }
+  }
+}
+
 async function assertMigrationSourceReceipt(
   receipt: LcxIdentityWriteReceipt | LcxIdentityConfigWriteReceipt,
+  nextRaw: string,
 ): Promise<void> {
   const { pathContract, source } = receipt;
   if (path.resolve(pathContract.readPath) === path.resolve(pathContract.writePath)) {
@@ -591,6 +658,16 @@ async function assertMigrationSourceReceipt(
       "LCX_IDENTITY_COMPLETION_SOURCE_STALE",
     );
   }
+  if (
+    sourceRaw !== null &&
+    !(await preservesMigrationSource(pathContract.writer, sourceRaw, nextRaw))
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration target does not preserve its compatibility source for " +
+        pathContract.writer,
+      "LCX_IDENTITY_COMPLETION_SOURCE_UNPRESERVED",
+    );
+  }
 }
 
 async function assertDurableMigrationReceipt(
@@ -603,7 +680,6 @@ async function assertDurableMigrationReceipt(
     );
   }
   if (isRawMigrationReceipt(receipt)) {
-    await assertMigrationSourceReceipt(receipt);
     if (
       !/^[a-f0-9]{64}$/i.test(receipt.next.hash) ||
       !Number.isInteger(receipt.next.bytes) ||
@@ -626,6 +702,7 @@ async function assertDurableMigrationReceipt(
         "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
       );
     }
+    await assertMigrationSourceReceipt(receipt, currentRaw);
     return;
   }
 

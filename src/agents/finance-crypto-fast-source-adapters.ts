@@ -33,18 +33,25 @@ function parseFiniteNumber(value: unknown, label: string): number {
   return parsed;
 }
 
-function parseTimestamp(value: unknown, fallback: string, label: string): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
-    return new Date(milliseconds).toISOString();
+// REST units: Bybit guide response.time and OKX market/ticker.ts are ms;
+// Bitstamp market ticker.timestamp is epoch seconds. Never infer time from the request cutoff.
+function parseTimestamp(value: unknown, unit: "seconds" | "milliseconds", label: string): string {
+  const epoch =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/u.test(value)
+        ? Number(value)
+        : Number.NaN;
+  const milliseconds = unit === "seconds" ? epoch * 1000 : epoch;
+  if (
+    !Number.isSafeInteger(epoch) ||
+    epoch <= 0 ||
+    !Number.isSafeInteger(milliseconds) ||
+    !Number.isFinite(new Date(milliseconds).getTime())
+  ) {
+    throw new FastCryptoSourceAdapterError(`${label} must be a valid ${unit} Unix timestamp`);
   }
-  if (typeof value === "string" && Number.isFinite(Date.parse(value))) {
-    return new Date(value).toISOString();
-  }
-  if (Number.isFinite(Date.parse(fallback))) {
-    return fallback;
-  }
-  throw new FastCryptoSourceAdapterError(`${label} must be a valid timestamp`);
+  return new Date(milliseconds).toISOString();
 }
 
 async function fetchJson(
@@ -134,7 +141,7 @@ export function parseBybitCryptoTicker(
   if (body.retCode !== 0 || row?.symbol !== crypto.bybit) {
     throw new FastCryptoSourceAdapterError("Bybit returned no usable public spot ticker");
   }
-  const sourceTimestamp = parseTimestamp(body.time, observedAt, "Bybit server time");
+  const sourceTimestamp = parseTimestamp(body.time, "milliseconds", "Bybit server time");
   const fields: FinanceDataGatewayObservationInput["fields"] = [
     {
       name: "last_price",
@@ -182,7 +189,12 @@ export function createBybitCryptoTickerAdapter(
         Accept: "application/json",
         "User-Agent": "LCX Agent research-only crypto snapshot",
       });
-      return parseBybitCryptoTicker(payload, request.instrument, sourceUrlOrArtifact, request.asOf);
+      return parseBybitCryptoTicker(
+        payload,
+        request.instrument,
+        sourceUrlOrArtifact,
+        new Date().toISOString(),
+      );
     },
   };
 }
@@ -202,7 +214,7 @@ export function parseOkxCryptoTicker(
   if (body.code !== "0" || row?.instId !== crypto.okx) {
     throw new FastCryptoSourceAdapterError("OKX returned no usable public spot ticker");
   }
-  const sourceTimestamp = parseTimestamp(row.ts, observedAt, "OKX ticker timestamp");
+  const sourceTimestamp = parseTimestamp(row.ts, "milliseconds", "OKX ticker timestamp");
   const fields: FinanceDataGatewayObservationInput["fields"] = [
     {
       name: "last_price",
@@ -250,7 +262,12 @@ export function createOkxCryptoTickerAdapter(
         Accept: "application/json",
         "User-Agent": "LCX Agent research-only crypto snapshot",
       });
-      return parseOkxCryptoTicker(payload, request.instrument, sourceUrlOrArtifact, request.asOf);
+      return parseOkxCryptoTicker(
+        payload,
+        request.instrument,
+        sourceUrlOrArtifact,
+        new Date().toISOString(),
+      );
     },
   };
 }
@@ -263,7 +280,7 @@ export function parseBitstampCryptoTicker(
 ): FinanceDataGatewayObservationInput {
   const ticker = payload as { timestamp?: unknown; last?: unknown; volume?: unknown };
   const crypto = normalizeInstrument(instrument);
-  const sourceTimestamp = parseTimestamp(ticker.timestamp, observedAt, "Bitstamp ticker timestamp");
+  const sourceTimestamp = parseTimestamp(ticker.timestamp, "seconds", "Bitstamp ticker timestamp");
   const fields: FinanceDataGatewayObservationInput["fields"] = [
     {
       name: "last_price",
@@ -315,7 +332,7 @@ export function createBitstampCryptoTickerAdapter(
         payload,
         request.instrument,
         sourceUrlOrArtifact,
-        request.asOf,
+        new Date().toISOString(),
       );
     },
   };

@@ -3,6 +3,7 @@ import {
   buildPipelineResult,
   parseArgs,
   readProviderCouncilEvidence,
+  readFinanceCandidateContext,
   runScenarioSuite,
 } from "../../src/agents/commercial-answer-pipeline.js";
 
@@ -15,6 +16,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     options.ask && options.candidateAnswer
       ? buildPipelineResult(options.ask, options.candidateAnswer, {
           financeDecisionMode: options.financeDecisionMode,
+          ...(options.candidateContextPath
+            ? { candidateContext: await readFinanceCandidateContext(options.candidateContextPath) }
+            : {}),
           ...(options.providerEvidencePath && options.providerMessageId
             ? {
                 providerEvidence: await readProviderCouncilEvidence(

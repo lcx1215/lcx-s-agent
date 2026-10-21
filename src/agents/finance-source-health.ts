@@ -49,6 +49,11 @@ function latestDispatchTime(attempt: unknown): number | undefined {
     if (!call || typeof call !== "object") {
       return [];
     }
+    const receipt = call as Record<string, unknown>;
+    const access = receipt.dataAccess;
+    if (access && typeof access === "object" && "kind" in access && access.kind !== "network") {
+      return [];
+    }
     // `dispatchedAt` is the moment the request left, which is the most faithful "when we saw this".
     // Receipts written before it was recorded still carry `finishedAt`, and discarding them made
     // the entire stored corpus invisible: hundreds of real source calls reported as `unverified`,
@@ -56,8 +61,13 @@ function latestDispatchTime(attempt: unknown): number | undefined {
     // old". Falling back to completion time does not weaken the freshness bound — an old receipt
     // still lands past the 24h cutoff as `verification_expired` — it only stops the evidence from
     // vanishing, and `unverified` keeps its meaning: called never, not called long ago.
-    const candidate = (call as Record<string, unknown>).dispatchedAt;
-    const fallback = (call as Record<string, unknown>).finishedAt;
+    const candidate = receipt.dispatchedAt;
+    const fallback =
+      "dispatchedAt" in receipt ||
+      receipt.transportError === "budget_exhausted" ||
+      receipt.transportError === "circuit_open"
+        ? undefined
+        : receipt.finishedAt;
     for (const value of [candidate, fallback]) {
       if (typeof value !== "string") {
         continue;

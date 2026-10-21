@@ -45,6 +45,25 @@ function input(close = 101): FinanceIntradayAppendInput {
 }
 
 describe("finance intraday ledger", () => {
+  it("returns an empty ledger only when the database is absent", async () => {
+    expect(await readFinanceIntradayLedger(await directory())).toEqual({
+      bars: [],
+      recordCount: 0,
+      headRef: null,
+    });
+  });
+
+  it.each(["EACCES", "EIO", "ENOTDIR"])("propagates database stat failure %s", async (code) => {
+    const root = await directory();
+    const error = Object.assign(new Error(`stat failed: ${code}`), { code });
+    const stat = vi.spyOn(fs, "stat").mockRejectedValueOnce(error);
+    try {
+      await expect(readFinanceIntradayLedger(root)).rejects.toBe(error);
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
   it("appends, reads, and idempotently skips an exact replay", async () => {
     const root = await directory();
     const first = await appendFinanceIntradayBars(root, input());

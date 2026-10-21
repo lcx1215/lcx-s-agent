@@ -2,6 +2,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import {
+  guardChildMemory,
+  ChildMemoryBudgetError,
+  waitForChildMemoryRelease,
+  type ChildMemoryObservation,
+} from "../process/child-memory-budget.js";
+import { killProcessTree } from "../process/kill-tree.js";
 import { financeInstrumentCitationScope } from "./finance-research-evidence.js";
 import {
   FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
@@ -59,6 +66,7 @@ export type LocalTextModelRuntimeConfig = Readonly<{
   baseModel?: boolean;
   maxTokens: number;
   timeoutMs: number;
+  memoryBudgetMb?: number;
   allowNetwork: boolean;
 }>;
 
@@ -73,6 +81,7 @@ export function resolveLocalTextModelRuntimeConfig(options: {
   pythonPath?: string;
   maxTokens?: number;
   timeoutMs?: number;
+  memoryBudgetMb?: number;
   allowNetwork?: boolean;
 }): LocalTextModelRuntimeConfig {
   const adapterPath = options.adapterPath.trim();
@@ -86,6 +95,7 @@ export function resolveLocalTextModelRuntimeConfig(options: {
     baseModel: options.baseModel ?? false,
     maxTokens: positiveInteger(options.maxTokens, DEFAULT_LOCAL_TEXT_MODEL_MAX_TOKENS),
     timeoutMs: positiveInteger(options.timeoutMs, DEFAULT_LOCAL_TEXT_MODEL_TIMEOUT_MS),
+    memoryBudgetMb: localTextMemoryBudgetMb(options),
     allowNetwork: options.allowNetwork ?? process.env.LCX_LOCAL_MODEL_ALLOW_NETWORK === "1",
   });
 }
@@ -98,31 +108,58 @@ function appendOutput(current: string, chunk: string): string {
   return next;
 }
 
-function terminateChild(child: ChildProcess): void {
-  if (child.exitCode !== null || child.signalCode !== null) {
+/** The existing MLX ceiling remains an upper bound even for a larger caller pool. */
+export function localTextMemoryBudgetMb(
+  runtime: { memoryBudgetMb?: number },
+  requested?: number,
+): number {
+  for (const value of [runtime.memoryBudgetMb, requested]) {
+    if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+      throw new Error("local model memory budget must be positive");
+    }
+  }
+  return Math.min(3072, runtime.memoryBudgetMb ?? 3072, requested ?? 3072);
+}
+
+async function terminateChild(child: ChildProcess, closed: Promise<void>): Promise<void> {
+  if (!child.pid) {
     return;
   }
-  child.kill("SIGTERM");
-  const killTimer = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-    }
-  }, 750);
-  killTimer.unref();
+  // The detached group may outlive its Python leader, including after its pipes close.
+  killProcessTree(child.pid, { graceMs: 750 });
+  try {
+    await waitForChildMemoryRelease(child);
+  } finally {
+    // A failed OS observation cannot skip joining the actual child/pipe lifecycle.
+    await closed;
+  }
 }
 
 export function parseLocalModelJson(raw: string): Record<string, unknown> {
+  if (raw.length > 2_000_000) {
+    throw new ModelAdapterError("output_limit");
+  }
   const trimmed = raw.trim();
   const candidates: Record<string, unknown>[] = [];
-  for (let searchFrom = 0; searchFrom < trimmed.length; searchFrom += 1) {
+  let inspectedCharacters = 0;
+  // Preserve bounded nested-envelope recovery without rescanning every offset
+  // before the same opening brace or allowing malformed output to monopolize JS.
+  for (let searchFrom = 0, candidateCount = 0; searchFrom < trimmed.length; ) {
     const start = trimmed.indexOf("{", searchFrom);
     if (start < 0) {
       break;
     }
+    if (++candidateCount > 64) {
+      throw new ModelAdapterError("output_limit");
+    }
+    searchFrom = start + 1;
     let depth = 0;
     let inString = false;
     let escaped = false;
     for (let index = start; index < trimmed.length; index += 1) {
+      if (++inspectedCharacters > 4_000_000) {
+        throw new ModelAdapterError("output_limit");
+      }
       const char = trimmed[index];
       if (escaped) {
         escaped = false;
@@ -147,7 +184,11 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
           try {
             const parsed = JSON.parse(trimmed.slice(start, index + 1)) as unknown;
             if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-              candidates.push(parsed as Record<string, unknown>);
+              const candidate = parsed as Record<string, unknown>;
+              if (typeof candidate.kind === "string") {
+                return candidate;
+              }
+              candidates.push(candidate);
             }
           } catch {
             // Keep searching; model runtimes may emit a short prefix before JSON.
@@ -156,10 +197,6 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
         }
       }
     }
-  }
-  const withKind = candidates.find((candidate) => typeof candidate.kind === "string");
-  if (withKind) {
-    return withKind;
   }
   const declaredKind = trimmed.match(/"kind"\s*:\s*"(plan|review|artifact)"/u)?.[1];
   if (declaredKind === "plan") {
@@ -667,7 +704,7 @@ export function buildQualityHarnessModelPromptWithCoverage(
       ? [
           `finding_packet=${JSON.stringify(request.findingPacket)}`,
           "The complete final artifact is present once in dependencyOutputs.formatting; finding_packet.evidenceSha256 binds the full normalized evidence set, including records reviewed in other batches.",
-          'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and artifactClaimId naming the exact current final claim; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
+          'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs already cited by the exact current final claim named by artifactClaimId; evidence elsewhere in the packet cannot substitute for the citations of that claim. Mark unresolved if the final claim still lacks the required citation; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
         ]
       : []),
     `previous=${(completeHandoffRequired ? dependencyJson : clipPromptText(dependencyJson, batchDependencyLimit)) || "none"}`,
@@ -853,7 +890,11 @@ async function runMlxGenerate(
   runtime: LocalTextModelRuntimeConfig,
   prompt: string,
   signal: AbortSignal,
-  onGenerated: (transportRequestId: string, normalized: boolean) => void,
+  onGenerated: (
+    transportRequestId: string,
+    normalized: boolean,
+    memory: ChildMemoryObservation,
+  ) => void,
 ): Promise<{ value: Record<string, unknown>; transportRequestId: string }> {
   return new Promise((resolve, reject) => {
     const args = [
@@ -872,20 +913,34 @@ async function runMlxGenerate(
       "--chat-template-config",
       '{"enable_thinking":false}',
     ];
-    const child = spawn(runtime.pythonPath, buildLocalMlxCommand("mlx_lm", args), {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: buildLocalModelProcessEnv(process.env, {
-        PYTHONUNBUFFERED: "1",
-        HF_HUB_OFFLINE: runtime.allowNetwork ? (process.env.HF_HUB_OFFLINE ?? "0") : "1",
-      }),
-    });
+    const child = spawn(
+      runtime.pythonPath,
+      buildLocalMlxCommand("mlx_lm", args, runtime.memoryBudgetMb),
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: buildLocalModelProcessEnv(process.env, {
+          PYTHONUNBUFFERED: "1",
+          HF_HUB_OFFLINE: runtime.allowNetwork ? (process.env.HF_HUB_OFFLINE ?? "0") : "1",
+        }),
+      },
+    );
     const transportRequestId = `mlx_lm:${child.pid ?? "unknown"}:${randomUUID()}`;
+    const closed = new Promise<void>((done) => child.once("close", () => done()));
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
 
-    const finish = (error?: Error, value?: Record<string, unknown>) => {
+    const guard = guardChildMemory(child, {
+      budgetMb: runtime.memoryBudgetMb ?? 3072,
+      includeProcessGroup: process.platform !== "win32",
+      onError: (error) => {
+        void finish(error);
+      },
+    });
+    void guard.ready.catch(() => undefined);
+    const finish = async (error?: Error, value?: Record<string, unknown>, generated?: boolean) => {
       if (settled) {
         return;
       }
@@ -894,8 +949,25 @@ async function runMlxGenerate(
         clearTimeout(timer);
       }
       signal.removeEventListener("abort", onAbort);
+      let memory: ChildMemoryObservation | undefined;
+      try {
+        memory = await guard.stop();
+      } catch (observationError) {
+        error ??= new ChildMemoryBudgetError(
+          observationError instanceof ChildMemoryBudgetError
+            ? observationError.code
+            : "memory_observation_unavailable",
+        );
+      }
+      if (generated !== undefined && memory) {
+        onGenerated(transportRequestId, generated, memory);
+      }
+      try {
+        await terminateChild(child, closed);
+      } catch {
+        error ??= new ModelAdapterError("process_error");
+      }
       if (error) {
-        terminateChild(child);
         reject(error);
         return;
       }
@@ -905,7 +977,9 @@ async function runMlxGenerate(
       }
       resolve({ value, transportRequestId });
     };
-    const onAbort = () => finish(new Error("local text model invocation aborted"));
+    const onAbort = () => {
+      void finish(new Error("local text model invocation aborted"));
+    };
     const onChunk = (target: "stdout" | "stderr", chunk: string) => {
       try {
         if (target === "stdout") {
@@ -914,7 +988,7 @@ async function runMlxGenerate(
           stderr = appendOutput(stderr, chunk);
         }
       } catch (error) {
-        finish(error instanceof Error ? error : new Error("local text model output overflow"));
+        void finish(error instanceof Error ? error : new Error("local text model output overflow"));
       }
     };
 
@@ -925,28 +999,28 @@ async function runMlxGenerate(
     child.once("error", () => finish(new ModelAdapterError("process_error")));
     child.once("close", (code) => {
       if (code !== 0) {
-        finish(new ModelAdapterError("process_error"));
+        void finish(new ModelAdapterError("process_error"));
         return;
       }
-      if (stdout.trim()) {
-        let normalized = false;
-        try {
-          JSON.parse(stdout.trim());
-        } catch {
-          normalized = true;
-        }
-        onGenerated(transportRequestId, normalized);
+      let normalized = false;
+      try {
+        JSON.parse(stdout.trim());
+      } catch {
+        normalized = true;
       }
       try {
-        finish(
+        void finish(
           undefined,
           runtime.baseModel ? parseLocalBaseModelJson(stdout) : parseLocalModelJson(stdout),
+          normalized,
         );
       } catch (error) {
-        finish(
+        void finish(
           error instanceof LocalTextModelOutputError
             ? error
             : new ModelAdapterError("output_invalid"),
+          undefined,
+          stdout.trim() ? normalized : undefined,
         );
       }
     });
@@ -975,6 +1049,7 @@ export function createLocalTextModelAdapter(
     {
       id: string;
       normalized: boolean;
+      memory: ChildMemoryObservation;
       evidenceCoverage?: ModelCallObservation["evidenceCoverage"];
     }
   >();
@@ -984,6 +1059,7 @@ export function createLocalTextModelAdapter(
     provider: LOCAL_TEXT_MODEL_PROVIDER,
     modelId: runtime.modelId,
     mode: "adapter" as const,
+    cancellationSettlement: "owned_process" as const,
     capabilities: Object.freeze([...options.capabilities]),
     requiredTools: Object.freeze([]),
     requiredSideEffects: Object.freeze(["local_compute"] as const),
@@ -991,13 +1067,14 @@ export function createLocalTextModelAdapter(
       const coveredPrompt = options.buildQualityPromptWithCoverage?.(request.payload);
       const prompt = coveredPrompt?.prompt ?? options.buildPrompt(request.payload);
       const result = await runMlxGenerate(
-        runtime,
+        { ...runtime, memoryBudgetMb: localTextMemoryBudgetMb(runtime, request.memoryBudgetMb) },
         prompt,
         signal,
-        (transportRequestId, normalized) => {
+        (transportRequestId, normalized, memory) => {
           observations.set(request.callId, {
             id: transportRequestId,
             normalized,
+            memory,
             ...(coveredPrompt ? { evidenceCoverage: coveredPrompt.evidenceCoverage } : {}),
           });
         },
@@ -1015,6 +1092,7 @@ export function createLocalTextModelAdapter(
         provider: LOCAL_TEXT_MODEL_PROVIDER,
         modelId: runtime.modelId,
         transportRequestId: transportRequestId.id,
+        memory: transportRequestId.memory,
         ...(transportRequestId.normalized
           ? { outputNormalization: "json_extraction" as const }
           : {}),

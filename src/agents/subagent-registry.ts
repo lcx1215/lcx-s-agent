@@ -43,6 +43,7 @@ import {
   getSubagentRunsSnapshotForRead,
   persistSubagentRunsToDisk,
   restoreSubagentRunsFromDisk,
+  resetSubagentRegistryStateForTests,
 } from "./subagent-registry-state.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { resolveAgentTimeoutMs } from "./timeout.js";
@@ -55,7 +56,13 @@ let sweeper: NodeJS.Timeout | null = null;
 let listenerStarted = false;
 let listenerStop: (() => void) | null = null;
 // Use var to avoid TDZ when init runs across circular imports during bootstrap.
-var restoreAttempted = false;
+var restorePhase: "unread" | "reconcile" | "persist" | "resume" | "complete" = "unread";
+type PendingSubagentTermination = Readonly<{
+  entry: SubagentRunRecord;
+  endedAt: number;
+  error: string;
+}>;
+const pendingTerminations = new Map<string, PendingSubagentTermination>();
 const SUBAGENT_ANNOUNCE_TIMEOUT_MS = 120_000;
 const MIN_ANNOUNCE_RETRY_DELAY_MS = 1_000;
 const MAX_ANNOUNCE_RETRY_DELAY_MS = 8_000;
@@ -359,6 +366,25 @@ async function emitSubagentEndedHookForRun(params: {
   });
 }
 
+function applyPendingTermination(entry: SubagentRunRecord, pending: PendingSubagentTermination) {
+  entry.endedAt = pending.endedAt;
+  entry.outcome = { status: "error", error: pending.error };
+  entry.endedReason = SUBAGENT_ENDED_REASON_KILLED;
+  entry.cleanupHandled = true;
+  entry.cleanupCompletedAt = pending.endedAt;
+  entry.suppressAnnounceReason = "killed";
+}
+
+/** Explicit termination evidence outranks late completion from the stopped run. */
+function preserveTerminationEvidence(entry: SubagentRunRecord): boolean {
+  const pending = pendingTerminations.get(entry.runId);
+  if (pending?.entry === entry) {
+    applyPendingTermination(entry, pending);
+    return true;
+  }
+  return entry.endedReason === SUBAGENT_ENDED_REASON_KILLED;
+}
+
 async function completeSubagentRun(params: {
   runId: string;
   endedAt?: number;
@@ -370,27 +396,24 @@ async function completeSubagentRun(params: {
 }) {
   clearPendingLifecycleError(params.runId);
   const entry = subagentRuns.get(params.runId);
-  if (!entry || entry.completionSource === "local") {
+  if (!entry || entry.completionSource === "local" || preserveTerminationEvidence(entry)) {
     return;
   }
 
-  let mutated = false;
   const endedAt = typeof params.endedAt === "number" ? params.endedAt : Date.now();
   if (entry.endedAt !== endedAt) {
     entry.endedAt = endedAt;
-    mutated = true;
   }
   if (!runOutcomesEqual(entry.outcome, params.outcome)) {
     entry.outcome = params.outcome;
-    mutated = true;
   }
   if (entry.endedReason !== params.reason) {
     entry.endedReason = params.reason;
-    mutated = true;
   }
 
-  if (mutated) {
-    persistSubagentRuns();
+  // Retry persistence even when a prior failed completion already updated memory.
+  if (!persistSubagentRuns()) {
+    return;
   }
 
   // Dispatch can finish before the gateway acknowledgement. Keep its receipt until
@@ -551,35 +574,48 @@ function resumeSubagentRun(runId: string) {
   resumedRuns.add(runId);
 }
 
-function restoreSubagentRunsOnce() {
-  if (restoreAttempted) {
-    return;
+function restoreSubagentRunsOnce(): boolean {
+  if (restorePhase === "complete") {
+    return true;
   }
-  restoreAttempted = true;
   try {
-    const restoredCount = restoreSubagentRunsFromDisk({
-      runs: subagentRuns,
-      mergeOnly: true,
-    });
-    if (restoredCount === 0) {
-      return;
+    if (restorePhase !== "reconcile" && restorePhase !== "persist" && restorePhase !== "resume") {
+      const restoredCount = restoreSubagentRunsFromDisk({
+        runs: subagentRuns,
+        mergeOnly: true,
+      });
+      restorePhase = restoredCount === 0 ? "complete" : "reconcile";
     }
-    reconcileOrphanedRestoredRuns();
-    persistSubagentRuns();
-    if (subagentRuns.size === 0) {
-      return;
+    if (restorePhase === "reconcile") {
+      reconcileOrphanedRestoredRuns();
+      restorePhase = "persist";
     }
-    // Resume pending work.
-    ensureListener();
-    if ([...subagentRuns.values()].some((entry) => entry.archiveAtMs)) {
-      startSweeper();
+    if (restorePhase === "persist") {
+      if (!persistSubagentRuns()) {
+        startSweeper();
+        return false;
+      }
+      restorePhase = "resume";
     }
-    for (const runId of subagentRuns.keys()) {
-      resumeSubagentRun(runId);
+    if (restorePhase === "resume") {
+      if (subagentRuns.size > 0) {
+        // Resume only after the restored/reconciled receipt is durable.
+        ensureListener();
+        if ([...subagentRuns.values()].some((entry) => entry.archiveAtMs)) {
+          startSweeper();
+        }
+        for (const runId of subagentRuns.keys()) {
+          resumeSubagentRun(runId);
+        }
+      }
+      restorePhase = "complete";
     }
   } catch {
-    // ignore restore failures
+    // Keep the failed phase for the existing sweeper; never replay dispatch.
+    startSweeper();
+    return false;
   }
+  return restorePhase === "complete";
 }
 
 function resolveArchiveAfterMs(cfg?: ReturnType<typeof loadConfig>) {
@@ -617,6 +653,14 @@ function stopSweeper() {
 }
 
 async function sweepSubagentRuns() {
+  if (restorePhase !== "unread" && restorePhase !== "complete") {
+    if (!restoreSubagentRunsOnce()) {
+      return;
+    }
+  }
+  if (pendingTerminations.size > 0 && !persistPendingTerminations()) {
+    return;
+  }
   const now = Date.now();
   let mutated = false;
   for (const [runId, entry] of subagentRuns.entries()) {
@@ -654,7 +698,10 @@ async function sweepSubagentRuns() {
   if (mutated) {
     persistSubagentRuns();
   }
-  if (subagentRuns.size === 0) {
+  if (
+    pendingTerminations.size === 0 &&
+    ![...subagentRuns.values()].some((entry) => entry.archiveAtMs)
+  ) {
     stopSweeper();
   }
 }
@@ -794,7 +841,9 @@ async function finalizeSubagentCleanup(
     entry.lastAnnounceRetryAt = now;
     entry.cleanupHandled = false;
     resumedRuns.delete(runId);
-    persistSubagentRuns();
+    if (!persistSubagentRuns()) {
+      return;
+    }
     setTimeout(() => {
       resumeSubagentRun(runId);
     }, deferredDecision.delayMs).unref?.();
@@ -829,7 +878,9 @@ async function finalizeSubagentCleanup(
   entry.cleanupHandled = false;
   // Clear the in-flight resume marker so the scheduled retry can run again.
   resumedRuns.delete(runId);
-  persistSubagentRuns();
+  if (!persistSubagentRuns()) {
+    return;
+  }
   if (deferredDecision.resumeDelayMs == null) {
     return;
   }
@@ -866,13 +917,15 @@ function completeCleanupBookkeeping(params: {
   if (params.cleanup === "delete") {
     clearPendingLifecycleError(params.runId);
     subagentRuns.delete(params.runId);
-    persistSubagentRuns();
-    retryDeferredCompletedAnnounces(params.runId);
+    if (persistSubagentRuns()) {
+      retryDeferredCompletedAnnounces(params.runId);
+    }
     return;
   }
   params.entry.cleanupCompletedAt = params.completedAt;
-  persistSubagentRuns();
-  retryDeferredCompletedAnnounces(params.runId);
+  if (persistSubagentRuns()) {
+    retryDeferredCompletedAnnounces(params.runId);
+  }
 }
 
 function retryDeferredCompletedAnnounces(excludeRunId?: string) {
@@ -916,7 +969,10 @@ function beginSubagentCleanup(runId: string) {
     return false;
   }
   entry.cleanupHandled = true;
-  persistSubagentRuns();
+  if (!persistSubagentRuns()) {
+    entry.cleanupHandled = false;
+    return false;
+  }
   return true;
 }
 
@@ -932,8 +988,12 @@ export function markSubagentRunForSteerRestart(runId: string) {
   if (entry.suppressAnnounceReason === "steer-restart") {
     return true;
   }
+  const previous = entry.suppressAnnounceReason;
   entry.suppressAnnounceReason = "steer-restart";
-  persistSubagentRuns();
+  if (!persistSubagentRuns()) {
+    entry.suppressAnnounceReason = previous;
+    return false;
+  }
   return true;
 }
 
@@ -950,7 +1010,10 @@ export function clearSubagentRunSteerRestart(runId: string) {
     return true;
   }
   entry.suppressAnnounceReason = undefined;
-  persistSubagentRuns();
+  if (!persistSubagentRuns()) {
+    entry.suppressAnnounceReason = "steer-restart";
+    return false;
+  }
   // If the interrupted run already finished while suppression was active, retry
   // cleanup now so completion output is not lost when restart dispatch fails.
   resumedRuns.delete(key);
@@ -1010,7 +1073,11 @@ export function replaceSubagentRunAfterSteer(params: {
 
   subagentRuns.set(nextRunId, next);
   ensureListener();
-  persistSubagentRuns();
+  if (!persistSubagentRuns()) {
+    next.dispatchState = "uncertain";
+    next.dispatchError = "Steer replacement receipt could not be persisted";
+    return false;
+  }
   void waitForSubagentCompletion(nextRunId, waitTimeoutMs);
   return true;
 }
@@ -1146,6 +1213,7 @@ export function recordSubagentDispatchFailure(runId: string, error: string) {
   // A terminal lifecycle may have arrived while the acknowledgement was pending.
   // Preserve that evidence; never manufacture it from a sessions.delete response.
   if (
+    persisted &&
     entry.completionSource !== "local" &&
     entry.endedAt &&
     entry.outcome &&
@@ -1182,7 +1250,7 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
       return;
     }
     const entry = subagentRuns.get(runId);
-    if (!entry) {
+    if (!entry || preserveTerminationEvidence(entry)) {
       return;
     }
     // agent.wait timeout is a polling deadline unless it carries a terminal timestamp.
@@ -1223,8 +1291,8 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
       entry.outcome = outcome;
       mutated = true;
     }
-    if (mutated) {
-      persistSubagentRuns();
+    if (mutated && !persistSubagentRuns()) {
+      return;
     }
     await completeSubagentRun({
       runId,
@@ -1252,7 +1320,8 @@ export function resetSubagentRegistryForTests(opts?: { persist?: boolean }) {
   clearAllPendingLifecycleErrors();
   resetAnnounceQueuesForTests();
   stopSweeper();
-  restoreAttempted = false;
+  restorePhase = "unread";
+  pendingTerminations.clear();
   if (listenerStop) {
     listenerStop();
     listenerStop = null;
@@ -1261,6 +1330,7 @@ export function resetSubagentRegistryForTests(opts?: { persist?: boolean }) {
   if (opts?.persist !== false) {
     persistSubagentRuns();
   }
+  resetSubagentRegistryStateForTests();
 }
 
 export function addSubagentRunForTests(entry: SubagentRunRecord) {
@@ -1269,6 +1339,7 @@ export function addSubagentRunForTests(entry: SubagentRunRecord) {
 
 export function releaseSubagentRun(runId: string) {
   clearPendingLifecycleError(runId);
+  pendingTerminations.delete(runId);
   const didDelete = subagentRuns.delete(runId);
   if (didDelete) {
     persistSubagentRuns();
@@ -1313,6 +1384,43 @@ export function isSubagentSessionRunActive(childSessionKey: string): boolean {
   return false;
 }
 
+function persistPendingTerminations(): boolean {
+  const entriesByChildSessionKey = new Map<string, SubagentRunRecord>();
+  for (const [runId, pending] of pendingTerminations) {
+    const entry = pending.entry;
+    if (subagentRuns.get(runId) !== entry) {
+      pendingTerminations.delete(runId);
+      continue;
+    }
+    applyPendingTermination(entry, pending);
+    if (!entriesByChildSessionKey.has(entry.childSessionKey)) {
+      entriesByChildSessionKey.set(entry.childSessionKey, entry);
+    }
+  }
+  if (pendingTerminations.size === 0) {
+    return true;
+  }
+  if (!persistSubagentRuns()) {
+    startSweeper();
+    return false;
+  }
+  pendingTerminations.clear();
+  for (const entry of entriesByChildSessionKey.values()) {
+    void emitSubagentEndedHookOnce({
+      entry,
+      reason: SUBAGENT_ENDED_REASON_KILLED,
+      sendFarewell: true,
+      outcome: SUBAGENT_ENDED_OUTCOME_KILLED,
+      error: entry.outcome?.status === "error" ? entry.outcome.error : undefined,
+      inFlightRunIds: endedHookInFlightRunIds,
+      persist: persistSubagentRuns,
+    }).catch(() => {
+      // Hook failures should not break termination flow.
+    });
+  }
+  return true;
+}
+
 export function markSubagentRunTerminated(params: {
   runId?: string;
   childSessionKey?: string;
@@ -1334,7 +1442,6 @@ export function markSubagentRunTerminated(params: {
   const now = Date.now();
   const reason = params.reason?.trim() || "killed";
   let updated = 0;
-  const entriesByChildSessionKey = new Map<string, SubagentRunRecord>();
   for (const runId of runIds) {
     clearPendingLifecycleError(runId);
     const entry = subagentRuns.get(runId);
@@ -1342,6 +1449,9 @@ export function markSubagentRunTerminated(params: {
       continue;
     }
     if (typeof entry.endedAt === "number") {
+      if (pendingTerminations.get(runId)?.entry === entry) {
+        updated += 1;
+      }
       continue;
     }
     if (entry.completionSource === "local") {
@@ -1350,34 +1460,12 @@ export function markSubagentRunTerminated(params: {
       persistSubagentRuns(true);
       continue;
     }
-    entry.endedAt = now;
-    entry.outcome = { status: "error", error: reason };
-    entry.endedReason = SUBAGENT_ENDED_REASON_KILLED;
-    entry.cleanupHandled = true;
-    entry.cleanupCompletedAt = now;
-    entry.suppressAnnounceReason = "killed";
-    if (!entriesByChildSessionKey.has(entry.childSessionKey)) {
-      entriesByChildSessionKey.set(entry.childSessionKey, entry);
-    }
+    const pending = Object.freeze({ entry, endedAt: now, error: reason });
+    applyPendingTermination(entry, pending);
+    pendingTerminations.set(runId, pending);
     updated += 1;
   }
-  if (updated > 0) {
-    persistSubagentRuns();
-    for (const entry of entriesByChildSessionKey.values()) {
-      void emitSubagentEndedHookOnce({
-        entry,
-        reason: SUBAGENT_ENDED_REASON_KILLED,
-        sendFarewell: true,
-        outcome: SUBAGENT_ENDED_OUTCOME_KILLED,
-        error: reason,
-        inFlightRunIds: endedHookInFlightRunIds,
-        persist: persistSubagentRuns,
-      }).catch(() => {
-        // Hook failures should not break termination flow.
-      });
-    }
-  }
-  return updated;
+  return updated > 0 && !persistPendingTerminations() ? 0 : updated;
 }
 
 export function listSubagentRunsForRequester(requesterSessionKey: string): SubagentRunRecord[] {

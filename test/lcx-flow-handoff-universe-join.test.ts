@@ -1,8 +1,13 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { probeUniverseJoin } from "./fixtures/lcx-waterflow-universe-join-probe.js";
+import {
+  probeUniverseJoin,
+  readUniverseSnapshotSources,
+} from "./fixtures/lcx-waterflow-universe-join-probe.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -10,6 +15,27 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 describe("native private same-parent Universe owner join and failure feedback", () => {
+  it("includes untracked source while excluding ignored files without changing the host index", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-source-inventory-"));
+    roots.push(root);
+    const git = async (args: string[]) =>
+      (await promisify(execFile)("git", args, { cwd: root, timeout: 10_000 })).stdout;
+    await git(["init", "--quiet"]);
+    await fs.mkdir(path.join(root, "src"));
+    await fs.writeFile(path.join(root, ".gitignore"), "src/ignored.ts\n");
+    await fs.writeFile(path.join(root, "src/tracked.ts"), "export const tracked = true;\n");
+    await git(["add", ".gitignore", "src/tracked.ts"]);
+    await fs.writeFile(path.join(root, "src/new.ts"), "export const added = true;\n");
+    await fs.writeFile(path.join(root, "src/ignored.ts"), "private ignored content");
+    const before = await fs.readFile(path.join(root, ".git/index"));
+    const { indexed } = await readUniverseSnapshotSources(root, git);
+    expect(indexed.find((entry) => entry.file === "src/tracked.ts")?.objectId).toMatch(
+      /^[a-f0-9]{40}$/u,
+    );
+    expect(indexed.find((entry) => entry.file === "src/new.ts")).toMatchObject({ objectId: "" });
+    expect(indexed.some((entry) => entry.file === "src/ignored.ts")).toBe(false);
+    expect(await fs.readFile(path.join(root, ".git/index"))).toEqual(before);
+  });
   it.each([undefined, "missing_source", "hash_conflict"] as const)(
     "preserves actual %s source failure through original join",
     async (fault) => {
@@ -28,6 +54,13 @@ describe("native private same-parent Universe owner join and failure feedback", 
         roots.push(root);
       }
       const result = await probeUniverseJoin(root, fault);
+      expect(result.snapshotImport).toMatchObject({
+        mode: "read_only_host_objects_private_index_and_dirty_blobs",
+        hostIndexUnchanged: true,
+        dirtyProof: { path: "test/changed.test.ts" },
+      });
+      expect(result.snapshotImport.indexedPaths).toBeGreaterThan(1_000);
+      expect(result.snapshotImport.dirtyPaths).toBeGreaterThan(0);
       expect(result.before).toHaveLength(5);
       expect(result.callerInputs).toHaveLength(5);
       for (const owner of result.before) {
@@ -60,7 +93,8 @@ describe("native private same-parent Universe owner join and failure feedback", 
         )
       ) {
         expect(result.before.find((owner) => owner.id === "mindModel")?.ok).toBe(true);
-        expect(result.before.find((owner) => owner.id === "flowGraph")?.ok).toBe(true);
+        const flowGraph = result.before.find((owner) => owner.id === "flowGraph");
+        expect(flowGraph?.ok, JSON.stringify(flowGraph?.compact)).toBe(true);
         expect(result.review.reason).toBe("cleanup_review_upstream_quality_failed:contextRecovery");
         expect(result.audit.status).toBe("normal_block");
         expect(result.audit.gaps).toEqual([]);
@@ -88,7 +122,14 @@ describe("native private same-parent Universe owner join and failure feedback", 
       expect(result.cleanup.directChildCloseObserved).toBe(true);
       expect(
         result.processes.every(
-          (child) => child.timeoutMs <= 20_000 && child.closeObserved && child.stdioClosed,
+          (child) =>
+            child.timeoutMs <=
+              (child.command === process.execPath &&
+              child.args.some((arg) => path.basename(arg) === "lcx-universe-index.ts")
+                ? 45_000
+                : 20_000) &&
+            child.closeObserved &&
+            child.stdioClosed,
         ),
       ).toBe(true);
       expect(network).not.toHaveBeenCalled();
@@ -96,6 +137,8 @@ describe("native private same-parent Universe owner join and failure feedback", 
         path.join(root, "native-guards.json"),
         JSON.stringify(
           {
+            snapshotImport: result.snapshotImport,
+            timing: result.timing,
             fetchCallCount: network.mock.calls.length,
             actualProcessCount: result.processes.length,
             deniedOriginalChildRequests: result.denied,

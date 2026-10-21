@@ -16,6 +16,163 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.rm(directory, { recursive: true, force: true });
 });
+it("propagates observation cancellation instead of reporting unavailable evidence", async () => {
+  const controller = new AbortController();
+  const reason = new Error("feedback read cancelled");
+  await expect(
+    readFinancePositionManagementFeedback({
+      directory,
+      observedAt: at,
+      rules: [],
+      signal: controller.signal,
+      reconciliationObservation: {
+        directory,
+        asOf: at,
+        read: async () => {
+          controller.abort(reason);
+          return { records: [], omittedAccounts: 0 };
+        },
+      },
+    }),
+  ).rejects.toBe(reason);
+});
+
+it.each([0, 180])(
+  "pages every retained holding without skipping byte-trimmed rows (padding=%s)",
+  async (padding) => {
+    const instruments = Array.from(
+      { length: 9 },
+      (_, index) => `FIX${index}${"X".repeat(padding)}`,
+    );
+    const record = await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "page-account",
+      venue: "alpaca:paper",
+      query: `reconciliation:${at}`,
+      cursor: "",
+      payload: [
+        {
+          observedAt: at,
+          positions: instruments.map((symbol) => ({ symbol, qty: "1" })),
+          openOrders: [],
+        },
+      ],
+    });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let pageIndex = 0; pageIndex < 12; pageIndex++) {
+      const result = await readFinancePositionManagementFeedback({
+        directory,
+        observedAt: at,
+        rules: [],
+        scope: { accountId: "page-account", venue: "alpaca:paper" },
+        holdingsPage: { cursor },
+      });
+      expect(result.status).toBe("present");
+      expect(Buffer.byteLength(JSON.stringify(result.accounts))).toBeLessThanOrEqual(1600);
+      const account = result.accounts![0];
+      expect(account.positionCount).toBe(9);
+      expect(account.snapshotRef).toBe(record.record.ref);
+      expect(account.holdings.length).toBeGreaterThan(0);
+      seen.push(...account.holdings.map((holding) => holding.instrument));
+      const page = account.holdingsPage!;
+      expect(page.returnedHoldings).toBe(account.holdings.length);
+      if (page.complete) {
+        break;
+      }
+      expect(page.nextCursor).toBeTypeOf("string");
+      expect(page.nextCursor).not.toBe(cursor);
+      cursor = page.nextCursor!;
+    }
+    expect(seen).toEqual(instruments);
+  },
+);
+
+it.each(["invalid", "account", "snapshot", "classification", "offset"])(
+  "rejects a changed holdings cursor (%s)",
+  async (change) => {
+    const snapshot = {
+      observedAt: at,
+      positions: Array.from({ length: 9 }, (_, index) => ({ symbol: `FIX${index}`, qty: "1" })),
+      openOrders: [],
+    };
+    let appendIndex = 0;
+    const append = () =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "page-account",
+        venue: "alpaca:paper",
+        query: `reconciliation:${at}`,
+        cursor: String(appendIndex++),
+        payload: [snapshot],
+      });
+    await append();
+    const request = {
+      directory,
+      observedAt: at,
+      rules: [],
+      scope: { accountId: "page-account", venue: "alpaca:paper" },
+      holdingsPage: {},
+    };
+    const first = await readFinancePositionManagementFeedback(request);
+    let cursor = first.accounts![0].holdingsPage!.nextCursor!;
+    if (change === "invalid") {
+      cursor = "not-json";
+    }
+    if (change === "snapshot") {
+      await append();
+    }
+    if (change === "offset") {
+      const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      cursor = Buffer.from(JSON.stringify({ ...value, offset: 999 })).toString("base64url");
+    }
+    const result = await readFinancePositionManagementFeedback({
+      ...request,
+      ...(change === "account"
+        ? { scope: { accountId: "other-account", venue: "alpaca:paper" } }
+        : {}),
+      ...(change === "classification"
+        ? { rules: [{ ruleId: "new-rule", state: "active", instruments: ["FIX0"] }] }
+        : {}),
+      holdingsPage: { cursor },
+    });
+    expect(result.status).toBe(change === "invalid" ? "invalid_cursor" : "stale_cursor");
+    expect(result.accounts).toBeUndefined();
+  },
+);
+
+it("reports a holdings item that cannot fit rather than returning a looping cursor", async () => {
+  await appendFinanceBrokerHistory(directory, {
+    kind: "broker_history",
+    accountId: "page-account",
+    venue: "alpaca:paper",
+    query: `reconciliation:${at}`,
+    cursor: "",
+    payload: [
+      { observedAt: at, positions: [{ symbol: "X".repeat(2200), qty: "1" }], openOrders: [] },
+    ],
+  });
+  const result = await readFinancePositionManagementFeedback({
+    directory,
+    observedAt: at,
+    rules: [],
+    scope: { accountId: "page-account", venue: "alpaca:paper" },
+    holdingsPage: {},
+  });
+  expect(result.accounts![0]).toMatchObject({
+    positionCount: 1,
+    omittedHoldings: 1,
+    holdings: [],
+    holdingsPage: {
+      status: "item_exceeds_page_budget",
+      returnedHoldings: 0,
+      remainingHoldings: 1,
+      complete: false,
+      nextCursor: null,
+    },
+  });
+});
+
 const stop = {
   id: "stop",
   symbol: "SPY",

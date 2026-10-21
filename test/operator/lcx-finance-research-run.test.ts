@@ -691,6 +691,16 @@ it("keeps the scheduler protocol parseable while full evidence stays in the rece
       accountId: "paper-account",
       venue: "paper" as const,
     },
+    intradayFeedbackReview: {
+      schemaVersion: "finance_research_intraday_feedback_review_v1" as const,
+      boundary:
+        "reported_research_response_not_configuration_publication_execution_or_adoption" as const,
+      inputCount: 0,
+      respondedCount: 0,
+      researchAccepted: false,
+      entries: [],
+      gaps: ["feedback_history_unavailable"],
+    },
     unusedEvidence: "x".repeat(100000),
   };
   const compact = compactFinanceResearchSummary(summary);
@@ -702,6 +712,15 @@ it("keeps the scheduler protocol parseable while full evidence stays in the rece
     portfolioPlanWritten: summary.portfolioPlanWritten,
     portfolioPlanWrite: summary.portfolioPlanWrite,
   });
+  expect(compact.intradayFeedbackReview).toMatchObject({
+    inputCount: 0,
+    respondedCount: 0,
+    unaddressedCount: 0,
+    researchAccepted: false,
+    gapCount: 1,
+    details: "original_written_research_receipt",
+  });
+  expect(compact.intradayFeedbackReview).not.toHaveProperty("entries");
   expect(compact).not.toHaveProperty("unusedEvidence");
   expect(parseArgs(["--scheduler-summary"]).json).toBe(true);
 });

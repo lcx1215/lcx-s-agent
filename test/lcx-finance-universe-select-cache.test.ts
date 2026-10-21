@@ -9,7 +9,11 @@ import {
   runUniverseSelect,
   writeAssetCache,
 } from "../scripts/operator/lcx-finance-universe-select.ts";
-import { financeBarLedgerExists, readFinanceBarLedger } from "../src/agents/finance-bar-ledger.ts";
+import {
+  closeFinanceBarLedger,
+  financeBarLedgerExists,
+  readFinanceBarLedger,
+} from "../src/agents/finance-bar-ledger.ts";
 import { financeUsEquityRegularCloseInstant } from "../src/agents/finance-cycle-schedule.ts";
 import { financeBarLedgerPath } from "../src/agents/finance-state-dir.ts";
 import {
@@ -213,6 +217,7 @@ afterEach(() => {
   });
   collectedHistorySymbols.splice(0);
   for (const dir of dirs.splice(0)) {
+    closeFinanceBarLedger(dir);
     fsSync.rmSync(dir, { recursive: true, force: true });
   }
 });

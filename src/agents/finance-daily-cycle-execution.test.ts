@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as accountEconomicsReader from "./finance-account-economic-feedback.js";
 import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
+import * as dailyHistoryReader from "./finance-daily-decision-history.js";
+import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import { FinanceExecutionSafetyUncertainError } from "./finance-execution-safety.js";
 import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
+import { commitFinanceSchedulerDatabaseState } from "./finance-scheduler-ledger.js";
 import type {
   FinanceTradeDecisionReviewRequest,
   FinanceTradeDecisionReviewResult,
@@ -19,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   venue: vi.fn(),
   ledger: vi.fn(),
   projection: vi.fn(),
+  appendReceipt: vi.fn(),
+  appendMark: vi.fn(),
 }));
 vi.mock("./finance-free-market-collection-adapters.js", () => ({
   createChinaReachableUsEodHistoryCollectionAdapter: () => ({ collect: mocks.collect }),
@@ -34,8 +42,8 @@ vi.mock("./finance-bar-ledger.js", () => ({
 vi.mock("./finance-position-ledger.js", () => ({
   readFinancePositionLedger: mocks.ledger,
   projectFinancePositions: mocks.projection,
-  appendFinanceExecutionReceipt: vi.fn(),
-  appendFinancePositionMark: vi.fn(),
+  appendFinanceExecutionReceipt: mocks.appendReceipt,
+  appendFinancePositionMark: mocks.appendMark,
 }));
 import {
   runFinanceDailyCycle,
@@ -359,6 +367,39 @@ describe("daily cycle execution data boundary", () => {
       }),
     );
   });
+  it.each([
+    { askPrice: 260, referencePrice: 260 },
+    { bidPrice: 248 },
+    { sourceUrlOrArtifact: "fixture://different-source" },
+    { feed: "changed-feed" },
+    { maxAgeMs: 60_000 },
+  ])("does not reuse daily approval after refreshed quote terms change: %j", async (changed) => {
+    let executionAt = Date.parse(asOf);
+    let reviewed = false;
+    const executionQuoteProvider = vi.fn(async () => ({
+      referencePrice: 250,
+      referencePriceAt: new Date(executionAt).toISOString(),
+      sourceUrlOrArtifact: "fixture://execution-quote",
+      bidPrice: 249,
+      askPrice: 250,
+      maxAgeMs: 30_000,
+      ...(reviewed ? changed : {}),
+    }));
+    const report = await runFinanceDailyCycle({
+      ...params,
+      executionQuoteProvider,
+      executionNow: () => executionAt,
+      tradeDecisionReviewer: async (request) => {
+        const result = await params.tradeDecisionReviewer(request);
+        reviewed = true;
+        executionAt += 40_000;
+        return result;
+      },
+    });
+    expect(executionQuoteProvider).toHaveBeenCalledTimes(4);
+    expect(mocks.order).not.toHaveBeenCalled();
+    expect(report.refusals.join()).toContain("execution quote changed since model review");
+  });
   it("retries a transient pre-review quote failure with a fresh quote when review is not needed", async () => {
     const executionQuoteProvider = vi
       .fn()
@@ -506,6 +547,9 @@ describe("daily cycle execution data boundary", () => {
     expect(mocks.order).toHaveBeenCalledTimes(1);
     expect(report.ok).toBe(false);
     expect(report.dataIssues.join()).toContain("stopped remaining orders");
+    expect(report.refusals).toContain(
+      "MSFT: not attempted after AAPL execution outcome became uncertain; pending reconciliation",
+    );
   });
   it("validates lazy quotes against current control clock, not historical strategy asOf", async () => {
     const now = Date.parse(asOf) + 600000;
@@ -767,3 +811,472 @@ it("delivers account attribution through the daily judgment and its durable repo
   expect(reviewer.mock.calls[0][0].accountEconomics).toEqual(economics);
   expect(report.tradeDecisionReview.accountEconomics).toEqual(economics);
 });
+
+it.each([
+  { instrument: "MSFT", quantity: 240, marketValue: 60000, firstSide: "sell", refusal: "none" },
+  { instrument: "AAPL", quantity: 40, marketValue: 10000, firstSide: "buy", refusal: "none" },
+  { instrument: "AAPL", quantity: 40, marketValue: 10000, firstSide: "buy", refusal: "veto" },
+  { instrument: "AAPL", quantity: 40, marketValue: 10000, firstSide: "buy", refusal: "gate" },
+  {
+    instrument: "AAPL",
+    quantity: 40,
+    marketValue: 10000,
+    firstSide: "buy",
+    refusal: "none",
+    filledQuantity: 2,
+  },
+])(
+  "prioritizes allocation convergence over symbol order ($firstSide/$refusal)",
+  async (holding) => {
+    const filledQuantity = holding.filledQuantity ?? 4;
+    const historyRead = vi.spyOn(dailyHistoryReader, "readFinanceDailyDecisionHistory");
+    mocks.order.mockImplementation(async (request) => {
+      if (holding.refusal === "gate" && request.conclusion.instrument === "MSFT") {
+        return { ok: false, stage: "gate", refusals: ["fixture definite gate rejection"] };
+      }
+      if (request.ordersPlacedThisRun >= request.budget.maxOrdersPerRun) {
+        return { ok: false, stage: "gate", refusals: ["fixture order limit"] };
+      }
+      return {
+        ok: true,
+        receipt: {
+          schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+          receiptId: "priority-fill",
+          intentId: "priority-intent",
+          runAuthorizationId: "synthetic",
+          adapterId: "fixture",
+          adapterKind: "venue",
+          venue: "alpaca:paper",
+          instrument: request.conclusion.instrument,
+          side: request.conclusion.direction,
+          orderType: "market",
+          quantity: 4,
+          referencePrice: 250,
+          referencePriceAt: asOf,
+          notional: 1000,
+          fill: { filledQuantity, fillPrice: 250, filledAt: asOf, venueRef: "fixture-fill" },
+          executionAuthority: "declared_execution_adapter_required",
+          recordedAt: asOf,
+        },
+      };
+    });
+    const report = await runFinanceDailyCycle({
+      ...params,
+      // Keep both buys feasible under the same exposure rule as the durable gate;
+      // this scenario isolates priority and the single available order slot.
+      caps: { ...params.caps, maxInstrumentNotional: 60_000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: async (request) => {
+        const reviewed = await params.tradeDecisionReviewer(request);
+        return {
+          ...reviewed,
+          decisions: reviewed.decisions?.map((decision) => ({
+            ...decision,
+            decision:
+              holding.refusal === "veto" &&
+              request.candidates.find((candidate) => candidate.candidateId === decision.candidateId)
+                ?.instrument === "MSFT"
+                ? ("veto" as const)
+                : ("approve" as const),
+          })),
+        };
+      },
+      accountId: "bound-account",
+      executionQuotes: quotes(),
+      accountBookProvider: async () => ({
+        accountId: "bound-account",
+        venue: "alpaca:paper",
+        equity: 100000,
+        observedAt: asOf,
+        expiresAt: new Date(Date.parse(asOf) + 60000).toISOString(),
+        positions: [holding],
+      }),
+    });
+    expect(report.drift).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ instrument: "AAPL", action: "buy" }),
+        expect.objectContaining({ instrument: "MSFT", action: holding.firstSide }),
+      ]),
+    );
+    expect(historyRead.mock.calls[0][0].instruments?.[0]).toBe("MSFT");
+    if (holding.refusal !== "none") {
+      expect(report.placed).toEqual([{ instrument: "AAPL", quantity: 4, notional: 1000 }]);
+      const accepted = mocks.order.mock.calls.find(
+        ([request]) => request.conclusion.instrument === "AAPL",
+      );
+      expect(accepted?.[0].ordersPlacedThisRun).toBe(0);
+      expect(mocks.order).toHaveBeenCalledTimes(holding.refusal === "veto" ? 1 : 2);
+      expect(report.refusals.join(" ")).toContain(
+        holding.refusal === "veto" ? "model vetoed" : "definite gate rejection",
+      );
+      return;
+    }
+    expect(mocks.order.mock.calls[0][0].conclusion).toMatchObject({
+      instrument: "MSFT",
+      direction: holding.firstSide,
+    });
+    expect(report.placed).toEqual([
+      { instrument: "MSFT", quantity: filledQuantity, notional: filledQuantity * 250 },
+    ]);
+    expect(mocks.order.mock.calls[1][0].ordersPlacedThisRun).toBe(1);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "limited-order-history-"));
+    try {
+      commitFinanceSchedulerDatabaseState(directory, "{}", [
+        {
+          runId: `limited-${holding.firstSide}`,
+          mode: "day",
+          firedAt: report.asOf,
+          completedAt: new Date(Date.parse(report.asOf) + 1000).toISOString(),
+          outputTruncated: false,
+          execution: { placementEnabled: true, venue: "alpaca" },
+          stdout: JSON.stringify({
+            ...report,
+            mode: "day",
+            ruleIds: ["fixture-daily-trend"],
+            positionBook: { source: "controller_account", accountId: "bound-account" },
+          }),
+        },
+      ]);
+      const history = dailyHistoryReader.readFinanceDailyDecisionHistory({
+        directory,
+        accountId: "bound-account",
+        asOf: new Date(Date.parse(report.asOf) + 2000).toISOString(),
+        instruments: ["MSFT", "AAPL"],
+      });
+      expect(history.entries.find((entry) => entry.instrument === "AAPL")).toMatchObject({
+        decision: "approve",
+        reportedPlacement: null,
+        refusals: ["AAPL: fixture order limit"],
+      });
+      expect(history.entries.find((entry) => entry.instrument === "MSFT")).toMatchObject({
+        decision: "approve",
+        proposedNotional: 1000,
+        reportedPlacement: { quantity: filledQuantity, notional: filledQuantity * 250 },
+        refusals: [],
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["receipt_write", "mark_write", "no_fill"] as const)(
+  "stops the remaining portfolio after accepted execution cannot be projected (%s)",
+  async (mode) => {
+    if (mode === "receipt_write") {
+      mocks.appendReceipt.mockRejectedValueOnce(new Error("fixture disk failure"));
+    }
+    if (mode === "mark_write") {
+      mocks.appendMark.mockRejectedValueOnce(new Error("fixture mark failure"));
+    }
+    mocks.order.mockImplementation(async (request) => ({
+      ok: true,
+      receipt: {
+        schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+        receiptId: "accepted-fill",
+        intentId: "accepted-intent",
+        runAuthorizationId: "synthetic",
+        adapterId: "fixture",
+        adapterKind: "venue",
+        venue: "alpaca:paper",
+        instrument: request.conclusion.instrument,
+        side: request.conclusion.direction,
+        orderType: "market",
+        quantity: 4,
+        referencePrice: 250,
+        referencePriceAt: asOf,
+        notional: 1000,
+        fill: {
+          filledQuantity: mode === "no_fill" ? 0 : 4,
+          fillPrice: 250,
+          filledAt: asOf,
+          venueRef: "fixture-accepted-order",
+        },
+        executionAuthority: "declared_execution_adapter_required",
+        recordedAt: asOf,
+      },
+    }));
+    const report = await runFinanceDailyCycle({ ...params, executionQuotes: quotes() });
+    expect(report.ok).toBe(false);
+    expect(mocks.order).toHaveBeenCalledOnce();
+    expect(report.dataIssues.join(" ")).toContain(
+      "stopped remaining orders pending reconciliation",
+    );
+    expect(report.placed).toHaveLength(mode === "mark_write" ? 1 : 0);
+    expect(report.dataIssues.join(" ")).toContain("receiptId=accepted-fill");
+    expect(report.dataIssues.join(" ")).toContain("venueRef=fixture-accepted-order");
+    expect(report.refusals).toContain(
+      "MSFT: not attempted after AAPL accepted execution projection incomplete; pending reconciliation",
+    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stopped-cycle-history-"));
+    try {
+      commitFinanceSchedulerDatabaseState(directory, "{}", [
+        {
+          runId: `stopped-${mode}`,
+          mode: "day",
+          firedAt: report.asOf,
+          completedAt: new Date(Date.parse(report.asOf) + 1000).toISOString(),
+          outputTruncated: false,
+          execution: { placementEnabled: true, venue: "alpaca" },
+          stdout: JSON.stringify({
+            ...report,
+            mode: "day",
+            ruleIds: ["fixture-daily-trend"],
+            positionBook: { source: "controller_account", accountId: "fixture-history" },
+          }),
+        },
+      ]);
+      const history = dailyHistoryReader.readFinanceDailyDecisionHistory({
+        directory,
+        accountId: "fixture-history",
+        asOf: new Date(Date.parse(report.asOf) + 2000).toISOString(),
+        instruments: ["MSFT"],
+      });
+      expect(history.entries[0]).toMatchObject({
+        decision: "approve",
+        reportedPlacement: null,
+        refusals: [
+          "MSFT: not attempted after AAPL accepted execution projection incomplete; pending reconciliation",
+        ],
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["approve", "veto", "skipped", "partial"] as const)(
+  "consumes verified prior daily %s in the next candidate judgment",
+  async (priorDecision) => {
+    const recordedDecision = priorDecision === "veto" ? "veto" : "approve";
+    const partial = priorDecision === "partial";
+    const previousRefusal =
+      priorDecision === "skipped"
+        ? "AAPL: not attempted after MSFT execution outcome became uncertain; pending reconciliation"
+        : "AAPL: no prior execution";
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "daily-consumer-"));
+    const priorAt = "2026-09-21T19:30:00.000Z";
+    try {
+      commitFinanceSchedulerDatabaseState(directory, "{}", [
+        {
+          runId: "previous-decision",
+          mode: "day",
+          firedAt: priorAt,
+          completedAt: "2026-09-21T19:31:00.000Z",
+          outputTruncated: false,
+          execution: { placementEnabled: true, venue: "alpaca" },
+          stdout: JSON.stringify({
+            mode: "day",
+            asOf: priorAt,
+            ruleIds: ["daily-trend"],
+            positionBook: { source: "controller_account", accountId: "bound-account" },
+            tradeDecisionReview: {
+              status: "completed",
+              candidateInputs: [
+                {
+                  candidateId: "previous-aapl",
+                  instrument: "AAPL",
+                  side: "buy",
+                  targetWeight: 0.4,
+                  currentWeight: 0,
+                  notional: 1000,
+                },
+              ],
+              decisions: [
+                {
+                  candidateId: "previous-aapl",
+                  decision: recordedDecision,
+                  rationale: "Fixture historical mechanism evidence.",
+                },
+              ],
+            },
+            placed: partial ? [{ instrument: "AAPL", quantity: 2, notional: 500 }] : [],
+            refusals: partial ? [] : [previousRefusal],
+          }),
+        },
+      ]);
+      // Unrelated/no-review rounds must not erase the last applicable decision.
+      commitFinanceSchedulerDatabaseState(
+        directory,
+        "{}",
+        Array.from({ length: 24 }, (_, i) => ({
+          runId: `non-decision-${i}`,
+          mode: "day",
+          firedAt: priorAt,
+          completedAt: "2026-09-21T19:32:00.000Z",
+          stdout: "{}",
+        })),
+      );
+      const reviewer = vi.fn(
+        async (
+          request: FinanceTradeDecisionReviewRequest,
+        ): Promise<FinanceTradeDecisionReviewResult> => {
+          const result = await params.tradeDecisionReviewer(request);
+          if (!("decisionHistory" in request)) {
+            throw new Error("history was not delivered");
+          }
+          expect(request.decisionHistory?.entries[0]).toMatchObject({
+            runId: "previous-decision",
+            decision: recordedDecision,
+            reportedPlacement: partial ? { quantity: 2, notional: 500 } : null,
+            refusals: partial ? [] : [previousRefusal],
+          });
+          // Scripted consumer proves the source-to-decision wiring, not natural model adoption.
+          return {
+            ...result,
+            decisions: request.candidates.map((candidate) => ({
+              candidateId: candidate.candidateId,
+              decision:
+                candidate.instrument === "AAPL" &&
+                request.decisionHistory?.entries[0]?.decision === "veto"
+                  ? "veto"
+                  : "approve",
+              rationale:
+                "Fixture re-evaluates the supplied previous hypothesis against unchanged current evidence.",
+            })),
+          };
+        },
+      );
+      const report = await runFinanceDailyCycle({
+        ...params,
+        directory,
+        caps: { ...params.caps, maxInstrumentNotional: 1000 },
+        executionQuotes: quotes(),
+        accountId: "bound-account",
+        accountBookProvider: async () => ({
+          accountId: "bound-account",
+          venue: "alpaca:paper",
+          equity: 100000,
+          observedAt: asOf,
+          expiresAt: new Date(Date.parse(asOf) + 60000).toISOString(),
+          positions: partial ? [{ instrument: "AAPL", quantity: 2, marketValue: 500 }] : [],
+        }),
+        tradeDecisionReviewer: reviewer,
+      });
+      expect(reviewer).toHaveBeenCalledOnce();
+      expect(report.tradeDecisionReview.decisionHistory?.entries[0].decision).toBe(
+        recordedDecision,
+      );
+      expect(
+        mocks.order.mock.calls.some(([request]) => request.conclusion.instrument === "AAPL"),
+      ).toBe(recordedDecision === "approve");
+      if (recordedDecision === "approve") {
+        const order = mocks.order.mock.calls.find(
+          ([request]) => request.conclusion.instrument === "AAPL",
+        );
+        expect(order?.[0].targetWeightAuthorization.maxOrderNotional).toBe(partial ? 500 : 1000);
+      }
+      expect(
+        mocks.order.mock.calls.some(([request]) => request.conclusion.instrument === "MSFT"),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  { cash: 1500, stale: false, expensive: false },
+  { cash: 0, stale: false, expensive: false },
+  { cash: 1500, stale: true, expensive: false },
+  { cash: 1500, stale: false, expensive: true },
+  { cash: 1500, stale: false, expensive: false, sharePrice: 1000 },
+  { cash: 1500, stale: false, expensive: false, sharePrice: 600 },
+  { cash: 1500, stale: false, expensive: false, sharePrice: 600.1234 },
+  { cash: 1500, stale: false, expensive: true, sharePrice: 1000.01 },
+])(
+  "budgets reviewed daily buys across the observed account funds ($cash, stale=$stale, expensive=$expensive, price=$sharePrice)",
+  async ({ cash, stale, expensive, sharePrice }) => {
+    const executionQuotes = quotes();
+    if (stale) {
+      executionQuotes.set("AAPL", {
+        ...executionQuotes.get("AAPL")!,
+        referencePriceAt: "2026-09-21T19:30:00.000Z",
+      });
+    }
+    if (expensive || sharePrice !== undefined) {
+      executionQuotes.set("AAPL", {
+        ...executionQuotes.get("AAPL")!,
+        referencePrice: sharePrice ?? 2000,
+      });
+    }
+    const report = await runFinanceDailyCycle({
+      ...params,
+      accountId: "funded-account",
+      executionQuotes,
+      accountBookProvider: async () => ({
+        accountId: "funded-account",
+        venue: "alpaca:paper",
+        observedAt: asOf,
+        expiresAt: new Date(Date.parse(asOf) + 60_000).toISOString(),
+        equity: 100000,
+        positions: [],
+        reconciliation: {
+          status: "ready",
+          historyStatus: "reconciled",
+          quarantinedInstruments: [],
+          uncertaintyReserve: 0,
+          reasons: [],
+        },
+        executionCapacity: {
+          source: "controller_account_safety_facts",
+          accountId: "funded-account",
+          venue: "alpaca:paper",
+          observedAt: asOf,
+          expiresAt: new Date(Date.parse(asOf) + 60_000).toISOString(),
+          policyPlanId: "fixture",
+          policyRevision: "1",
+          grossExposure: 0,
+          maxGrossExposure: 100000,
+          uncertaintyReserve: 0,
+          availableCash: cash,
+        },
+      }),
+    });
+    if (expensive) {
+      expect(report.drift.find((item) => item.instrument === "AAPL")).toMatchObject({
+        action: "none",
+        notional: 0,
+      });
+      expect(report.refusals.join()).toContain("cannot fund one whole share; target remains unmet");
+    }
+    if (stale || expensive) {
+      expect(
+        report.tradeDecisionReview.candidateInputs?.map((c) => [c.instrument, c.notional]),
+      ).toEqual([["MSFT", 1000]]);
+      expect(mocks.order).toHaveBeenCalledOnce();
+      expect(mocks.order.mock.calls[0][0].targetWeightAuthorization.maxOrderNotional).toBe(1000);
+    } else if (sharePrice === 600 || sharePrice === 600.1234) {
+      const firstBudget = sharePrice === 600 ? 600 : 600.13;
+      expect(
+        report.tradeDecisionReview.candidateInputs?.map((c) => [c.instrument, c.notional]),
+      ).toEqual([
+        ["AAPL", firstBudget],
+        ["MSFT", 750],
+      ]);
+      expect(
+        mocks.order.mock.calls.map(
+          ([request]) => request.targetWeightAuthorization.maxOrderNotional,
+        ),
+      ).toEqual([firstBudget, 750]);
+      expect(Math.floor(firstBudget / sharePrice)).toBe(1);
+    } else if (cash > 0) {
+      expect(
+        report.tradeDecisionReview.candidateInputs?.map((c) => [c.instrument, c.notional]),
+      ).toEqual([
+        ["AAPL", 1000],
+        ["MSFT", 500],
+      ]);
+      expect(
+        mocks.order.mock.calls.map(
+          ([request]) => request.targetWeightAuthorization.maxOrderNotional,
+        ),
+      ).toEqual([1000, 500]);
+      expect(report.drift.map((item) => item.notional)).toEqual([1000, 500]);
+    } else {
+      expect(report.tradeDecisionReview.status).toBe("not_needed");
+      expect(mocks.order).not.toHaveBeenCalled();
+      expect(report.drift.every((item) => item.action === "none" && item.target > 0)).toBe(true);
+      expect(report.refusals.join()).toContain("observed account funding; target remains unmet");
+    }
+  },
+);

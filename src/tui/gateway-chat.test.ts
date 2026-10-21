@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadConfigMock as loadConfig,
   pickPrimaryLanIPv4Mock as pickPrimaryLanIPv4,
@@ -7,7 +7,16 @@ import {
 } from "../gateway/gateway-connection.test-mocks.js";
 import { captureEnv, withEnv } from "../test-utils/env.js";
 
-const { resolveGatewayConnection } = await import("./gateway-chat.js");
+const gatewayClientOptions = vi.hoisted(() => vi.fn());
+vi.mock("../gateway/client.js", () => ({
+  GatewayClient: class {
+    constructor(options: unknown) {
+      gatewayClientOptions(options);
+    }
+  },
+}));
+
+const { GatewayChatClient, resolveGatewayConnection } = await import("./gateway-chat.js");
 
 describe("resolveGatewayConnection", () => {
   let envSnapshot: ReturnType<typeof captureEnv>;
@@ -34,6 +43,21 @@ describe("resolveGatewayConnection", () => {
 
     expect(() => resolveGatewayConnection({ url: "wss://override.example/ws" })).toThrow(
       "explicit credentials",
+    );
+  });
+
+  it("passes the explicit certificate fingerprint to the TLS client", () => {
+    loadConfig.mockReturnValue({ gateway: { mode: "local" } });
+    new GatewayChatClient({
+      url: "wss://127.0.0.1:18789",
+      token: "explicit-token",
+      tlsFingerprint: "local-cert-pin",
+    });
+    expect(gatewayClientOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        url: "wss://127.0.0.1:18789",
+        tlsFingerprint: "local-cert-pin",
+      }),
     );
   });
 

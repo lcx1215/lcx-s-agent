@@ -9,11 +9,19 @@ import {
   readFinancePositionLedger,
   reduceFinanceBrokerHistoryRecords,
 } from "./finance-position-ledger.js";
+import { readFinanceSchedulerDatabaseDayRuns } from "./finance-scheduler-ledger.js";
 
 const Numeric = z
   .union([z.number(), z.string().min(1)])
   .transform(Number)
   .pipe(z.number().finite());
+const ReconciliationObservation = z.object({
+  status: z.enum(["reconciled", "unresolved"]),
+  observedAt: z.string().datetime(),
+  accountObservation: z.object({ accountId: z.string() }),
+  cashDifference: z.number().finite().optional(),
+  cashComponents: z.object({ feeCash: z.number().finite() }).optional(),
+});
 const Snapshot = z.object({
   status: z.literal("reconciled"),
   observedAt: z.string().datetime(),
@@ -44,6 +52,43 @@ type Decision = Pick<OriginalDecision, "ref" | "recordedAt"> & {
     >;
   };
 };
+const DailyRunSchema = z.object({
+  runId: z.string().min(1),
+  mode: z.literal("day"),
+  firedAt: z.string().datetime(),
+  completedAt: z.string().datetime(),
+  outputTruncated: z.literal(false),
+  stdout: z.string(),
+  execution: z.object({ placementEnabled: z.literal(true), venue: z.literal("alpaca") }),
+});
+const DailyDecisionSchema = z.object({
+  mode: z.literal("day"),
+  asOf: z.string().datetime(),
+  signalAnchor: z.string().min(1),
+  positionBook: z.object({ source: z.literal("controller_account"), accountId: z.string().min(1) }),
+  ruleIds: z.array(z.string().min(1)).min(1),
+  tradeDecisionReview: z.object({
+    status: z.enum(["completed", "failed"]),
+    candidateInputs: z.array(
+      z.object({
+        candidateId: z.string(),
+        instrument: z.string(),
+        side: z.enum(["buy", "sell"]),
+        notional: z.number().positive(),
+      }),
+    ),
+    decisions: z
+      .array(z.object({ candidateId: z.string(), decision: z.enum(["approve", "veto"]) }))
+      .optional(),
+  }),
+  placed: z.array(
+    z.object({
+      instrument: z.string(),
+      quantity: z.number().positive(),
+      notional: z.number().positive(),
+    }),
+  ),
+});
 type Anchor = { at: string; equity: number; ref: string };
 type Cohort = "inheritedPositions" | "newDecisions" | "unlinkedPostAnchorEntries";
 
@@ -69,6 +114,7 @@ export function attributeFinancePaperEconomics(params: {
   activities: readonly Record<string, unknown>[];
   receipts: readonly FinanceExecutionReceipt[];
   decisions: readonly Decision[];
+  dailyRuns?: ReturnType<typeof readFinanceSchedulerDatabaseDayRuns>;
 }) {
   const start = Snapshot.parse(params.opening),
     end = Snapshot.parse(params.closing);
@@ -84,6 +130,39 @@ export function attributeFinancePaperEconomics(params: {
     Date.parse(end.accountObservation.observedAt) > through
   ) {
     throw new Error("account_anchor_or_cutoff_mismatch");
+  }
+  const dailyDecisions = (params.dailyRuns ?? []).flatMap(({ ref, run }) => {
+    try {
+      if (!/^[a-f0-9]{64}$/u.test(ref)) {
+        return [];
+      }
+      const scheduled = DailyRunSchema.parse(run);
+      const report = DailyDecisionSchema.parse(JSON.parse(scheduled.stdout));
+      if (
+        report.asOf !== scheduled.firedAt ||
+        report.positionBook.accountId !== params.accountId ||
+        Date.parse(report.asOf) <= from ||
+        Date.parse(scheduled.completedAt) > through ||
+        Date.parse(scheduled.completedAt) < Date.parse(report.asOf)
+      ) {
+        return [];
+      }
+      return [{ ref, scheduled, report }];
+    } catch {
+      return [];
+    }
+  });
+  const dailyDecisionsByCandidate = new Map<string, typeof dailyDecisions>();
+  for (const daily of dailyDecisions) {
+    // Index each report once per candidate; preserve separate duplicate reports.
+    // Duplicate candidates inside a report remain visible to the original checks.
+    for (const candidateId of new Set(
+      daily.report.tradeDecisionReview.candidateInputs.map((candidate) => candidate.candidateId),
+    )) {
+      const bucket = dailyDecisionsByCandidate.get(candidateId) ?? [];
+      bucket.push(daily);
+      dailyDecisionsByCandidate.set(candidateId, bucket);
+    }
   }
   const issues = new Set<string>();
   // The sealed reconciliation bounds all activities; explicit fill times must also fit.
@@ -158,8 +237,22 @@ export function attributeFinancePaperEconomics(params: {
       orderQuantity.set(id, (orderQuantity.get(id) ?? 0) + Number(r.qty));
     }
   }
+  // Preserve every matching original, including duplicates: ambiguity must still
+  // prevent attribution. Build these local indexes once per account observation.
+  const receiptsByVenueRef = new Map<string, FinanceExecutionReceipt[]>();
+  for (const receipt of params.receipts) {
+    const bucket = receiptsByVenueRef.get(receipt.fill.venueRef) ?? [];
+    bucket.push(receipt);
+    receiptsByVenueRef.set(receipt.fill.venueRef, bucket);
+  }
+  const decisionsBySignal = new Map<string, Decision[]>();
+  for (const decision of params.decisions) {
+    const bucket = decisionsBySignal.get(decision.input.signalId) ?? [];
+    bucket.push(decision);
+    decisionsBySignal.set(decision.input.signalId, bucket);
+  }
   function decisionFor(orderId: string, instrument: string, side: string, fillAt: string) {
-    const receipts = params.receipts.filter(
+    const receipts = (receiptsByVenueRef.get(`alpaca:paper:${orderId}`) ?? []).filter(
       (r) =>
         r.accountId === params.accountId &&
         r.venue === "alpaca:paper" &&
@@ -176,7 +269,53 @@ export function attributeFinancePaperEconomics(params: {
       return null;
     }
     const receipt = receipts[0];
-    const matches = params.decisions.filter(
+    if (receipt.decisionRef?.source === "daily_cycle_candidate") {
+      const linked = (dailyDecisionsByCandidate.get(receipt.decisionRef.id) ?? []).filter(
+        ({ scheduled, report }) => {
+          const candidateId = `${receipt.runAuthorizationId}:${report.signalAnchor}:${instrument}:${side}`;
+          const candidates = report.tradeDecisionReview.candidateInputs.filter(
+            (candidate) =>
+              candidate.candidateId === candidateId &&
+              candidate.instrument === instrument &&
+              candidate.side === side,
+          );
+          const placed = report.placed.filter(
+            (fill) =>
+              fill.instrument === instrument &&
+              Math.abs(fill.quantity - receipt.fill.filledQuantity) <= 1e-10 &&
+              Math.abs(fill.notional - receipt.fill.filledQuantity * receipt.fill.fillPrice) <=
+                0.01,
+          );
+          const approvals = report.tradeDecisionReview.decisions?.filter(
+            (decision) => decision.candidateId === candidateId,
+          );
+          return (
+            receipt.decisionRef?.id === candidateId &&
+            receipt.runAuthorizationId === `daily-cycle:${report.asOf.slice(0, 10)}` &&
+            receipt.intentId === `intent:daily_cycle:${report.signalAnchor}:${instrument}` &&
+            Date.parse(report.asOf) <= Date.parse(fillAt) &&
+            Date.parse(scheduled.completedAt) >= Date.parse(fillAt) &&
+            candidates.length === 1 &&
+            placed.length === 1 &&
+            (report.tradeDecisionReview.status === "failed" ||
+              (approvals?.length === 1 && approvals[0].decision === "approve"))
+          );
+        },
+      );
+      if (linked.length !== 1) {
+        return null;
+      }
+      const match = linked[0];
+      return {
+        source: "daily_cycle_candidate" as const,
+        decisionRef: match.ref,
+        candidateId: receipt.decisionRef.id,
+        schedulerRunId: match.scheduled.runId,
+        receiptId: receipt.receiptId,
+        ruleIds: match.report.ruleIds,
+      };
+    }
+    const matches = (decisionsBySignal.get(receipt.decisionRef?.id ?? "") ?? []).filter(
       (d) =>
         receipt.decisionRef?.source === "intraday_signal" &&
         receipt.decisionRef.id === d.input.signalId &&
@@ -310,13 +449,17 @@ export function attributeFinancePaperEconomics(params: {
     if (row.activity_type !== "FEE" && row.activity_type !== "CFEE") {
       return false;
     }
-    const time =
-      typeof row.transaction_time === "string" &&
-      /T.*(?:Z|[+-]\d\d:\d\d)$/.test(row.transaction_time)
-        ? Date.parse(row.transaction_time)
-        : NaN;
-    if (Number.isFinite(time)) {
-      return time > from && time <= through;
+    // Match the original reconciliation owner: an explicit occurrence/creation
+    // timestamp takes precedence over the settlement date, not balance posting.
+    const occurredAt = row.transaction_time ?? row.created_at;
+    if (occurredAt !== undefined) {
+      const parsedTime = z.string().datetime({ offset: true }).safeParse(occurredAt);
+      const time = parsedTime.success ? Date.parse(parsedTime.data) : NaN;
+      if (Number.isFinite(time)) {
+        return time > from && time <= through;
+      }
+      feeTimesUnknown.push(String(row.id));
+      return false;
     }
     if (typeof row.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
       if (row.date < startDay || row.date > endDay) {
@@ -341,6 +484,7 @@ export function attributeFinancePaperEconomics(params: {
             type: r.activity_type,
             date: r.date ?? null,
             transactionTime: r.transaction_time ?? null,
+            createdAt: r.created_at ?? null,
             orderId: r.order_id ?? null,
             status: r.status ?? null,
             currency: r.currency ?? null,
@@ -403,6 +547,7 @@ export function attributeFinancePaperEconomics(params: {
       "equity_change_minus_known_gross; includes_cashflows_fees_income_corporate_actions_unvalued_lots_and_snapshot_skew; not_profit",
     fees: {
       periodConfirmedReportedCashFees: periodFees.reportedCashFeeAmount,
+      periodTimingBasis: "transaction_time_then_created_at_then_date; not_balance_posting",
       periodAssetFeeValuation: periodFees.reportedAssetFeeValuation,
       periodTimeAmbiguousActivityIds: [...new Set(feeTimesUnknown)],
       historicalFeeActivityCount: fifo.feeActivityCount,
@@ -443,8 +588,23 @@ export async function readFinancePaperEconomicAttribution(
       directory,
       accountId,
       "alpaca:paper",
-      { opening: undefined as Stored | undefined, closing: undefined as Stored | undefined },
+      {
+        opening: undefined as Stored | undefined,
+        closing: undefined as Stored | undefined,
+        latest: undefined as
+          | { snapshot: z.infer<typeof ReconciliationObservation>; ref: string }
+          | undefined,
+      },
       (state, record) => {
+        const observation = ReconciliationObservation.safeParse(record.body.payload[0]);
+        if (
+          observation.success &&
+          observation.data.accountObservation.accountId === accountId &&
+          Date.parse(observation.data.observedAt) <= Date.parse(asOf) &&
+          (!state.latest || observation.data.observedAt >= state.latest.snapshot.observedAt)
+        ) {
+          state.latest = { snapshot: observation.data, ref: record.ref };
+        }
         const parsed = Snapshot.safeParse(record.body.payload[0]);
         if (
           !parsed.success ||
@@ -473,7 +633,23 @@ export async function readFinancePaperEconomicAttribution(
       readFinancePositionLedger(directory, { asOf: closing.snapshot.observedAt }),
       readFinanceIntradayDecisions(directory),
     ]);
-    const result = attributeFinancePaperEconomics({
+    let dailyRuns: ReturnType<typeof readFinanceSchedulerDatabaseDayRuns> = [];
+    let dailyHistoryUnavailable = false;
+    if (
+      positions.receipts.some(
+        (receipt) =>
+          receipt.accountId === accountId &&
+          receipt.decisionRef?.source === "daily_cycle_candidate" &&
+          Date.parse(receipt.fill.filledAt) > Date.parse(opening.snapshot.observedAt),
+      )
+    ) {
+      try {
+        dailyRuns = readFinanceSchedulerDatabaseDayRuns(directory);
+      } catch {
+        dailyHistoryUnavailable = true;
+      }
+    }
+    const attribution = attributeFinancePaperEconomics({
       accountId,
       anchor,
       opening: opening.snapshot,
@@ -482,9 +658,35 @@ export async function readFinancePaperEconomicAttribution(
       activities: history.activities,
       receipts: positions.receipts,
       decisions,
+      dailyRuns,
     });
+    const result = dailyHistoryUnavailable
+      ? {
+          ...attribution,
+          status: "partially_attributed" as const,
+          issues: [...attribution.issues, "daily_decision_history_unavailable"],
+        }
+      : attribution;
+    const latest = snapshots.value.latest;
+    const newerUnresolved =
+      latest?.snapshot.status === "unresolved" &&
+      latest.snapshot.observedAt >= closing.snapshot.observedAt;
     return {
       ...result,
+      ...(newerUnresolved
+        ? {
+            status: "partially_attributed" as const,
+            reconciliationRef: latest.ref,
+            reconciliationAt: latest.snapshot.observedAt,
+            reconciliationStatus: "unresolved" as const,
+            latestCashDifference: latest.snapshot.cashDifference ?? null,
+            latestFeeCash: latest.snapshot.cashComponents?.feeCash ?? null,
+            issues: [
+              ...result.issues,
+              "newer_reconciliation_unresolved; historical_attribution_only",
+            ],
+          }
+        : {}),
       evidence: result.evidence.slice(0, 12),
       omittedEvidenceLots: Math.max(0, result.evidence.length - 12),
       fees: {

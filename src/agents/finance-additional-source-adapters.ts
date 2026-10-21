@@ -1,6 +1,10 @@
+import { ApiCallError } from "./api-call-contract.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
-import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
+import type {
+  FinanceRealtimeSourceAdapter,
+  FinanceRealtimeSourceRequest,
+} from "./finance-realtime-source-registry.js";
 
 const SEC_USER_AGENT = "LCX Agent research-only contact=local";
 const NASDAQ_USER_AGENT = "Mozilla/5.0 (LCX Agent research-only; contact=local)";
@@ -18,6 +22,36 @@ function requiredText(value: string, label: string): string {
     throw new Error(`${label} required`);
   }
   return normalized;
+}
+
+function isUsStockClass(assetClass: string): boolean {
+  return ["common_stock", "equity", "stock", "us_equity", "etf"].includes(
+    assetClass.trim().toLowerCase(),
+  );
+}
+
+// These USD parsers implement native US stock/ETF symbols, not Yahoo's global formats.
+function isUsStockSymbol(symbol: string): boolean {
+  return /^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)?$/u.test(symbol.trim().toUpperCase());
+}
+
+function supportsUsStock(request: FinanceRealtimeSourceRequest): boolean {
+  return isUsStockClass(request.assetClass) && isUsStockSymbol(request.instrument);
+}
+
+function stooqUsSymbol(request: FinanceRealtimeSourceRequest): string | undefined {
+  const symbol = request.instrument.trim().replace(/\.us$/iu, "");
+  return isUsStockClass(request.assetClass) && isUsStockSymbol(symbol)
+    ? `${symbol.toLowerCase()}.us`
+    : undefined;
+}
+
+function supportsAlphaVantageStock(request: FinanceRealtimeSourceRequest): boolean {
+  const assetClass = request.assetClass.trim().toLowerCase();
+  return (
+    (isUsStockClass(assetClass) || assetClass.endsWith("_equity")) &&
+    /^[A-Z0-9]+(?:[.-][A-Z0-9]+)*$/u.test(request.instrument.trim().toUpperCase())
+  );
 }
 
 function parseFiniteNumber(value: unknown, label: string): number {
@@ -159,6 +193,9 @@ async function fetchJson(
   try {
     response = await fetchImpl(url, { headers });
   } catch (error) {
+    if (error instanceof ApiCallError) {
+      throw error;
+    }
     throw new AdditionalSourceAdapterError(
       `source request failed: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -231,20 +268,24 @@ export function createStooqDelayedMarketAdapter(
     providerName: "stooq-public-daily",
     providerRole: "cross_check_market_data",
     priority: 20,
-    supports: (request) =>
-      !["crypto", "prediction_market"].includes(request.assetClass.trim().toLowerCase()),
-    collect: async (request) => {
-      const symbol = request.instrument.includes(".")
-        ? request.instrument.toLowerCase()
-        : `${request.instrument.toLowerCase()}.us`;
+    supports: (request) => stooqUsSymbol(request) !== undefined,
+    collect: async (request, signal) => {
+      const symbol = stooqUsSymbol(request);
+      if (!symbol) {
+        throw new AdditionalSourceAdapterError("unsupported Stooq US stock/ETF request");
+      }
+      signal.throwIfAborted();
       const sourceUrlOrArtifact = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol)}&i=d`;
-      const fetchImpl = resolveFinanceFetch(options.fetchImpl);
+      const fetchImpl = resolveFinanceFetch(options.fetchImpl, { signal });
       let response: { ok: boolean; status: number; text: () => Promise<string> };
       try {
         response = await fetchImpl(sourceUrlOrArtifact, {
           headers: { "User-Agent": SEC_USER_AGENT },
         });
       } catch (error) {
+        if (error instanceof ApiCallError) {
+          throw error;
+        }
         throw new AdditionalSourceAdapterError(
           `stooq request failed: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -283,14 +324,18 @@ export function createNasdaqExchangeMarketAdapter(
     providerRole: "cross_check_market_data",
     priority: 12,
     sampleRequest: { instrument: "AAPL", assetClass: "us_equity" },
-    supports: (request) =>
-      !["crypto", "prediction_market"].includes(request.assetClass.trim().toLowerCase()),
-    collect: async (request) => {
+    supports: supportsUsStock,
+    collect: async (request, signal) => {
+      if (!supportsUsStock(request)) {
+        throw new AdditionalSourceAdapterError("unsupported Nasdaq US stock/ETF request");
+      }
+      signal.throwIfAborted();
       const assetClass = request.assetClass.trim().toLowerCase();
       const nasdaqAssetClass = assetClass === "etf" ? "etfs" : "stocks";
-      const sourceUrlOrArtifact = `https://api.nasdaq.com/api/quote/${encodeURIComponent(request.instrument.toUpperCase())}/info?assetclass=${nasdaqAssetClass}`;
+      const symbol = request.instrument.trim().toUpperCase();
+      const sourceUrlOrArtifact = `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/info?assetclass=${nasdaqAssetClass}`;
       const payload = (await fetchJson(
-        resolveFinanceFetch(options.fetchImpl),
+        resolveFinanceFetch(options.fetchImpl, { signal }),
         sourceUrlOrArtifact,
         {
           Accept: "application/json, text/plain, */*",
@@ -323,7 +368,7 @@ export function createNasdaqExchangeMarketAdapter(
             value: parseDollarNumber(primary.lastSalePrice, "Nasdaq last sale price"),
             currency: "USD",
             adjusted: false,
-            fieldDefinition: `Nasdaq public exchange last sale for ${request.instrument.toUpperCase()}`,
+            fieldDefinition: `Nasdaq public exchange last sale for ${symbol}`,
             sourceTimestamp,
             sourceUrlOrArtifact,
           },
@@ -333,17 +378,85 @@ export function createNasdaqExchangeMarketAdapter(
   };
 }
 
+type AlphaVantageQuoteMetadata = Readonly<{
+  currency: string;
+  timezone: string;
+  sourceUrlOrArtifact?: string;
+}>;
+
+function isAlphaVantageTimezone(value: string): boolean {
+  const match = value.match(/^UTC(?:[+-](\d{1,2})(?::([0-5]\d)|(\.(?:25|5|75)))?)?$/u);
+  return (
+    match !== null &&
+    Number(match[1] ?? 0) + Number(match[2] ?? 0) / 60 + Number(match[3] ?? 0) <= 14
+  );
+}
+
+function parseAlphaVantageSymbolMetadata(
+  payload: unknown,
+  symbol: string,
+  sourceUrlOrArtifact: string,
+): AlphaVantageQuoteMetadata {
+  const matches = (payload as { bestMatches?: unknown } | null)?.bestMatches;
+  const exact = Array.isArray(matches)
+    ? matches.filter(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === "object" &&
+          entry !== null &&
+          typeof entry["1. symbol"] === "string" &&
+          entry["1. symbol"].trim().toUpperCase() === symbol.trim().toUpperCase(),
+      )
+    : [];
+  if (exact.length === 0) {
+    throw new AdditionalSourceAdapterError("alpha vantage metadata has no exact symbol match");
+  }
+  const currencies = new Set(Intl.supportedValuesOf("currency"));
+  const metadata = exact.map((entry) => {
+    const currency = entry["8. currency"];
+    const timezone = entry["7. timezone"];
+    if (
+      typeof currency !== "string" ||
+      // Alpha Vantage's documented London quotes use GBX (pence); never relabel as GBP.
+      (!currencies.has(currency.trim()) && currency.trim() !== "GBX") ||
+      typeof timezone !== "string" ||
+      !isAlphaVantageTimezone(timezone.trim())
+    ) {
+      throw new AdditionalSourceAdapterError(
+        "alpha vantage metadata currency/timezone unavailable",
+      );
+    }
+    return { currency: currency.trim(), timezone: timezone.trim(), sourceUrlOrArtifact };
+  });
+  const first = metadata[0];
+  if (
+    metadata.some((entry) => entry.currency !== first.currency || entry.timezone !== first.timezone)
+  ) {
+    throw new AdditionalSourceAdapterError("alpha vantage metadata has conflicting exact matches");
+  }
+  return first;
+}
+
 export function parseAlphaVantageGlobalQuote(
   payload: unknown,
   symbol: string,
   sourceUrlOrArtifact: string,
   observedAt = new Date().toISOString(),
+  metadata?: AlphaVantageQuoteMetadata,
 ): FinanceDataGatewayObservationInput {
+  if (!metadata && !isUsStockSymbol(symbol)) {
+    throw new AdditionalSourceAdapterError("alpha vantage metadata required for a global symbol");
+  }
   const quote = (payload as { [key: string]: unknown })["Global Quote"] as
     | Record<string, unknown>
     | undefined;
   if (!quote || Object.keys(quote).length === 0) {
     throw new AdditionalSourceAdapterError("alpha vantage returned no Global Quote");
+  }
+  if (
+    typeof quote["01. symbol"] !== "string" ||
+    quote["01. symbol"].trim().toUpperCase() !== symbol.trim().toUpperCase()
+  ) {
+    throw new AdditionalSourceAdapterError("alpha vantage Global Quote symbol mismatch");
   }
   const date = dayStartIso(quote["07. latest trading day"], "alpha vantage trading day");
   const close = parseFiniteNumber(quote["05. price"], "alpha vantage price");
@@ -352,15 +465,15 @@ export function parseAlphaVantageGlobalQuote(
     providerRole: "cross_check_market_data",
     sourceFamily: "market_data_api",
     observedAt,
-    timezone: "UTC",
+    timezone: metadata?.timezone ?? "UTC",
     delayStatus: "end_of_day",
     fields: [
       {
         name: "last_price",
         value: close,
-        currency: "USD",
+        currency: metadata?.currency ?? "USD",
         adjusted: false,
-        fieldDefinition: `end-of-day global quote from Alpha Vantage for ${symbol}`,
+        fieldDefinition: `end-of-day global quote from Alpha Vantage for ${symbol}${metadata?.sourceUrlOrArtifact ? `; currency/timezone from ${metadata.sourceUrlOrArtifact}` : ""}`,
         sourceTimestamp: date,
         sourceUrlOrArtifact,
       },
@@ -380,17 +493,45 @@ export function createAlphaVantageMarketAdapter(options: {
     providerName: "alpha-vantage-global-quote",
     providerRole: "cross_check_market_data",
     priority: 15,
-    supports: (request) =>
-      !["crypto", "prediction_market"].includes(request.assetClass.trim().toLowerCase()),
-    collect: async (request) => {
-      const sourceUrlOrArtifact = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(request.instrument)}`;
+    supports: supportsAlphaVantageStock,
+    collect: async (request, signal) => {
+      if (!supportsAlphaVantageStock(request)) {
+        throw new AdditionalSourceAdapterError(
+          "unsupported Alpha Vantage GLOBAL_QUOTE stock/ETF request",
+        );
+      }
+      signal.throwIfAborted();
+      const symbol = request.instrument.trim();
+      const fetchImpl = resolveFinanceFetch(options.fetchImpl, { signal });
+      let metadata: AlphaVantageQuoteMetadata | undefined;
+      if (!supportsUsStock(request)) {
+        const metadataUrl = `https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=${encodeURIComponent(symbol)}`;
+        let payload: unknown;
+        try {
+          payload = await fetchJson(
+            fetchImpl,
+            `${metadataUrl}&apikey=${encodeURIComponent(apiKey)}`,
+          );
+        } catch (error) {
+          if (error instanceof ApiCallError) {
+            throw error;
+          }
+          throw new AdditionalSourceAdapterError(
+            `alpha vantage metadata unavailable: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        metadata = parseAlphaVantageSymbolMetadata(payload, symbol, metadataUrl);
+      }
+      signal.throwIfAborted();
+      const sourceUrlOrArtifact = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(symbol)}`;
       const url = `${sourceUrlOrArtifact}&apikey=${encodeURIComponent(apiKey)}`;
-      const payload = await fetchJson(resolveFinanceFetch(options.fetchImpl), url);
+      const payload = await fetchJson(fetchImpl, url);
       const observation = parseAlphaVantageGlobalQuote(
         payload,
-        request.instrument,
+        symbol,
         sourceUrlOrArtifact,
         request.asOf,
+        metadata,
       );
       return { ...observation, delayStatus };
     },

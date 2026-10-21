@@ -402,6 +402,37 @@ describe("gateway send mirroring", () => {
     );
   });
 
+  it("keeps External group routing separate from its opaque delivery ID", async () => {
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "external",
+          source: "test",
+          plugin: { id: "external", meta: { id: "external" } },
+        },
+      ]),
+      "external-target-route",
+    );
+    mocks.resolveOutboundTarget.mockReturnValue({ ok: true, to: "dm:123" });
+    mocks.deliverOutboundPayloads.mockResolvedValue([
+      { messageId: "external-1", channel: "external" },
+    ]);
+    const { respond } = await runSend({
+      to: "external:group:dm:123",
+      message: "hello",
+      channel: "external",
+      idempotencyKey: "external-target",
+    });
+    expect(respond.mock.calls[0]?.[0], JSON.stringify(respond.mock.calls)).toBe(true);
+    expectDeliverySessionMirror({
+      agentId: "main",
+      sessionKey: "agent:main:external:group:dm:123",
+    });
+    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "dm:123" }),
+    );
+  });
+
   it("uses explicit agentId for delivery when sessionKey is not provided", async () => {
     mockDeliverySuccess("m-agent");
 

@@ -40,8 +40,13 @@ describe("external replay identity migration writer", () => {
       "message-1": 100,
       "message-2": 200,
     });
+    await expect(
+      writeExternalReplayStateForIdentityMigration(migration, { "message-2": 200 }),
+    ).rejects.toThrow("legacy persistent dedupe claim removal refused");
     const second = await writeExternalReplayStateForIdentityMigration(migration, {
+      "message-1": 100,
       "message-2": 200,
+      "message-3": 300,
     });
     const canonicalPath = path.join(root, ".lcx", "external", "replay-dedupe", "primary.json");
     expect(JSON.parse(await readFile(`${canonicalPath}.bak`, "utf8"))).toEqual({
@@ -81,5 +86,37 @@ describe("external replay identity migration writer", () => {
         namespace: "primary",
       }),
     ).toThrow("state-root authority");
+  });
+  it("preserves versioned unresolved replay states through identity migration and rollback", async () => {
+    const root = await createRoot();
+    const legacyPath = path.join(root, ".openclaw", "external", "replay-dedupe", "primary.json");
+    await mkdir(path.dirname(legacyPath), { recursive: true });
+    const state = {
+      schemaVersion: "lcx_persistent_dedupe_v2" as const,
+      entries: {
+        pending: { recordedAt: 100, claimId: "pending-claim", status: "processing" as const },
+        uncertain: {
+          recordedAt: 100,
+          claimId: "uncertain-claim",
+          status: "delivery_unknown" as const,
+        },
+      },
+    };
+    await writeFile(legacyPath, JSON.stringify(state));
+    const migration = createLcxIdentityExternalReplayMigration({
+      migrationPlan: resolveLcxIdentityMigrationPlan({ env: {}, homedir: () => root }),
+      namespace: "primary",
+    });
+    expect(await readExternalReplayStateForIdentityMigration(migration)).toEqual(state);
+    const receipt = await writeExternalReplayStateForIdentityMigration(migration, state);
+    expect(await readExternalReplayStateForIdentityMigration(migration)).toEqual(state);
+    await expect(
+      writeExternalReplayStateForIdentityMigration(migration, { pending: 100 }),
+    ).rejects.toThrow("version downgrade refused");
+    await expect(
+      writeExternalReplayStateForIdentityMigration(migration, { ...state, entries: {} }),
+    ).rejects.toThrow("claim removal refused");
+    await rollbackExternalReplayIdentityMigration(receipt);
+    expect(await readExternalReplayStateForIdentityMigration(migration)).toEqual(state);
   });
 });

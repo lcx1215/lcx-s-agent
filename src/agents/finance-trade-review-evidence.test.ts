@@ -3406,6 +3406,19 @@ it("consumes asset fee source valuation and persists its boundary without invent
   expect(finalPrompt).toContain("reportedAssetFeeValuation");
   expect(finalPrompt).toContain("never subtract it again");
   const evidence = result.toolEvidence![0];
+  const retained = JSON.parse(evidence.summary);
+  if (feedback.status !== "present") {
+    throw new Error("fixture feedback unavailable");
+  }
+  expect(retained.result.economics).toEqual(feedback.economics);
+  expect(retained.result).toMatchObject({
+    historyHeadRef: feedback.historyHeadRef,
+    snapshotRef: feedback.snapshotRef,
+    sealedSequence: feedback.sealedSequence,
+  });
+  expect(retained.omittedKeys).toContain("scope");
+  expect(Buffer.byteLength(evidence.summary, "utf8")).toBeLessThanOrEqual(1600);
+
   expect(Buffer.byteLength(JSON.stringify(evidence), "utf8")).toBeLessThanOrEqual(2048);
   expect(evidence.resultSha256).toBe(
     createHash("sha256").update(JSON.stringify(feedback)).digest("hex"),

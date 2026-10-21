@@ -8,9 +8,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildFinanceLiveExecutionPayload as buildWithoutController,
+  formatFinanceLiveExecutionPayload,
   parseArgs,
   type Options,
 } from "../../scripts/operator/lcx-finance-live-execution.ts";
@@ -21,6 +22,7 @@ import {
 } from "../../src/agents/finance-execution-adapter.ts";
 import * as executionAdapters from "../../src/agents/finance-execution-adapter.ts";
 import { syntheticSafetyContext } from "../../src/agents/finance-execution-safety.test-support.js";
+import { closeFinancePositionLedger } from "../../src/agents/finance-position-ledger.js";
 import { financePositionLedgerPath } from "../../src/agents/finance-state-dir.ts";
 import { createFinancePositionLedgerReadTool } from "../../src/agents/tools/finance-position-ledger-read-tool.ts";
 
@@ -29,10 +31,16 @@ const buildFinanceLiveExecutionPayload = (input: Options) =>
   buildWithoutController(input, { createSafetyContext: syntheticSafetyContext });
 
 /** Safely in the past, so the ledger's future-observation guard is never what a test measures. */
-const AS_OF = new Date(Date.now() - 1_000).toISOString();
-const MARK_AT = new Date(Date.now() - 500).toISOString();
+let AS_OF: string;
+let MARK_AT: string;
 
 const directories: string[] = [];
+
+// Timestamp each case when it starts; worker queue time is not quote age.
+beforeEach(() => {
+  AS_OF = new Date(Date.now() - 1_000).toISOString();
+  MARK_AT = new Date(Date.now() - 500).toISOString();
+});
 
 async function storeDirectory(): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-live-execution-"));
@@ -43,7 +51,10 @@ async function storeDirectory(): Promise<string> {
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(
-    directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    directories.splice(0).map((dir) => {
+      closeFinancePositionLedger(dir);
+      return fs.rm(dir, { recursive: true, force: true });
+    }),
   );
 });
 
@@ -91,7 +102,10 @@ describe("finance live execution operator entry", () => {
     const directory = await storeDirectory();
     const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.durableLedger.written).toBe(false);
     expect(payload.durableLedger.reason).toBe(
       "pass --write-ledger to append this run to the durable book",
@@ -231,7 +245,10 @@ describe("finance live execution entry allowlist translation", () => {
     const directory = await storeDirectory();
     const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.riskBudget.allowedInstruments).toEqual([FINANCE_RISK_BUDGET_ANY_INSTRUMENT]);
     // The raw flag was empty. Reporting the flag here would contradict the placement that just
     // succeeded, so the payload must report what the adapter actually declares.
@@ -271,7 +288,10 @@ describe("finance live execution entry allowlist translation", () => {
       }),
     );
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.nodes.order_placement.refusalReasons).toEqual([]);
     expect(payload.riskBudget.allowedInstruments).toEqual(["AAPL"]);
     expect(payload.nodes.declared_execution_adapter.declaredInstruments).toEqual(["AAPL"]);
@@ -361,7 +381,10 @@ describe("finance live execution unattended ceiling gate", () => {
       }),
     );
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(
+      payload.nodes.order_placement.status,
+      JSON.stringify(payload.nodes.order_placement),
+    ).toBe("placed");
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
   });
 
@@ -442,4 +465,60 @@ it("does not treat CLI labels and attended flags as controller authorization", a
     "execution_safety_context_required",
   );
   expect(factory).not.toHaveBeenCalled();
+});
+
+it.each([
+  { allowInstruments: [], declared: ["AAPL"], placed: true },
+  { allowInstruments: ["AAPL"], declared: ["AAPL"], placed: true },
+  { allowInstruments: ["QQQ"], declared: ["QQQ"], placed: false },
+])(
+  "declares the requested Alpaca instrument within budget $allowInstruments",
+  async ({ allowInstruments, declared, placed }) => {
+    const directory = await storeDirectory();
+    const execute = vi.fn(async () => ({
+      filledQuantity: 10,
+      fillPrice: 231.4,
+      filledAt: AS_OF,
+      venueRef: "synthetic:never-sent",
+      terminalOrderIdentity: { orderId: "synthetic-terminal", terminal: true as const },
+    }));
+    const factory = vi
+      .spyOn(alpacaAdapters, "createAlpacaExecutionAdapter")
+      .mockImplementation((config) => ({
+        id: "alpaca-venue",
+        venue: "fixture",
+        kind: "venue",
+        orderTypes: ["market"],
+        instruments: config.instruments,
+        credentialsAuthority: "external",
+        execute,
+      }));
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({ adapter: "alpaca", allowInstruments, ledgerDirectory: directory }),
+    );
+    expect(factory).toHaveBeenCalledWith(expect.objectContaining({ instruments: declared }));
+    expect(payload.nodes.declared_execution_adapter.declaredInstruments).toEqual(declared);
+    expect(payload.riskBudget.allowedInstruments).toEqual(
+      allowInstruments.length ? allowInstruments : [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
+    );
+    expect(payload.nodes.order_placement.status).toBe(placed ? "placed" : "refused");
+    expect(execute).toHaveBeenCalledTimes(placed ? 1 : 0);
+    const human = formatFinanceLiveExecutionPayload(payload);
+    expect(human).toContain("alpaca-venue，fixture");
+    expect(human).toContain(payload.boundary);
+    expect(human).toContain(payload.liveTouchedReason);
+    expect(human).toContain(`liveTouched=${placed}`);
+    expect(human).not.toContain("仅 paper");
+    expect(human).not.toContain("真实下单路径仍未实现");
+  },
+);
+
+it("renders paper execution from its actual payload boundary", async () => {
+  const directory = await storeDirectory();
+  const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
+  const human = formatFinanceLiveExecutionPayload(payload);
+  expect(human).toContain(payload.nodes.declared_execution_adapter.adapterId);
+  expect(human).toContain(payload.boundary);
+  expect(human).toContain(payload.liveTouchedReason);
+  expect(human).toContain("liveTouched=false");
 });

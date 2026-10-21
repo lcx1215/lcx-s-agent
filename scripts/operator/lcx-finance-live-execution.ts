@@ -312,10 +312,13 @@ export async function buildFinanceLiveExecutionPayload(
     ...options.budget,
     allowedInstruments,
   });
+  const venueInstruments = allowedInstruments.includes(FINANCE_RISK_BUDGET_ANY_INSTRUMENT)
+    ? [options.instrument]
+    : allowedInstruments;
   const adapters = Object.freeze([
     options.adapter === "alpaca"
       ? createAlpacaExecutionAdapter({
-          instruments: allowedInstruments,
+          instruments: venueInstruments,
           mode: options.alpacaMode,
           postJson: async (url, init) => {
             const transport = createFinanceWriteTransport();
@@ -469,10 +472,8 @@ export async function buildFinanceLiveExecutionPayload(
       },
       declared_execution_adapter: {
         adapterId: executionAdapterId,
-        // What the adapter actually declares, not the raw flag: with no --allow-instrument the
-        // adapter declares the any-instrument token, and reporting the empty flag list here
-        // would contradict the placement that just succeeded.
-        declaredInstruments: allowedInstruments,
+        declaredInstruments: adapters[0].instruments,
+        venue: adapters[0].venue,
       },
       order_placement: { status: placement.status, refusalReasons: placement.refusalReasons },
       ...(unattendedMissingCaps.length === 0
@@ -546,16 +547,12 @@ export async function buildFinanceLiveExecutionPayload(
   };
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const payload = await buildFinanceLiveExecutionPayload(options);
-  if (options.json) {
-    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-    return;
-  }
-  process.stdout.write(
+export function formatFinanceLiveExecutionPayload(
+  payload: Awaited<ReturnType<typeof buildFinanceLiveExecutionPayload>>,
+): string {
+  return (
     [
-      `场景：finance_live_execution_waterflow（owner 入口，仅 paper 适配器）`,
+      `场景：${payload.waterflow}（${payload.nodes.declared_execution_adapter.adapterId}，${payload.nodes.declared_execution_adapter.venue}）`,
       `order_placement：${payload.nodes.order_placement.status}${
         payload.nodes.order_placement.refusalReasons.length > 0
           ? `（${payload.nodes.order_placement.refusalReasons.join(", ")}）`
@@ -575,8 +572,18 @@ async function main() {
       ...(payload.durableLedger.directorySourceNotice === null
         ? []
         : [`注意：${payload.durableLedger.directorySourceNotice}`]),
-      `边界：未读凭据、未联网、未触达任何交易场所；真实下单路径仍未实现。`,
-    ].join("\n") + "\n",
+      `边界：${payload.boundary}；${payload.liveTouchedReason}；liveTouched=${payload.liveTouched}`,
+    ].join("\n") + "\n"
+  );
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const payload = await buildFinanceLiveExecutionPayload(options);
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(payload, null, 2)}\n`
+      : formatFinanceLiveExecutionPayload(payload),
   );
 }
 

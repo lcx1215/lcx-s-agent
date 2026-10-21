@@ -169,7 +169,9 @@ export const externalChannelPlugin: ChannelPlugin<ResolvedExternalAccount> = {
       resolveGroupRequireMention(resolveExternalAccount({ cfg, accountId }), groupId),
   },
   messaging: {
-    normalizeTarget: normalizeExternalTarget,
+    // Preserve routing syntax through repeated generic target resolution.
+    // outbound.resolveTarget decodes it once; sendExternalMessage receives a raw ID.
+    normalizeTarget: (target) => target.trim() || undefined,
     targetResolver: {
       looksLikeId: (raw, normalized) => Boolean(normalized ?? raw.trim()),
       hint: "<conversationId>",

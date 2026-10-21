@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
-const { gateway, save, load, events } = vi.hoisted(() => ({
+const { gateway, save, load, events, endedHook } = vi.hoisted(() => ({
+  endedHook: vi.fn(async (_event: unknown) => {}),
   gateway: vi.fn(),
   save: vi.fn(),
   load: vi.fn(),
@@ -34,12 +35,17 @@ vi.mock("./subagent-registry.store.js", () => ({
   describeSubagentRegistryLoadStatus: () => "fixture-blocked",
 }));
 vi.mock("./subagent-announce.js", () => ({ runSubagentAnnounceFlow: async () => true }));
-vi.mock("../plugins/hook-runner-global.js", () => ({ getGlobalHookRunner: () => null }));
+vi.mock("../plugins/hook-runner-global.js", () => ({
+  getGlobalHookRunner: () => ({ hasHooks: () => true, runSubagentEnded: endedHook }),
+}));
 import {
   addSubagentRunForTests,
   confirmSubagentDispatch,
   completeLocalSubagentRun,
   markSubagentRunTerminated,
+  markSubagentRunForSteerRestart,
+  clearSubagentRunSteerRestart,
+  replaceSubagentRunAfterSteer,
   initSubagentRegistry,
   listSubagentRunsForRequester,
   registerSubagentRun,
@@ -62,6 +68,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(1000);
   gateway.mockReset().mockResolvedValue({ status: "pending" });
+  endedHook.mockClear();
+  events.handler = undefined;
   save.mockReset().mockReturnValue(true);
   load.mockReset().mockReturnValue(new Map());
 });
@@ -203,4 +211,151 @@ it("does not infer local completion from an unrelated termination request", () =
   markSubagentRunTerminated({ runId: "fixture" });
   expect(runs()[0]).toMatchObject({ dispatchState: "uncertain" });
   expect(runs()[0]?.endedAt).toBeUndefined();
+});
+
+describe("registry lifecycle persistence failure", () => {
+  it("does not acknowledge a steer suppression that was not persisted", () => {
+    addSubagentRunForTests(makeRun());
+    save.mockReturnValue(false);
+    expect(markSubagentRunForSteerRestart("fixture")).toBe(false);
+    expect(markSubagentRunForSteerRestart("fixture")).toBe(false);
+  });
+  it("does not resume cleanup when clearing steer suppression was not persisted", () => {
+    addSubagentRunForTests({ ...makeRun(), suppressAnnounceReason: "steer-restart", endedAt: 2 });
+    save.mockReturnValue(false);
+    expect(clearSubagentRunSteerRestart("fixture")).toBe(false);
+    expect(gateway).not.toHaveBeenCalled();
+  });
+  it("does not start polling or acknowledge a replacement whose receipt failed", () => {
+    addSubagentRunForTests(makeRun());
+    save.mockReturnValue(false);
+    expect(replaceSubagentRunAfterSteer({ previousRunId: "fixture", nextRunId: "next" })).toBe(
+      false,
+    );
+    expect(gateway).not.toHaveBeenCalled();
+  });
+  it("does not acknowledge termination or emit hooks when terminal persistence failed", () => {
+    addSubagentRunForTests(makeRun());
+    save.mockReturnValue(false);
+    expect(markSubagentRunTerminated({ runId: "fixture" })).toBe(0);
+  });
+  it("retries terminal persistence and emits the original ended hook exactly once", async () => {
+    addSubagentRunForTests(makeRun());
+    save.mockReturnValue(false);
+    expect(markSubagentRunTerminated({ runId: "fixture", reason: "original" })).toBe(0);
+    const endedAt = runs()[0]?.endedAt;
+    expect(endedHook).not.toHaveBeenCalled();
+    save.mockReturnValue(true);
+    expect(markSubagentRunTerminated({ runId: "fixture", reason: "later" })).toBe(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(markSubagentRunTerminated({ runId: "fixture" })).toBe(0);
+    expect(endedHook).toHaveBeenCalledTimes(1);
+    expect(endedHook.mock.calls[0]?.[0]).toMatchObject({ endedAt, error: "original" });
+  });
+  it("uses the existing sweeper to finish a failed startup commit without a second init", async () => {
+    load.mockReturnValue(
+      new Map([
+        ["local", { ...makeRun("local"), completionSource: "local", dispatchState: "preparing" }],
+        ["gateway", { ...makeRun("gateway"), dispatchState: "preparing" }],
+      ]),
+    );
+    save.mockReturnValue(false);
+    initSubagentRegistry();
+    expect(events.handler).toBeUndefined();
+    expect(gateway).not.toHaveBeenCalled();
+    save.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events.handler).toBeTypeOf("function");
+    expect(runs().find((run) => run.runId === "local")?.dispatchState).toBe("uncertain");
+    const writes = save.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(save).toHaveBeenCalledTimes(writes);
+    expect(gateway).not.toHaveBeenCalled();
+  });
+
+  it("uses the existing sweeper to commit failed termination and emit its hook once", async () => {
+    addSubagentRunForTests({ ...makeRun(), spawnMode: "session" });
+    save.mockReturnValue(false);
+    expect(markSubagentRunTerminated({ runId: "fixture", reason: "original" })).toBe(0);
+    expect(endedHook).not.toHaveBeenCalled();
+    save.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(endedHook).toHaveBeenCalledTimes(1);
+    expect(markSubagentRunTerminated({ runId: "fixture" })).toBe(0);
+    expect(runs()[0]?.outcome).toEqual({ status: "error", error: "original" });
+    expect(gateway).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(endedHook).toHaveBeenCalledTimes(1);
+  });
+  it.each(["end", "error", "wait-ok", "wait-error"])(
+    "preserves failed termination evidence against a late %s result until the original sweeper commits",
+    async (late) => {
+      let resolveWait:
+        | ((value: { status: string; startedAt?: number; endedAt: number; error?: string }) => void)
+        | undefined;
+      gateway.mockImplementation((request: { method: string }) =>
+        request.method === "agent.wait"
+          ? new Promise((resolve) => {
+              resolveWait = resolve;
+            })
+          : Promise.resolve({}),
+      );
+      registerSubagentRun({ ...makeRun(), spawnMode: "session" });
+      save.mockReturnValue(false);
+      expect(markSubagentRunTerminated({ runId: "fixture", reason: "original termination" })).toBe(
+        0,
+      );
+      const endedAt = runs()[0]?.endedAt;
+      if (late === "end" || late === "error") {
+        events.handler?.({
+          runId: "fixture",
+          stream: "lifecycle",
+          data: { phase: late, endedAt: 77, error: "late error" },
+        });
+        if (late === "error") {
+          await vi.advanceTimersByTimeAsync(15_000);
+        }
+      } else {
+        resolveWait?.({
+          status: late === "wait-ok" ? "ok" : "error",
+          startedAt: 7,
+          endedAt: 77,
+          error: "late wait error",
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      expect(runs()[0]).toMatchObject({
+        endedAt,
+        endedReason: "subagent-killed",
+        outcome: { status: "error", error: "original termination" },
+      });
+      expect(endedHook).not.toHaveBeenCalled();
+      save.mockReturnValue(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runs()[0]).toMatchObject({
+        endedAt,
+        endedReason: "subagent-killed",
+        outcome: { status: "error", error: "original termination" },
+      });
+      expect(endedHook).toHaveBeenCalledTimes(1);
+      expect(endedHook.mock.calls[0]?.[0]).toMatchObject({
+        endedAt,
+        reason: "subagent-killed",
+        outcome: "killed",
+        error: "original termination",
+      });
+      // A later successful wait/event cannot rewrite an already committed kill either.
+      events.handler?.({
+        runId: "fixture",
+        stream: "lifecycle",
+        data: { phase: "end", endedAt: 88 },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(runs()[0]?.outcome).toEqual({ status: "error", error: "original termination" });
+      expect(endedHook).toHaveBeenCalledTimes(1);
+    },
+  );
 });

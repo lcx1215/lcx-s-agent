@@ -22,6 +22,8 @@ export type DeliveryTargetResolution =
       ok: true;
       channel: Exclude<OutboundChannel, "none">;
       to: string;
+      /** Original routing syntax, distinct from the opaque transport ID. */
+      routeTarget?: string;
       accountId?: string;
       threadId?: string | number;
       mode: "explicit" | "implicit";
@@ -194,6 +196,7 @@ export async function resolveDeliveryTarget(
     ok: true,
     channel,
     to: docked.to,
+    ...(docked.routeTarget ? { routeTarget: docked.routeTarget } : {}),
     accountId,
     threadId,
     mode,

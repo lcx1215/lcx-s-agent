@@ -26,6 +26,7 @@ docker network create "$NET_NAME" >/dev/null
 echo "Starting gateway container..."
 docker run -d \
   --name "$GW_NAME" \
+  --hostname lcx-gateway \
   --network "$NET_NAME" \
   -e "OPENCLAW_GATEWAY_TOKEN=$TOKEN" \
   -e "OPENCLAW_STATE_DIR=/tmp/lcx-gateway-state" \

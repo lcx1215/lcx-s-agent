@@ -42,7 +42,9 @@ export async function minimaxUnderstandImage(params: {
   imageDataUrl: string;
   apiHost?: string;
   modelBaseUrl?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
+  params.signal?.throwIfAborted();
   const apiKey = normalizeSecretInput(params.apiKey);
   if (!apiKey) {
     throw new Error("MiniMax VLM: apiKey required");
@@ -67,6 +69,7 @@ export async function minimaxUnderstandImage(params: {
 
   const res = await fetch(url, {
     method: "POST",
+    signal: params.signal,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -78,9 +81,11 @@ export async function minimaxUnderstandImage(params: {
     }),
   });
 
+  params.signal?.throwIfAborted();
   const traceId = res.headers.get("Trace-Id") ?? "";
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    params.signal?.throwIfAborted();
     const trace = traceId ? ` Trace-Id: ${traceId}` : "";
     throw new Error(
       `MiniMax VLM request failed (${res.status} ${res.statusText}).${trace}${
@@ -90,6 +95,7 @@ export async function minimaxUnderstandImage(params: {
   }
 
   const json = (await res.json().catch(() => null)) as unknown;
+  params.signal?.throwIfAborted();
   if (!isRecord(json)) {
     const trace = traceId ? ` Trace-Id: ${traceId}` : "";
     throw new Error(`MiniMax VLM response was not JSON.${trace}`);

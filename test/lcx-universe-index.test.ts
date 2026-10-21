@@ -11,8 +11,9 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
 let userHome: string;
+
 beforeAll(async () => {
-  userHome = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-universe-home-"));
+  userHome = await fs.mkdtemp(path.join(os.tmpdir(), "universe-index-test-"));
 });
 afterAll(async () => {
   await fs.rm(userHome, { recursive: true, force: true });
@@ -124,6 +125,62 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
 }
 
 describe("LCX universe index", () => {
+  it("inventories untracked visible files through Git when optional rg is absent", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "universe-visible-fallback-"));
+    try {
+      await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+      await fs.writeFile(path.join(directory, ".gitignore"), "ignored.txt\nnode_modules/\n");
+      await fs.writeFile(path.join(directory, "tracked.ts"), "// tracked\n");
+      await execFileAsync("git", ["add", ".gitignore", "tracked.ts"], { cwd: directory });
+      await fs.writeFile(path.join(directory, "untracked.ts"), "// visible\n");
+      await fs.writeFile(path.join(directory, ".hidden.ts"), "// hidden and visible\n");
+      await fs.writeFile(path.join(directory, "ignored.txt"), "ignored\n");
+      await fs.mkdir(path.join(directory, "node_modules"));
+      await fs.writeFile(path.join(directory, "node_modules/dependency.js"), "// excluded\n");
+      const source = await fs.readFile(
+        path.join(repoRoot, "scripts/operator/lcx-universe-index.ts"),
+        "utf8",
+      );
+      const ast = ts.createSourceFile("universe.ts", source, ts.ScriptTarget.Latest, true);
+      const declarations = ast.statements.filter(
+        (node) =>
+          ts.isFunctionDeclaration(node) &&
+          ["execLinesWithStatus", "readVisibleFileInventory"].includes(node.name?.text ?? ""),
+      );
+      expect(declarations).toHaveLength(2);
+      const compiled = ts.transpileModule(
+        declarations.map((node) => node.getText(ast)).join("\n") + "\nreadVisibleFileInventory;",
+        {
+          compilerOptions: { target: ts.ScriptTarget.ES2022 },
+        },
+      ).outputText;
+      const runUniverseChild = async (command: string, args: string[], cwd: string) => {
+        if (command === "rg") {
+          throw Object.assign(new Error("spawn rg ENOENT"), { code: "ENOENT" });
+        }
+        return execFileAsync(command, args, { cwd });
+      };
+      const read = vm.runInNewContext(compiled, {
+        repoRoot: directory,
+        runUniverseChild,
+      }) as (deadline: {
+        check: () => void;
+      }) => Promise<{ ok: boolean; lines: string[]; source: string; primaryError: string }>;
+      const result = await read({ check: () => {} });
+      expect(result.ok).toBe(true);
+      expect(result.source).toBe("git_tracked_and_untracked");
+      expect(result.primaryError).toContain("ENOENT");
+      expect(result.lines.toSorted()).toEqual([
+        ".gitignore",
+        ".hidden.ts",
+        "tracked.ts",
+        "untracked.ts",
+      ]);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes Windows inventory paths before governance classification", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/operator/lcx-universe-index.ts"),
@@ -220,7 +277,14 @@ describe("LCX universe index", () => {
     expect(payload.ownerCoverage.changeImpact.ok).toBe(
       payload.ownerCoverage.changeImpact.unmatchedFiles.length === 0,
     );
-    expect(payload.ownerCoverage.governanceCoverage.status).toBe("complete");
+    expect(
+      payload.ownerCoverage.governanceCoverage.status,
+      JSON.stringify({
+        unknownComponents: payload.ownerCoverage.governanceCoverage.unknownComponents.slice(0, 20),
+        unknownComponentCount: payload.ownerCoverage.governanceCoverage.unknownComponents.length,
+        missingRouteOwners: payload.ownerCoverage.governanceCoverage.routeOwnerValidation.missing,
+      }),
+    ).toBe("complete");
     expect(payload.ownerCoverage.governanceCoverage.scope).toBe("repo_tracked_and_visible_files");
     expect(payload.ownerCoverage.governanceCoverage.summary.totalComponents).toBe(
       payload.summary.trackedAndVisibleFiles,

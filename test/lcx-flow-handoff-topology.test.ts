@@ -108,7 +108,7 @@ describe("exact fields in encoded receipt transports", () => {
     },
   );
 });
-async function functionBody(file: string, name: string) {
+async function functionBody(file: string, name: string, followLocalCalls = false) {
   const source = await fs.readFile(file, "utf8");
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const node = ast.statements.find(
@@ -116,7 +116,34 @@ async function functionBody(file: string, name: string) {
       ts.isFunctionDeclaration(statement) && statement.name?.text === name,
   );
   expect(node?.body).toBeDefined();
-  return node!.body!.getText(ast);
+  const bodies: string[] = [];
+  const visited = new Set<ts.FunctionDeclaration>();
+  function collect(declaration: ts.FunctionDeclaration) {
+    if (!declaration.body || visited.has(declaration)) {
+      return;
+    }
+    visited.add(declaration);
+    bodies.push(declaration.body.getText(ast));
+    if (!followLocalCalls) {
+      return;
+    }
+    function visit(child: ts.Node) {
+      if (ts.isCallExpression(child) && ts.isIdentifier(child.expression)) {
+        const calleeName = child.expression.text;
+        const callee = ast.statements.find(
+          (statement): statement is ts.FunctionDeclaration =>
+            ts.isFunctionDeclaration(statement) && statement.name?.text === calleeName,
+        );
+        if (callee) {
+          collect(callee);
+        }
+      }
+      ts.forEachChild(child, visit);
+    }
+    ts.forEachChild(declaration.body, visit);
+  }
+  collect(node!);
+  return bodies.join("\n");
 }
 
 async function originalFinanceSourceAudit(overrides: Record<string, string> = {}) {
@@ -143,7 +170,7 @@ async function originalFinanceSourceAudit(overrides: Record<string, string> = {}
       repoRoot: ".",
       fs: {
         readFile: (file: string) => {
-          const relative = path.normalize(file);
+          const relative = path.normalize(file).split(path.sep).join("/");
           return overrides[relative] === undefined
             ? fs.readFile(file, "utf8")
             : Promise.resolve(overrides[relative]);
@@ -267,6 +294,7 @@ describe("factory topology describes original source without inventing consumers
     const monitor = await functionBody(
       "extensions/external/src/monitor.ts",
       "processExternalMessage",
+      true,
     );
     expect(monitor).toContain("dispatchReplyWithBufferedBlockDispatcher");
     expect(monitor).toContain("sendExternalMessage");
@@ -495,7 +523,7 @@ describe("factory topology describes original source without inventing consumers
       "runFinanceDailyCycleOperator",
     );
     expect(daily).toContain("const samplePath = join(directory, SAMPLES_FILE)");
-    expect(daily).toContain('readFile(samplePath, "utf8")');
+    expect(daily).toMatch(/await readFile\(samplePath(?:,\s*"utf8")?\)/u);
     expect(daily).toContain("await backfillOutcomes({");
     expect(daily).toContain("await appendScoredOutcomes(");
     const feedback = await fs.readFile(
@@ -585,8 +613,12 @@ describe("factory topology describes original source without inventing consumers
     expect(scene.feedbackEdges).toContainEqual(["cleanup_candidate_review", "change_impact_plan"]);
   });
 
-  it("keeps loop siblings feeding the host writer and missing digest consumer explicit", async () => {
+  it("checks installed host writer source when present; absent source remains unverified", async (context) => {
     const host = await readProcessOwnerSource("host-installed:lcx-local-operator-loop.sh");
+    if (!host) {
+      context.skip();
+      return;
+    }
     expect(host).toContain(
       "const governanceAutopilot = readJson(process.env.NODE_GOVERNANCE_FILE)",
     );
@@ -596,6 +628,9 @@ describe("factory topology describes original source without inventing consumers
     expect(host).not.toContain("readJson(process.env.NODE_FAILURE_TRACE_FILE)");
     expect(host).toContain("Boolean(trainingSupervisor.ok)");
     expect(host).toContain("const exam = readJson(process.env.NODE_EXAM_FILE)");
+  });
+
+  it("keeps loop siblings feeding the host writer and missing digest consumer explicit", () => {
     const scene = find("local_automation_digest_waterflow");
     const nodes = [
       "automation_cleanup",
@@ -664,7 +699,7 @@ describe("factory topology describes original source without inventing consumers
     const train = main.indexOf("const trained = await runTrain(");
     const evalAt = main.indexOf("const candidateEval = await runJsonStep(", train);
     const promotion = main.indexOf('event: "adapter_promoted_for_guard_session"', evalAt);
-    const cooldown = main.lastIndexOf("await runEvolutionCooldown(options, round, deadline)");
+    const cooldown = main.lastIndexOf("await runEvolutionCooldown(");
     expect(train).toBeGreaterThanOrEqual(0);
     expect(evalAt).toBeGreaterThan(train);
     expect(promotion).toBeGreaterThan(evalAt);

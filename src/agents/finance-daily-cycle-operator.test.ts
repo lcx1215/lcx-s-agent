@@ -600,6 +600,7 @@ describe("explicit history sync before daily business", () => {
     historyHeadRef: null,
   };
   const history = {
+    syncId: "00000000-0000-4000-8000-000000000001",
     accountReconciliation,
     accountId: "synthetic",
     venue: "alpaca:paper",

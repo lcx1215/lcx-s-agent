@@ -43,7 +43,7 @@ vi.mock("./subagent-announce.js", () => ({
 }));
 
 const loadSubagentRegistryFromDisk = vi.fn(() => new Map());
-const saveSubagentRegistryToDisk = vi.fn();
+const saveSubagentRegistryToDisk = vi.fn(() => true);
 
 vi.mock("./subagent-registry.store.js", () => ({
   loadSubagentRegistryFromDisk,

@@ -104,8 +104,16 @@ export async function runCentralHarnessCycle(
   options: HarnessLoopOptions,
 ): Promise<CentralRunReceipt> {
   const controller = new AbortController();
-  const remainingMs = (options.deadlineMs ?? Date.now() + 120_000) - Date.now();
+  const deadlineMs = options.deadlineMs ?? Date.now() + 120_000;
+  const remainingMs = deadlineMs - Date.now();
   const expire = () => controller.abort(new Error("central cycle deadline exceeded"));
+  // Timers may be delayed by host sleep or a busy event loop. Reuse the same
+  // cancellation path at dispatch and result boundaries before trusting a result.
+  const checkDeadline = () => {
+    if (Date.now() >= deadlineMs) {
+      expire();
+    }
+  };
   const timer = remainingMs > 0 ? setTimeout(expire, remainingMs) : undefined;
   if (remainingMs <= 0) {
     expire();
@@ -114,7 +122,7 @@ export async function runCentralHarnessCycle(
     ? AbortSignal.any([options.signal, controller.signal])
     : controller.signal;
   try {
-    return await runCycle(options, signal);
+    return await runCycle({ ...options, deadlineMs }, signal, checkDeadline);
   } finally {
     if (timer) {
       clearTimeout(timer);
@@ -123,7 +131,12 @@ export async function runCentralHarnessCycle(
 }
 
 /** Allow bounded cleanup before recording cancellation; unknown adapters must not imply shutdown. */
-async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+async function observeUntilAborted<T>(
+  signal: AbortSignal,
+  checkDeadline: () => void,
+  run: () => Promise<T>,
+): Promise<T> {
+  checkDeadline();
   signal.throwIfAborted();
   return new Promise<T>((resolve, reject) => {
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -139,10 +152,12 @@ async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>
     signal.addEventListener("abort", abort, { once: true });
     Promise.resolve()
       .then(() => {
+        checkDeadline();
         signal.throwIfAborted();
         return run();
       })
       .then((value) => {
+        checkDeadline();
         if (signal.aborted) {
           reject(signal.reason);
         } else {
@@ -161,6 +176,7 @@ async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>
 async function runCycle(
   options: HarnessLoopOptions,
   signal: AbortSignal,
+  checkDeadline: () => void,
 ): Promise<CentralRunReceipt> {
   const observer = options.registry;
   const runId = options.runId ?? randomUUID();
@@ -202,8 +218,8 @@ async function runCycle(
     };
   } else {
     try {
-      proposal = await observeUntilAborted(signal, () =>
-        options.brain.propose(bounded.perception, signal),
+      proposal = await observeUntilAborted(signal, checkDeadline, () =>
+        options.brain.propose(bounded.perception, signal, options.deadlineMs),
       );
     } catch (error) {
       brainCall = {
@@ -312,7 +328,7 @@ async function runCycle(
     }
     const spec = observer.get(step.ownerId)!;
     try {
-      const observation = await observeUntilAborted(signal, () =>
+      const observation = await observeUntilAborted(signal, checkDeadline, () =>
         options.execute !== undefined
           ? // Test/offline override: deterministic execute given the full spec.
             options.execute(step.ownerId, spec, step.args, signal)
@@ -417,6 +433,7 @@ async function runCycle(
 
   // The next action is computed here, by TypeScript, and never by the brain: it
   // is a bounded enum the following cycle can trust, not self-authored guidance.
+  checkDeadline();
   const nextAction =
     signal.aborted || bounded.report.overBudget
       ? "halt_and_report"
@@ -736,6 +753,7 @@ export function compactReceipts(
     step.ownerId === "finance_bar_ledger" ||
     (step.ownerId === "finance_position_ledger_read" &&
       (isPlainRecord(step.outcome?.history) ||
+        isPlainRecord(step.outcome?.brokerSnapshot) ||
         (isPlainRecord(step.outcome?.brokerTradeEconomics) &&
           isPlainRecord(step.outcome.brokerTradeEconomics.diagnostic))));
   const argumentIdentity = (step: CentralStep) =>
@@ -886,6 +904,7 @@ export function compactReceipts(
       (outcome.ownerId === "finance_bar_ledger" ||
         (outcome.ownerId === "finance_position_ledger_read" &&
           (isPlainRecord(outcome.outcome.history) ||
+            isPlainRecord(outcome.outcome.brokerSnapshot) ||
             (isPlainRecord(outcome.outcome.brokerTradeEconomics) &&
               isPlainRecord(outcome.outcome.brokerTradeEconomics.diagnostic))))),
     );
@@ -1539,7 +1558,8 @@ function projectFinanceBudgetFacts(
               "needsInspection",
             ]
           : ["accountId", "venue", "snapshotRef", "status", "netMatchedPnl", "costScope", "basis"];
-      projected.accounts = original.accounts.slice(0, 1).map((account) => {
+      const maximumAccounts = section === "economicFeedback" ? 2 : 1;
+      projected.accounts = original.accounts.slice(0, maximumAccounts).map((account) => {
         const selected = pick(account, accountKeys, `${section}.accounts.`);
         if (isPlainRecord(account) && Array.isArray(account.issues)) {
           selected.issues = account.issues
@@ -1583,6 +1603,7 @@ function projectFinanceBudgetFacts(
               "through",
               "accountEquityChange",
               "inheritedGrossPnl",
+              "inheritedExitDecisionGrossPnl",
               "newDecisionGrossPnl",
               "unlinkedGrossPnl",
               "unallocatedPnl",
@@ -1590,6 +1611,11 @@ function projectFinanceBudgetFacts(
               "historicalAssetFeeValue",
               "periodConfirmedCashFees",
               "periodFeeTimingUnknownCount",
+              "reconciliationRef",
+              "reconciliationAt",
+              "reconciliationStatus",
+              "latestCashDifference",
+              "latestFeeCash",
               "pendingFees",
               "modelBill",
               "reason",
@@ -1599,6 +1625,15 @@ function projectFinanceBudgetFacts(
         }
         return selected;
       });
+      const additionalOmitted = Math.max(0, original.accounts.length - maximumAccounts);
+      if (additionalOmitted > 0) {
+        projected.omittedAccounts =
+          (typeof original.omittedAccounts === "number" &&
+          Number.isSafeInteger(original.omittedAccounts) &&
+          original.omittedAccounts >= 0
+            ? original.omittedAccounts
+            : 0) + additionalOmitted;
+      }
       omitted.add(`${section}.accounts.details_or_additional_accounts`);
     }
     result[section] = projected;
@@ -1660,9 +1695,16 @@ function projectFinanceBudgetFacts(
     ) {
       result[section] = {
         status: details.status,
-        accounts: details.accounts
-          .slice(0, 1)
-          .map((a) => (isPlainRecord(a) ? { accountEconomics: a.accountEconomics } : a)),
+        omittedAccounts: details.omittedAccounts,
+        accounts: details.accounts.map((a) =>
+          isPlainRecord(a)
+            ? {
+                accountId: a.accountId,
+                venue: a.venue,
+                accountEconomics: a.accountEconomics,
+              }
+            : a,
+        ),
       };
       omitted.add("economicFeedback.accounts.other_details");
     } else if (isPlainRecord(details) && Object.hasOwn(details, "accounts")) {
@@ -1763,11 +1805,18 @@ function projectFinanceBudgetFacts(
     };
   }
   if (isPlainRecord(result.economicFeedback) && Array.isArray(result.economicFeedback.accounts)) {
-    const account = result.economicFeedback.accounts.find(
+    const accounts = result.economicFeedback.accounts.filter(
       (a) => isPlainRecord(a) && isPlainRecord(a.accountEconomics),
     );
-    if (isPlainRecord(account)) {
-      minimal.economicFeedback = { accounts: [{ accountEconomics: account.accountEconomics }] };
+    if (accounts.length > 0) {
+      minimal.economicFeedback = {
+        omittedAccounts: result.economicFeedback.omittedAccounts,
+        accounts: accounts.map((account) => ({
+          accountId: account.accountId,
+          venue: account.venue,
+          accountEconomics: account.accountEconomics,
+        })),
+      };
     }
   }
   for (const key of Object.keys(source)) {
@@ -1785,6 +1834,23 @@ function projectFinanceBudgetFacts(
   };
   annotateMinimal();
   for (const section of ["economicFeedback", "positionManagement", "intradayExecution"]) {
+    if (
+      section === "economicFeedback" &&
+      isPlainRecord(minimal.economicFeedback) &&
+      Array.isArray(minimal.economicFeedback.accounts)
+    ) {
+      const economic = minimal.economicFeedback;
+      const accounts = minimal.economicFeedback.accounts;
+      let omittedAccounts =
+        typeof economic.omittedAccounts === "number" ? economic.omittedAccounts : 0;
+      while (accounts.length > 1 && jsonBytes(minimal) > maxBytes) {
+        accounts.pop();
+        omittedAccounts += 1;
+        minimal.economicFeedback = { ...economic, accounts, omittedAccounts };
+        omitted.add("economicFeedback.accounts.additional_accounts");
+        annotateMinimal();
+      }
+    }
     if (jsonBytes(minimal) <= maxBytes) {
       break;
     }

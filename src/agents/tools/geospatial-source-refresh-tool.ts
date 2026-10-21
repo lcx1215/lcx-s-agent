@@ -54,6 +54,7 @@ export function createGeospatialSourceRefreshTool(options?: {
   fetchImpl?: FetchImpl;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
+  const registry = createGeospatialSourceRegistry({ fetchImpl: options?.fetchImpl });
   return {
     label: "Geospatial Source Refresh",
     name: "geospatial_source_refresh",
@@ -79,7 +80,6 @@ export function createGeospatialSourceRefreshTool(options?: {
           asOf: params.asOf ?? new Date().toISOString(),
           freshnessMaxMinutes: params.freshnessMaxMinutes,
         };
-        const registry = createGeospatialSourceRegistry({ fetchImpl: options?.fetchImpl });
         if (params.liveFetch !== true) {
           return jsonResult({
             ...inspectGeospatialSourceRegistry(request, registry),
@@ -102,6 +102,7 @@ export function createGeospatialSourceRefreshTool(options?: {
           : undefined;
         return jsonResult({ ...receipt, receiptPath });
       } catch (error) {
+        callerSignal?.throwIfAborted();
         throw new ToolInputError((error as Error).message);
       }
     },

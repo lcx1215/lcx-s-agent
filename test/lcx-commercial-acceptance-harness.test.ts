@@ -204,7 +204,7 @@ function baseInputs(): HarnessInputs {
     }),
     externalChannelBindingStatus: owner("lcx-external-channel-binding", {
       externalChannelBinding: {
-        status: "channel_runtime_probe_ok_user_visible_pending",
+        status: "channel_runtime_probe_ok_user_visible_observed",
         userVisibleObserved: true,
         missingProof: [],
       },
@@ -872,6 +872,33 @@ describe("lcx-commercial-acceptance-harness", () => {
       ]),
     );
   });
+
+  it.each(["blocked", "unavailable"])(
+    "does not promote legacy success over a %s canonical binding owner",
+    (state) => {
+      const inputs = baseInputs();
+      inputs.externalChannelBindingStatus =
+        state === "blocked"
+          ? owner("lcx-external-channel-binding", {
+              externalChannelBinding: {
+                status: "ready_for_channel_bind_apply",
+                userVisibleObserved: false,
+              },
+            })
+          : {
+              ok: false,
+              commandSucceeded: false,
+              owner: "lcx-external-channel-binding",
+              command: "lcx-external-channel-binding --json",
+              error: "probe unavailable",
+            };
+
+      const result = buildCommercialAcceptanceHarness(inputs);
+
+      expect(result.blockedGates).toContain("external_channel_not_bound");
+      expect(result.gates.some((gate) => gate.id === "user_visible_observed")).toBe(false);
+    },
+  );
 
   it("blocks release when the external message channel is not bound", () => {
     const inputs = baseInputs();

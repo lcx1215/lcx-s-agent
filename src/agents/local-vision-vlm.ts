@@ -220,19 +220,37 @@ export async function runLocalVisionVlm(params: {
       "--no-verbose",
     ];
     let stdout = "";
+    params.signal?.throwIfAborted();
+    const invocation = execFileAsync(pythonPath, buildLocalMlxCommand("mlx_vlm", args), {
+      cwd: tempDir,
+      env: buildLocalModelProcessEnv(process.env, { PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: "1" }),
+      timeout: timeoutMs,
+      // A failed one-shot inference must release its process/slot even if SIGTERM is ignored.
+      killSignal: "SIGKILL",
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    // execFile does not forward killSignal to spawn's AbortSignal handling on Node 22.
+    // Handle cancellation here and await execFile's close before releasing the caller.
+    const onAbort = () => {
+      if (invocation.child.exitCode === null && invocation.child.signalCode === null) {
+        invocation.child.kill("SIGKILL");
+      }
+    };
+    params.signal?.addEventListener("abort", onAbort, { once: true });
+    if (params.signal?.aborted) {
+      onAbort();
+    }
     try {
-      const result = await execFileAsync(pythonPath, buildLocalMlxCommand("mlx_vlm", args), {
-        cwd: tempDir,
-        env: buildLocalModelProcessEnv(process.env, { PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: "1" }),
-        timeout: timeoutMs,
-        signal: params.signal,
-        maxBuffer: 2 * 1024 * 1024,
-      });
+      const result = await invocation;
+      params.signal?.throwIfAborted();
       stdout = result.stdout;
     } catch (error) {
+      params.signal?.throwIfAborted();
       const stderr =
         error && typeof error === "object" && "stderr" in error ? String(error.stderr) : "";
       throw describeProcessError(error, stderr);
+    } finally {
+      params.signal?.removeEventListener("abort", onAbort);
     }
 
     const text = collapseRepeatedVisionText(stdout.trim());

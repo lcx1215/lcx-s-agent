@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   readLcxIdentityWriterRaw,
   resolveLcxIdentityStateWriterPathContract,
@@ -13,6 +14,7 @@ import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { loadJsonFileDetailed, saveJsonFile } from "../infra/json-file.js";
 import { logWarn } from "../logger.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.js";
+import { acquireSubagentRegistryWriteLock } from "./subagent-registry-lock.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
 /**
@@ -103,7 +105,7 @@ function parseSubagentRegistry(raw: unknown): {
   migrated: boolean;
   invalid: boolean;
 } {
-  if (!raw || typeof raw !== "object") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { runs: new Map(), migrated: false, invalid: true };
   }
   const record = raw as Partial<PersistedSubagentRegistry>;
@@ -111,19 +113,19 @@ function parseSubagentRegistry(raw: unknown): {
     return { runs: new Map(), migrated: false, invalid: true };
   }
   const runsRaw = record.runs;
-  if (!runsRaw || typeof runsRaw !== "object") {
+  if (!runsRaw || typeof runsRaw !== "object" || Array.isArray(runsRaw)) {
     return { runs: new Map(), migrated: false, invalid: true };
   }
   const out = new Map<string, SubagentRunRecord>();
   const isLegacy = record.version === 1;
   let migrated = false;
   for (const [runId, entry] of Object.entries(runsRaw)) {
-    if (!entry || typeof entry !== "object") {
-      continue;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return { runs: new Map(), migrated: false, invalid: true };
     }
     const typed = entry as LegacySubagentRunRecord;
-    if (!typed.runId || typeof typed.runId !== "string") {
-      continue;
+    if (!typed.runId || typeof typed.runId !== "string" || typed.runId !== runId) {
+      return { runs: new Map(), migrated: false, invalid: true };
     }
     const legacyCompletedAt =
       isLegacy && typeof typed.announceCompletedAt === "number"
@@ -236,20 +238,30 @@ export function loadSubagentRegistryFromDisk(): Map<string, SubagentRunRecord> {
     return new Map();
   }
   registryLoadStatus = { state: "ok" };
-  if (parsed.migrated) {
-    try {
-      saveSubagentRegistryToDisk(parsed.runs);
-    } catch {
-      // ignore migration write failures
-    }
-  }
   return parsed.runs;
 }
 
-export function saveSubagentRegistryToDisk(runs: Map<string, SubagentRunRecord>): boolean {
-  // The in-memory map is empty when the file on disk could not be read. Writing
-  // that emptiness back would replace the only remaining copy of these runs
-  // with `{}`, so hold writes until a load actually succeeds.
+function comparableRun(entry: SubagentRunRecord | undefined): unknown {
+  // Optional undefined fields are not persisted; compare the same JSON shape.
+  return entry === undefined
+    ? undefined
+    : JSON.parse(
+        JSON.stringify({ ...entry, spawnMode: entry.spawnMode === "session" ? "session" : "run" }),
+      );
+}
+
+/** Compare the same normalized JSON shape used by persistence conflict checks. */
+export function equalSubagentRegistryRun(
+  left: SubagentRunRecord | undefined,
+  right: SubagentRunRecord | undefined,
+): boolean {
+  return isDeepStrictEqual(comparableRun(left), comparableRun(right));
+}
+
+export function saveSubagentRegistryToDisk(
+  runs: Map<string, SubagentRunRecord>,
+  baseline: Map<string, SubagentRunRecord> = new Map(),
+): boolean {
   if (isRegistryWriteBlocked()) {
     if (!warnedWriteBlocked) {
       warnedWriteBlocked = true;
@@ -260,8 +272,75 @@ export function saveSubagentRegistryToDisk(runs: Map<string, SubagentRunRecord>)
     return false;
   }
   const pathname = resolveSubagentRegistryPath();
-  saveJsonFile(pathname, serializeSubagentRegistry(runs));
-  return true;
+  const release = acquireSubagentRegistryWriteLock(pathname);
+  try {
+    // Read only after obtaining the mutex. Atomic rename alone does not merge
+    // independently running local and gateway owners.
+    const latest = loadSubagentRegistryFromDisk();
+    if (isRegistryWriteBlocked()) {
+      return false;
+    }
+    for (const id of new Set([...baseline.keys(), ...runs.keys()])) {
+      const before = comparableRun(baseline.get(id));
+      const after = comparableRun(runs.get(id));
+      if (isDeepStrictEqual(before, after)) {
+        continue;
+      }
+      const current = comparableRun(latest.get(id));
+      if (!isDeepStrictEqual(current, before) && !isDeepStrictEqual(current, after)) {
+        throw new Error(`subagent registry conflict for run ${id}; reload and reconcile`);
+      }
+      const next = runs.get(id);
+      if (next) {
+        latest.set(id, next);
+      } else {
+        latest.delete(id);
+      }
+    }
+    saveJsonFile(pathname, serializeSubagentRegistry(latest));
+    // Adopt external changes only after the complete transaction succeeds.
+    const previous = new Map(runs);
+    runs.clear();
+    for (const [id, entry] of latest) {
+      const existing = previous.get(id);
+      runs.set(
+        id,
+        existing && isDeepStrictEqual(comparableRun(existing), comparableRun(entry))
+          ? existing
+          : entry,
+      );
+    }
+    return true;
+  } finally {
+    release();
+  }
+}
+
+const migrationWriteBaselines = new WeakMap<
+  LcxIdentitySubagentRegistryMigration,
+  {
+    pathname: string;
+    runs: Map<string, SubagentRunRecord>;
+  }
+>();
+
+function migrationRunsAt(pathname: string): Map<string, SubagentRunRecord> {
+  const loaded = loadJsonFileDetailed(pathname);
+  if (loaded.status === "absent") {
+    return new Map();
+  }
+  if (loaded.status !== "ok") {
+    throw new Error(`subagent registry migration source ${loaded.status}`);
+  }
+  const parsed = parseSubagentRegistry(loaded.value);
+  if (parsed.invalid) {
+    throw new Error("subagent registry migration source has unknown structure");
+  }
+  return parsed.runs;
+}
+
+function comparableRuns(runs: Map<string, SubagentRunRecord>): Map<string, unknown> {
+  return new Map([...runs].map(([id, entry]) => [id, comparableRun(entry)]));
 }
 
 export async function readSubagentRegistryForIdentityMigration(
@@ -269,14 +348,23 @@ export async function readSubagentRegistryForIdentityMigration(
 ): Promise<Map<string, SubagentRunRecord>> {
   const pathContract = resolveCurrentSubagentRegistryPathContract(migration);
   const raw = await readLcxIdentityWriterRaw(pathContract);
-  if (raw === null) {
-    return new Map();
-  }
-  try {
-    return parseSubagentRegistry(JSON.parse(raw)).runs;
-  } catch {
-    return new Map();
-  }
+  const parsed =
+    raw === null
+      ? new Map<string, SubagentRunRecord>()
+      : (() => {
+          const value = parseSubagentRegistry(JSON.parse(raw));
+          if (value.invalid) {
+            throw new Error("subagent registry migration source has unknown structure");
+          }
+          return value.runs;
+        })();
+  // This explicit migration read prepares only that migration's write contract.
+  // Ordinary runtime loads/read queries never change any writer's baseline.
+  migrationWriteBaselines.set(migration, {
+    pathname: pathContract.readPath,
+    runs: structuredClone(parsed),
+  });
+  return parsed;
 }
 
 export async function writeSubagentRegistryForIdentityMigration(
@@ -285,15 +373,55 @@ export async function writeSubagentRegistryForIdentityMigration(
   options?: { expectedReadPath?: string; expectedWritePath?: string },
 ): Promise<LcxIdentityWriteReceipt> {
   const pathContract = resolveCurrentSubagentRegistryPathContract(migration);
-  return await writeLcxIdentityWriterRawWithReceipt(
-    pathContract,
-    `${JSON.stringify(serializeSubagentRegistry(runs), null, 2)}\n`,
-    options,
-  );
+  const releases: Array<() => void> = [];
+  try {
+    for (const pathname of [
+      ...new Set([pathContract.readPath, pathContract.writePath]),
+    ].toSorted()) {
+      releases.push(acquireSubagentRegistryWriteLock(pathname));
+    }
+    const baseline = migrationWriteBaselines.get(migration);
+    const current = migrationRunsAt(pathContract.readPath);
+    if (baseline) {
+      if (
+        baseline.pathname !== pathContract.readPath ||
+        !isDeepStrictEqual(comparableRuns(current), comparableRuns(baseline.runs))
+      ) {
+        throw new Error("subagent registry migration conflict; reload and reconcile");
+      }
+    } else if (current.size > 0) {
+      throw new Error("subagent registry migration conflict; explicit source read required");
+    }
+    if (
+      pathContract.readPath !== pathContract.writePath &&
+      loadJsonFileDetailed(pathContract.writePath).status !== "absent"
+    ) {
+      throw new Error("subagent registry migration conflict; write target already exists");
+    }
+    const receipt = await writeLcxIdentityWriterRawWithReceipt(
+      pathContract,
+      `${JSON.stringify(serializeSubagentRegistry(runs), null, 2)}\n`,
+      options,
+    );
+    migrationWriteBaselines.set(migration, {
+      pathname: pathContract.writePath,
+      runs: structuredClone(runs),
+    });
+    return receipt;
+  } finally {
+    for (const release of releases.toReversed()) {
+      release();
+    }
+  }
 }
 
 export async function rollbackSubagentRegistryIdentityMigration(
   receipt: LcxIdentityWriteReceipt,
 ): Promise<void> {
-  await rollbackLcxIdentityWriter(receipt);
+  const release = acquireSubagentRegistryWriteLock(receipt.pathContract.writePath);
+  try {
+    await rollbackLcxIdentityWriter(receipt);
+  } finally {
+    release();
+  }
 }

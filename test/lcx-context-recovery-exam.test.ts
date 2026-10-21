@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -7,7 +8,8 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
-const lcxUserHome = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
+// This local integration exam reads the account profile, not the unit-test HOME.
+const lcxUserHome = process.env.LCX_USER_HOME ?? os.userInfo().homedir;
 const localOperatorPath = path.join(lcxUserHome, ".openclaw", "bin", "lcx-local-operator-loop.sh");
 const localRuntimeEnv = {
   ...process.env,
@@ -296,10 +298,15 @@ describeRecovery("LCX compressed context recovery exam", () => {
       expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
       expect(localOperator).toContain("NODE_FLOW_FILE");
       expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
-      expect(localOperator).toContain("governanceAutopilot");
-      expect(localOperator).toContain("volatileOwner");
-      expect(localOperator).toContain("learningSedimentationBridge");
-      expect(localOperator).toContain("compressedContextRecovered");
+      expect(localOperator).toContain("scripts/operator/lcx-local-operator-receipt-writer.cjs");
+      const receiptWriter = await fs.readFile(
+        path.join(repoRoot, "scripts/operator/lcx-local-operator-receipt-writer.cjs"),
+        "utf8",
+      );
+      expect(receiptWriter).toContain("governanceAutopilot");
+      expect(receiptWriter).toContain("volatileOwner");
+      expect(receiptWriter).toContain("learningSedimentationBridge");
+      expect(receiptWriter).toContain("compressedContextRecovered");
     }
   });
 });

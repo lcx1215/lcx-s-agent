@@ -56,6 +56,11 @@ export async function probeUniverseWhole(
     sourcePath,
     "scripts/operator/lcx-local-paths.ts",
     "scripts/operator/lcx-change-impact-plan.ts",
+    "scripts/operator/lcx-flow-graph.ts",
+    "scripts/operator/lcx-flow-consolidation-declarations.ts",
+    "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    "scripts/operator/lcx-directed-daily-research-brief.ts",
+    "scripts/operator/lcx-finance-research-checkpoint-run.ts",
     "scripts/operator/lcx-problem-cluster-radar.ts",
     "scripts/operator/lcx-external-channel-status.ts",
   ];
@@ -97,11 +102,31 @@ export async function probeUniverseWhole(
     await fs.mkdir(path.join(repo, "unknown-fixture"));
     await fs.writeFile(path.join(repo, "unknown-fixture/unknown.zzz"), "unmapped\n");
   }
+  const slowProcessArgs = ["-e", "setTimeout(() => {}, 10000)"];
+  const processFaultHook = path.join(root, "private-git-delay.cjs");
   if (fault === "git_timeout") {
-    const bin = path.join(root, "bin");
-    await fs.mkdir(bin);
-    await fs.writeFile(path.join(bin, "git"), "#!/bin/sh\nexec /bin/sleep 10\n", { mode: 0o755 });
-    env.PATH = `${bin}${path.delimiter}${env.PATH ?? ""}`;
+    // Substitute only the Git child with an actual slow Node child. A shell
+    // executable on PATH cannot intercept git.exe on Windows.
+    await fs.writeFile(
+      processFaultHook,
+      `const cp = require('node:child_process');
+const { promisify } = require('node:util');
+const { syncBuiltinESMExports } = require('node:module');
+const original = cp.execFile;
+const originalAsync = promisify(original);
+const slowArgs = ${JSON.stringify(slowProcessArgs)};
+function delayed(command, args, options, callback) {
+  return command === 'git'
+    ? original(process.execPath, slowArgs, options, callback)
+    : original(command, args, options, callback);
+}
+delayed[promisify.custom] = (command, args, options) => command === 'git'
+  ? originalAsync(process.execPath, slowArgs, options)
+  : originalAsync(command, args, options);
+cp.execFile = delayed;
+syncBuiltinESMExports();
+`,
+    );
   }
   let cliBytes = "";
   let cliExitCode: unknown = 0;
@@ -111,6 +136,7 @@ export async function probeUniverseWhole(
     ({ stdout: cliBytes } = await nativeExec(
       process.execPath,
       [
+        ...(fault === "git_timeout" ? ["--require", processFaultHook] : []),
         "--import",
         "tsx",
         path.join(repo, sourcePath),
@@ -255,7 +281,9 @@ export async function probeUniverseWhole(
       exitCode: 0,
     },
     execFileAsync: (command: string, args: string[], options: object) =>
-      nativeExec(command, args, { ...options, env }),
+      fault === "git_timeout" && command === "git"
+        ? nativeExec(process.execPath, slowProcessArgs, { ...options, env })
+        : nativeExec(command, args, { ...options, env }),
     capturePhase: (name: string, value: unknown) => {
       phaseObservations[name] = clone(value);
     },

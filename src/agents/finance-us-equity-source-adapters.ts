@@ -173,7 +173,7 @@ function latestFact(
       textValue(right.fact.end).localeCompare(textValue(left.fact.end))
     );
   });
-  const selected = sorted.find((candidate) => Number.isFinite(Number(candidate.fact.val)));
+  const selected = sorted.find((candidate) => finiteNumber(candidate.fact.val) !== undefined);
   return selected;
 }
 
@@ -183,8 +183,8 @@ function factField(
   entityName: string,
   sourceUrlOrArtifact: string,
 ): FinanceDataGatewayFieldInput | undefined {
-  const value = Number(fact.fact.val);
-  if (!Number.isFinite(value)) {
+  const value = finiteNumber(fact.fact.val);
+  if (value === undefined) {
     return undefined;
   }
   const sourceTimestamp = isoDate(fact.fact.filed ?? fact.fact.end, `${name} source date`);

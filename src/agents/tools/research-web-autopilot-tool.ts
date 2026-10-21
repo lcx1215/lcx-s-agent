@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -43,6 +44,7 @@ type SearchDetails = {
 type FetchDetails = {
   url?: unknown;
   finalUrl?: unknown;
+  finalUrlSource?: unknown;
   status?: unknown;
   title?: unknown;
   text?: unknown;
@@ -134,15 +136,13 @@ function likelyPrimaryReference(url: string, query = ""): boolean {
   if (hostname === "sec.gov" || hostname.endsWith(".sec.gov")) {
     return true;
   }
-  const issuerHostMatches = hostnameMatchesQuery(hostname, query);
+  // Investor/IR-shaped hosts and query tokens are leads, not issuer-ownership proof.
+  // Keep their opened evidence, but they cannot satisfy requirePrimary without a
+  // separately verified issuer-domain binding. Government namespaces retain their
+  // existing official-reference classification and query binding.
   return (
-    issuerHostMatches &&
-    (hostname.endsWith(".gov") ||
-      hostname.endsWith(".mil") ||
-      hostname.startsWith("investor.") ||
-      hostname.startsWith("ir.") ||
-      hostname.includes(".investors.") ||
-      hostname.includes("annualreports."))
+    hostnameMatchesQuery(hostname, query) &&
+    (hostname.endsWith(".gov") || hostname.endsWith(".mil"))
   );
 }
 
@@ -263,23 +263,38 @@ function safeReceiptStem(value: string): string {
       .replace(/[^a-z0-9._-]+/gu, "-")
       .replace(/-+/gu, "-")
       .replace(/^-|-$/gu, "") || "web-research"
-  );
+  ).slice(0, 80);
 }
 
 async function writeWebReceipt(
   workspaceDir: string,
   query: string,
   payload: unknown,
+  signal?: AbortSignal,
 ): Promise<string> {
   const now = new Date().toISOString();
   const relativePath = path.join(
     "memory",
     "web-research-autopilot",
-    `${now.slice(0, 10)}-${safeReceiptStem(query)}-${now.replace(/[:.]/gu, "-")}.json`,
+    `${now.slice(0, 10)}-${safeReceiptStem(query)}-${now.replace(/[:.]/gu, "-")}-${randomUUID()}.json`,
   );
   const absolutePath = path.join(workspaceDir, relativePath);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  signal?.throwIfAborted();
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true, mode: 0o700 });
+  signal?.throwIfAborted();
+  const temporary = `${absolutePath}.tmp`;
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+      signal,
+    });
+    signal?.throwIfAborted();
+    await fs.rename(temporary, absolutePath);
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
   return relativePath;
 }
 
@@ -467,16 +482,26 @@ export function createResearchWebAutopilotTool(options?: {
               });
               return undefined;
             }
-            const finalUrl = httpUrl(details.finalUrl) ?? candidate.url;
+            const observedFinalUrl = httpUrl(details.finalUrl);
+            const finalUrl = observedFinalUrl ?? candidate.url;
+            const sourceProvenanceGaps =
+              !observedFinalUrl || details.finalUrlSource === "requested_url_fallback"
+                ? ["opened_document_final_url_unobserved"]
+                : [];
             return {
               url: candidate.url,
               finalUrl,
+              finalUrlSource:
+                textValue(details.finalUrlSource) ||
+                (observedFinalUrl ? "fetch_tool_metadata" : "search_candidate_fallback"),
+              sourceProvenanceGaps,
               title: textValue(details.title) || candidate.title,
               contentType: textValue(details.contentType),
               extractor: textValue(details.extractor),
               text: text.slice(0, maxChars),
               fetchedAt: textValue(details.fetchedAt) || observedAt,
-              isLikelyPrimary: likelyPrimaryReference(finalUrl, query),
+              isLikelyPrimary:
+                sourceProvenanceGaps.length === 0 && likelyPrimaryReference(finalUrl, query),
             };
           } catch (error) {
             if (callerSignal?.aborted) {
@@ -494,6 +519,7 @@ export function createResearchWebAutopilotTool(options?: {
       const hasPrimary = openedDocuments.some((document) => document.isLikelyPrimary);
       const missingEvidence = [
         ...(openedDocuments.length === 0 ? ["opened_original_web_document"] : []),
+        ...new Set(openedDocuments.flatMap((document) => document.sourceProvenanceGaps)),
         ...(params.requirePrimary && !hasPrimary ? ["primary_or_official_reference"] : []),
       ];
       const status =
@@ -528,7 +554,14 @@ export function createResearchWebAutopilotTool(options?: {
             ? ["configure_or_repair_web_search_and_web_fetch", "retry_current_query"]
             : failures.length > 0
               ? ["inspect_failed_web_source_attempts", "retry_or_add_another_source"]
-              : [],
+              : [
+                  ...(missingEvidence.includes("opened_document_final_url_unobserved")
+                    ? ["verify_opened_document_final_url"]
+                    : []),
+                  ...(params.requirePrimary && !hasPrimary
+                    ? ["find_primary_or_official_reference"]
+                    : []),
+                ],
         notTouched: [
           "provider_config",
           "external_channel_sender",
@@ -538,9 +571,16 @@ export function createResearchWebAutopilotTool(options?: {
         ],
       };
       callerSignal?.throwIfAborted();
-      const receiptPath = params.writeReceipt
-        ? await writeWebReceipt(workspaceDir, query, payload)
-        : undefined;
+      let receiptPath: string | undefined;
+      try {
+        receiptPath = params.writeReceipt
+          ? await writeWebReceipt(workspaceDir, query, payload, callerSignal)
+          : undefined;
+      } catch (error) {
+        callerSignal?.throwIfAborted();
+        throw error;
+      }
+      callerSignal?.throwIfAborted();
       return jsonResult({ ...payload, receiptPath });
     },
   };

@@ -155,6 +155,74 @@ describe("US equity finance source adapters", () => {
     );
   });
 
+  it.each([null, "", "   ", false, true, [], [42]].map((invalidValue) => ({ invalidValue })))(
+    "skips malformed SEC fact %j rather than replacing a valid observation",
+    async ({ invalidValue }) => {
+      const fetchImpl: FetchImpl = async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            entityName: "Example Inc.",
+            facts: {
+              "us-gaap": {
+                Assets: {
+                  units: {
+                    USD: [
+                      { val: invalidValue, filed: "2026-08-01", end: "2026-06-30" },
+                      { val: 1500, filed: "2026-05-01", end: "2026-03-31" },
+                    ],
+                  },
+                },
+                Revenues: {
+                  units: { USD: [{ val: invalidValue, filed: "2026-08-01", end: "2026-06-30" }] },
+                },
+              },
+            },
+          }),
+      });
+      const observation = await createSecCompanyFactsAdapter({
+        fetchImpl,
+        cikByInstrument: { AAPL: "320193" },
+      }).collect(REQUEST, new AbortController().signal);
+      expect(observation.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "fundamental_assets",
+            value: 1500,
+            sourceTimestamp: "2026-05-01T00:00:00.000Z",
+          }),
+        ]),
+      );
+      expect(observation.fields.some((entry) => entry.name === "fundamental_revenue")).toBe(false);
+    },
+  );
+
+  it.each([0, "0", "42"])("preserves valid SEC fact %j", async (value) => {
+    const fetchImpl: FetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          entityName: "Example Inc.",
+          facts: {
+            "us-gaap": {
+              Assets: { units: { USD: [{ val: value, filed: "2026-08-01", end: "2026-06-30" }] } },
+            },
+          },
+        }),
+    });
+    const observation = await createSecCompanyFactsAdapter({
+      fetchImpl,
+      cikByInstrument: { AAPL: "320193" },
+    }).collect(REQUEST, new AbortController().signal);
+    expect(observation.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "fundamental_assets", value: Number(value) }),
+      ]),
+    );
+  });
+
   it("only supports US equity asset classes", () => {
     const adapter = createMassiveUsEquitySnapshotAdapter({ apiKey: "test-key" });
     expect(adapter.supports(REQUEST)).toBe(true);

@@ -122,6 +122,17 @@ const PYTHON_POLICIES: Record<string, Omit<PythonFilePolicy, "path">> = {
     reason: "MLX 评估属于训练/评估发动机层，TS 只负责调度和验收。",
     targetTsOwner: "scripts/operator/local-brain-training-plan.ts",
   },
+  "scripts/local-model/lcx_text_worker.py": {
+    role: "keep_python_engine",
+    plainRole: "保留",
+    reason: "离线 JSONL 推理工作进程只加载模型和返回文本；生命周期、取消和工具权限由 TS 主人控制。",
+    targetTsOwner: "src/agents/local-text-worker.ts",
+  },
+  "skills/test_lcx_skill_ownership.py": {
+    role: "keep_python_engine",
+    plainRole: "保留",
+    reason: "Skill 所有权与同步助手的离线回归测试，不持有运行时流程或执行权限。",
+  },
 };
 
 function parseArgs(args: string[]) {

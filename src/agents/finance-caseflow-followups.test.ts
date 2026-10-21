@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { CronJob } from "../cron/types.js";
+import { validateScheduleTimestamp } from "../cron/validate-timestamp.js";
 import {
   bindFinanceCaseFollowups,
   type FinanceFollowupScheduler,
@@ -56,6 +57,60 @@ it("binds two jobs, reads state, preserves completed jobs and prevents duplicate
     );
     expect(jobs).toHaveLength(1);
   } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("records an overdue checkpoint and still binds the later future checkpoint without reserving the old one", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "followup-overdue-"));
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-05-01T00:00:00Z"));
+  try {
+    const receipt = await runFinanceResearchRun({
+      input: { ask: "Quarterly review", asOf: "2026-01-01T00:00:00Z" },
+    });
+    const packet = await saveFinanceCaseRun(
+      directory,
+      buildFinanceCaseRun({
+        caseId: "overdue",
+        receipt,
+        execution: {},
+        budget: { maxApiCalls: 1 },
+      }),
+    );
+    const jobs: CronJob[] = [];
+    const add = vi.fn<FinanceFollowupScheduler["add"]>(async (input) => {
+      const valid = validateScheduleTimestamp(input.schedule);
+      if (!valid.ok) {
+        throw new Error(valid.message);
+      }
+      const job: CronJob = {
+        ...input,
+        id: String(jobs.length),
+        createdAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+        state: {},
+      };
+      jobs.push(job);
+      return job;
+    });
+    const params = {
+      directory,
+      packetRef: packet.ref,
+      scheduler: { list: async () => [...jobs], add },
+      register: true,
+    };
+    const result = await bindFinanceCaseFollowups(params);
+    expect(result.bindings.map((entry) => entry.status)).toEqual(["overdue_unbound", "scheduled"]);
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(jobs[0].schedule).toEqual({ kind: "at", at: "2026-07-01T00:00:00.000Z" });
+    expect((await bindFinanceCaseFollowups(params)).bindings.map((entry) => entry.status)).toEqual([
+      "overdue_unbound",
+      "scheduled",
+    ]);
+    expect(add).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
     await fs.rm(directory, { recursive: true, force: true });
   }
 });

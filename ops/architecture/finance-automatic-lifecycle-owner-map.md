@@ -37,6 +37,25 @@ An arrow exists only when the downstream owner consumes an upstream durable
 receipt. A Flow Graph edge, imported module, configured connector, tool name,
 or successful model call is not proof of that handoff.
 
+## Resident scheduling and recovery
+
+The original scheduler keeps account operations serialized. When a scheduled phase
+becomes due, or a research child finishes and requests execution handoff, a monitor
+sweep yields between completed instrument operations. It retains pending discovery
+for the next sweep, filters it against the refreshed universe and still prioritizes
+owned-position monitoring. An in-flight operation must finish before handoff; yielding
+does not cancel an order, discard an unknown outcome or create parallel account authority.
+Due phases run before optional universe recovery, so recovery work cannot consume the
+entire remaining phase window before dispatch.
+
+Free universe recovery reuses the existing durable attempt journal. A verified terminal
+failure becomes retryable after a bounded cooldown even when the latest completed
+market session has not changed. This permits recovery across a weekend or after a
+transient outage without a per-tick retry loop. A started or unverifiable attempt
+remains blocked for reconciliation. Every recovered snapshot still passes the original
+source, freshness and runtime binding checks; selecting a universe grants no new
+strategy or execution authority.
+
 ## Open method development and immediate adaptation
 
 Research may retain, revise or propose competing mechanisms whenever relevant evidence
@@ -125,6 +144,36 @@ direction and event times. Within its four-original budget, prefer the same nati
 direction before ranking operation time. Label the historical side and any
 opposite-direction fallback; a search-summary match is not proof of direction.
 This is prior context for judgment, not a new execution gate or automatic veto.
+
+Day account research and scheduled night research also project bounded execution
+history directly from the original intraday decision/outcome ledger. New outcomes
+retain the execution host's account and Paper venue even when preparation fails
+before model review. Legacy outcomes need their original review account identity;
+anonymous failures are excluded rather than assigned to the current account.
+The projection scans at most 24 account outcomes and returns at most eight entries
+within its byte budget, retaining native decision/outcome hashes, cutoff times,
+refusals, uncertainty and labelled model hypotheses. It does not infer fills,
+costs, profit or automatic strategy invalidation. The original research, Quality,
+portfolio compiler and capital-budget consumers still own any configuration change.
+
+## Account capital decisions across execution phases
+
+Quality-accepted research allocations use the existing portfolio-plan file and
+controller-owned strategy budgets. A reviewed `no_allocation` also publishes a
+plan there, with zero budgets for the selected active strategies and the original
+source references and validity period. The scheduler verifies those exact bytes,
+account, time and zero budgets before accepting abstention; it records the write
+without invoking the daily rebalance. An abstention with no published capital
+transition is not a completed account decision.
+
+Intraday entries consume that same plan through the existing capital-budget owner
+and recheck its fingerprint before dispatch. Withholding new capital does not
+create liquidation targets: owned-position protection and exits retain their
+original path. Later quality-supported positive allocations can supersede the zero
+budgets normally. Historical positions still consume account capacity; unused
+strategy budget is not proof that broker cash is available. Economic feedback may
+inform these research choices but is not an automatic loss threshold, execution
+promotion or proof of natural model adoption.
 
 ## Profit-first quantitative rule
 
@@ -279,6 +328,29 @@ ledgers own positions, outcomes, strategy rules, bars, and intraday decisions;
 JSON/JSONL receipts own scheduler attempts, research samples/scores, proposals,
 and bounded latest views. No owner may silently introduce another finance state
 root.
+
+Source calls, batch dispatch, whole-run acceptance and scheduler child completion
+check elapsed wall deadlines as well as cancellation timers. After host suspension,
+expired work cannot receive a fresh request budget or publish a late portfolio plan.
+Logical tasks enforce the same boundary around input/output guards and executor
+completion. Routed model calls inherit the earlier task deadline, recheck before
+physical dispatch and output acceptance, and pass it to the configured finance
+adapter. Direct adapter invocations also enforce their own wall deadline. Final
+budget admission is followed by another cancellation/deadline check;
+an expired task cannot obtain a fresh role timeout or launch a fallback.
+Completed source evidence remains retained; successful transport with incomplete
+evidence still requires review, and uncertain dispatch is never assumed retryable.
+These checks support recovery after wake; they cannot execute while a host sleeps.
+
+The intraday decision ledger keeps a bounded process-local connection pool (eight
+handles) and a verified chain head, not a cache of historical payloads. The first
+read/write after opening audits the complete chain with streaming iteration;
+SQLite `data_version` changes from other connections invalidate that proof.
+Resident appends verify the new record and update the head only after commit.
+Scoped reads use migration-versioned expression indexes and decode fresh selected
+records. Scope filtering never bypasses a required whole-chain audit. Reopening
+or external writes may still require linear recovery work; this is not a claim
+that all finance ledgers or ten-million-record workloads are capacity-verified.
 
 ## Historical handoff snapshot (2026-09-24 source)
 

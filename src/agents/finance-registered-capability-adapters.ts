@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ApiCallError } from "./api-call-contract.js";
 import { isFinanceUsEquityDailyBarComplete } from "./finance-cycle-schedule.js";
 import { extendedFinanceCapabilities } from "./finance-extended-capability-catalog.js";
@@ -191,6 +192,19 @@ export function createRegisteredCapabilityAdapters(
     .filter((c) => c.key?.trim())
     .map((c) => {
       const alpacaDailyHistory = c.id === "alpaca_daily_history";
+      // One builder owns both dispatch and its opaque access identity, including headers/keys.
+      const dispatchRequest = (request: FinanceMarketCollectionRequest) => {
+        const endpoint = c.url(request);
+        const sourceUrlOrArtifact = endpoint.toString();
+        const headers: Record<string, string> = { ...c.extraHeaders };
+        if (c.auth === "apikey") {
+          endpoint.searchParams.set(c.auth, c.key!.trim());
+        } else {
+          headers[c.auth === "apikey-header" ? "apikey" : c.auth] =
+            c.auth === "Authorization" ? `Bearer ${c.key!.trim()}` : c.key!.trim();
+        }
+        return { endpoint: endpoint.toString(), sourceUrlOrArtifact, headers };
+      };
       return {
         id: c.id,
         providerName: c.provider,
@@ -199,6 +213,22 @@ export function createRegisteredCapabilityAdapters(
         // include the credentialed feed before lower-ranked public alternatives.
         priority: alpacaDailyHistory ? 15 : 65,
         sampleRequest: c.sample,
+        accessScopeForRequest: (request: FinanceMarketCollectionRequest) => {
+          const dispatch = dispatchRequest(request);
+          return createHash("sha256")
+            .update(
+              JSON.stringify([
+                "finance_read_access_v1",
+                c.id,
+                "GET",
+                dispatch.endpoint,
+                Object.entries(dispatch.headers).toSorted(([left], [right]) =>
+                  left.localeCompare(right),
+                ),
+              ]),
+            )
+            .digest("hex");
+        },
         supports: (r) =>
           r.collection === c.collection &&
           (c.accepts
@@ -207,23 +237,12 @@ export function createRegisteredCapabilityAdapters(
               ? r.assetClass === "crypto"
               : ["us_equity", "stock", "equity", "common_stock"].includes(r.assetClass)),
         collect: async (r, signal) => {
-          const endpoint = c.url(r);
-          const sourceUrlOrArtifact = endpoint.toString();
-          const headers: Record<string, string> = { ...c.extraHeaders };
-          if (c.auth === "apikey") {
-            endpoint.searchParams.set(c.auth, c.key!.trim());
-          } else {
-            headers[c.auth === "apikey-header" ? "apikey" : c.auth] =
-              c.auth === "Authorization" ? `Bearer ${c.key!.trim()}` : c.key!.trim();
-          }
+          const { endpoint, sourceUrlOrArtifact, headers } = dispatchRequest(r);
           let response;
           try {
-            response = await resolveFinanceFetch(options.fetchImpl, { signal })(
-              endpoint.toString(),
-              {
-                headers,
-              },
-            );
+            response = await resolveFinanceFetch(options.fetchImpl, { signal })(endpoint, {
+              headers,
+            });
           } catch (error) {
             if (error instanceof ApiCallError) {
               throw error;

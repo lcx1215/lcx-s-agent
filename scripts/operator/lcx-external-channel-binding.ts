@@ -214,27 +214,32 @@ function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-function externalChannelStatusSucceeded(value: JsonRecord | undefined): boolean {
-  if (!value || value.ok === false) {
+export function externalChannelStatusSucceeded(
+  value: JsonRecord | undefined,
+  proof: { statusCommandOk: boolean; driftCommandOk: boolean; driftSummary: string | undefined },
+): boolean {
+  if (
+    !value ||
+    value.ok === false ||
+    !proof.statusCommandOk ||
+    !proof.driftCommandOk ||
+    !sidecarDriftIsZero(proof.driftSummary)
+  ) {
     return false;
   }
-  if (value.ok === true) {
-    return true;
-  }
+  const runtimeRunning = (account: JsonRecord | undefined): boolean =>
+    account?.configured === true &&
+    account.enabled !== false &&
+    account.running === true &&
+    !account.lastError &&
+    (account.probe === undefined || recordValue(account.probe)?.ok === true);
   const channels = recordValue(value.channels);
   const channel = recordValue(channels?.external);
-  if (channel?.configured === true && channel.enabled !== false) {
-    return true;
-  }
   const channelAccounts = recordValue(value.channelAccounts);
   const accounts = channelAccounts?.external;
-  return (
-    Array.isArray(accounts) &&
-    accounts.some((entry) => {
-      const account = recordValue(entry);
-      return account?.configured === true && account.enabled !== false;
-    })
-  );
+  return Array.isArray(accounts)
+    ? accounts.some((entry) => runtimeRunning(recordValue(entry)))
+    : runtimeRunning(channel);
 }
 
 async function readJson(filePath: string): Promise<JsonRecord | undefined> {
@@ -984,7 +989,11 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
         "channel_runtime_probe_ok_user_visible_observed") &&
     stringValue(previousExternalChannel?.selectedCleanAdapter) === decision.selectedCleanAdapter &&
     sidecarDriftIsZero(liveSidecarDriftBefore) &&
-    externalChannelStatusSucceeded(previousStatus);
+    externalChannelStatusSucceeded(previousStatus, {
+      statusCommandOk: true,
+      driftCommandOk: driftBefore.ok,
+      driftSummary: liveSidecarDriftBefore,
+    });
   if (!options.apply && decision.status === "ready_for_apply" && previousChannelStillMatches) {
     decision = buildExternalChannelBindingDecision({
       trainingPlan,
@@ -1023,8 +1032,11 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     decision = buildExternalChannelBindingDecision({
       trainingPlan,
       apply: true,
-      externalChannelStatusOk:
-        statusCheck.ok && externalChannelStatusSucceeded(externalChannelStatus),
+      externalChannelStatusOk: externalChannelStatusSucceeded(externalChannelStatus, {
+        statusCommandOk: statusCheck.ok,
+        driftCommandOk: driftBefore.ok,
+        driftSummary: liveSidecarDriftBefore,
+      }),
       userVisibleObserved,
       liveTouched: false,
     });
@@ -1089,8 +1101,11 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     decision = buildExternalChannelBindingDecision({
       trainingPlan,
       apply: true,
-      externalChannelStatusOk:
-        statusCheck.ok && externalChannelStatusSucceeded(externalChannelStatus),
+      externalChannelStatusOk: externalChannelStatusSucceeded(externalChannelStatus, {
+        statusCommandOk: statusCheck.ok,
+        driftCommandOk: driftAfter.ok,
+        driftSummary: liveSidecarDriftAfter,
+      }),
       userVisibleObserved,
       liveTouched: syncApply.ok || build.ok || restart.ok,
     });

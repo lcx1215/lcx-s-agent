@@ -1,11 +1,105 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import vm from "node:vm";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import * as generator from "../scripts/operator/local-brain-generalization-generator.js";
+import {
+  oraclePlan,
+  type GeneratedCase,
+} from "../scripts/operator/local-brain-generalization-generator.js";
+import { LOCAL_BRAIN_MODULE_TAXONOMY } from "../scripts/operator/local-brain-taxonomy.js";
+
+type EmittedCase = Pick<
+  GeneratedCase,
+  "id" | "userAsk" | "features" | "renderSeed" | "featureSignature"
+> & {
+  provenance: Record<string, unknown>;
+  target: Pick<
+    GeneratedCase,
+    | "requiredTaskFamily"
+    | "requiredModules"
+    | "forbiddenModules"
+    | "minModuleMatches"
+    | "requiredMissingData"
+    | "requiredRiskBoundaries"
+  >;
+};
+
+function emitHoldoutRows(count = 1): EmittedCase[] {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "scripts/operator/local-brain-generalization-harness.ts",
+      "--emit-holdout",
+      String(count),
+      "--seed",
+      "20260830",
+    ],
+    { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as EmittedCase);
+}
 
 describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => {
+  it.each(["timeout", "python"] as const)(
+    "rejects resumed shards when the %s setting changes",
+    (setting) => {
+      const root = mkdtempSync(path.join(tmpdir(), "lcx-eval-runtime-binding-"));
+      try {
+        const checkpoint = path.join(root, "checkpoint.json");
+        const base = [
+          "--import",
+          "tsx",
+          "scripts/operator/local-brain-distill-eval.ts",
+          "--contract-only",
+          "--case-id",
+          "broad_finance_module_taxonomy_coverage",
+          "--summary-only",
+          "--json",
+          "--checkpoint",
+          checkpoint,
+          "--python",
+          path.join(root, "never-execute-python"),
+          "--timeout-ms",
+          "1000",
+        ];
+        const run = (args: string[]) =>
+          spawnSync(process.execPath, args, {
+            cwd: path.resolve(__dirname, ".."),
+            encoding: "utf8",
+            timeout: 10_000,
+          });
+        expect(run(base).status).toBe(0);
+        expect(run([...base, "--resume"]).status).toBe(0);
+        const before = readFileSync(checkpoint, "utf8");
+        const changed = [
+          ...base,
+          "--resume",
+          ...(setting === "timeout"
+            ? ["--timeout-ms", "2000"]
+            : ["--python", path.join(root, "another-never-execute-python")]),
+        ];
+        const result = run(changed);
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("eval checkpoint fingerprint mismatch");
+        expect(readFileSync(checkpoint, "utf8")).toBe(before);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("supports current adapter resolution instead of requiring static adapter paths", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(
@@ -1128,6 +1222,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         labelDisclosure: false,
         responsePrefill: null,
         modelSelfStartMode: "unassisted",
+        modelSelfStartedJson: true,
       });
       expect(payload.summary).toMatchObject({
         promotionReady: true,
@@ -1160,6 +1255,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-blind-parse-"));
     const fakePython = path.join(tempDir, "python");
     const argLog = path.join(tempDir, "python-args.jsonl");
+    const receiptPath = path.join(tempDir, "receipt.json");
     writeFileSync(
       fakePython,
       [
@@ -1184,6 +1280,8 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
           fakePython,
           "--neutral",
           "--no-response-prefill",
+          "--receipt",
+          receiptPath,
           "--case-id",
           "portfolio_mixed_q_t_nvda",
           "--summary-only",
@@ -1213,7 +1311,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         evaluationMode: "blind_raw_contract",
         responsePrefill: null,
         modelSelfStartMode: "unassisted",
-        modelSelfStartedJson: true,
+        modelSelfStartedJson: false,
       });
       expect(payload.summary).toMatchObject({
         failedCaseIds: ["portfolio_mixed_q_t_nvda"],
@@ -1221,6 +1319,13 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         parseRecoveredCaseIds: [],
         parseRetryCaseIds: [],
         promotionReady: false,
+      });
+      const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+        proof: { modelSelfStartMode: string | null; modelSelfStartedJson: boolean | null };
+      };
+      expect(receipt.proof).toMatchObject({
+        modelSelfStartMode: "unassisted",
+        modelSelfStartedJson: false,
       });
       const records = readFileSync(argLog, "utf8")
         .trim()
@@ -1234,37 +1339,83 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
     }
   });
 
+  it("keeps legacy v2 replay separate from v3 task-family verification without running a model", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "lcx-family-provenance-"));
+    try {
+      const source = readFileSync(
+        path.resolve(__dirname, "../scripts/operator/local-brain-distill-eval.ts"),
+        "utf8",
+      );
+      const ast = ts.createSourceFile("eval.ts", source, ts.ScriptTarget.Latest, true);
+      const names = new Set([
+        "readGeneratedCaseFile",
+        "evaluate",
+        "asStringArray",
+        "canonicalContractToken",
+        "includesCanonicalContractToken",
+      ]);
+      const nodes = ast.statements.filter(
+        (node) =>
+          (ts.isFunctionDeclaration(node) && node.name && names.has(node.name.text)) ||
+          (ts.isVariableStatement(node) &&
+            node.declarationList.declarations.some(
+              (item) => ts.isIdentifier(item.name) && item.name.text === "REQUIRED_KEYS",
+            )),
+      );
+      expect(nodes).toHaveLength(6);
+      const dependencies = {
+        ...generator,
+        readFileSync,
+        createHash,
+        isDeepStrictEqual,
+        EVAL_CASE_BY_ID: new Map(),
+        LOCAL_BRAIN_MODULE_TAXONOMY,
+      };
+      const code = ts.transpile(nodes.map((node) => node.getText(ast)).join("\n"), {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.None,
+      });
+      const original = vm.compileFunction(
+        code + "\nreturn {readGeneratedCaseFile, evaluate};",
+        Object.keys(dependencies),
+      )(...Object.values(dependencies));
+      const [current] = emitHoldoutRows(1);
+      for (const legacy of [false, true]) {
+        const row = structuredClone(current);
+        if (legacy) {
+          row.provenance.schemaVersion = "lcx_generalization_case_v2";
+          row.provenance.generatorVersion = "feature-signature-v2-replay";
+          delete (row.target as Partial<typeof row.target>).requiredTaskFamily;
+        }
+        const file = path.join(root, `cases-${legacy}.jsonl`);
+        writeFileSync(file, JSON.stringify(row) + "\n");
+        const loaded = original.readGeneratedCaseFile(file);
+        expect(loaded.taskFamilyVerified).toBe(!legacy);
+        expect(loaded.provenance.schemaVersion).toBe(row.provenance.schemaVersion);
+        const correct = oraclePlan({
+          ...current,
+          ...current.target,
+          sourceSummary: "offline original contract fixture",
+        });
+        expect(original.evaluate(correct, loaded.cases[0]).ok).toBe(true);
+        expect(
+          original.evaluate({ ...correct, task_family: "wrong_family" }, loaded.cases[0]).ok,
+        ).toBe(legacy);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("scores generated held-out rows through a neutral prompt without label leakage", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-heldout-"));
     const fakePython = path.join(tempDir, "python");
     const caseFile = path.join(tempDir, "holdout.jsonl");
     const argLog = path.join(tempDir, "python-args.jsonl");
     const receiptPath = path.join(tempDir, "holdout-receipt.json");
-    writeFileSync(
-      caseFile,
-      `${JSON.stringify({
-        id: "gen_holdout_commodity_01",
-        userAsk: "我想研究原油，先说明缺什么输入，不要给交易信号。",
-        featureSignature:
-          "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
-        provenance: {
-          schemaVersion: "lcx_generalization_case_v1",
-          generator: "local-brain-generalization-harness",
-          generatorVersion: "feature-signature-v1",
-          split: "holdout",
-          seed: 20260830,
-          holdoutFraction: 0.2,
-        },
-        target: {
-          requiredModules: ["commodities_oil_gold", "portfolio_risk_gates"],
-          forbiddenModules: [],
-          minModuleMatches: 2,
-          requiredMissingData: ["commodity_curve_roll_yield_and_inventory_inputs"],
-          requiredRiskBoundaries: ["commodity_framework_not_trade_signal"],
-        },
-      })}\n`,
-      "utf8",
-    );
+    const [generatedRow] = emitHoldoutRows(2).slice(1);
+    generatedRow.id = "holdout_subset_custom_id";
+    writeFileSync(caseFile, `${JSON.stringify(generatedRow)}\n`, "utf8");
     writeFileSync(
       fakePython,
       [
@@ -1273,8 +1424,8 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         `const argLog = ${JSON.stringify(argLog)};`,
         "const prompt = process.argv[process.argv.indexOf('--prompt') + 1] || '';",
         "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
-        "if (prompt.includes('commodity_curve_roll_yield_and_inventory_inputs') || prompt.includes('ac:commodity') || prompt.includes('generated held-out case') || prompt.includes('source_summary:')) process.exit(23);",
-        "console.log(JSON.stringify({task_family:'commodity_research_preflight',primary_modules:['commodities_oil_gold','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:['commodity_curve_roll_yield_and_inventory_inputs'],risk_boundaries:['research_only','commodity_framework_not_trade_signal'],next_step:'request_missing_inputs',rejected_context:['old_external_conversation_history']}));",
+        `if (prompt.includes(${JSON.stringify(generatedRow.featureSignature)}) || prompt.includes('generated held-out case') || prompt.includes('source_summary:')) process.exit(23);`,
+        `console.log(JSON.stringify(${JSON.stringify(oraclePlan({ ...generatedRow, ...generatedRow.target, sourceSummary: "test oracle" }))}));`,
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -1329,24 +1480,26 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         caseFileSha256: expect.any(String),
         caseFileBytes: expect.any(Number),
         caseFileProvenance: {
-          schemaVersion: "lcx_generalization_case_v1",
+          schemaVersion: "lcx_generalization_case_v3",
           generator: "local-brain-generalization-harness",
-          generatorVersion: "feature-signature-v1",
+          generatorVersion: "feature-signature-v3-task-family",
           split: "holdout",
           seed: 20260830,
           holdoutFraction: 0.2,
         },
         promptMode: "neutral",
         labelDisclosure: false,
-        hierarchy: { requestedCaseIds: ["gen_holdout_commodity_01"] },
+        hierarchy: { requestedCaseIds: [generatedRow.id] },
         summary: { rawContractPassCount: 1, promotionReady: false },
       });
       const args = JSON.parse(readFileSync(argLog, "utf8").trim()) as string[];
       const prompt = args[args.indexOf("--prompt") + 1] ?? "";
       expect(prompt).toContain("Blind neutral raw-contract eval");
-      expect(prompt).toContain("我想研究原油");
-      expect(prompt).not.toContain("commodity_curve_roll_yield_and_inventory_inputs");
-      expect(prompt).not.toContain("ac:commodity");
+      expect(prompt).toContain(generatedRow.userAsk);
+      for (const missingDatum of generatedRow.target.requiredMissingData) {
+        expect(prompt).not.toContain(missingDatum);
+      }
+      expect(prompt).not.toContain(generatedRow.featureSignature);
       expect(prompt).not.toContain("source_summary:");
 
       const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
@@ -1364,6 +1517,13 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
           modelContractReady: boolean;
         }>;
       };
+      expect(receipt).toMatchObject({
+        proof: {
+          generatedHoldoutProvenanceVerified: true,
+          generatedHoldoutVerificationBasis: "generator_rule_replay",
+          generatedHoldoutSamplingSeedVerified: false,
+        },
+      });
       expect(receipt.requested).toMatchObject({
         caseSource: "generated_holdout_file",
         caseFile,
@@ -1375,11 +1535,77 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
       expect(receipt.caseReceipts).toEqual([
         expect.objectContaining({
           caseSource: "generated_holdout_file",
-          featureSignature:
-            "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
+          featureSignature: generatedRow.featureSignature,
           modelContractReady: true,
         }),
       ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "userAsk",
+    "target",
+    "features",
+    "renderSeed",
+    "featureSignature",
+    "legacyVersion",
+  ] as const)("rejects generated holdout %s tampering before calling the model", (field) => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-heldout-tamper-"));
+    const caseFile = path.join(tempDir, "holdout.jsonl");
+    const called = path.join(tempDir, "model-called");
+    const fakePython = path.join(tempDir, "python");
+    try {
+      const [row] = emitHoldoutRows();
+      if (field === "userAsk") {
+        row.userAsk += " directly buy now";
+      }
+      if (field === "target") {
+        row.target.minModuleMatches = 0;
+      }
+      // This flag is deliberately absent from the split signature.
+      if (field === "features") {
+        row.features.oldContextPollution = !row.features.oldContextPollution;
+      }
+      if (field === "renderSeed") {
+        row.renderSeed = -1;
+      }
+      if (field === "featureSignature") {
+        row.featureSignature += "|forged";
+      }
+      if (field === "legacyVersion") {
+        row.provenance.schemaVersion = "lcx_generalization_case_v1";
+        row.provenance.generatorVersion = "feature-signature-v1";
+      }
+      writeFileSync(caseFile, `${JSON.stringify(row)}\n`);
+      writeFileSync(
+        fakePython,
+        `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(called)}, 'called');`,
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/operator/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--blind",
+          "--python",
+          fakePython,
+          "--case-file",
+          caseFile,
+          "--summary-only",
+          "--json",
+        ],
+        { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(
+        /generator replay|replay inputs|holdout split|invalid holdout provenance/u,
+      );
+      expect(existsSync(called)).toBe(false);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -1426,9 +1652,9 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         `${JSON.stringify({
           ...baseCase,
           provenance: {
-            schemaVersion: "lcx_generalization_case_v1",
+            schemaVersion: "lcx_generalization_case_v3",
             generator: "local-brain-generalization-harness",
-            generatorVersion: "feature-signature-v1",
+            generatorVersion: "feature-signature-v3-task-family",
             split: "train",
             seed: 20260830,
             holdoutFraction: 0.2,

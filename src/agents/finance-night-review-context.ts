@@ -8,8 +8,10 @@ import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedbac
 import { brokerSymbol } from "./finance-broker-reconciliation.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeEtClock, latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
+import { readFinanceDailyDecisionHistory } from "./finance-daily-decision-history.js";
 import {
   readFinanceIntradayDecisions,
+  readFinanceIntradayAccountHistory,
   readFinanceIntradayOutcomes,
   type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
@@ -18,9 +20,11 @@ import {
   projectFinancePositions,
   readFinanceLatestBrokerReconciliations,
   readFinancePositionLedger,
+  withFinanceBrokerHistorySnapshot,
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import type { FinanceActiveStrategyResearchSource } from "./finance-research-portfolio-plan.js";
+import { readFinanceSchedulerDatabaseResearchRuns } from "./finance-scheduler-ledger.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
 
@@ -76,6 +80,171 @@ export type FinanceNightResearchScope = Readonly<{
     selectionMethod: "held_priority_et_date_rotation_v1";
   }>;
 }>;
+
+export function parseControllerResearchScope(
+  evidence: readonly FinanceCommitteeEvidence[],
+  asOf: string,
+): FinanceNightResearchScope {
+  assertFinanceNightResearchAsOf(asOf);
+  const matching = evidence.filter(
+    (item) =>
+      item.id === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
+      item.source === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+  );
+  if (
+    matching.length !== 1 ||
+    matching[0]?.id !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
+    matching[0]?.source !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE
+  ) {
+    throw new Error("--controller-research-scope requires exactly one canonical night scope item");
+  }
+  if (matching[0].timestamp !== asOf) {
+    throw new Error("controller night research scope evidence timestamp does not match --as-of");
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(matching[0].text);
+  } catch {
+    throw new Error("controller night research scope is not valid JSON");
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("controller night research scope must be an object");
+  }
+  const scope = raw as Record<string, unknown>;
+  if (
+    scope.schemaVersion !== FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION ||
+    scope.asOf !== asOf ||
+    !Array.isArray(scope.activeStrategyIds) ||
+    scope.activeStrategyIds.some((id) => typeof id !== "string" || !id.trim()) ||
+    new Set(scope.activeStrategyIds).size !== scope.activeStrategyIds.length ||
+    !Array.isArray(scope.instruments) ||
+    scope.instruments.length === 0 ||
+    scope.instruments.length > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS
+  ) {
+    throw new Error("controller night research scope is invalid or does not match --as-of");
+  }
+  const seen = new Set<string>();
+  const isSupportedIdentity = (instrument: string, assetClass: unknown) =>
+    assetClass === "crypto"
+      ? /^[A-Z0-9]{2,12}\/USD$/u.test(instrument)
+      : assetClass === "us_equity"
+        ? /^[A-Z]{1,5}(?:\.[A-Z])?$/u.test(instrument)
+        : false;
+  const instruments = scope.instruments.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`controller night research scope instrument ${index} must be an object`);
+    }
+    const item = value as Record<string, unknown>;
+    if (
+      typeof item.instrument !== "string" ||
+      typeof item.assetClass !== "string" ||
+      (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
+      !Array.isArray(item.reasons) ||
+      item.reasons.length === 0 ||
+      item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy")
+    ) {
+      throw new Error(`controller night research scope instrument ${index} is malformed`);
+    }
+    const instrument = item.instrument.trim().toUpperCase();
+    if (!isSupportedIdentity(instrument, item.assetClass)) {
+      throw new Error(
+        `controller night research scope has unsupported instrument identity: ${instrument}`,
+      );
+    }
+    const key = `${item.assetClass}:${instrument}`;
+    if (!instrument || seen.has(key)) {
+      throw new Error(
+        `controller night research scope has empty or duplicate instrument: ${instrument}`,
+      );
+    }
+    seen.add(key);
+    return Object.freeze({
+      instrument,
+      assetClass: item.assetClass,
+      reasons: Object.freeze(
+        [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+      ) as FinanceNightResearchInstrument["reasons"],
+    }) as FinanceNightResearchInstrument;
+  });
+  let coverage: FinanceNightResearchScope["coverage"];
+  if (scope.coverage !== undefined) {
+    if (
+      typeof scope.coverage !== "object" ||
+      scope.coverage === null ||
+      Array.isArray(scope.coverage)
+    ) {
+      throw new Error("controller night research scope coverage is malformed");
+    }
+    const rawCoverage = scope.coverage as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(rawCoverage.totalInstrumentCount) ||
+      (rawCoverage.totalInstrumentCount as number) <= instruments.length ||
+      rawCoverage.selectionMethod !== "held_priority_et_date_rotation_v1" ||
+      !Array.isArray(rawCoverage.deferredInstruments) ||
+      rawCoverage.deferredInstruments.length === 0 ||
+      (rawCoverage.totalInstrumentCount as number) !==
+        instruments.length + rawCoverage.deferredInstruments.length
+    ) {
+      throw new Error("controller night research scope coverage is invalid");
+    }
+    const deferredInstruments = rawCoverage.deferredInstruments.map((value, index) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(
+          `controller night research scope deferred instrument ${index} is malformed`,
+        );
+      }
+      const item = value as Record<string, unknown>;
+      if (
+        typeof item.instrument !== "string" ||
+        typeof item.assetClass !== "string" ||
+        (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
+        !Array.isArray(item.reasons) ||
+        item.reasons.length === 0 ||
+        item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy") ||
+        new Set(item.reasons).size !== item.reasons.length
+      ) {
+        throw new Error(
+          `controller night research scope deferred instrument ${index} is malformed`,
+        );
+      }
+      const instrument = item.instrument.trim().toUpperCase();
+      if (!isSupportedIdentity(instrument, item.assetClass)) {
+        throw new Error(
+          `controller night research scope has unsupported instrument identity: ${instrument}`,
+        );
+      }
+      const key = `${item.assetClass}:${instrument}`;
+      if (!instrument || seen.has(key)) {
+        throw new Error(
+          `controller night research scope has empty or duplicate instrument: ${instrument}`,
+        );
+      }
+      seen.add(key);
+      return Object.freeze({
+        instrument,
+        assetClass: item.assetClass,
+        reasons: Object.freeze(
+          [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+        ) as FinanceNightResearchInstrument["reasons"],
+      }) as FinanceNightResearchInstrument;
+    });
+    coverage = Object.freeze({
+      totalInstrumentCount: rawCoverage.totalInstrumentCount as number,
+      deferredInstruments: Object.freeze(deferredInstruments),
+      selectionMethod: "held_priority_et_date_rotation_v1",
+    });
+  }
+  return Object.freeze({
+    schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+    asOf,
+    activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
+    instruments: Object.freeze(instruments),
+    ...(scope.holdingBasis === undefined
+      ? {}
+      : { holdingBasis: financeNightResearchHoldingBasisSchema.parse(scope.holdingBasis) }),
+    ...(coverage ? { coverage } : {}),
+  });
+}
 
 export const financeNightResearchHoldingBasisSchema = z
   .object({
@@ -794,103 +963,109 @@ async function readFinanceActiveStrategyResearchEvidenceAndSource(params: {
   start.setUTCMonth(start.getUTCMonth() - months - 1);
   const fromDate = start.toISOString().slice(0, 10);
   const toDate = latestCompletedWeekdaySessionDate(params.asOf);
-  const histories = await Promise.all(
-    instruments.map(async (instrument) => {
-      const book = await readFinanceBarLedger(params.directory, { instrument, asOf: params.asOf });
-      const rawWindow = book.bars.filter((bar) => bar.date >= fromDate && bar.date <= toDate);
-      // This is a close-only projection: differing OHLC records with the same close
-      // must not manufacture extra return observations. Conflicting closes remain.
-      const window = [
-        ...new Map(rawWindow.map((bar) => [JSON.stringify([bar.date, bar.close]), bar])).values(),
-      ];
-      const bars = window.slice(-400);
-      const monthEndDates = new Map<string, string>();
-      for (const bar of bars) {
-        const month = bar.date.slice(0, 7);
-        const prior = monthEndDates.get(month);
-        if (!prior || bar.date > prior) {
-          monthEndDates.set(month, bar.date);
+  const book =
+    instruments.length > 0
+      ? await readFinanceBarLedger(params.directory, { instruments, asOf: params.asOf })
+      : undefined;
+  const histories = book
+    ? instruments.map((instrument) => {
+        const rawWindow = book.bars.filter(
+          (bar) => bar.instrument === instrument && bar.date >= fromDate && bar.date <= toDate,
+        );
+        // This is a close-only projection: differing OHLC records with the same close
+        // must not manufacture extra return observations. Conflicting closes remain.
+        const window = [
+          ...new Map(rawWindow.map((bar) => [JSON.stringify([bar.date, bar.close]), bar])).values(),
+        ];
+        const bars = window.slice(-400);
+        const monthEndDates = new Map<string, string>();
+        // The daily display cap must not shorten the declared method horizon.
+        for (const bar of window) {
+          const month = bar.date.slice(0, 7);
+          const prior = monthEndDates.get(month);
+          if (!prior || bar.date > prior) {
+            monthEndDates.set(month, bar.date);
+          }
         }
-      }
-      const monthlyCloseObservations = [...monthEndDates.entries()]
-        .toSorted(([left], [right]) => left.localeCompare(right))
-        .map(([month, sessionDate]) => ({
-          month,
-          sessionDate,
-          closeValues: [
-            ...new Set(bars.filter((bar) => bar.date === sessionDate).map((bar) => bar.close)),
-          ].toSorted((left, right) => left - right),
-        }));
-      const divergentDates = book.divergentDates.filter((key) => {
-        const date = key.slice(key.lastIndexOf("@") + 1);
-        return date >= fromDate && date <= toDate;
-      });
-      const historyPayload =
-        params.historyFormat === "daily_calculation"
-          ? {
+        const monthlyCloseObservations = [...monthEndDates.entries()]
+          .toSorted(([left], [right]) => left.localeCompare(right))
+          .map(([month, sessionDate]) => ({
+            month,
+            sessionDate,
+            closeValues: [
+              ...new Set(window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close)),
+            ].toSorted((left, right) => left - right),
+          }));
+        const divergentDates = book.divergentDates.filter((key) => {
+          const date = key.slice(key.lastIndexOf("@") + 1);
+          return key.startsWith(`${instrument}@`) && date >= fromDate && date <= toDate;
+        });
+        const historyPayload =
+          params.historyFormat === "daily_calculation"
+            ? {
+                instrument,
+                headRef: book.headRef,
+                fromDate,
+                toDate,
+                windowBarCount: window.length,
+                rawBarCount: rawWindow.length,
+                collapsedRepeatedCloses: rawWindow.length - window.length,
+                suppliedBarCount: bars.length,
+                omittedByLimit: window.length - bars.length,
+                divergentDates,
+                closes: bars.map((bar) => [bar.date, bar.close]),
+                monthlyCloseObservations,
+              }
+            : {
+                instrument,
+                headRef: book.headRef,
+                fromDate,
+                toDate,
+                windowBarCount: window.length,
+                rawBarCount: rawWindow.length,
+                collapsedRepeatedCloses: rawWindow.length - window.length,
+                uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
+                suppliedBarCount: window.length,
+                omittedByLimit: 0,
+                divergentDates,
+                divergentCloseObservations: divergentDates.map((key) => {
+                  const sessionDate = key.slice(key.lastIndexOf("@") + 1);
+                  return {
+                    sessionDate,
+                    closeValues: [
+                      ...new Set(
+                        window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
+                      ),
+                    ].toSorted((left, right) => left - right),
+                  };
+                }),
+                boundary:
+                  "stored historical observations summarized to the last session in the requested window per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
+                columns: ["month", "sessionDate", "closeValues"],
+                monthlyCloseObservations,
+              };
+        const evidence: FinanceCommitteeEvidence = {
+          id: `finance-controller:eod:${instrument}`,
+          source: "finance-bar-ledger",
+          timestamp: params.asOf,
+          text: JSON.stringify(historyPayload),
+        };
+        return {
+          evidence,
+          // Keep daily rows out of model context while the existing numerical engine
+          // still receives its actual inputs. The durable book and headRef retain them.
+          calculationInput: {
+            ...evidence,
+            text: JSON.stringify({
               instrument,
-              headRef: book.headRef,
-              fromDate,
-              toDate,
-              windowBarCount: window.length,
-              rawBarCount: rawWindow.length,
-              collapsedRepeatedCloses: rawWindow.length - window.length,
-              suppliedBarCount: bars.length,
-              omittedByLimit: window.length - bars.length,
               divergentDates,
-              closes: bars.map((bar) => [bar.date, bar.close]),
-              monthlyCloseObservations,
-            }
-          : {
-              instrument,
-              headRef: book.headRef,
-              fromDate,
-              toDate,
-              windowBarCount: window.length,
-              rawBarCount: rawWindow.length,
-              collapsedRepeatedCloses: rawWindow.length - window.length,
-              uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
-              suppliedBarCount: bars.length,
-              omittedByLimit: window.length - bars.length,
-              divergentDates,
-              divergentCloseObservations: divergentDates.map((key) => {
-                const sessionDate = key.slice(key.lastIndexOf("@") + 1);
-                return {
-                  sessionDate,
-                  closeValues: [
-                    ...new Set(
-                      window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
-                    ),
-                  ].toSorted((left, right) => left - right),
-                };
-              }),
-              boundary:
-                "stored historical observations summarized to the last supplied session per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
-              columns: ["month", "sessionDate", "closeValues"],
-              monthlyCloseObservations,
-            };
-      const evidence: FinanceCommitteeEvidence = {
-        id: `finance-controller:eod:${instrument}`,
-        source: "finance-bar-ledger",
-        timestamp: params.asOf,
-        text: JSON.stringify(historyPayload),
-      };
-      return {
-        evidence,
-        // Keep daily rows out of model context while the existing numerical engine
-        // still receives its actual inputs. The durable book and headRef retain them.
-        calculationInput: {
-          ...evidence,
-          text: JSON.stringify({
-            instrument,
-            divergentDates,
-            suppliedBarCount: bars.length,
-            closes: bars.map((bar) => [bar.date, bar.close]),
-          }),
-        },
-      };
-    }),
-  );
+              suppliedBarCount: window.length,
+              closes: window.map((bar) => [bar.date, bar.close]),
+            }),
+          },
+        };
+      })
+    : [];
   const selectedRules = activeRules.map((rule) => ({
     ruleId: rule.ruleId,
     form: rule.form,
@@ -1073,8 +1248,23 @@ function projectFinanceBrokerAccountResearchSummary(params: {
                 : typeof rawQuantity === "string" && rawQuantity.trim()
                   ? Number(rawQuantity)
                   : Number.NaN;
+            const rawMarketValue = position.market_value;
+            const marketValue =
+              typeof rawMarketValue === "number"
+                ? rawMarketValue
+                : typeof rawMarketValue === "string" && rawMarketValue.trim()
+                  ? Number(rawMarketValue)
+                  : Number.NaN;
             return typeof position.symbol === "string" && Number.isFinite(quantity)
-              ? [{ symbol: position.symbol, quantity }]
+              ? [
+                  {
+                    symbol: position.symbol,
+                    quantity,
+                    ...(params.includeAccountFields
+                      ? { marketValue: Number.isFinite(marketValue) ? marketValue : null }
+                      : {}),
+                  },
+                ]
               : [];
           })
         : [];
@@ -1130,6 +1320,10 @@ function projectFinanceBrokerAccountResearchSummary(params: {
         ...(Array.isArray(snapshotObject.positions) &&
         snapshotPositions.length !== snapshotObject.positions.length
           ? ["positions.invalid_entries"]
+          : []),
+        ...(params.includeAccountFields &&
+        snapshotPositions.some((position) => position.marketValue === null)
+          ? ["positions.market_value"]
           : []),
         ...(!Array.isArray(protection?.coverage) ? ["protectionCoverage"] : []),
       ];
@@ -1231,8 +1425,302 @@ function projectFinanceBrokerAccountResearchSummary(params: {
   };
 }
 
+/** Resume coverage from original immutable research receipts, never an adoption acknowledgement. */
+export async function readFinanceScheduledIntradayHistory(params: {
+  directory: string;
+  asOf: string;
+  accountId: string;
+  researchWorkspaceDir?: string;
+}) {
+  const read = (cursor?: string) =>
+    readFinanceIntradayAccountHistory(params.directory, {
+      accountId: params.accountId,
+      asOf: params.asOf,
+      ...(cursor ? { cursor } : {}),
+    });
+  if (!params.researchWorkspaceDir) {
+    return read();
+  }
+  const object = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  try {
+    const index = readFinanceSchedulerDatabaseResearchRuns(params.directory);
+    const runs = index.runs.map((entry) => object(entry.run));
+    for (const run of runs) {
+      if (
+        typeof run.completedAt !== "string" ||
+        !Number.isFinite(Date.parse(run.completedAt)) ||
+        Date.parse(run.completedAt) >= Date.parse(params.asOf)
+      ) {
+        continue;
+      }
+      const mode = run.mode;
+      const phase = object(
+        mode === "day" ? run.researchPlanRefresh : mode === "night" ? run.nightReview : undefined,
+      );
+      const process = object(phase.processResult);
+      if (
+        typeof process.stdout !== "string" ||
+        Buffer.byteLength(process.stdout, "utf8") > 2_097_152
+      ) {
+        continue;
+      }
+      if (process.outputTruncated === true) {
+        throw new Error("scheduled_history_summary_truncated");
+      }
+      let summary: Record<string, unknown>;
+      try {
+        summary = object(JSON.parse(process.stdout));
+      } catch {
+        if (phase.ok === true) {
+          throw new Error("scheduled_history_success_summary_unreadable");
+        }
+        continue;
+      }
+      const written = object(summary.written);
+      if (
+        typeof written.datedPath !== "string" ||
+        typeof written.sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(written.sha256)
+      ) {
+        continue;
+      }
+      const root = await fs.realpath(
+        path.join(params.researchWorkspaceDir, "state", "finance-research-runs"),
+      );
+      const filename = await fs.realpath(written.datedPath);
+      const relative = path.relative(root, filename);
+      if (
+        !/^\d{4}-\d{2}-\d{2}[/\\]\d{4}-\d{2}-\d{2}T[\d-]+Z(?:__[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?__finance-research-run\.json$/u.test(
+          relative,
+        )
+      ) {
+        throw new Error("scheduled_history_receipt_outside_archive");
+      }
+      const handle = await fs.open(filename, "r");
+      let bytes: Buffer;
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > 8_388_608) {
+          throw new Error("scheduled_history_receipt_oversize");
+        }
+        const buffer = Buffer.alloc(stat.size + 1);
+        let length = 0;
+        while (length < buffer.length) {
+          const result = await handle.read(buffer, length, buffer.length - length, null);
+          if (result.bytesRead === 0) {
+            break;
+          }
+          length += result.bytesRead;
+        }
+        bytes = buffer.subarray(0, length);
+      } finally {
+        await handle.close();
+      }
+      if (
+        bytes.length > 8_388_608 ||
+        createHash("sha256").update(bytes).digest("hex") !== written.sha256
+      ) {
+        throw new Error("scheduled_history_receipt_hash_mismatch");
+      }
+      const receipt = object(JSON.parse(bytes.toString("utf8")));
+      const plan = object(receipt.plan);
+      const expectedAsOf = mode === "day" ? run.firedAt : object(phase.acceptance).expectedAsOf;
+      if (
+        receipt.schemaVersion !== "lcx_finance_research_run_v1" ||
+        receipt.boundary !== "finance_research_run_research_only" ||
+        typeof plan.asOf !== "string" ||
+        !Number.isFinite(Date.parse(plan.asOf)) ||
+        plan.asOf !== expectedAsOf ||
+        Date.parse(plan.asOf) > Date.parse(run.completedAt)
+      ) {
+        throw new Error("scheduled_history_receipt_scope_mismatch");
+      }
+      const evidence = object(receipt.batch).committeeEvidence;
+      if (!Array.isArray(evidence)) {
+        continue;
+      }
+      const histories: {
+        history: Record<string, unknown>;
+        evidenceId: string;
+        evidenceSha256: string;
+      }[] = [];
+      for (const raw of evidence) {
+        const item = object(raw);
+        if (typeof item.text !== "string") {
+          continue;
+        }
+        const evidenceId = typeof item.id === "string" ? item.id : "";
+        const evidenceSha256 = createHash("sha256").update(item.text).digest("hex");
+        if (
+          mode === "day" &&
+          item.id === "finance-controller:broker-account-summary" &&
+          item.source === "finance-broker-profit-summary"
+        ) {
+          histories.push({
+            history: object(object(JSON.parse(item.text)).intradayExecutionHistory),
+            evidenceId,
+            evidenceSha256,
+          });
+        } else if (
+          mode === "night" &&
+          typeof run.etDate === "string" &&
+          item.id === `finance-night:execution-history:${run.etDate}` &&
+          item.source === "finance-daily-execution-history"
+        ) {
+          const accounts = object(JSON.parse(item.text)).accounts;
+          if (Array.isArray(accounts)) {
+            for (const account of accounts) {
+              const value = object(account),
+                history = object(value.intradayHistory);
+              if (value.accountId !== history.accountId) {
+                throw new Error("scheduled_history_account_scope_mismatch");
+              }
+              histories.push({ history, evidenceId, evidenceSha256 });
+            }
+          }
+        }
+      }
+      const matching = histories.filter(
+        (entry) =>
+          entry.history.accountId === params.accountId && entry.history.venue === "alpaca:paper",
+      );
+      if (matching.length === 0) {
+        continue;
+      }
+      if (
+        matching.length !== 1 ||
+        matching[0].history.status !== "observed" ||
+        matching[0].history.asOf !== plan.asOf ||
+        !Array.isArray(matching[0].history.entries)
+      ) {
+        throw new Error("scheduled_history_projection_unverified");
+      }
+      const { history, evidenceId, evidenceSha256 } = matching[0];
+      const review = object(receipt.intradayFeedbackReview);
+      const responses = Array.isArray(review.entries) ? review.entries.map(object) : [];
+      const expectedEntries = (history.entries as unknown[]).map(object);
+      const pendingCount = expectedEntries.filter((entry) => {
+        const matchingResponses = responses.filter(
+          (response) =>
+            response.outcomeRef === entry.outcomeRef &&
+            response.decisionRef === entry.decisionRef &&
+            response.accountId === params.accountId,
+        );
+        if (
+          review.schemaVersion !== "finance_research_intraday_feedback_review_v1" ||
+          review.researchAccepted !== true ||
+          review.boundary !==
+            "reported_research_response_not_configuration_publication_execution_or_adoption" ||
+          matchingResponses.length !== 1
+        ) {
+          return true;
+        }
+        const response = matchingResponses[0];
+        return (
+          typeof response.disposition !== "string" ||
+          !["considered", "deferred", "rejected"].includes(response.disposition) ||
+          response.responseSource !== "quality_final_artifact" ||
+          typeof response.reason !== "string" ||
+          !response.reason.trim() ||
+          !Array.isArray(response.evidence) ||
+          !response.evidence.some((rawSource) => {
+            const source = object(rawSource);
+            return source.id === evidenceId && source.sha256 === evidenceSha256;
+          })
+        );
+      }).length;
+      const accepted = phase.ok === true;
+      const canAdvance = accepted && pendingCount === 0;
+      let cursor = canAdvance ? (history.resumeCursor ?? history.nextCursor) : history.pageCursor;
+      let legacyProgressReplay = false;
+      if (canAdvance && cursor === null) {
+        legacyProgressReplay = true;
+        cursor = undefined;
+      } else if (typeof cursor === "string") {
+        const prior = object(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
+        if (prior.v === undefined && typeof prior.scope === "string") {
+          // A verified old host receipt may trigger conservative replay, never
+          // authentication or advancement of its unsigned progress fields.
+          legacyProgressReplay = true;
+          cursor = undefined;
+        }
+      }
+      if (!legacyProgressReplay && cursor !== null && typeof cursor !== "string") {
+        return {
+          ...(await read()),
+          continuation: {
+            status: "initial_window",
+            reason: "prior_receipt_has_no_continuation",
+            sourceReceiptSha256: written.sha256,
+          },
+        };
+      }
+      const current = await read(typeof cursor === "string" ? cursor : undefined);
+      return {
+        ...current,
+        continuation: {
+          status:
+            current.status !== "observed"
+              ? "unavailable"
+              : legacyProgressReplay
+                ? "legacy_progress_replayed_untrusted"
+                : canAdvance
+                  ? history.nextCursor === null
+                    ? "historical_window_complete"
+                    : "resumed"
+                  : accepted
+                    ? "retrying_unaddressed_feedback_page"
+                    : "retrying_failed_research_page",
+          ...(legacyProgressReplay
+            ? { reason: "unsigned_or_missing_resume_progress_not_trusted" }
+            : {}),
+          pendingFeedbackCount: pendingCount,
+          reasonsRetainedIn: "original_hashed_research_receipt",
+          sourceRunId: run.runId,
+          sourceMode: mode,
+          sourceReceiptSha256: written.sha256,
+          boundary: "history_input_coverage_not_model_adoption_or_execution_authority",
+        },
+      };
+    }
+    if (index.olderRunsMayExist) {
+      throw new Error("scheduled_history_scoped_receipt_outside_bounded_window");
+    }
+    return {
+      ...(await read()),
+      continuation: { status: "initial_window", reason: "no_prior_scoped_receipt" },
+    };
+  } catch (error) {
+    const gap =
+      error instanceof Error && /^scheduled_history_[a-z_]+$/u.test(error.message)
+        ? error.message
+        : "scheduled_history_original_read_failed";
+    return {
+      continuationGap: gap,
+      status: "unavailable" as const,
+      accountId: params.accountId,
+      venue: "alpaca:paper" as const,
+      asOf: params.asOf,
+      entries: [],
+      reason: "scheduled_history_continuation_unverified",
+      boundary: "history_input_coverage_not_model_adoption_or_execution_authority",
+    };
+  }
+}
+
 /** Local canonical observations only: no broker call, allocation or execution authority. */
-export async function buildFinanceBrokerAccountResearchEvidence(params: {
+export async function buildFinanceBrokerAccountResearchEvidence(
+  params: Parameters<typeof buildFinanceBrokerAccountResearchEvidenceSnapshot>[0],
+) {
+  return withFinanceBrokerHistorySnapshot(params.directory, () =>
+    buildFinanceBrokerAccountResearchEvidenceSnapshot(params),
+  );
+}
+
+async function buildFinanceBrokerAccountResearchEvidenceSnapshot(params: {
   directory: string;
   asOf: string;
   /** Both fields select one canonical book; omit both for the legacy night aggregate. */
@@ -1241,6 +1729,7 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
   venue?: string;
   /** Callers may retain an existing evidence identity, including the night review identity. */
   evidenceId?: string;
+  researchWorkspaceDir?: string;
 }): Promise<FinanceCommitteeEvidence> {
   if (!Number.isFinite(Date.parse(params.asOf)) || Date.parse(params.asOf) > Date.now()) {
     throw new Error("account research evidence requires a valid non-future asOf");
@@ -1304,6 +1793,21 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
     ? {
         ...projected,
         accountScope: { accountId: params.accountId, venue: params.venue },
+        ...(params.venue === "alpaca:paper"
+          ? {
+              executionHistory: readFinanceDailyDecisionHistory({
+                directory: params.directory,
+                accountId: params.accountId,
+                asOf: params.asOf,
+              }),
+              intradayExecutionHistory: await readFinanceScheduledIntradayHistory({
+                directory: params.directory,
+                accountId: params.accountId ?? "",
+                asOf: params.asOf,
+                researchWorkspaceDir: params.researchWorkspaceDir,
+              }),
+            }
+          : {}),
         currentAccountFactsStatus: usableCurrentAccountFacts ? "observed" : "unknown",
         positionSnapshots: projected.positionSnapshots.map((snapshot) =>
           usableCurrentAccountFacts
@@ -1348,6 +1852,8 @@ export async function buildFinanceNightReviewEvidence(params: {
   settlement: FinanceNightSettlementSummary;
   /** Include a fail-closed typed scope only for scheduler night research runs. */
   includeResearchScope?: boolean;
+  researchWorkspaceDir?: string;
+  preferredAccountId?: string;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
   const positionRead = readFinancePositionLedger(params.directory, { asOf: params.asOf });
   const reconciliationRead = readFinanceLatestBrokerReconciliations(params.directory);
@@ -1479,16 +1985,21 @@ export async function buildFinanceNightReviewEvidence(params: {
     )
     .slice(-100)
     .map(compactReceipt);
+  const historyAccounts = [
+    ...new Set(
+      brokerReconciliations.records
+        .filter((record) => record.venue === "alpaca:paper")
+        .map((record) => record.accountId),
+    ),
+  ].toSorted(
+    (left, right) =>
+      Number(right === params.preferredAccountId) - Number(left === params.preferredAccountId),
+  );
   const accountPerformance = await Promise.all(
-    [
-      ...new Set(
-        brokerReconciliations.records
-          .filter((r) => r.venue === "alpaca:paper")
-          .map((r) => r.accountId),
-      ),
-    ]
-      .slice(0, 2)
-      .map((accountId) => readFinancePaperEconomicWindow(params.directory, accountId, params.asOf)),
+    historyAccounts.slice(0, 2).map(async (accountId) => ({
+      ...(await readFinancePaperEconomicWindow(params.directory, accountId, params.asOf)),
+      accountId,
+    })),
   );
   const brokerSummary: FinanceCommitteeEvidence = {
     id: `finance-night:broker-profit:${params.etDate}`,
@@ -1610,6 +2121,45 @@ export async function buildFinanceNightReviewEvidence(params: {
         ]
       : []),
     ...controllerEodEvidence,
+    ...(params.includeResearchScope
+      ? [
+          {
+            id: `finance-night:execution-history:${params.etDate}`,
+            source: "finance-daily-execution-history",
+            timestamp: params.asOf,
+            text: JSON.stringify({
+              executionAuthority: "none",
+              accountCoverage: {
+                observedAccountCount: historyAccounts.length,
+                includedAccountCount: Math.min(historyAccounts.length, 2),
+                omittedAccountIds: historyAccounts.slice(2),
+                sourceOmittedAccountCount: brokerReconciliations.omittedAccounts,
+                preferredAccountStatus: !params.preferredAccountId
+                  ? "not_requested"
+                  : historyAccounts.includes(params.preferredAccountId)
+                    ? "included"
+                    : "not_observed",
+              },
+              accounts: await Promise.all(
+                historyAccounts.slice(0, 2).map(async (accountId) => ({
+                  accountId,
+                  intradayHistory: await readFinanceScheduledIntradayHistory({
+                    directory: params.directory,
+                    accountId,
+                    asOf: params.asOf,
+                    researchWorkspaceDir: params.researchWorkspaceDir,
+                  }),
+                  history: readFinanceDailyDecisionHistory({
+                    directory: params.directory,
+                    accountId,
+                    asOf: params.asOf,
+                  }),
+                })),
+              ),
+            }),
+          },
+        ]
+      : []),
   ]);
   const intradayIndex = evidence.findIndex(
     (item) => item.id === `finance-night:intraday:${params.etDate}`,

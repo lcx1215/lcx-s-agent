@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runBarLedger } from "../scripts/operator/lcx-finance-bar-ledger.js";
-import { appendFinancePositionMark } from "../src/agents/finance-position-ledger.js";
+import { closeFinanceBarLedger } from "../src/agents/finance-bar-ledger.js";
+import {
+  appendFinancePositionMark,
+  closeFinancePositionLedger,
+} from "../src/agents/finance-position-ledger.js";
 
 /**
  * Writing bars into a book nobody named is how a ledger fills up in the wrong place, and a
@@ -25,6 +29,8 @@ describe("bar ledger writes to a named location", () => {
     } else {
       process.env.LCX_FINANCE_STATE_DIR = previousEnv;
     }
+    closeFinanceBarLedger(dir);
+    closeFinancePositionLedger(dir);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

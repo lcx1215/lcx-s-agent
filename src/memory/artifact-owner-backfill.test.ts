@@ -245,7 +245,7 @@ it("defers expired recovery without opening the store or changing original histo
   );
 });
 
-it("stops between registrations and a later default pass recovers idempotently", async () => {
+it("stops between registrations and the next bounded pass resumes", async () => {
   await write("state/lcx-central-agent-runs/1.json", { runId: "one" });
   await write("state/lcx-central-agent-runs/2.json", { runId: "two" });
   const deadline = Date.now() + 60000;
@@ -270,11 +270,17 @@ it("stops between registrations and a later default pass recovers idempotently",
   expect(first.gaps).toEqual([{ relativePath: "", reason: "artifact_backfill_deadline_reached" }]);
   expect(first.coverage[0].status).toBe("partial");
   vi.restoreAllMocks();
-  const second = await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir: root });
+  const second = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    cursor: first.nextCursor,
+    limit: 2,
+  });
   expect(second).toMatchObject({
     status: "complete",
     registered: 1,
-    unchanged: 1,
+    unchanged: 0,
     truncated: false,
   });
 });
@@ -313,4 +319,111 @@ it("recovers an explicitly observed source age after the file landed but DB inde
   } finally {
     store.close();
   }
+});
+
+it("resumes bounded sweeps across roots and revisits newly inserted earlier files", async () => {
+  await write("state/lcx-central-agent-runs/a.json", { runId: "a" });
+  await write("state/lcx-central-agent-runs/b.json", { runId: "b" });
+  await write("memory/module-learning-pipeline-reviews/c.json", { runId: "c" });
+  let cursor: unknown;
+  const registered: number[] = [];
+  for (let index = 0; index < 3; index++) {
+    const pass = await backfillOwnerArtifacts({
+      config,
+      agentId: "main",
+      workspaceDir: root,
+      limit: 1,
+      cursor,
+    });
+    registered.push(pass.registered);
+    // Round-trip as the original latest receipt does across process invocations.
+    cursor = JSON.parse(JSON.stringify(pass.nextCursor));
+  }
+  expect(registered).toEqual([1, 1, 1]);
+  const finish = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+    cursor,
+  });
+  expect(finish.nextCursor).toBeNull();
+  await write("state/lcx-central-agent-runs/0.json", { runId: "new-earlier" });
+  const nextSweep = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+    cursor: finish.nextCursor,
+  });
+  expect(nextSweep.registered).toBe(1);
+});
+
+it("advances past a bad original and rejects a cursor from another workspace", async () => {
+  await write("state/lcx-central-agent-runs/a.json", []);
+  await write("state/lcx-central-agent-runs/b.json", { runId: "b" });
+  const first = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+  });
+  expect(first.gapCount).toBeGreaterThan(0);
+  const second = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+    cursor: first.nextCursor,
+  });
+  expect(second.registered).toBe(1);
+  const foreign = path.join(root, "other");
+  await fs.mkdir(foreign);
+  const rejected = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: foreign,
+    cursor: first.nextCursor,
+  });
+  expect(rejected.gaps.some((gap) => gap.reason === "artifact_backfill_cursor_invalid")).toBe(true);
+});
+
+it("continues after the saved original is removed without skipping later nested directories", async () => {
+  await write("memory/module-learning-pipeline-reviews/a/1.json", { runId: "first" });
+  await write("memory/module-learning-pipeline-reviews/a/2.json", { runId: "second" });
+  await write("memory/module-learning-pipeline-reviews/b/1.json", { runId: "third" });
+  const first = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+  });
+  expect(first.registered).toBe(1);
+  await fs.unlink(path.join(root, "memory/module-learning-pipeline-reviews/a/1.json"));
+  const second = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+    cursor: first.nextCursor,
+  });
+  expect(second.registered).toBe(1);
+  await fs.rm(path.join(root, "memory/module-learning-pipeline-reviews/a"), { recursive: true });
+  const third = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+    cursor: second.nextCursor,
+  });
+  expect(third.registered).toBe(1);
+  const finish = await backfillOwnerArtifacts({
+    config,
+    agentId: "main",
+    workspaceDir: root,
+    limit: 1,
+    cursor: third.nextCursor,
+  });
+  expect(finish.registered).toBe(0);
+  expect(finish.nextCursor).toBeNull();
 });

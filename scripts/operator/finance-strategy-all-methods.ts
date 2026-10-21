@@ -9,6 +9,7 @@
  * blocked methods blocked. It never turns a diagnostic into a trade signal.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,6 +21,7 @@ import {
 import { buildStressVariants } from "./finance-strategy-method-benchmark.ts";
 
 type JsonObject = Record<string, unknown>;
+type SourcePeriod = Readonly<{ fromDate: string; toDate: string }>;
 type MethodReceipt = Readonly<{
   method: StrategyMethodId;
   name: string;
@@ -127,9 +129,11 @@ function requiredPeriodMetrics(value: unknown, label: string): JsonObject[] {
   });
 }
 
-function sourceGroupReady(receipts: JsonObject): boolean {
+function sourceGroupReady(receipts: JsonObject, period?: SourcePeriod): boolean {
   const rows = Object.entries(receipts);
-  return rows.length > 0 && rows.every(([key, receipt]) => sourceReceiptReady(key, receipt));
+  return (
+    rows.length > 0 && rows.every(([key, receipt]) => sourceReceiptReady(key, receipt, period))
+  );
 }
 
 const SOURCE_RECEIPT_TIMESTAMP_KEYS = [
@@ -204,7 +208,728 @@ function receiptRequestValues(receipt: JsonObject): string[] {
     .filter((value): value is string => value !== undefined);
 }
 
-function sourceReceiptReady(key: string, value: unknown): boolean {
+function receiptDay(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    return undefined;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+    ? value
+    : undefined;
+}
+
+function sourcePeriod(value: unknown): SourcePeriod | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const row = value as JsonObject;
+  const fromDate = receiptDay(row.fromDate ?? row.from ?? row.start);
+  const toDate = receiptDay(row.toDate ?? row.to ?? row.end);
+  return fromDate && toDate && fromDate <= toDate ? { fromDate, toDate } : undefined;
+}
+
+function sourceRequestCovers(receipt: JsonObject, expected: SourcePeriod): boolean {
+  const expectedPeriod = sourcePeriod(expected);
+  const request = nestedReceiptObject(receipt) ?? receipt;
+  const window = nonEmptyReceiptText(request.window)?.split("..");
+  const actual =
+    sourcePeriod(request) ??
+    (window?.length === 2 ? sourcePeriod({ from: window[0], to: window[1] }) : undefined);
+  return Boolean(
+    expectedPeriod &&
+    actual &&
+    actual.fromDate <= expectedPeriod.fromDate &&
+    actual.toDate >= expectedPeriod.toDate,
+  );
+}
+
+function localBenchmarkSourcesReady(benchmarkData: JsonObject): boolean {
+  const period = sourcePeriod(benchmarkData);
+  const symbols = benchmarkData.symbols;
+  const receipts = benchmarkData.sourceReceipts;
+  const observations = benchmarkData.alignedObservations;
+  const asOf = typeof benchmarkData.asOf === "string" ? Date.parse(benchmarkData.asOf) : NaN;
+  if (
+    !period ||
+    !Array.isArray(symbols) ||
+    symbols.length === 0 ||
+    symbols.some((symbol) => typeof symbol !== "string" || !symbol.trim()) ||
+    new Set(symbols).size !== symbols.length ||
+    !Array.isArray(receipts) ||
+    receipts.length !== symbols.length ||
+    typeof observations !== "number" ||
+    !Number.isInteger(observations) ||
+    observations < 2 ||
+    !Number.isFinite(asOf)
+  ) {
+    return false;
+  }
+  const seen = new Set<string>();
+  return receipts.every((value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+    const receipt = value as JsonObject;
+    const symbol = receipt.symbol;
+    const first =
+      typeof receipt.firstSourceTimestamp === "string"
+        ? Date.parse(receipt.firstSourceTimestamp)
+        : NaN;
+    const last =
+      typeof receipt.lastSourceTimestamp === "string"
+        ? Date.parse(receipt.lastSourceTimestamp)
+        : NaN;
+    if (
+      typeof symbol !== "string" ||
+      !symbols.includes(symbol) ||
+      seen.has(symbol) ||
+      receipt.status !== "ready" ||
+      typeof receipt.recordCount !== "number" ||
+      !Number.isInteger(receipt.recordCount) ||
+      receipt.recordCount < observations ||
+      !Number.isFinite(first) ||
+      !Number.isFinite(last) ||
+      first > last ||
+      last > asOf ||
+      new Date(first).toISOString().slice(0, 10) > period.fromDate ||
+      new Date(last).toISOString().slice(0, 10) < period.toDate ||
+      !Array.isArray(receipt.chunks) ||
+      receipt.chunks.length === 0
+    ) {
+      return false;
+    }
+    seen.add(symbol);
+    const chunks: SourcePeriod[] = [];
+    let chunkRecordCount = 0;
+    for (const value of receipt.chunks) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+      }
+      const chunk = value as JsonObject;
+      const window = sourcePeriod(chunk);
+      if (
+        !window ||
+        chunk.status !== "ready" ||
+        typeof chunk.recordCount !== "number" ||
+        !Number.isInteger(chunk.recordCount) ||
+        chunk.recordCount < 0
+      ) {
+        return false;
+      }
+      chunkRecordCount += chunk.recordCount;
+      chunks.push(window);
+    }
+    if (chunkRecordCount < receipt.recordCount) {
+      return false;
+    }
+    // Requests include warmup and arrive newest first. Check their union, not array order.
+    chunks.sort((a, b) => a.fromDate.localeCompare(b.fromDate));
+    let coveredThrough = Date.parse(period.fromDate) - 86_400_000;
+    for (const chunk of chunks) {
+      const start = Date.parse(chunk.fromDate);
+      if (start > coveredThrough + 86_400_000) {
+        break;
+      }
+      coveredThrough = Math.max(coveredThrough, Date.parse(chunk.toDate));
+    }
+    return coveredThrough >= Date.parse(period.toDate);
+  });
+}
+
+function cboeSourceReady(receipt: JsonObject, result: JsonObject, raw?: Uint8Array): boolean {
+  if (
+    !raw ||
+    typeof receipt.raw_sha256 !== "string" ||
+    createHash("sha256").update(raw).digest("hex") !== receipt.raw_sha256
+  ) {
+    return false;
+  }
+  let snapshot: JsonObject;
+  try {
+    snapshot = asObject(JSON.parse(Buffer.from(raw).toString("utf8")), "Cboe snapshot");
+  } catch {
+    return false;
+  }
+  const symbol = nonEmptyReceiptText(snapshot.symbol);
+  const timestamp = nonEmptyReceiptText(snapshot.timestamp);
+  const data = snapshot.data;
+  const clock = timestamp && /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})$/u.exec(timestamp);
+  const validQuoteTime =
+    clock &&
+    receiptDay(clock[1]) &&
+    Number(clock[2]) < 24 &&
+    Number(clock[3]) < 60 &&
+    Number(clock[4]) < 60;
+  if (
+    !symbol ||
+    !validQuoteTime ||
+    result.quote_timestamp !== timestamp ||
+    receipt.observed_as_of !== timestamp ||
+    receipt.source_url !==
+      `https://cdn.cboe.com/api/global/delayed_quotes/options/${symbol}.json` ||
+    !sourceReceiptReady("cboe", {
+      ...receipt,
+      finished_at: receipt.fetched_at,
+      request: { symbol },
+    }) ||
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  ) {
+    return false;
+  }
+  const chain = data as JsonObject;
+  if (
+    chain.symbol !== symbol ||
+    typeof chain.current_price !== "number" ||
+    !Number.isFinite(chain.current_price) ||
+    chain.current_price <= 0 ||
+    result.spot !== chain.current_price ||
+    !Array.isArray(chain.options)
+  ) {
+    return false;
+  }
+  const contracts = new Map<string, JsonObject>();
+  for (const value of chain.options) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const option = value as JsonObject;
+      if (typeof option.option === "string") {
+        if (contracts.has(option.option)) {
+          return false;
+        }
+        contracts.set(option.option, option);
+      }
+    }
+  }
+  const quote = (code: unknown, expiry: unknown, strike: unknown, side: "C" | "P") => {
+    if (
+      typeof code !== "string" ||
+      !receiptDay(expiry) ||
+      typeof strike !== "number" ||
+      !Number.isFinite(strike) ||
+      strike <= 0
+    ) {
+      return undefined;
+    }
+    const suffix = code.slice(symbol.length);
+    const match = /^(\d{6})([CP])(\d{8})$/u.exec(suffix);
+    if (
+      !code.startsWith(symbol) ||
+      !match ||
+      match[1] !== String(expiry).slice(2).replaceAll("-", "") ||
+      match[2] !== side ||
+      Number(match[3]) / 1000 !== strike
+    ) {
+      return undefined;
+    }
+    const option = contracts.get(code);
+    return option &&
+      typeof option.bid === "number" &&
+      Number.isFinite(option.bid) &&
+      option.bid >= 0 &&
+      typeof option.ask === "number" &&
+      Number.isFinite(option.ask) &&
+      option.ask >= option.bid
+      ? option
+      : undefined;
+  };
+  if (result.module === "M10") {
+    if (!result.put || typeof result.put !== "object" || Array.isArray(result.put)) {
+      return false;
+    }
+    const put = result.put as JsonObject;
+    const option = quote(put.contract, put.expiry, put.strike, "P");
+    return Boolean(
+      option &&
+      typeof option.iv === "number" &&
+      Number.isFinite(option.iv) &&
+      option.iv > 0 &&
+      typeof option.bid === "number" &&
+      option.bid > 0 &&
+      put.bid === option.bid &&
+      put.ask === option.ask &&
+      put.iv === option.iv,
+    );
+  }
+  if (result.module === "M11") {
+    if (
+      !result.contract_pair ||
+      typeof result.contract_pair !== "object" ||
+      Array.isArray(result.contract_pair)
+    ) {
+      return false;
+    }
+    const pair = result.contract_pair as JsonObject;
+    const call = quote(pair.call, pair.expiry, pair.strike, "C");
+    const put = quote(pair.put, pair.expiry, pair.strike, "P");
+    return Boolean(call && put);
+  }
+  return false;
+}
+
+async function readCboeSnapshot(researchRoot: string): Promise<Uint8Array | undefined> {
+  try {
+    return await fs.readFile(
+      path.join(researchRoot, "experiments/real_market/raw/cboe_spy_options.json"),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+type NativeSourceBytes = Readonly<Record<string, Uint8Array | undefined>>;
+type NativeEvidence = Readonly<{
+  strategy: NativeSourceBytes;
+  real: NativeSourceBytes;
+  events: NativeSourceBytes;
+}>;
+type SourceRequirement = Readonly<{
+  symbol: string;
+  period: SourcePeriod;
+  endpoints?: boolean;
+  nextClose?: boolean;
+  previousClose?: boolean;
+}>;
+
+function verifiedSourceObject(
+  receipt: JsonObject,
+  raw: Uint8Array | undefined,
+): JsonObject | undefined {
+  if (
+    !raw ||
+    typeof receipt.raw_sha256 !== "string" ||
+    createHash("sha256").update(raw).digest("hex") !== receipt.raw_sha256
+  ) {
+    return undefined;
+  }
+  try {
+    return asObject(JSON.parse(Buffer.from(raw).toString("utf8")), "source body");
+  } catch {
+    return undefined;
+  }
+}
+
+function sourceSymbols(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((symbol) => typeof symbol === "string" && /^[A-Z^][A-Z0-9.^-]{0,19}$/u.test(symbol))
+    ? [...new Set(value as string[])]
+    : undefined;
+}
+
+function historicalRequirements(
+  method: string,
+  result: JsonObject,
+  manifest: JsonObject,
+): SourceRequirement[] | undefined {
+  if (method === "M09") {
+    if (!Array.isArray(result.events) || result.events.length === 0) {
+      return undefined;
+    }
+    const required: SourceRequirement[] = [];
+    for (const value of result.events) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return undefined;
+      }
+      const event = value as JsonObject;
+      const period = sourcePeriod({ from: event.entry_date, to: event.exit_date });
+      const announcement = receiptDay(event.announcement_date);
+      const effective = receiptDay(event.effective_date);
+      const symbols = sourceSymbols(event.tickers);
+      if (
+        !period ||
+        !announcement ||
+        !effective ||
+        !symbols ||
+        announcement >= period.fromDate ||
+        period.toDate >= effective
+      ) {
+        return undefined;
+      }
+      required.push(
+        ...[...new Set([...symbols, "SPY"])].map((symbol) => ({ symbol, period, endpoints: true })),
+      );
+    }
+    return required;
+  }
+  let period = sourcePeriod(result.sample);
+  if (method === "M04" && period) {
+    period = { ...period, fromDate: `${period.fromDate.slice(0, 7)}-01` };
+  }
+  let symbols: string[] | undefined;
+  if (method === "M02") {
+    symbols = sourceSymbols(result.universe);
+  } else if (method === "M03") {
+    symbols = ["SPY", "^TNX"];
+  } else if (method === "M04") {
+    symbols = sourceSymbols([
+      result.target,
+      ...(Array.isArray(result.factor_proxies) ? result.factor_proxies : []),
+    ]);
+    if (!sourceSymbols(result.factor_proxies)) {
+      return undefined;
+    }
+  } else if (method === "M08") {
+    symbols = ["HYG", "SPY", "LQD"];
+  } else if (["M05", "M06", "M07"].includes(method)) {
+    if (!Array.isArray(result.results) || result.results.length === 0) {
+      return undefined;
+    }
+    const all: string[] = [];
+    for (const value of result.results) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return undefined;
+      }
+      const row = value as JsonObject;
+      const rowSymbols = sourceSymbols(method === "M07" ? [row.cef, row.nav_proxy] : row.universe);
+      if (!rowSymbols) {
+        return undefined;
+      }
+      all.push(...rowSymbols);
+    }
+    symbols = [...new Set(all)];
+    if (method === "M07") {
+      period = sourcePeriod({ start: manifest.start, end: manifest.end_requested });
+    }
+  }
+  return period && symbols
+    ? symbols.map((symbol) => ({
+        symbol,
+        period,
+        nextClose: method === "M03" && symbol === "SPY",
+        previousClose: ["M04", "M08"].includes(method) || (method === "M03" && symbol === "^TNX"),
+      }))
+    : undefined;
+}
+
+function historicalSourcesReady(
+  method: string,
+  result: JsonObject,
+  receipts: JsonObject,
+  raw: NativeSourceBytes | undefined,
+  manifest: JsonObject = {},
+): boolean {
+  const required = historicalRequirements(method, result, manifest);
+  if (!required || !raw) {
+    return false;
+  }
+  const parsed = new Map<string, { receipt: JsonObject; days: Set<string> }>();
+  for (const expected of required) {
+    let source = parsed.get(expected.symbol);
+    if (!source) {
+      const value = receipts[expected.symbol];
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+      }
+      const receipt = value as JsonObject;
+      const body = verifiedSourceObject(receipt, raw[expected.symbol]);
+      if (!body || receipt.symbol !== expected.symbol) {
+        return false;
+      }
+      let url: URL;
+      let pathname: string;
+      try {
+        url = new URL(String(receipt.source_url));
+        pathname = decodeURIComponent(url.pathname);
+      } catch {
+        return false;
+      }
+      if (
+        url.origin !== "https://query1.finance.yahoo.com" ||
+        pathname !== `/v8/finance/chart/${expected.symbol}` ||
+        url.searchParams.get("interval") !== "1d" ||
+        !["period1", "period2"].every(
+          (key) =>
+            url.searchParams.getAll(key).length === 1 &&
+            /^\d+$/u.test(url.searchParams.get(key) ?? ""),
+        )
+      ) {
+        return false;
+      }
+      const from = Number(url.searchParams.get("period1")) * 1000;
+      const to = Number(url.searchParams.get("period2")) * 1000;
+      if (
+        !Number.isFinite(from) ||
+        !Number.isFinite(to) ||
+        from >= to ||
+        !Number.isFinite(new Date(from).getTime()) ||
+        !Number.isFinite(new Date(to).getTime())
+      ) {
+        return false;
+      }
+      const chart = body.chart;
+      if (!chart || typeof chart !== "object" || Array.isArray(chart)) {
+        return false;
+      }
+      const rows = chart as JsonObject;
+      if (rows.error != null || !Array.isArray(rows.result) || rows.result.length !== 1) {
+        return false;
+      }
+      const row = rows.result[0] as JsonObject | undefined;
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return false;
+      }
+      const meta = row.meta as JsonObject | undefined;
+      const indicators = row.indicators as JsonObject | undefined;
+      const quote = Array.isArray(indicators?.quote)
+        ? (indicators.quote[0] as JsonObject | undefined)
+        : undefined;
+      const adjusted = Array.isArray(indicators?.adjclose)
+        ? (indicators.adjclose[0] as JsonObject | undefined)
+        : undefined;
+      const closes = quote?.close;
+      const adjustedCloses = adjusted?.adjclose ?? closes;
+      if (
+        meta?.symbol !== expected.symbol ||
+        !Array.isArray(row.timestamp) ||
+        !Array.isArray(closes) ||
+        !Array.isArray(adjustedCloses) ||
+        closes.length !== row.timestamp.length ||
+        adjustedCloses.length !== row.timestamp.length
+      ) {
+        return false;
+      }
+      const days = new Set<string>();
+      for (let i = 0; i < row.timestamp.length; i++) {
+        const time = row.timestamp[i];
+        const close = closes[i];
+        const adjclose = adjustedCloses[i];
+        if (
+          typeof time === "number" &&
+          Number.isFinite(time) &&
+          Number.isFinite(new Date(time * 1000).getTime()) &&
+          typeof close === "number" &&
+          Number.isFinite(close) &&
+          close > 0 &&
+          typeof adjclose === "number" &&
+          Number.isFinite(adjclose) &&
+          adjclose > 0
+        ) {
+          days.add(new Date(time * 1000).toISOString().slice(0, 10));
+        }
+      }
+      const ordered = [...days].toSorted();
+      if (
+        !ordered.length ||
+        receipt.observed_as_of !== ordered.at(-1) ||
+        Date.parse(String(receipt.fetched_at)) < Date.parse(ordered.at(-1) ?? "")
+      ) {
+        return false;
+      }
+      const request = {
+        symbol: expected.symbol,
+        fromDate: new Date(from).toISOString().slice(0, 10),
+        toDate: new Date(to - 1).toISOString().slice(0, 10),
+      };
+      if (
+        !sourceReceiptReady(expected.symbol, {
+          ...receipt,
+          finished_at: receipt.fetched_at,
+          request,
+        })
+      ) {
+        return false;
+      }
+      source = { receipt: { ...receipt, finished_at: receipt.fetched_at, request }, days };
+      parsed.set(expected.symbol, source);
+    }
+    if (
+      !sourceReceiptReady(expected.symbol, source.receipt, expected.period) ||
+      [...source.days].filter(
+        (day) => day >= expected.period.fromDate && day <= expected.period.toDate,
+      ).length < (expected.endpoints ? 1 : 2) ||
+      (method === "M04"
+        ? String(source.receipt.observed_as_of).slice(0, 7) < expected.period.toDate.slice(0, 7)
+        : String(source.receipt.observed_as_of) < expected.period.toDate) ||
+      (expected.endpoints &&
+        (!source.days.has(expected.period.fromDate) || !source.days.has(expected.period.toDate))) ||
+      (expected.previousClose && ![...source.days].some((day) => day < expected.period.fromDate)) ||
+      (expected.nextClose && ![...source.days].some((day) => day > expected.period.toDate))
+    ) {
+      return false;
+    }
+  }
+  if (["M03", "M04", "M08"].includes(method)) {
+    const sample = result.sample as JsonObject;
+    const observations = method === "M04" ? sample.monthly_observations : sample.observations;
+    if (typeof observations !== "number" || !Number.isInteger(observations) || observations < 2) {
+      return false;
+    }
+    const first = required[0];
+    if (!first) {
+      return false;
+    }
+    let actualCount: number;
+    if (method === "M04") {
+      // The producer resamples each series independently before joining months.
+      const months = required.map(
+        ({ symbol, period }) =>
+          new Set(
+            [...(parsed.get(symbol)?.days ?? [])]
+              .map((day) => day.slice(0, 7))
+              .filter(
+                (month) =>
+                  month >= period.fromDate.slice(0, 7) && month <= period.toDate.slice(0, 7),
+              ),
+          ),
+      );
+      actualCount = [...(months[0] ?? [])].filter((month) =>
+        months.every((set) => set.has(month)),
+      ).length;
+    } else {
+      actualCount = [...(parsed.get(first.symbol)?.days ?? [])].filter(
+        (day) =>
+          day >= first.period.fromDate &&
+          day <= first.period.toDate &&
+          required.every(({ symbol }) => parsed.get(symbol)?.days.has(day)),
+      ).length;
+    }
+    if (actualCount < observations) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function officialEventSourcesReady(
+  events: unknown,
+  receipts: JsonObject,
+  raw: NativeSourceBytes | undefined,
+): boolean {
+  if (!Array.isArray(events) || events.length === 0 || !raw) {
+    return false;
+  }
+  const seen = new Set<string>();
+  for (const value of events) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+    const event = value as JsonObject;
+    const id = nonEmptyReceiptText(event.event_id);
+    const date = receiptDay(event.announcement_date);
+    const effective = receiptDay(event.effective_date);
+    if (
+      !id ||
+      !/^[A-Za-z0-9_-]{1,64}$/u.test(id) ||
+      seen.has(id) ||
+      !date ||
+      !effective ||
+      date >= effective
+    ) {
+      return false;
+    }
+    seen.add(id);
+    const receipt = receipts[id];
+    const embedded = event.source_receipt;
+    if (
+      !receipt ||
+      typeof receipt !== "object" ||
+      Array.isArray(receipt) ||
+      !embedded ||
+      typeof embedded !== "object" ||
+      Array.isArray(embedded)
+    ) {
+      return false;
+    }
+    const source = receipt as JsonObject;
+    const retained = embedded as JsonObject;
+    const bytes = raw[id];
+    const normalize = (value: unknown) => {
+      try {
+        const url = new URL(String(value));
+        return url.origin === "https://press.spglobal.com" && !url.search && !url.hash
+          ? url.origin + decodeURIComponent(url.pathname)
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const url = normalize(event.source_url);
+    if (
+      !url ||
+      !new URL(url).pathname.startsWith(`/${date}-`) ||
+      normalize(source.source_url) !== url ||
+      normalize(retained.source_url) !== url ||
+      !bytes ||
+      source.raw_sha256 !== createHash("sha256").update(bytes).digest("hex") ||
+      retained.raw_sha256 !== source.raw_sha256 ||
+      source.bytes !== bytes.byteLength ||
+      retained.bytes !== source.bytes ||
+      ![source, retained].every(
+        (receipt) =>
+          sourceReceiptReady("event", {
+            ...receipt,
+            finished_at: receipt.fetched_at,
+            request: { query: url },
+          }) && Date.parse(String(receipt.fetched_at)) >= Date.parse(date),
+      )
+    ) {
+      return false;
+    }
+    const html = Buffer.from(bytes).toString("utf8");
+    const canonical =
+      /<link\b(?=[^>]*\brel=["']canonical["'])[^>]*\bhref=["']([^"']+)["'][^>]*>/iu.exec(html)?.[1];
+    if (normalize(canonical) !== url || !html.includes(`<!-- ITEMDATE: ${date} `)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function readNativeEvidence(
+  researchRoot: string,
+  strategy: JsonObject,
+  real: JsonObject,
+): Promise<NativeEvidence> {
+  const read = async (file: string) => {
+    try {
+      return await fs.readFile(file);
+    } catch {
+      return undefined;
+    }
+  };
+  const group = async (receipts: unknown, directory: string, prefix: string, suffix: string) => {
+    if (!receipts || typeof receipts !== "object" || Array.isArray(receipts)) {
+      return {};
+    }
+    const entries = await Promise.all(
+      Object.keys(receipts).map(
+        async (key) =>
+          [
+            key,
+            /^[A-Za-z0-9^_-][A-Za-z0-9.^_-]{0,63}$/u.test(key)
+              ? await read(path.join(directory, `${prefix}${key}${suffix}`))
+              : undefined,
+          ] as const,
+      ),
+    );
+    return Object.fromEntries(entries);
+  };
+  const sources = real.sources as JsonObject | undefined;
+  const [strategyBytes, realBytes, events] = await Promise.all([
+    group(strategy.source_receipts, path.join(researchRoot, "experiments/raw"), "", ".json"),
+    group(
+      sources?.yahoo_symbols,
+      path.join(researchRoot, "experiments/real_market/raw"),
+      "yahoo_",
+      ".json",
+    ),
+    group(
+      sources?.event_sources,
+      path.join(researchRoot, "experiments/real_market/raw"),
+      "event_",
+      ".html",
+    ),
+  ]);
+  return { strategy: strategyBytes, real: realBytes, events };
+}
+
+function sourceGroupReadyForResult(receipts: JsonObject, result: JsonObject): boolean {
+  const period = sourcePeriod(result.sample);
+  return period !== undefined && sourceGroupReady(receipts, period);
+}
+
+function sourceReceiptReady(key: string, value: unknown, period?: SourcePeriod): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
@@ -247,6 +972,12 @@ function sourceReceiptReady(key: string, value: unknown): boolean {
   }
   const requestValues = receiptRequestValues(receipt);
   if (requestValues.length === 0) {
+    return false;
+  }
+  if (
+    period &&
+    (!sourceRequestCovers(receipt, period) || Date.parse(timestamp) < Date.parse(period.toDate))
+  ) {
     return false;
   }
   const expectedInstrument = /^[A-Z][A-Z0-9.-]{1,9}$/u.test(key) ? key.toUpperCase() : undefined;
@@ -357,6 +1088,8 @@ function buildMethods(
   realResults: Readonly<Record<string, JsonObject>>,
   researchRoot: string = CONFIGURED_RESEARCH_ROOT ?? REPO_ROOT,
   inputRoot: string = REPO_ROOT,
+  cboeSnapshot?: Uint8Array,
+  nativeEvidence?: NativeEvidence,
 ): readonly MethodReceipt[] {
   const benchmarkChecks = requiredObject(benchmark.checks, "benchmark.checks");
   const benchmarkPortfolio = requiredObject(benchmark.portfolio, "benchmark.portfolio");
@@ -413,30 +1146,33 @@ function buildMethods(
     strategyManifest.source_receipts,
     "strategy manifest source_receipts",
   );
-  const strategySourcesReady = sourceGroupReady(strategyManifestReceipts);
-  const localSources = benchmarkData.sourceReceipts;
-  const localSourcesReady =
-    Array.isArray(localSources) &&
-    localSources.length > 0 &&
-    localSources.every(
-      (receipt) =>
-        typeof receipt === "object" &&
-        receipt !== null &&
-        (receipt as JsonObject).status === "ready",
+  const strategySourcesReady = (method: string, result: JsonObject) =>
+    historicalSourcesReady(
+      method,
+      result,
+      strategyManifestReceipts,
+      nativeEvidence?.strategy,
+      strategyManifest,
     );
+  const localSourcesReady = localBenchmarkSourcesReady(benchmarkData);
   const realSources = requiredObject(realSummary.sources, "real_market_summary.sources");
   const realYahooSources = requiredObject(
     realSources.yahoo_symbols,
     "real_market_summary.sources.yahoo_symbols",
   );
-  const realYahooReady = sourceGroupReady(realYahooSources);
+  const realYahooReady = (method: string, result: JsonObject) =>
+    historicalSourcesReady(method, result, realYahooSources, nativeEvidence?.real);
   const cboeSource = requiredObject(realSources.cboe, "real_market_summary.sources.cboe");
-  const cboeReady = sourceReceiptReady("cboe", cboeSource);
+  const cboeReady = (result: JsonObject) => cboeSourceReady(cboeSource, result, cboeSnapshot);
   const eventSources = requiredObject(
     realSources.event_sources,
     "real_market_summary.sources.event_sources",
   );
-  const eventSourcesReady = sourceGroupReady(eventSources);
+  const eventSourcesReady = officialEventSourcesReady(
+    realResults.M09?.events,
+    eventSources,
+    nativeEvidence?.events,
+  );
   const realSummaryTests = realSummary.tests;
   if (!Array.isArray(realSummaryTests)) {
     throw new Error("real_market_summary.tests must be an array");
@@ -506,7 +1242,7 @@ function buildMethods(
       [localBenchmark, localStress, artifact(external("experiments/m02_results.json"))],
       [requiredText(benchmarkData.source, "benchmarkData.source"), "Yahoo Finance chart API"],
       "research_candidate",
-      localSourcesReady && strategySourcesReady,
+      localSourcesReady && strategySourcesReady("M02", m02),
       checkBooleans(benchmarkChecks, "benchmark.checks") &&
         Number(stressSummary.variantCount) === expectedM02StressVariantKeys.size &&
         m02StressVariantRowsComplete,
@@ -528,7 +1264,7 @@ function buildMethods(
       ],
       ["Yahoo Finance chart API"],
       requiredText(real("M03").stage, "M03.stage"),
-      realYahooReady,
+      realYahooReady("M03", real("M03")),
       checkBooleans(real("M03").checks, "M03.checks"),
       realGate("M03"),
       {
@@ -546,7 +1282,7 @@ function buildMethods(
       ],
       ["Yahoo Finance chart API"],
       requiredText(real("M04").stage, "M04.stage"),
-      realYahooReady,
+      realYahooReady("M04", real("M04")),
       checkBooleans(real("M04").checks, "M04.checks"),
       realGate("M04"),
       {
@@ -564,7 +1300,7 @@ function buildMethods(
       ],
       ["Yahoo Finance chart API"],
       requiredText(m05.stage, "m05.stage"),
-      strategySourcesReady,
+      strategySourcesReady("M05", m05),
       m05Medium.length === 2 &&
         m05Medium.every(
           (row) => requiredObject(row.long_short, "M05.long_short").metrics !== undefined,
@@ -588,7 +1324,7 @@ function buildMethods(
       ],
       ["Yahoo Finance chart API"],
       requiredText(m06.stage, "m06.stage"),
-      strategySourcesReady,
+      strategySourcesReady("M06", m06),
       m06Medium.length === 2 &&
         m06Medium.every((row) => requiredObject(row, "M06.row").metrics !== undefined),
       "research_only_high_turnover_and_drawdown",
@@ -609,7 +1345,7 @@ function buildMethods(
       ],
       ["Yahoo Finance chart API"],
       requiredText(m07.stage, "m07.stage"),
-      strategySourcesReady,
+      strategySourcesReady("M07", m07),
       m07Rows.length === 18,
       requiredText(m07.gate_status, "m07.gate_status"),
       {
@@ -629,7 +1365,7 @@ function buildMethods(
       ],
       ["Yahoo Finance chart API"],
       requiredText(real("M08").stage, "M08.stage"),
-      realYahooReady,
+      realYahooReady("M08", real("M08")),
       checkBooleans(real("M08").checks, "M08.checks"),
       realGate("M08"),
       { netMetrics: real("M08").net_metrics, stress: real("M08").credit_relative_stress },
@@ -644,7 +1380,7 @@ function buildMethods(
       ],
       ["S&P Global official announcements", "Yahoo Finance chart API"],
       requiredText(real("M09").stage, "M09.stage"),
-      realYahooReady && eventSourcesReady,
+      realYahooReady("M09", real("M09")) && eventSourcesReady,
       checkBooleans(real("M09").checks, "M09.checks"),
       realGate("M09"),
       { eventCount: Array.isArray(m09Events) ? m09Events.length : 0 },
@@ -659,7 +1395,7 @@ function buildMethods(
       ],
       ["Cboe delayed options quote API"],
       requiredText(real("M10").stage, "M10.stage"),
-      cboeReady,
+      cboeReady(real("M10")),
       checkBooleans(real("M10").checks, "M10.checks"),
       realGate("M10"),
       { put: real("M10").put, scenarios: real("M10").scenarios },
@@ -674,7 +1410,7 @@ function buildMethods(
       ],
       ["Cboe delayed options quote API"],
       requiredText(real("M11").stage, "M11.stage"),
-      cboeReady,
+      cboeReady(real("M11")),
       checkBooleans(real("M11").checks, "M11.checks"),
       realGate("M11"),
       {
@@ -765,6 +1501,8 @@ export async function buildAllMethodsReceipt(
     realById,
     researchRoot,
     inputRoot,
+    await readCboeSnapshot(researchRoot),
+    await readNativeEvidence(researchRoot, strategyManifest, realSummary),
   );
   const checks = Object.freeze({
     completeCatalog:
@@ -854,6 +1592,14 @@ export const __test = {
   buildMethods,
   requiredText,
   sourceGroupReady,
+  sourceGroupReadyForResult,
+  localBenchmarkSourcesReady,
+  cboeSourceReady,
+  readCboeSnapshot,
+  historicalRequirements,
+  historicalSourcesReady,
+  officialEventSourcesReady,
+  readNativeEvidence,
   parseOutputPath,
   parseCliOptions,
 };

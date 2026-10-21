@@ -9,6 +9,8 @@
  * transitions are the runtime's problem rather than a hard-coded UTC offset.
  */
 
+import { isFinanceUsEquitySessionDate } from "./finance-history-coverage.js";
+
 export const FINANCE_MARKET_TZ = "America/New_York";
 
 export const FINANCE_TRADING_WEEKDAYS = Object.freeze(["Mon", "Tue", "Wed", "Thu", "Fri"]);
@@ -123,8 +125,8 @@ export function isFinanceUsEquityDailyBarComplete(date: string, asOf: string): b
 }
 
 /**
- * Resolve the latest completed weekday session using the same weekday/16:00 ET contract used by
- * universe snapshot consumers. Exchange holidays and early closes are intentionally not inferred.
+ * Resolve the latest published exchange session, retaining the conservative 16:00 ET cutoff.
+ * Early-close bars are admitted after 16:00 too; closed dates never stand in for a session.
  */
 export function latestCompletedWeekdaySessionDate(asOf: string): string {
   const asOfMs = Date.parse(asOf.trim());
@@ -140,8 +142,13 @@ export function latestCompletedWeekdaySessionDate(asOf: string): string {
   }
   for (let attempts = 0; attempts < 7; attempts += 1) {
     const candidate = new Date(cursor);
-    if (candidate.getUTCDay() !== 0 && candidate.getUTCDay() !== 6) {
-      return candidate.toISOString().slice(0, 10);
+    const date = candidate.toISOString().slice(0, 10);
+    const session = isFinanceUsEquitySessionDate(date);
+    if (session === undefined) {
+      throw new Error("exchange calendar year unverified");
+    }
+    if (session) {
+      return date;
     }
     cursor -= 86_400_000;
   }

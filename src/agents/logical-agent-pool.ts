@@ -298,9 +298,9 @@ export type LocalModelPoolConfig = Readonly<{
   modelId: string;
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
-  /** Requested per-invocation delta; the enforcement mode is reported below. */
+  /** Node invocation delta; the same caller limit is forwarded to local process adapters. */
   memoryBudgetMb: number;
-  memoryBudgetEnforcement: "measured_invocation_delta";
+  memoryBudgetEnforcement: "node_invocation_delta";
   taskTimeoutMs: number;
 }>;
 
@@ -308,8 +308,7 @@ export type LocalModelPoolOptions<
   TInput = unknown,
   TResult = unknown,
 > = Partial<LocalModelPoolConfig> & {
-  /** Adds `provider_call` to this pool's grant; a widening that is meaningful only when a
-   * caller has already narrowed `capabilities`. */
+  /** Explicitly admits `provider_call`; false/omitted forbids it even in an open grant. */
   allowProviderCalls?: boolean;
   /**
    * Capability grant applied to every task in this pool. Defaults to the open
@@ -328,7 +327,7 @@ export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = Object.freeze({
   maxLoadedModels: 1,
   maxConcurrency: 1,
   memoryBudgetMb: 3072,
-  memoryBudgetEnforcement: "measured_invocation_delta",
+  memoryBudgetEnforcement: "node_invocation_delta",
   taskTimeoutMs: 30_000,
 });
 
@@ -396,7 +395,7 @@ export type LogicalAgentPoolStatus = {
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
-  memoryBudgetEnforcement: "measured_invocation_delta";
+  memoryBudgetEnforcement: "node_invocation_delta";
   taskTimeoutMs: number;
   queuedRuns: number;
   activeRuns: number;
@@ -482,7 +481,7 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
     maxLoadedModels: 1,
     maxConcurrency,
     memoryBudgetMb,
-    memoryBudgetEnforcement: "measured_invocation_delta",
+    memoryBudgetEnforcement: "node_invocation_delta",
     taskTimeoutMs,
   });
 }
@@ -516,20 +515,18 @@ export class LogicalAgentPool<TInput, TResult> {
   }
 
   /** Functions are deliberately excluded; adapter code changes require a new revision. */
-  get modelRoutingFingerprint(): string | undefined {
-    return this.#modelRouter
-      ? createHash("sha256")
-          .update(
-            stableStringify({
-              routing: this.#modelRouter.routing,
-              allowProviderCalls: this.#allowProviderCalls,
-              // Included only when a caller narrowed the grant, so an un-narrowed pool keeps
-              // exactly its previous fingerprint.
-              ...(this.#capabilities ? { capabilities: this.#capabilities } : {}),
-            }),
-          )
-          .digest("hex")
-      : undefined;
+  get modelRoutingFingerprint(): string {
+    return createHash("sha256")
+      .update(
+        stableStringify({
+          routing: this.#modelRouter?.routing ?? null,
+          allowProviderCalls: this.#allowProviderCalls,
+          // Legacy/injected pools must also invalidate pre-gate completed tasks.
+          providerCallGateVersion: 1,
+          ...(this.#capabilities ? { capabilities: this.#capabilities } : {}),
+        }),
+      )
+      .digest("hex");
   }
 
   get config(): LocalModelPoolConfig {
@@ -674,7 +671,13 @@ export class LogicalAgentPool<TInput, TResult> {
                 (effect) => effect !== "provider_call",
               ),
             }
-          : granted,
+          : {
+              ...granted,
+              allowedSideEffects: granted.allowedSideEffects.filter(
+                (effect) => effect !== "provider_call",
+              ),
+              forbiddenSideEffects: [...granted.forbiddenSideEffects, "provider_call"],
+            },
       );
       const agent = freezeLogicalAgentDefinition({
         ...registeredAgent,
@@ -854,6 +857,7 @@ export class LogicalAgentPool<TInput, TResult> {
                 capabilities,
                 signal: controller.signal,
                 deadlineAtMs,
+                memoryBudgetMb: this.#config.memoryBudgetMb,
                 isDeadlineAbort: isTaskTimeoutError,
                 dispatch: (invoke, dispatchSignal) => this.#invokeModel(invoke, dispatchSignal),
                 record: (receipt) => receipts.push(receipt),
@@ -1704,6 +1708,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   const runId = params.runId?.trim() || createLogicalAgentRunId();
   const events: LogicalAgentRunEvent[] = [];
   let eventSequence = 0;
+  let persistEventCursor: ((sequence: number) => void) | undefined;
   const emit = (
     kind: LogicalAgentRunEventKind,
     taskId?: string,
@@ -1719,6 +1724,9 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       atMs: Date.now(),
       ...(payload === undefined ? {} : { payload }),
     }) satisfies LogicalAgentRunEvent;
+    // Once recoverable work exists, reserve every event ID durably before
+    // observers can see it, including failed-task and terminal events.
+    persistEventCursor?.(event.sequence);
     events.push(event);
     try {
       params.eventSink?.(event);
@@ -1746,6 +1754,23 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
         tasks,
       })
     : new Map<string, LogicalAgentTaskResult<TResult>>();
+  let checkpointEstablished = Boolean(restoredCheckpoint);
+  let persistedEventSequence = restoredCheckpoint?.lastEventSequence ?? 0;
+  persistEventCursor = (sequence) => {
+    if (!checkpointEstablished || !params.checkpointStore || sequence <= persistedEventSequence) {
+      return;
+    }
+    params.checkpointStore.save(
+      checkpointForResults({
+        runId,
+        planFingerprint,
+        tasks,
+        results: restoredResults,
+        lastEventSequence: sequence,
+      }),
+    );
+    persistedEventSequence = sequence;
+  };
   if (params.resume) {
     pool.restoreCompletedModelCalls(runId, [...restoredResults.values()]);
     eventSequence = restoredCheckpoint?.lastEventSequence ?? 0;
@@ -1795,6 +1820,8 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
         lastEventSequence: eventSequence + 1,
       });
       params.checkpointStore.save(checkpoint);
+      checkpointEstablished = true;
+      persistedEventSequence = checkpoint.lastEventSequence;
       emit("checkpoint_saved", undefined, {
         completedTaskCount: checkpoint.completedTaskIds.length,
         checkpointEventSequence: checkpoint.lastEventSequence,

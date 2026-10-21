@@ -41,11 +41,13 @@ import { appendFinanceBars } from "./finance-bar-ledger.js";
  */
 import type { FinanceExecutionReconciliation } from "./finance-broker-reconciliation.js";
 import { financeUsEquityRegularCloseInstant } from "./finance-cycle-schedule.js";
+import { readFinanceDailyDecisionHistory } from "./finance-daily-decision-history.js";
 import {
   annualisedVol,
   FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
   financeMonthlyTrendReturn,
 } from "./finance-daily-strategy.js";
+import { freshExecutionCapacity } from "./finance-execution-capacity.js";
 export { annualisedVol } from "./finance-daily-strategy.js";
 import {
   financeExecutionResearchLineageSchema,
@@ -1195,30 +1197,70 @@ export async function runFinanceDailyCycle(
     }
   }
 
+  const heldInstrumentNotional = (instrument: string, price: number) =>
+    Math.max(
+      0,
+      (currentWeight.get(instrument) ?? 0) * equity,
+      Number.isFinite(price) && price > 0 ? (ledgerQuantity.get(instrument) ?? 0) * price : 0,
+    );
+
   // Only the part OUTSIDE the band is traded, and never more than the declared cap.
   //
   // Trading the full delta would make a first build concentrate the whole book into one day and
   // blow the per-order cap (SPY alone wants ~21k of a 100k book). Trading the excess instead
   // means the book converges over a few sessions, which is both cap-safe and honest: a target
   // weight is a destination, not a single order.
-  const drift: FinanceDailyCycleDrift[] = targets.map((target) => {
+  let drift: FinanceDailyCycleDrift[] = targets.map((target) => {
     const current = currentWeight.get(target.instrument) ?? 0;
     const delta = target.weight - current;
     const excess = blockedInstruments.has(target.instrument)
       ? 0
       : Math.max(0, Math.abs(delta) - band);
     const desiredNotional = excess * equity;
-    const notional = Math.min(desiredNotional, params.caps.maxOrderNotional);
-    const action = excess <= 0 ? "none" : delta > 0 ? "buy" : "sell";
+    // Decide action at the same currency precision sent downstream. Floating
+    // point residue at the band must not create repeated zero-notional reviews.
+    // The durable gate also counts existing holdings. Plan the feasible remainder
+    // rather than repeatedly proposing an order that exceeds the position cap.
+    const headroom =
+      delta > 0
+        ? Math.max(
+            0,
+            Math.floor(
+              (params.caps.maxInstrumentNotional -
+                heldInstrumentNotional(target.instrument, target.close)) *
+                100,
+            ) / 100,
+          )
+        : Number.POSITIVE_INFINITY;
+    const notional = Number(
+      Math.min(desiredNotional, params.caps.maxOrderNotional, headroom).toFixed(2),
+    );
+    if (delta > 0 && desiredNotional >= 0.01 && headroom < 0.01) {
+      refusals.push(
+        `${target.instrument}: instrument exposure at declared cap; target remains unmet`,
+      );
+    }
+    const action = notional <= 0 ? "none" : delta > 0 ? "buy" : "sell";
     return {
       instrument: target.instrument,
       target: Number(target.weight.toFixed(4)),
       current: Number(current.toFixed(4)),
       delta: Number(delta.toFixed(4)),
       action,
-      notional: Number(notional.toFixed(2)),
+      notional,
     };
   });
+
+  // Converge toward the approved allocation with scarce order slots: reduce
+  // overweights before adding exposure, then address the largest target gap.
+  // This is execution priority, not a new investment score. Every order still
+  // passes the original review, fresh account/quote, and execution gates.
+  let executionDrift = drift.toSorted(
+    (a, b) =>
+      Number(b.action === "sell") - Number(a.action === "sell") ||
+      Math.abs(b.delta) - Math.abs(a.delta) ||
+      a.instrument.localeCompare(b.instrument),
+  );
 
   // Notional already committed to each instrument *in this run*. Without it every order looks
   // like the first one of the run and both declared caps (`maxOrdersPerRun`,
@@ -1294,6 +1336,7 @@ export async function runFinanceDailyCycle(
   >();
   const executionQuoteErrors = new Map<string, string>();
   const reviewCandidates: FinanceTradeDecisionCandidate[] = [];
+  const reviewedExecutionQuotes = new Map<string, FinanceDailyCycleExecutionQuote>();
   const readExecutionQuote = async (candidate: {
     instrument: string;
     side: "buy" | "sell";
@@ -1337,6 +1380,7 @@ export async function runFinanceDailyCycle(
     if (executionQuoteIssue(executionQuote, quoteObservedAt) !== null || !executionQuote) {
       continue;
     }
+    reviewedExecutionQuotes.set(candidate.candidateId, { ...executionQuote });
     reviewCandidates.push({
       ...candidate,
       executionQuote: {
@@ -1353,6 +1397,68 @@ export async function runFinanceDailyCycle(
       },
     });
   }
+  const capacity =
+    accountBook && params.accountId
+      ? freshExecutionCapacity(accountBook, params.accountId, (params.executionNow ?? Date.now)())
+      : undefined;
+  if (capacity) {
+    const eligible = new Set(reviewCandidates.map((candidate) => candidate.instrument));
+    let remaining = Math.max(
+      0,
+      Math.min(
+        capacity.maxGrossExposure - capacity.grossExposure - capacity.uncertaintyReserve,
+        capacity.availableCash === undefined
+          ? Number.POSITIVE_INFINITY
+          : capacity.availableCash - capacity.uncertaintyReserve,
+      ),
+    );
+    // Allocate the observed funds in the same priority as execution, before review.
+    // Unfilled sales and vetoed orders do not authorize reallocating reviewed amounts.
+    executionDrift = executionDrift.map((item) => {
+      if (
+        item.action !== "buy" ||
+        (params.place === true && params.venue === "alpaca" && !eligible.has(item.instrument)) ||
+        unpricedPositions.has(item.instrument) ||
+        inconsistentMarkBars.has(item.instrument)
+      ) {
+        return item;
+      }
+      let notional = Math.max(0, Math.min(item.notional, Math.floor(remaining * 100) / 100));
+      const quote = reviewedExecutionQuotes.get(reviewCandidateId(item));
+      // The Alpaca compiler requires whole shares. An unfundable share must not
+      // reserve cash ahead of another eligible candidate before review.
+      if (quote && notional > 0 && notional < quote.referencePrice) {
+        refusals.push(
+          `${item.instrument}: available buy budget cannot fund one whole share; target remains unmet`,
+        );
+        return { ...item, notional: 0, action: "none" };
+      }
+      if (quote) {
+        // Reserve only whole shares executable at the reviewed price. Otherwise
+        // an unusable fractional-share remainder starves later candidates. Round
+        // the reservation up to cents so floating-point sizing cannot lose a share.
+        notional = Math.min(
+          notional,
+          Math.ceil(Math.floor(notional / quote.referencePrice) * quote.referencePrice * 100) / 100,
+        );
+      }
+      remaining = Math.max(0, remaining - notional);
+      if (notional === 0) {
+        refusals.push(
+          `${item.instrument}: buy bounded by observed account funding; target remains unmet`,
+        );
+      }
+      return { ...item, notional, action: notional > 0 ? "buy" : "none" };
+    });
+    const funded = new Map(executionDrift.map((item) => [item.instrument, item]));
+    drift = drift.map((item) => funded.get(item.instrument) ?? item);
+    const fundedCandidates = reviewCandidates.flatMap((candidate) => {
+      const item = funded.get(candidate.instrument);
+      return item && item.notional > 0 ? [{ ...candidate, notional: item.notional }] : [];
+    });
+    reviewCandidates.splice(0, reviewCandidates.length, ...fundedCandidates);
+  }
+
   const reviewCandidateById = new Map(
     reviewCandidates.map((candidate) => [candidate.candidateId, candidate]),
   );
@@ -1377,7 +1483,18 @@ export async function runFinanceDailyCycle(
       asOf,
       instruments: reviewCandidates.map((candidate) => candidate.instrument),
     });
+    const decisionHistory = readFinanceDailyDecisionHistory({
+      directory,
+      accountId: accountBook?.accountId,
+      asOf,
+      instruments: executionDrift
+        .filter((item) =>
+          reviewCandidates.some((candidate) => candidate.instrument === item.instrument),
+        )
+        .map((item) => item.instrument),
+    });
     const reviewRequest = {
+      decisionHistory,
       schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
       ...(accountEconomics ? { accountEconomics } : {}),
       venue: "alpaca:paper",
@@ -1456,6 +1573,7 @@ export async function runFinanceDailyCycle(
       candidateCount: reviewCandidates.length,
       modelCalls: result.modelCalls ?? (result.attempted ? 1 : 0),
       candidateInputs: reviewCandidates,
+      decisionHistory,
       decisionContext,
       ...(accountEconomics ? { accountEconomics } : {}),
       ...(result.status === "failed" ? { failureCode: result.failureCode } : {}),
@@ -1480,7 +1598,17 @@ export async function runFinanceDailyCycle(
   }
 
   if (params.place === true) {
-    for (const item of drift) {
+    // A stopped account run also explains why later approved candidates did not
+    // execute. Keep that cause in their original per-instrument feedback so the
+    // next judgment does not see an unexplained approve-without-placement.
+    const recordUnattempted = (from: number, reason: string) => {
+      for (const remaining of executionDrift.slice(from)) {
+        if (remaining.action !== "none") {
+          refusals.push(`${remaining.instrument}: not attempted ${reason}`);
+        }
+      }
+    };
+    for (const [executionIndex, item] of executionDrift.entries()) {
       if (item.action === "none") {
         continue;
       }
@@ -1576,6 +1704,27 @@ export async function runFinanceDailyCycle(
             );
             continue;
           }
+          const reviewedQuote = reviewedExecutionQuotes.get(candidateId);
+          // Refreshing a timestamp does not authorize changing the terms approved
+          // by the reviewer. Keep deterministic fallback separate from a completed
+          // decision, and let the next natural cycle review changed terms.
+          if (
+            !reviewedQuote ||
+            !executionQuote ||
+            executionQuote.referencePrice !== reviewedQuote.referencePrice ||
+            executionQuote.bidPrice !== reviewedQuote.bidPrice ||
+            executionQuote.askPrice !== reviewedQuote.askPrice ||
+            executionQuote.sourceUrlOrArtifact !== reviewedQuote.sourceUrlOrArtifact ||
+            executionQuote.feed !== reviewedQuote.feed ||
+            executionQuote.priceBasis !== reviewedQuote.priceBasis ||
+            executionQuote.maxAgeMs !== reviewedQuote.maxAgeMs ||
+            Date.parse(executionQuote.referencePriceAt) < Date.parse(reviewedQuote.referencePriceAt)
+          ) {
+            refusals.push(
+              `${item.instrument}: execution quote changed since model review; requires a new decision`,
+            );
+            continue;
+          }
         }
       }
       const referencePrice =
@@ -1666,12 +1815,36 @@ export async function runFinanceDailyCycle(
         },
         instruments,
         ordersPlacedThisRun: placed.length,
-        committedInstrumentNotional: committedNotional.get(item.instrument) ?? 0,
+        committedInstrumentNotional:
+          item.action === "buy"
+            ? Math.max(
+                committedNotional.get(item.instrument) ?? 0,
+                heldInstrumentNotional(item.instrument, referencePrice),
+              )
+            : (committedNotional.get(item.instrument) ?? 0),
       } as const;
       // Slippage is a modelling assumption the local simulator needs and the venue does not:
       // an Alpaca fill reports the price it actually got, so passing a modelled one would
       // silently overwrite a real observation with a guess.
       //
+      if (params.venue === "alpaca" && params.portfolioPlan) {
+        try {
+          // Collection, review and earlier orders can outlive the plan lease.
+          // Reuse its owner validation at dispatch time, not the cycle's frozen asOf.
+          validateFinancePortfolioPlan(
+            params.portfolioPlan,
+            new Date((params.executionNow ?? Date.now)()).toISOString(),
+            params.venue,
+          );
+        } catch {
+          refusals.push("portfolio plan no longer valid at execution; stopped remaining orders");
+          recordUnattempted(
+            executionIndex,
+            "because portfolio plan was no longer valid before dispatch",
+          );
+          break;
+        }
+      }
       const result = await attemptCycleOrder(() =>
         params.venue === "alpaca"
           ? runFinanceAlpacaOrder(shared)
@@ -1691,6 +1864,10 @@ export async function runFinanceDailyCycle(
             : {}),
         });
         if ("uncertain" in result && result.uncertain) {
+          recordUnattempted(
+            executionIndex + 1,
+            `after ${item.instrument} execution outcome became uncertain; pending reconciliation`,
+          );
           dataIssues.push(
             "execution outcome uncertain; stopped remaining orders pending reconciliation",
           );
@@ -1707,14 +1884,27 @@ export async function runFinanceDailyCycle(
       if (record.refusal !== null) {
         refusals.push(`${item.instrument}: ${record.refusal}`);
       }
-      if (!record.recorded) {
-        continue;
+      if (record.recorded) {
+        placed.push({
+          instrument: item.instrument,
+          quantity: record.quantity,
+          notional: record.notional,
+        });
       }
-      placed.push({
-        instrument: item.instrument,
-        quantity: record.quantity,
-        notional: record.notional,
-      });
+      if (!record.recorded || !record.marked) {
+        recordUnattempted(
+          executionIndex + 1,
+          `after ${item.instrument} accepted execution projection incomplete; pending reconciliation`,
+        );
+        // Acceptance/fill already consumed execution authority. A failed projection
+        // must not turn it into an unused order slot or a trustworthy empty book.
+        // The original confirmed-execution recovery owns replaying receipts/marks,
+        // never another venue order. Keep its exact identity in the cycle report.
+        dataIssues.push(
+          `${item.instrument}: accepted execution projection incomplete; stopped remaining orders pending reconciliation; receiptId=${result.receipt.receiptId}; venueRef=${result.receipt.fill.venueRef}`,
+        );
+        break;
+      }
     }
   }
 

@@ -272,10 +272,16 @@ describe("canonical account observation", () => {
   async function reconcile(
     extra: Record<string, unknown> = {},
     latency?: { historyMs: number; appendMs: number },
+    historyActivities: Record<string, unknown>[] = [],
   ) {
     syncMocks.append.mockReset();
     syncMocks.history.mockResolvedValue({ status: "raw_history_synced" });
-    syncMocks.readHistory.mockResolvedValue({ records: [], headRef: "history-head" });
+    syncMocks.readHistory.mockResolvedValue({
+      records: historyActivities.length
+        ? [{ body: { query: "activities:window", payload: historyActivities } }]
+        : [],
+      headRef: "history-head",
+    });
     if (latency) {
       syncMocks.readHistory.mockImplementation(async () => {
         vi.setSystemTime(Date.now() + latency.historyMs);
@@ -316,6 +322,50 @@ describe("canonical account observation", () => {
     });
     return { snapshot, read };
   }
+  it("does not reconcile a balanced round-trip that lies beyond the sealed cutoff", async () => {
+    const rows = ["buy", "sell"].map((side) => ({
+      id: `late-${side}`,
+      activity_type: "FILL",
+      type: "fill",
+      side,
+      symbol: "SPY",
+      qty: "1",
+      price: "100",
+      transaction_time: "2020-01-02T00:00:00Z",
+    }));
+    const { snapshot } = await reconcile({}, undefined, rows);
+    expect(snapshot.status).toBe("unresolved");
+    expect(snapshot.issues).toContain("history_not_complete_from_inception");
+  });
+  it("preserves supported created-at-only cash merger pairs within the seal", async () => {
+    const merger = {
+      activity_type: "MA",
+      activity_sub_type: "CMA",
+      group_id: "merger-group",
+      corporate_action_id: "action",
+      symbol: "WBD",
+      currency: "USD",
+      status: "executed",
+      created_at: "2019-01-03T16:00:00Z",
+    };
+    const rows = [
+      {
+        id: "buy",
+        activity_type: "FILL",
+        type: "fill",
+        side: "buy",
+        symbol: "WBD",
+        qty: "10",
+        price: "50",
+        transaction_time: "2019-01-02T16:00:00Z",
+      },
+      { ...merger, id: "cash", net_amount: "500" },
+      { ...merger, id: "shares", qty: "-10", price: "50", net_amount: "0" },
+    ];
+    const { snapshot } = await reconcile({}, undefined, rows);
+    expect(snapshot.status).toBe("reconciled");
+    expect(snapshot.cashDifference).toBe(0);
+  });
   it("projects only activities for reconciliation without changing account reads", async () => {
     syncMocks.projection.mockClear();
     const { snapshot, read } = await reconcile();
@@ -345,8 +395,8 @@ describe("canonical account observation", () => {
     });
     for (const [url] of read.mock.calls.filter(([url]) => /activities\/(?:CFEE|FEE)/u.test(url))) {
       const query = new URL(url).searchParams;
-      expect(query.has("after")).toBe(false);
-      expect(query.has("until")).toBe(false);
+      expect(query.get("after")).toBe("1999-01-01T00:00:00Z");
+      expect(query.get("until")).toBe("2020-01-01T00:00:00Z");
       expect(query.get("direction")).toBe("asc");
       expect(query.get("page_size")).toBe("100");
     }
@@ -720,4 +770,52 @@ it("stops cancelled reconciliation before accepting a late account response", as
   expect(read).toHaveBeenCalledTimes(1);
   expect(syncMocks.history).not.toHaveBeenCalled();
   expect(syncMocks.append).not.toHaveBeenCalled();
+});
+
+it("keeps executed fee activities blocked until the broker cash actually reflects their debit", () => {
+  const activities = [
+    {
+      id: "funding",
+      activity_type: "JNLC",
+      status: "executed",
+      net_amount: "100",
+      currency: "USD",
+    },
+    {
+      id: "cat",
+      activity_type: "FEE",
+      status: "executed",
+      net_amount: "-0.01",
+      currency: "USD",
+      created_at: "2026-10-15T00:06:26.239442Z",
+      date: "2026-10-14",
+    },
+    {
+      id: "reg",
+      activity_type: "FEE",
+      status: "executed",
+      net_amount: "-0.23",
+      currency: "USD",
+      created_at: "2026-10-15T00:16:46.654286Z",
+      date: "2026-10-14",
+    },
+  ];
+  const input = {
+    activities,
+    positions: [],
+    completeFromInception: true,
+    asOf: "2026-10-15T07:20:00.000Z",
+  };
+  const lagging = reconcileFinanceBrokerActivities({ ...input, cash: 100 });
+  expect(lagging).toMatchObject({
+    status: "unresolved",
+    feesInterpreted: false,
+  });
+  expect(lagging.cashComponents.feeCash).toBeCloseTo(-0.24, 8);
+  expect(lagging.cashDifference).toBeCloseTo(0.24, 8);
+  expect(lagging.issues).toContain("cash_difference");
+  expect(reconcileFinanceBrokerActivities({ ...input, cash: 99.76 })).toMatchObject({
+    status: "reconciled",
+    feesInterpreted: true,
+  });
 });

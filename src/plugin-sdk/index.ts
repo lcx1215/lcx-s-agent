@@ -347,11 +347,17 @@ export {
 } from "../infra/device-pairing.js";
 export { createDedupeCache } from "../infra/dedupe.js";
 export type { DedupeCache } from "../infra/dedupe.js";
-export { createPersistentDedupe } from "./persistent-dedupe.js";
+export {
+  createPersistentDedupe,
+  parsePersistentDedupeState,
+  assertPersistentDedupeStatePreserved,
+  withPersistentDedupeStateLock,
+} from "./persistent-dedupe.js";
 export type {
   PersistentDedupe,
   PersistentDedupeCheckOptions,
   PersistentDedupeOptions,
+  PersistentDedupeState,
 } from "./persistent-dedupe.js";
 export { formatErrorMessage } from "../infra/errors.js";
 export {
@@ -694,3 +700,9 @@ export { loadWebMedia, type WebMediaResult } from "../web/media.js";
 
 // Security utilities
 export { redactSensitiveText } from "../logging/redact.js";
+
+export {
+  parseExternalTarget,
+  normalizeExternalTarget,
+  formatExternalTarget,
+} from "../channels/plugins/normalize/external.js";

@@ -347,6 +347,7 @@ export async function runAgentTurnWithFallback(params: {
                 }
                 return isMarkdownCapableMessageChannel(channel) ? "markdown" : "plain";
               })(),
+              disableMessageTool: params.opts?.disableMessageTool,
               suppressToolErrorWarnings: params.opts?.suppressToolErrorWarnings,
               bootstrapContextMode: params.opts?.bootstrapContextMode,
               bootstrapContextRunKind: params.opts?.isHeartbeat ? "heartbeat" : "default",

@@ -7,6 +7,7 @@ import { readFinancePaperEconomicAttribution } from "./finance-paper-economic-at
 import {
   appendFinanceBrokerHistory,
   reduceFinanceBrokerHistoryRecords,
+  withFinanceBrokerHistorySnapshot,
 } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -255,6 +256,16 @@ export async function readFinancePaperEconomicWindow(
   accountId: string,
   asOf: string,
 ) {
+  try {
+    return await withFinanceBrokerHistorySnapshot(directory, () =>
+      readEconomicWindowSnapshot(directory, accountId, asOf),
+    );
+  } catch {
+    return { status: "unavailable", reason: "account_economic_observation_unverified" };
+  }
+}
+
+async function readEconomicWindowSnapshot(directory: string, accountId: string, asOf: string) {
   try {
     if (!Number.isFinite(Date.parse(asOf)) || Date.parse(asOf) > Date.now()) {
       throw new Error("invalid cutoff");

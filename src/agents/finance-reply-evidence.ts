@@ -220,7 +220,10 @@ export function createFinanceReplyEvidenceTracker(params: {
       if (reference.receiptSha256 !== receipt.receiptSha256) {
         return block(["finance_receipt_reference_hash_conflict"]);
       }
-      const relativePath = path.relative(params.workspaceDir, receipt.receiptPath);
+      const relativePath = path
+        .relative(params.workspaceDir, receipt.receiptPath)
+        .split(path.sep)
+        .join("/");
       if (!/^state\/finance-research-runs\/[^/]+\.json$/u.test(relativePath)) {
         return block(["finance_receipt_path_outside_original_owner"]);
       }

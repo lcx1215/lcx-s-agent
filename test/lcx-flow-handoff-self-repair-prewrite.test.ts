@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { auditWorkflowHandoffs } from "../scripts/operator/lcx-flow-graph.js";
+import { withRealpathSymlinkRebindRace } from "../src/test-utils/symlink-rebind-race.js";
 import {
   produceOriginalPrewriteRecall,
   readOriginalPrewriteContentReview,
@@ -96,6 +97,85 @@ describe.skipIf(before)("original latest candidate root byte observation", () =>
   });
 });
 describe.skipIf(before)("same-attempt original self-repair consumers", () => {
+  it("accepts a canonical producer map through a stable workspace alias", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-prewrite-map-alias-"));
+    roots.push(directory);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network forbidden")));
+    const result = await probeOriginalSelfRepairSameAttempt({
+      directory,
+      scenario: "read",
+      observeNextFeedback: true,
+      canonicalProducerMap: true,
+    });
+    expect(result.nextFeedback?.completed.diagnosticFeedback?.status).toBe("read");
+    expect(
+      result.scenarioAudit?.gaps.filter(
+        (gap) =>
+          gap.reason.startsWith("feedback_read_") ||
+          gap.reason === "consumer_did_not_receive_output:owner_coverage_map",
+      ),
+    ).toEqual([]);
+    const canonicalInput = structuredClone(result.auditInput);
+    const feedback = canonicalInput[0].feedbackReads![0];
+    feedback.receipt.path = await fs.realpath(feedback.receipt.path);
+    const canonicalAudit = (await auditWorkflowHandoffs(canonicalInput)).find(
+      (entry) => entry.scenarioId === "self_repair_hands_waterflow",
+    );
+    expect(
+      canonicalAudit?.gaps.filter(
+        (gap) =>
+          gap.reason.startsWith("feedback_read_") ||
+          gap.reason === "consumer_did_not_receive_output:owner_coverage_map",
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects a producer map in a retargeted workspace after pinning the original root", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-prewrite-map-rebind-"));
+    roots.push(directory);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network forbidden")));
+    const result = await probeOriginalSelfRepairSameAttempt({
+      directory,
+      scenario: "read",
+      observeNextFeedback: true,
+      canonicalProducerMap: true,
+    });
+    const next = result.nextFeedback!;
+    const alias = next.completed.workspaceDir;
+    const other = path.join(directory, "other-workspace");
+    await fs.cp(result.produced.workspaceDir, other, { recursive: true });
+    const otherMap = path.join(other, path.relative(result.produced.workspaceDir, result.mapPath));
+    expect(await fs.readFile(otherMap)).toEqual(await fs.readFile(result.mapPath));
+    const input = result.auditInput.map((scenario) => ({
+      ...scenario,
+      nodes: scenario.nodes.map((node) =>
+        node.nodeId === "owner_coverage_map"
+          ? {
+              ...node,
+              scope: { ...node.scope, path: otherMap },
+              output: node.output ? { ...node.output, path: otherMap } : undefined,
+              inputs: node.inputs?.map((input) => ({
+                ...input,
+                value: { ...input.value, path: otherMap },
+              })),
+            }
+          : node,
+      ),
+    }));
+    const audit = await withRealpathSymlinkRebindRace({
+      shouldFlip: (filePath) => filePath === next.completed.latestJsonPath,
+      symlinkPath: alias,
+      symlinkTarget: other,
+      timing: "after-realpath",
+      run: () => auditWorkflowHandoffs(input),
+    });
+    const observed = audit.find((entry) => entry.scenarioId === "self_repair_hands_waterflow");
+    expect(await fs.realpath(alias), JSON.stringify(observed?.gaps)).toBe(await fs.realpath(other));
+    expect(
+      observed?.gaps.some((gap) => gap.reason === "feedback_read_current_map_pin_mismatch"),
+    ).toBe(true);
+  });
+
   it.each(["read", "missing_memory", "review_timeout"] as const)(
     "retains original scope and propagates the %s outcome through review, governance and owner feedback",
     async (scenario) => {
@@ -363,8 +443,18 @@ describe.skipIf(before)("same-attempt original self-repair consumers", () => {
           ).toBe(true);
         }
         if (scenario === "review_timeout") {
-          expect(result.reviewCalls.length).toBeGreaterThan(0);
-          expect(result.reviewCalls.every((entry) => entry.abortObserved)).toBe(true);
+          expect(result.reviewed?.reviewed.gaps).toContain("self_repair_review_deadline");
+          if (result.reviewCalls.length) {
+            expect(result.reviewCalls.every((entry) => entry.abortObserved)).toBe(true);
+            expect(result.reviewed?.reviewed.cleanup).toBe(
+              "local_listener_released_model_cleanup_unconfirmed",
+            );
+          } else {
+            // The same deadline also bounds source reads before model invocation.
+            expect(result.reviewed?.reviewed.cleanup).toBe(
+              "local_listener_released_read_cleanup_unconfirmed",
+            );
+          }
         } else {
           expect(result.reviewCalls).toHaveLength(0);
         }

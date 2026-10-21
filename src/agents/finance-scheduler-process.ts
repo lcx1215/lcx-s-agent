@@ -43,6 +43,7 @@ export async function runFinanceCycleProcess(params: {
     return { ...result, status: "cancelled" };
   }
   const graceMs = params.killGraceMs ?? 1000;
+  const deadlineAtMs = Date.now() + params.timeoutMs;
   let termination: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stop: () => void = () => {};
@@ -71,8 +72,14 @@ export async function runFinanceCycleProcess(params: {
         full[key] = true;
       }
     };
-    child.stdout.setEncoding("utf8").on("data", (text: string) => append("stdout", text));
-    child.stderr.setEncoding("utf8").on("data", (text: string) => append("stderr", text));
+    const onOutput = (key: "stdout" | "stderr", text: string) => {
+      if (Date.now() >= deadlineAtMs) {
+        terminate("timed_out");
+      }
+      append(key, text);
+    };
+    child.stdout.setEncoding("utf8").on("data", (text: string) => onOutput("stdout", text));
+    child.stderr.setEncoding("utf8").on("data", (text: string) => onOutput("stderr", text));
     const terminate = (status: "timed_out" | "cancelled") => {
       if (termination || result.status === "spawn_error") {
         return;
@@ -97,7 +104,8 @@ export async function runFinanceCycleProcess(params: {
         result.exitCode = result.status === "spawn_error" ? null : code;
         result.signal = signal;
         if (!termination && result.status !== "spawn_error") {
-          result.status = code === 0 ? "succeeded" : "failed";
+          result.status =
+            Date.now() >= deadlineAtMs ? "timed_out" : code === 0 ? "succeeded" : "failed";
         }
         resolve();
       });

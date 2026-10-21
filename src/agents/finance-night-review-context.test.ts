@@ -1,7 +1,9 @@
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import * as barLedger from "./finance-bar-ledger.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
@@ -13,12 +15,14 @@ import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
+  readFinanceIntradayAccountHistory,
   type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
 import {
   buildFinanceActiveStrategyResearchEvidence,
   buildFinanceBrokerAccountResearchEvidence,
   buildFinanceNightReviewEvidence,
+  readFinanceScheduledIntradayHistory,
   summarizeFinanceNightIntradayEvidence,
   readFinanceNightReviewResearchScope,
   readFinanceActiveStrategyResearchScope,
@@ -28,6 +32,7 @@ import {
   appendFinanceExecutionReceipt,
   readFinanceLatestBrokerReconciliations,
 } from "./finance-position-ledger.js";
+import { commitFinanceSchedulerDatabaseState } from "./finance-scheduler-ledger.js";
 import {
   declareFinanceStrategyRule,
   activateFinanceStrategyRule,
@@ -192,7 +197,17 @@ describe("finance night review context", () => {
         "finance-strategy-rule-ledger",
         "finance-intraday-control-ledger",
         "finance-night-research-scope",
+        "finance-daily-execution-history",
       ]);
+      expect(JSON.parse(evidence.at(-1)!.text)).toMatchObject({
+        executionAuthority: "none",
+        accounts: expect.arrayContaining([
+          expect.objectContaining({
+            accountId: "test-account",
+            history: expect.objectContaining({ status: "unavailable" }),
+          }),
+        ]),
+      });
       expect(evidence[4].text).toContain("risk_gate_blocked");
       expect(
         evidence.reduce((total, item) => total + Buffer.byteLength(item.text, "utf8"), 0),
@@ -203,7 +218,14 @@ describe("finance night review context", () => {
         omittedDecisionCount: 0,
       });
       const review = JSON.parse(evidence[0].text).profitReview;
-      expect(review.questions).toHaveLength(6);
+      expect(review.questions).toHaveLength(8);
+      expect(review.questions).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Use accountPerformance"),
+          expect.stringContaining("Which reconciled account holdings"),
+          expect.stringContaining("Use methodPerformance"),
+        ]),
+      );
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
       const portfolio = JSON.parse(evidence[2].text);
       expect(portfolio.costsReconciled).toBe(false);
@@ -226,6 +248,8 @@ describe("finance night review context", () => {
       // account reader selects only sealed snapshots available at the cutoff.
       expect(JSON.parse(sharedBrokerSummary.text)).toMatchObject({
         ...brokerSummary,
+        // Only the in-cutoff account contributes an economic window here.
+        accountPerformance: [{ status: "unavailable", reason: "no_account_economic_observation" }],
         accounts: brokerSummary.accounts.filter(
           (account: { status: string }) => account.status !== "snapshot_outside_cutoff",
         ),
@@ -838,7 +862,7 @@ it("supplies actual active rule bodies and historical closes from the controller
       kind: "declared",
       ruleId: "trend",
       form: "trend",
-      instruments: ["AAA"],
+      instruments: ["AAA", "BBB"],
       emits: "weights",
       schedule: { kind: "monthly" },
       body,
@@ -872,10 +896,28 @@ it("supplies actual active rule bodies and historical closes from the controller
       observedAt: "2026-09-04T01:00:00Z",
       bars: [{ date: "2026-09-02", open: 100, high: 104, low: 98, close: 101 }],
     });
-    const evidence = await buildFinanceActiveStrategyResearchEvidence({
-      directory,
-      asOf: researchAsOf,
+    await appendFinanceBars(directory, {
+      instrument: "BBB",
+      derivation: "ohlcv",
+      provenance: { origin: "fixture" },
+      observedAt: "2026-09-03T00:00:00Z",
+      bars: [{ date: "2026-09-02", open: 200, high: 202, low: 199, close: 201 }],
     });
+    const read = vi.spyOn(barLedger, "readFinanceBarLedger");
+    let evidence: Awaited<ReturnType<typeof buildFinanceActiveStrategyResearchEvidence>>;
+    try {
+      evidence = await buildFinanceActiveStrategyResearchEvidence({
+        directory,
+        asOf: researchAsOf,
+      });
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      read.mockRestore();
+    }
+    const second = JSON.parse(evidence[2].text);
+    expect(second).toMatchObject({ instrument: "BBB", suppliedBarCount: 1, divergentDates: [] });
+    expect(second.monthlyCloseObservations[0].closeValues).toEqual([201]);
+    expect(second.headRef).toBe(JSON.parse(evidence[1].text).headRef);
     expect(JSON.parse(evidence[0].text).activeRules[0]).toMatchObject({
       ruleId: "trend",
       declaredAt: declaration.record.recordedAt,
@@ -1101,61 +1143,105 @@ it("preserves numerical inputs while compressing controller history for model co
   }
 });
 
-it("retains the prior calendar-month anchor through the controller-to-research handoff", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-controller-anchor-"));
-  try {
-    await declareFinanceStrategyRule(directory, {
-      kind: "declared",
-      ruleId: "trend",
-      form: "cross_asset_trend",
-      formVersion: "1",
-      instruments: ["SPY"],
-      emits: "target_weights",
-      schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
-      body: { frozenRule: { lookbackMonths: 12 } },
-      observedAt: "2025-09-01T00:00:00.000Z",
-    });
-    await activateFinanceStrategyRule(directory, {
-      kind: "activated",
-      ruleId: "trend",
-      reason: "paper test",
-      observedAt: "2025-09-02T00:00:00.000Z",
-    });
-    await appendFinanceBars(directory, {
-      instrument: "SPY",
-      derivation: "ohlcv",
-      provenance: { origin: "controller-month-anchor-fixture" },
-      observedAt: "2026-09-29T20:00:00.000Z",
-      bars: [
-        { date: "2025-08-29", open: 100, high: 100, low: 100, close: 100 },
-        { date: "2026-08-31", open: 110, high: 110, low: 110, close: 110 },
-        { date: "2026-09-29", open: 120, high: 120, low: 120, close: 120 },
-      ],
-    });
-    const evidence = await buildFinanceActiveStrategyResearchEvidence({
-      directory,
-      asOf: "2026-09-30T07:00:00.000Z",
-    });
-    const history = JSON.parse(
-      evidence.find((item) => item.id === "finance-controller:eod:SPY")!.text,
-    );
-    expect(history.fromDate).toBe("2025-08-01");
-    expect(history.monthlyCloseObservations[0]).toEqual({
-      month: "2025-08",
-      sessionDate: "2025-08-29",
-      closeValues: [100],
-    });
-    expect(history).not.toHaveProperty("closes");
-    const derived = evidence.find(
-      (item) => item.id === "finance-derived:monthly-close-change:trend:SPY",
-    );
-    expect(derived?.text).toContain("anchor close 110 on 2026-08-31");
-    expect(derived?.text).toContain("prior close 100 on 2025-08-29");
-    expect(derived?.text).toContain("formula (anchor/prior - 1) * 100 = +10.0%");
-  } finally {
-    await fs.rm(directory, { recursive: true, force: true });
-  }
-});
+it.each([12, 24, 120])(
+  "retains the %s-month anchor through a dense controller-to-research handoff",
+  async (lookbackMonths) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-controller-anchor-"));
+    try {
+      await declareFinanceStrategyRule(directory, {
+        kind: "declared",
+        ruleId: "trend",
+        form: "cross_asset_trend",
+        formVersion: "1",
+        instruments: ["SPY"],
+        emits: "target_weights",
+        schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+        body: { frozenRule: { lookbackMonths } },
+        observedAt: "2025-09-01T00:00:00.000Z",
+      });
+      await activateFinanceStrategyRule(directory, {
+        kind: "activated",
+        ruleId: "trend",
+        reason: "paper test",
+        observedAt: "2025-09-02T00:00:00.000Z",
+      });
+      if (lookbackMonths === 120) {
+        await declareFinanceStrategyRule(directory, {
+          kind: "declared",
+          ruleId: "short-trend",
+          form: "cross_asset_trend",
+          formVersion: "1",
+          instruments: ["SPY"],
+          emits: "target_weights",
+          schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+          body: { frozenRule: { lookbackMonths: 12 } },
+          observedAt: "2025-09-01T00:00:00.000Z",
+        });
+        await activateFinanceStrategyRule(directory, {
+          kind: "activated",
+          ruleId: "short-trend",
+          reason: "compare explicit horizons",
+          observedAt: "2025-09-02T00:00:00.000Z",
+        });
+      }
+      const priorYear = 2026 - lookbackMonths / 12;
+      const priorDate = `${priorYear}-08-29`;
+      const denseBars = [];
+      for (let time = Date.UTC(priorYear, 8, 1); time < Date.UTC(2026, 7, 31); time += 86400000) {
+        denseBars.push({
+          date: new Date(time).toISOString().slice(0, 10),
+          open: 105,
+          high: 105,
+          low: 105,
+          close: 105,
+        });
+      }
+      await appendFinanceBars(directory, {
+        instrument: "SPY",
+        derivation: "ohlcv",
+        provenance: { origin: "controller-month-anchor-fixture" },
+        observedAt: "2026-09-29T20:00:00.000Z",
+        bars: [
+          { date: priorDate, open: 100, high: 100, low: 100, close: 100 },
+          ...denseBars,
+          { date: "2026-08-31", open: 110, high: 110, low: 110, close: 110 },
+          { date: "2026-09-29", open: 120, high: 120, low: 120, close: 120 },
+        ],
+      });
+      const evidence = await buildFinanceActiveStrategyResearchEvidence({
+        directory,
+        asOf: "2026-09-30T07:00:00.000Z",
+      });
+      const history = JSON.parse(
+        evidence.find((item) => item.id === "finance-controller:eod:SPY")!.text,
+      );
+      expect(history.fromDate).toBe(`${priorYear}-08-01`);
+      expect(history.suppliedBarCount).toBe(denseBars.length + 3);
+      expect(history.omittedByLimit).toBe(0);
+      expect(history.monthlyCloseObservations[0]).toEqual({
+        month: `${priorYear}-08`,
+        sessionDate: priorDate,
+        closeValues: [100],
+      });
+      expect(history).not.toHaveProperty("closes");
+      const derived = evidence.find(
+        (item) => item.id === "finance-derived:monthly-close-change:trend:SPY",
+      );
+      expect(derived?.text).toContain("anchor close 110 on 2026-08-31");
+      expect(derived?.text).toContain(`prior close 100 on ${priorDate}`);
+      expect(derived?.text).toContain("formula (anchor/prior - 1) * 100 = +10.0%");
+      if (lookbackMonths === 120) {
+        const shorter = evidence.find(
+          (item) => item.id === "finance-derived:monthly-close-change:short-trend:SPY",
+        );
+        expect(shorter?.text).toContain("lookback=12 calendar months");
+        expect(shorter?.text).toContain("+4.8%");
+      }
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("preserves held crypto identity and unions it with active strategy instruments", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-research-scope-"));
@@ -1583,7 +1669,7 @@ it("passes active close history to night research using the latest completed mar
         }),
       ]),
     );
-    expect(evidence).toHaveLength(8);
+    expect(evidence).toHaveLength(9);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -1675,7 +1761,7 @@ describe("shared broker account research evidence", () => {
             portfolioValue: 200,
             accountObservationSource: source,
             accountObservationObservedAt: observedAt,
-            missingFields: [],
+            missingFields: ["positions.market_value"],
             accountBalanceDiagnostics: {
               balanceAsOf: "2026-09-20",
               accruedFees: 0,
@@ -1689,7 +1775,7 @@ describe("shared broker account research evidence", () => {
             buyingPower: null,
             portfolioValue: null,
             accountObservationSource: null,
-            missingFields: ["equity", "buyingPower", "portfolioValue"],
+            missingFields: ["equity", "buyingPower", "portfolioValue", "positions.market_value"],
             accountBalanceDiagnostics: {
               balanceAsOf: null,
               accruedFees: null,
@@ -1825,7 +1911,7 @@ describe("shared broker account research evidence", () => {
             brokerCash: 100,
             equity: null,
             buyingPower: null,
-            missingFields: ["equity", "buyingPower", "portfolioValue"],
+            missingFields: ["equity", "buyingPower", "portfolioValue", "positions.market_value"],
             positions: [{ symbol: "SPY", quantity: 1 }],
           },
         ],
@@ -2247,3 +2333,465 @@ it.each(["cash_difference", "stale", "multiple_accounts", "no_broker"])(
     }
   },
 );
+
+it.each([
+  { value: "125.50", expected: 125.5 },
+  { value: -125.5, expected: -125.5 },
+  { value: 0, expected: 0 },
+  { value: "", expected: null },
+  { value: "invalid", expected: null },
+  { value: undefined, expected: null },
+])(
+  "preserves observed position valuation or names its gap ($value)",
+  async ({ value, expected }) => {
+    const asOf = "2026-09-22T22:00:00.000Z";
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "position-value-context-"));
+    try {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "selected",
+        venue: "alpaca:paper",
+        query: "reconciliation:valuation",
+        cursor: "",
+        payload: [
+          {
+            observedAt: asOf,
+            brokerCash: 100,
+            positions: [
+              { symbol: "SPY", qty: "1", ...(value === undefined ? {} : { market_value: value }) },
+            ],
+            protection: { coverage: [] },
+          },
+        ],
+      });
+      const summary = JSON.parse(
+        (
+          await buildFinanceBrokerAccountResearchEvidence({
+            directory,
+            asOf,
+            accountId: "selected",
+            venue: "alpaca:paper",
+          })
+        ).text,
+      );
+      expect(summary.positionSnapshots[0].positions[0]).toEqual({
+        symbol: "SPY",
+        quantity: 1,
+        marketValue: expected,
+      });
+      expect(summary.positionSnapshots[0].missingFields.includes("positions.market_value")).toBe(
+        expected === null,
+      );
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("hands original account execution history to day configuration and night research", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "account-execution-research-"));
+  const asOf = "2026-09-22T22:00:00.000Z";
+  try {
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "trend",
+      form: "trend",
+      instruments: ["OTHER"],
+      emits: "weights",
+      schedule: { kind: "daily" },
+      body: { frozenRule: { lookbackMonths: 6 } },
+      observedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "trend",
+      reason: "existing strategy fixture",
+      observedAt: "2026-09-02T00:00:00.000Z",
+    });
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId: "selected",
+      venue: "alpaca:paper",
+      query: "reconciliation:selected",
+      cursor: "",
+      payload: [
+        {
+          observedAt: asOf,
+          brokerCash: 1000,
+          positions: [{ symbol: "OTHER", qty: "2", market_value: "500" }],
+          protection: { coverage: [] },
+        },
+      ],
+    });
+    const priorAsOf = "2026-09-22T19:30:00.000Z";
+    const output = {
+      mode: "day",
+      asOf: priorAsOf,
+      positionBook: { source: "controller_account", accountId: "selected" },
+      ruleIds: ["trend"],
+      tradeDecisionReview: {
+        status: "completed",
+        candidateInputs: [
+          {
+            candidateId: "prior-OTHER",
+            instrument: "OTHER",
+            side: "buy",
+            targetWeight: 0.4,
+            currentWeight: 0.2,
+            notional: 1000,
+          },
+        ],
+        decisions: [
+          {
+            candidateId: "prior-OTHER",
+            decision: "approve",
+            rationale: "Retain supported exposure",
+          },
+        ],
+      },
+      placed: [{ instrument: "OTHER", quantity: 2, notional: 500 }],
+      refusals: [],
+    };
+    commitFinanceSchedulerDatabaseState(directory, "{}", [
+      {
+        runId: "original-day",
+        mode: "day",
+        firedAt: priorAsOf,
+        completedAt: "2026-09-22T19:31:00.000Z",
+        outputTruncated: false,
+        execution: { placementEnabled: true, venue: "alpaca" },
+        stdout: JSON.stringify(output),
+      },
+    ]);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-22T19:32:00.000Z"));
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-history",
+        instrument: "OTHER",
+        sessionDate: "2026-09-22",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-22T19:32:00.000Z",
+        datasetHeadRef: "b".repeat(64),
+        strategyRule: "intraday",
+      });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId: "intraday-history",
+        status: "uncertain",
+        reasons: ["original_unknown_execution"],
+        executionScope: { accountId: "selected", venue: "alpaca:paper" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    const day = JSON.parse(
+      (
+        await buildFinanceBrokerAccountResearchEvidence({
+          directory,
+          asOf,
+          accountId: "selected",
+          venue: "alpaca:paper",
+        })
+      ).text,
+    );
+    expect(day.executionHistory).toMatchObject({
+      status: "observed",
+      entries: [
+        {
+          instrument: "OTHER",
+          proposedNotional: 1000,
+          reportedPlacement: { quantity: 2, notional: 500 },
+          sourceRef: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      ],
+    });
+    expect(day.intradayExecutionHistory).toMatchObject({
+      status: "observed",
+      entries: [
+        {
+          signalId: "intraday-history",
+          status: "uncertain",
+          reviewStatus: "not_observed",
+          reasons: ["original_unknown_execution"],
+        },
+      ],
+    });
+    // The scheduler-selected account must survive the two-account projection.
+    for (const accountId of ["newer-one", "newer-two"]) {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query: `reconciliation:${accountId}`,
+        cursor: "",
+        payload: [
+          { observedAt: asOf, brokerCash: 1000, positions: [], protection: { coverage: [] } },
+        ],
+      });
+    }
+    const night = await buildFinanceNightReviewEvidence({
+      directory,
+      asOf,
+      etDate: "2026-09-22",
+      includeResearchScope: true,
+      preferredAccountId: "selected",
+      settlement: {
+        scoredFiled: { appended: 0, skipped: 0 },
+        reflection: {},
+        pending: [],
+        declined: [],
+        issues: [],
+      },
+    });
+    const history = JSON.parse(
+      night.find((item) => item.source === "finance-daily-execution-history")!.text,
+    );
+    expect(history.accountCoverage).toMatchObject({
+      observedAccountCount: 3,
+      includedAccountCount: 2,
+      omittedAccountIds: ["newer-one"],
+      preferredAccountStatus: "included",
+    });
+    expect(history.accounts).toHaveLength(2);
+    const performance = JSON.parse(
+      night.find((item) => item.id === "finance-night:broker-profit:2026-09-22")!.text,
+    );
+    expect(
+      performance.accountPerformance.map((item: { accountId: string }) => item.accountId),
+    ).toEqual(["selected", "newer-two"]);
+    expect(history.accounts[0]).toEqual({
+      accountId: "selected",
+      history: day.executionHistory,
+      intradayHistory: day.intradayExecutionHistory,
+    });
+    expect(
+      night.reduce((bytes, item) => bytes + Buffer.byteLength(item.text), 0),
+    ).toBeLessThanOrEqual(250_000);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("resumes original hashed research history across day/night and retries a failed page", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "scheduled-feedback-continuation-"));
+  const asOf = "2026-09-22T15:00:00.000Z";
+  vi.useFakeTimers();
+  try {
+    for (let index = 0; index < 18; index++) {
+      vi.setSystemTime(new Date(Date.parse("2026-09-22T14:00:00.000Z") + index * 1000));
+      const signalId = `original-feedback-${index}`;
+      await appendFinanceIntradayDecision(directory, {
+        signalId,
+        instrument: "SPY",
+        sessionDate: "2026-09-22",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-22T13:59:00.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "a".repeat(64),
+        strategyRule: "opening_range_breakout_long_next_bar_v1",
+      });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId,
+        status: "refused",
+        reasons: ["retained original refusal"],
+        executionScope: { accountId: "account", venue: "alpaca:paper" },
+      });
+    }
+    const initial = await readFinanceIntradayAccountHistory(directory, {
+      accountId: "account",
+      asOf,
+    });
+    const archive = path.join(directory, "state", "finance-research-runs", "2026-09-22");
+    await fs.mkdir(archive, { recursive: true });
+    const save = async (
+      mode: "day" | "night",
+      history: unknown,
+      at: string,
+      ok: boolean,
+      addressed = true,
+    ) => {
+      const etDate = "2026-09-22",
+        runId = randomUUID();
+      const filename = path.join(
+        archive,
+        `2026-09-22T15-30-00-000Z__${runId}__finance-research-run.json`,
+      );
+      const evidence =
+        mode === "day"
+          ? {
+              id: "finance-controller:broker-account-summary",
+              source: "finance-broker-profit-summary",
+              text: JSON.stringify({ intradayExecutionHistory: history }),
+            }
+          : {
+              id: `finance-night:execution-history:${etDate}`,
+              source: "finance-daily-execution-history",
+              text: JSON.stringify({
+                accounts: [{ accountId: "account", intradayHistory: history }],
+              }),
+            };
+      const bytes = Buffer.from(
+        JSON.stringify({
+          schemaVersion: "lcx_finance_research_run_v1",
+          boundary: "finance_research_run_research_only",
+          plan: { asOf: at },
+          batch: { committeeEvidence: [evidence] },
+          intradayFeedbackReview: {
+            schemaVersion: "finance_research_intraday_feedback_review_v1",
+            boundary:
+              "reported_research_response_not_configuration_publication_execution_or_adoption",
+            researchAccepted: ok,
+            entries: addressed
+              ? (history as { entries: { outcomeRef: string; decisionRef: string }[] }).entries.map(
+                  (entry) => ({
+                    ...entry,
+                    accountId: "account",
+                    disposition: "deferred",
+                    reason: "Retain unresolved original evidence.",
+                    responseSource: "quality_final_artifact",
+                    evidence: [
+                      {
+                        id: evidence.id,
+                        sha256: createHash("sha256").update(evidence.text).digest("hex"),
+                      },
+                    ],
+                  }),
+                )
+              : [],
+          },
+        }),
+      );
+      await fs.writeFile(filename, bytes);
+      const processResult = {
+        stdout: JSON.stringify({
+          written: {
+            datedPath: filename,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+        }),
+      };
+      commitFinanceSchedulerDatabaseState(directory, "{}", [
+        {
+          runId,
+          mode,
+          etDate,
+          firedAt: at,
+          completedAt: new Date(Date.parse(at) + 60_000).toISOString(),
+          ...(mode === "day"
+            ? { researchPlanRefresh: { ok, processResult } }
+            : { nightReview: { ok, processResult, acceptance: { expectedAsOf: at } } }),
+        },
+      ]);
+      return filename;
+    };
+    await save("day", initial, asOf, false);
+    commitFinanceSchedulerDatabaseState(directory, "{}", [
+      {
+        runId: "newer-no-receipt",
+        mode: "day",
+        firedAt: "2026-09-22T15:02:00.000Z",
+        completedAt: "2026-09-22T15:03:00.000Z",
+        researchPlanRefresh: { ok: false, processResult: { stdout: "failed before receipt" } },
+      },
+    ]);
+    const retryAsOf = "2026-09-22T16:00:00.000Z";
+    const retry = await readFinanceScheduledIntradayHistory({
+      directory,
+      accountId: "account",
+      asOf: retryAsOf,
+      researchWorkspaceDir: directory,
+    });
+    expect(retry).toMatchObject({
+      status: "observed",
+      continuation: { status: "retrying_failed_research_page" },
+      pageCursor: "pageCursor" in initial ? initial.pageCursor : undefined,
+    });
+    await save("night", retry, retryAsOf, true, false);
+    const pending = await readFinanceScheduledIntradayHistory({
+      directory,
+      accountId: "account",
+      asOf: "2026-09-22T17:00:00.000Z",
+      researchWorkspaceDir: directory,
+    });
+    expect(pending).toMatchObject({
+      status: "observed",
+      pageCursor: "pageCursor" in retry ? retry.pageCursor : undefined,
+      continuation: { status: "retrying_unaddressed_feedback_page", pendingFeedbackCount: 8 },
+    });
+    const nightFile = await save("night", pending, "2026-09-22T17:00:00.000Z", true);
+    const next = await readFinanceScheduledIntradayHistory({
+      directory,
+      accountId: "account",
+      asOf: "2026-09-22T18:00:00.000Z",
+      researchWorkspaceDir: directory,
+    });
+    expect(next).toMatchObject({
+      status: "observed",
+      historyAsOf: asOf,
+      continuation: { status: "resumed", sourceMode: "night" },
+    });
+    expect(next.entries.some((entry) => entry.signalId === "original-feedback-9")).toBe(true);
+    await fs.appendFile(nightFile, " ");
+    expect(
+      await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: "2026-09-22T19:00:00.000Z",
+        researchWorkspaceDir: directory,
+      }),
+    ).toMatchObject({ status: "unavailable", reason: "scheduled_history_continuation_unverified" });
+    let page = next;
+    for (let index = 0; index < 6 && page.entries.length > 0; index++) {
+      await save("night", page, page.asOf, true);
+      page = await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: new Date(Date.parse("2026-09-22T18:10:00.000Z") + index * 120_000).toISOString(),
+        researchWorkspaceDir: directory,
+      });
+    }
+    expect(page).toMatchObject({ status: "observed", entries: [], nextCursor: null });
+    expect("resumeCursor" in page && page.resumeCursor).toEqual(expect.any(String));
+    // Unsigned/missing completion proof can only replay conservatively, never grant coverage.
+    await save("night", { ...page, resumeCursor: undefined }, page.asOf, true);
+    expect(
+      await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: "2026-09-22T19:00:00.000Z",
+        researchWorkspaceDir: directory,
+      }),
+    ).toMatchObject({
+      status: "observed",
+      continuation: { status: "legacy_progress_replayed_untrusted" },
+    });
+    commitFinanceSchedulerDatabaseState(
+      directory,
+      "{}",
+      Array.from({ length: 16 }, (_, index) => ({
+        runId: `failed-without-receipt-${index}`,
+        mode: index % 2 ? "day" : "night",
+        completedAt: "2026-09-22T18:30:00.000Z",
+      })),
+    );
+    expect(
+      await readFinanceScheduledIntradayHistory({
+        directory,
+        accountId: "account",
+        asOf: "2026-09-22T20:00:00.000Z",
+        researchWorkspaceDir: directory,
+      }),
+    ).toMatchObject({
+      status: "unavailable",
+      continuationGap: "scheduled_history_scoped_receipt_outside_bounded_window",
+    });
+  } finally {
+    vi.useRealTimers();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

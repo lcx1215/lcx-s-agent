@@ -2,12 +2,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
+import { projectFinanceAccountEconomicFeedback } from "./finance-account-economic-feedback.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   attributeFinancePaperEconomics,
   readFinancePaperEconomicAttribution,
 } from "./finance-paper-economic-attribution.js";
-import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
+import {
+  appendFinanceExecutionReceipt,
+  appendFinanceBrokerHistory,
+} from "./finance-position-ledger.js";
+import {
+  commitFinanceSchedulerDatabaseState,
+  readFinanceSchedulerDatabaseDayRuns,
+  FINANCE_SCHEDULER_DATABASE,
+} from "./finance-scheduler-ledger.js";
 
 const from = "2026-10-15T05:18:54.810Z",
   through = "2026-10-15T06:00:00.000Z";
@@ -295,3 +305,333 @@ it("reads exact hash-bound snapshots and cutoff from the original ledger without
     ),
   ).toHaveProperty("status", "unavailable");
 });
+
+it("retains historical attribution but exposes a newer unresolved cash snapshot and clears it only on reconciliation", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "economic-fee-gap-"));
+  dirs.push(dir);
+  const f = fixture();
+  const append = (at: string, payload: Record<string, unknown>[]) =>
+    appendFinanceBrokerHistory(dir, {
+      kind: "broker_history",
+      accountId: "paper",
+      venue: "alpaca:paper",
+      query: at,
+      cursor: "",
+      payload,
+    });
+  await append("activities:initial", [f.activities[0]]);
+  const opening = await append(`reconciliation:${from}`, [f.opening]);
+  await append(`reconciliation:${through}`, [snapshot(through, 2050, 10, 115)]);
+  const at = "2026-10-15T06:10:00.000Z";
+  const unresolved = await append(`reconciliation:${at}`, [
+    {
+      ...snapshot(at, 2050, 10, 115),
+      status: "unresolved",
+      feesInterpreted: false,
+      cashDifference: 0.24024382,
+      cashComponents: { feeCash: -4.29 },
+    },
+  ]);
+  const anchor = { ...f.anchor, ref: opening.record.ref };
+  const old = await readFinancePaperEconomicAttribution(dir, "paper", anchor, through);
+  expect(old).not.toHaveProperty("reconciliationStatus");
+  const gap = await readFinancePaperEconomicAttribution(dir, "paper", anchor, at);
+  expect(gap).toMatchObject({
+    status: "partially_attributed",
+    through,
+    attributedGrossPnl: 50,
+    reconciliationRef: unresolved.record.ref,
+    reconciliationAt: at,
+    reconciliationStatus: "unresolved",
+    latestCashDifference: 0.24024382,
+    latestFeeCash: -4.29,
+  });
+  const recoveredAt = "2026-10-15T06:20:00.000Z";
+  await append(`reconciliation:${recoveredAt}`, [snapshot(recoveredAt, 2050, 10, 115)]);
+  const recovered = await readFinancePaperEconomicAttribution(dir, "paper", anchor, recoveredAt);
+  expect(recovered).toMatchObject({
+    status: "gross_price_contributions_attributed",
+    through: recoveredAt,
+  });
+  expect(recovered).not.toHaveProperty("reconciliationStatus");
+});
+
+it("uses explicit fee creation time ahead of settlement date without claiming balance posting time", () => {
+  const f = fixture();
+  const lateFee = {
+    id: "late-created",
+    activity_type: "FEE",
+    status: "executed",
+    currency: "USD",
+    net_amount: "-0.24",
+    date: "2026-10-14",
+    created_at: "2026-10-15T05:45:00.000Z",
+  };
+  const r = attributeFinancePaperEconomics({ ...f, activities: [...f.activities, lateFee] });
+  expect(r.fees.periodConfirmedReportedCashFees).toBeCloseTo(3.24);
+  expect(r.fees.feeEvidence.find((e) => e.activityId === lateFee.id)).toHaveProperty(
+    "createdAt",
+    lateFee.created_at,
+  );
+  expect(r.fees.periodTimingBasis).toContain("not_balance_posting");
+});
+
+it.each([
+  {
+    id: "explicit-first",
+    transaction_time: "2026-10-15T04:00:00.000Z",
+    created_at: "2026-10-15T05:45:00.000Z",
+    expected: 3,
+    unknown: [],
+  },
+  { id: "future-created", created_at: "2026-10-15T07:00:00.000Z", expected: 3, unknown: [] },
+  { id: "bad-created", created_at: "2026-10-15T05:45:00", expected: 3, unknown: ["bad-created"] },
+])("preserves fee timing priority and uncertainty for $id", ({ expected, unknown, ...fee }) => {
+  const f = fixture();
+  const r = attributeFinancePaperEconomics({
+    ...f,
+    activities: [
+      ...f.activities,
+      {
+        ...fee,
+        activity_type: "FEE",
+        status: "executed",
+        currency: "USD",
+        net_amount: "-0.24",
+        date: "2026-10-14",
+      },
+    ],
+  });
+  expect(r.fees.periodConfirmedReportedCashFees).toBe(expected);
+  expect(r.fees.periodTimeAmbiguousActivityIds).toEqual(unknown);
+});
+
+function dailyFixture() {
+  const f = fixture();
+  const candidateId = "daily-cycle:2026-10-15:2026-10-01:SPY:buy";
+  f.receipts[1] = {
+    ...f.receipts[1],
+    intentId: "intent:daily_cycle:2026-10-01:SPY",
+    runAuthorizationId: "daily-cycle:2026-10-15",
+    decisionRef: { source: "daily_cycle_candidate", id: candidateId },
+  };
+  const output = {
+    mode: "day",
+    asOf: "2026-10-15T05:39:00.000Z",
+    signalAnchor: "2026-10-01",
+    positionBook: { source: "controller_account", accountId: "paper" },
+    ruleIds: ["daily-trend"],
+    tradeDecisionReview: {
+      status: "completed",
+      candidateInputs: [{ candidateId, instrument: "SPY", side: "buy", notional: 240 }],
+      decisions: [{ candidateId, decision: "approve" }],
+    },
+    placed: [{ instrument: "SPY", quantity: 2, notional: 240 }],
+  };
+  const run = {
+    runId: "daily-run",
+    mode: "day",
+    firedAt: output.asOf,
+    completedAt: "2026-10-15T05:41:00.000Z",
+    outputTruncated: false,
+    execution: { placementEnabled: true, venue: "alpaca" },
+    stdout: JSON.stringify(output),
+  };
+  return { ...f, dailyOutput: output, dailyRuns: [{ ref: "c".repeat(64), run }] };
+}
+
+it("attributes a confirmed daily allocation through its original scheduled candidate and receipt", () => {
+  const result = attributeFinancePaperEconomics(dailyFixture());
+  expect(result.cohorts.newDecisions.grossPnl).toBe(10);
+  expect(result.cohorts.unlinkedPostAnchorEntries.grossPnl).toBe(0);
+});
+
+it.each([
+  "account",
+  "candidate",
+  "quantity",
+  "veto",
+  "missing_approval",
+  "future",
+  "truncated",
+  "duplicate",
+  "missing",
+  "intent",
+] as const)("keeps unproven daily contribution unlinked (%s)", (mode) => {
+  const f = dailyFixture();
+  const output = f.dailyOutput;
+  if (mode === "account") {
+    output.positionBook.accountId = "foreign";
+  }
+  if (mode === "candidate") {
+    output.tradeDecisionReview.candidateInputs[0].candidateId = "wrong";
+  }
+  if (mode === "quantity") {
+    output.placed[0].quantity = 3;
+  }
+  if (mode === "veto") {
+    output.tradeDecisionReview.decisions[0].decision = "veto";
+  }
+  if (mode === "missing_approval") {
+    output.tradeDecisionReview.decisions = [];
+  }
+  if (mode === "future") {
+    f.dailyRuns[0].run.completedAt = "2026-10-15T07:00:00.000Z";
+  }
+  if (mode === "truncated") {
+    f.dailyRuns[0].run.outputTruncated = true;
+  }
+  if (mode === "intent") {
+    f.receipts[1] = { ...f.receipts[1], intentId: "wrong" };
+  }
+  f.dailyRuns[0].run.stdout = JSON.stringify(output);
+  if (mode === "duplicate") {
+    f.dailyRuns.push(f.dailyRuns[0]);
+  }
+  if (mode === "missing") {
+    f.dailyRuns = [];
+  }
+  const result = attributeFinancePaperEconomics(f);
+  expect(result.cohorts.newDecisions.grossPnl).toBe(0);
+  expect(result.cohorts.unlinkedPostAnchorEntries.grossPnl).toBe(10);
+});
+
+it("keeps an executed deterministic daily fallback attributable without claiming model adoption", () => {
+  const f = dailyFixture();
+  f.dailyOutput.tradeDecisionReview.status = "failed";
+  f.dailyOutput.tradeDecisionReview.decisions = [];
+  f.dailyRuns[0].run.stdout = JSON.stringify(f.dailyOutput);
+  expect(attributeFinancePaperEconomics(f).cohorts.newDecisions.grossPnl).toBe(10);
+});
+
+it("joins original scheduler history and receipt ledger into the next economic feedback source", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "daily-attribution-"));
+  dirs.push(dir);
+  const f = dailyFixture();
+  const append = (query: string, payload: Record<string, unknown>[]) =>
+    appendFinanceBrokerHistory(dir, {
+      kind: "broker_history",
+      accountId: "paper",
+      venue: "alpaca:paper",
+      query,
+      cursor: "",
+      payload,
+    });
+  await append("activities:initial", [f.activities[0]]);
+  const opening = await append(`reconciliation:${from}`, [f.opening]);
+  await append("activities:window", f.activities.slice(1));
+  await append(`reconciliation:${through}`, [f.closing]);
+  for (const receipt of f.receipts) {
+    await appendFinanceExecutionReceipt(dir, receipt);
+  }
+  commitFinanceSchedulerDatabaseState(dir, "{}", [f.dailyRuns[0].run]);
+  const result = await readFinancePaperEconomicAttribution(
+    dir,
+    "paper",
+    { ...f.anchor, ref: opening.record.ref },
+    through,
+  );
+  expect(result).toMatchObject({
+    cohorts: { newDecisions: { grossPnl: 10 }, unlinkedPostAnchorEntries: { grossPnl: 0 } },
+  });
+  const feedback = projectFinanceAccountEconomicFeedback(
+    {
+      accountId: "paper",
+      venue: "alpaca:paper",
+      sourceRef: "d".repeat(64),
+      observedAt: through,
+      postRepair: { attribution: result },
+    },
+    "paper",
+    through,
+  );
+  expect(feedback).toMatchObject({
+    newDecisionGrossPnl: 10,
+    unlinkedGrossPnl: 0,
+    inheritedGrossPnl: 130,
+  });
+  const rows = readFinanceSchedulerDatabaseDayRuns(dir);
+  expect(rows).toHaveLength(1);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(path.join(dir, FINANCE_SCHEDULER_DATABASE));
+  try {
+    db.exec("UPDATE scheduler_runs SET body='{}'");
+  } finally {
+    db.close();
+  }
+  expect(() => readFinanceSchedulerDatabaseDayRuns(dir)).toThrow("corrupt");
+  expect(
+    await readFinancePaperEconomicAttribution(
+      dir,
+      "paper",
+      { ...f.anchor, ref: opening.record.ref },
+      through,
+    ),
+  ).toMatchObject({
+    status: "partially_attributed",
+    issues: expect.arrayContaining(["daily_decision_history_unavailable"]),
+    cohorts: {
+      inheritedPositions: { grossPnl: 130 },
+      newDecisions: { grossPnl: 0 },
+      unlinkedPostAnchorEntries: { grossPnl: 10 },
+    },
+  });
+});
+
+it("attributes a new daily exit of inherited inventory without adding it to new-entry gains", () => {
+  const f = dailyFixture();
+  f.receipts[1] = fixture().receipts[1];
+  f.receipts[0] = {
+    ...f.receipts[0],
+    intentId: "intent:daily_cycle:2026-10-01:SPY",
+    runAuthorizationId: "daily-cycle:2026-10-15",
+    decisionRef: {
+      source: "daily_cycle_candidate",
+      id: "daily-cycle:2026-10-15:2026-10-01:SPY:sell",
+    },
+  };
+  f.dailyOutput.asOf = "2026-10-15T05:29:00.000Z";
+  const candidate = f.dailyOutput.tradeDecisionReview.candidateInputs[0];
+  candidate.candidateId = f.receipts[0].decisionRef!.id;
+  candidate.side = "sell";
+  candidate.notional = 480;
+  f.dailyOutput.tradeDecisionReview.decisions[0].candidateId = candidate.candidateId;
+  f.dailyOutput.placed[0] = { instrument: "SPY", quantity: 4, notional: 480 };
+  f.dailyRuns[0].run.firedAt = f.dailyOutput.asOf;
+  f.dailyRuns[0].run.completedAt = "2026-10-15T05:31:00.000Z";
+  f.dailyRuns[0].run.stdout = JSON.stringify(f.dailyOutput);
+  const result = attributeFinancePaperEconomics(f);
+  expect(result.inheritedExitsByNewDecision.grossPnl).toBe(40);
+  expect(result.cohorts.inheritedPositions.grossPnl).toBe(130);
+  expect(result.cohorts.newDecisions.grossPnl).toBe(10);
+});
+
+it.each(["receipt", "decision"] as const)(
+  "keeps duplicate %s evidence ambiguous after indexed association",
+  (kind) => {
+    const input = fixture();
+    if (kind === "receipt") {
+      input.receipts.push({ ...input.receipts[1] });
+    } else {
+      input.decisions.push({ ...input.decisions[1] });
+    }
+    const result = attributeFinancePaperEconomics(input);
+    expect(result.cohorts.newDecisions.grossPnl).toBe(0);
+    expect(result.cohorts.unlinkedPostAnchorEntries.grossPnl).toBe(10);
+  },
+);
+
+it.each([false, true])(
+  "keeps daily candidate identity distinct within a multi-candidate report (duplicate=%s)",
+  (duplicate) => {
+    const input = dailyFixture();
+    const original = input.dailyOutput.tradeDecisionReview.candidateInputs[0];
+    const candidateId = duplicate ? original.candidateId : `${original.candidateId}:other`;
+    input.dailyOutput.tradeDecisionReview.candidateInputs.push({ ...original, candidateId });
+    input.dailyOutput.tradeDecisionReview.decisions.push({ candidateId, decision: "veto" });
+    input.dailyRuns[0].run.stdout = JSON.stringify(input.dailyOutput);
+    const result = attributeFinancePaperEconomics(input);
+    expect(result.cohorts.newDecisions.grossPnl).toBe(duplicate ? 0 : 10);
+    expect(result.cohorts.unlinkedPostAnchorEntries.grossPnl).toBe(duplicate ? 10 : 0);
+  },
+);

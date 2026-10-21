@@ -604,12 +604,20 @@ export function ensureBindingsLoaded() {
     }
     return;
   }
-  const raw = loaded.value;
-  if (!raw || typeof raw !== "object") {
-    return;
-  }
-  const payload = raw as Partial<PersistedThreadBindingsPayload>;
-  if (payload.version !== 1 || !payload.bindings || typeof payload.bindings !== "object") {
+  const payload = loaded.value as Partial<PersistedThreadBindingsPayload> | null;
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    payload.version !== THREAD_BINDINGS_VERSION ||
+    !payload.bindings ||
+    typeof payload.bindings !== "object" ||
+    Array.isArray(payload.bindings)
+  ) {
+    THREAD_BINDINGS_STATE.blockedPersistReason = "unsupported-or-invalid-shape";
+    logWarn(
+      `[discord-thread-bindings] unsupported or invalid bindings at ${bindingsPath}; refusing to persist until repaired`,
+    );
     return;
   }
 

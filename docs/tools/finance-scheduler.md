@@ -78,6 +78,22 @@ contracts are transmitted separately from clipped general context. Deadline and
 cancellation failures emit a failed machine summary pointing to the durable
 checkpoint; they never advertise an accepted portfolio plan.
 
+Source, batch and whole-run limits also use wall deadlines. On wake from host
+suspension, queued HTTP dispatch and late results are checked before accepting
+more work or publishing a portfolio configuration. Scheduler output/completion
+checks likewise reject an expired child even if its timeout callback has not run.
+The original call ceilings and recovery rules remain: preserve completed evidence,
+inspect successful-but-incomplete evidence, and reconcile unknown dispatch.
+Host sleep and network failure remain distinct operational conditions; these
+checks do not provide execution or monitoring while the host is asleep.
+
+Day account research and scheduled night research consume the original intraday
+outcome ledger as bounded historical evidence. Native execution scope covers new
+failures before model review; older entries require their original review account.
+Unbound legacy failures remain excluded. The evidence keeps execution status,
+review status, reasons, hashes and timestamps separately. A saved or read outcome
+does not prove the natural model adopted it or that trading performance improved.
+
 ## Lifecycle and execution boundaries
 
 - `--cycle-timeout-ms N` bounds each cycle; the default is 900000 (15 minutes).

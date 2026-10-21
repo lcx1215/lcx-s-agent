@@ -289,16 +289,28 @@ function defaultNewsFor(
  * bars for all of them. Sampling only from the network threw that away and reported `lastPrice: 0`,
  * which downstream reads as "no opinion" rather than "we did not look in our own book".
  */
-function defaultBarFor(directory?: string): (instrument: string) => Promise<readonly FinanceBar[]> {
+function defaultBarFor(
+  directory: string | undefined,
+  instruments: readonly string[],
+): (instrument: string) => Promise<readonly FinanceBar[]> {
   const root = resolveFinanceStateDir({ directory }).directory;
+  let snapshot: Promise<Map<string, FinanceBar[]>> | undefined;
   return async (instrument) => {
-    try {
-      const ledger = await readFinanceBarLedger(root, { instrument });
-      return ledger.bars;
-    } catch {
-      // An unreadable book is a missing source, never a price.
-      return [];
-    }
+    // One lazy verified snapshot per batch, shared even when several providers
+    // refuse their symbols. Never retain it across independent sampling runs.
+    snapshot ??= readFinanceBarLedger(root, { instruments })
+      .then((ledger) => {
+        const byInstrument = new Map<string, FinanceBar[]>();
+        for (const bar of ledger.bars) {
+          const rows = byInstrument.get(bar.instrument) ?? [];
+          rows.push(bar);
+          byInstrument.set(bar.instrument, rows);
+        }
+        return byInstrument;
+      })
+      .catch(() => new Map<string, FinanceBar[]>());
+    // An unreadable book is a missing source, never a price.
+    return (await snapshot).get(instrument) ?? [];
   };
 }
 
@@ -636,6 +648,7 @@ export async function runResearchBatch(
       }
     });
 
+  const barFor = params.barFor ?? defaultBarFor(params.directory, todo);
   const recorded: BatchRecord[] = [];
   for (const instrument of todo) {
     recorded.push(
@@ -646,7 +659,7 @@ export async function runResearchBatch(
         targetAdapters,
         macroFor: params.macroFor ?? defaultMacroFor(env),
         newsFor: params.newsFor ?? defaultNewsFor(env),
-        barFor: params.barFor ?? defaultBarFor(params.directory),
+        barFor,
         warn,
       }),
     );

@@ -14,6 +14,8 @@ import {
 } from "../scripts/operator/local-brain-training-plan.js";
 import { reviewCleanupBeforeDecision } from "../src/agents/central-harness/cleanup-review-handoff.js";
 import { buildCentralGovernanceInput } from "../src/agents/central-harness/governance-input.js";
+import { readGlobalEvidenceProjectionForAdapter } from "../src/shared/global-evidence-projection-read.js";
+import { buildGlobalEvidenceProjection } from "../src/shared/global-evidence-projection.js";
 import {
   boundaryFromFlags,
   buildLcxRunReceipt,
@@ -212,6 +214,166 @@ async function runAutopilot() {
   };
 }
 
+describe("offline governance projection consumption time", () => {
+  it.each([
+    ["same-cycle owner output", "2026-10-19T01:07:38.876Z", "current", "projection_current"],
+    ["future owner output", "2026-10-19T01:09:00.000Z", "stale", "projection_time_ahead"],
+    ["expired owner output", "2026-10-19T00:00:00.000Z", "stale", "projection_stale"],
+  ])(
+    "reads %s at actual consumption without changing snapshot identity",
+    async (_name, generatedAt, readStatus, reason) => {
+      const observedAt = "2026-10-19T01:07:36.626Z";
+      const consumedAt = "2026-10-19T01:08:00.000Z";
+      const source = await fs.readFile(
+        path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"),
+        "utf8",
+      );
+      const ast = ts.createSourceFile("autopilot.ts", source, ts.ScriptTarget.Latest, true);
+      const names = new Set([
+        "governanceCheckedAt",
+        "globalEvidenceProjectionCheckedAt",
+        "globalEvidenceProjectionReader",
+      ]);
+      const statements = ast.statements.filter(
+        (statement) =>
+          ts.isVariableStatement(statement) &&
+          names.has(statement.declarationList.declarations[0]?.name.getText(ast)),
+      );
+      expect(statements.length).toBeGreaterThanOrEqual(2);
+      const projection = buildGlobalEvidenceProjection({
+        generatedAt,
+        sourceOwners: ["mind-model"],
+        lanes: [],
+        invariants: [],
+      });
+      const code = ts.transpileModule(
+        `${statements.map((statement) => statement.getText(ast)).join("\n")}
+({ checkedAt: governanceCheckedAt, reader: globalEvidenceProjectionReader });`,
+        { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+      ).outputText;
+      const result = vm.runInNewContext(code, {
+        governanceSnapshot: { observedAt },
+        byOwner: { mindModel: { projection } },
+        readGlobalEvidenceProjectionForAdapter,
+        Date: class extends Date {
+          constructor() {
+            super(consumedAt);
+          }
+        },
+      }) as {
+        checkedAt: string;
+        reader: ReturnType<typeof readGlobalEvidenceProjectionForAdapter>;
+      };
+      expect(result.checkedAt).toBe(observedAt);
+      expect(result.reader.read).toMatchObject({
+        readStatus,
+        reason,
+        blocked: readStatus !== "current",
+      });
+    },
+  );
+});
+
+describe("offline local-model candidate auto-repair relevance", () => {
+  const historical = {
+    boundary: "local_model_lane_relevance_only",
+    status: "historical_only",
+    configurationStatus: "observed",
+    configuredSelectionStatus: "remote_only",
+    processObservationStatus: "observed",
+    activeTrainingProcessCount: 0,
+    teacherEnabled: false,
+  };
+  it.each([
+    ["historical", {}, undefined],
+    ["unknown", { localModelLaneRelevance: undefined }, "candidate_eval_dirty_cases"],
+    [
+      "local selected",
+      {
+        localModelLaneRelevance: {
+          ...historical,
+          status: "current",
+          configuredSelectionStatus: "local_selected",
+        },
+      },
+      "candidate_eval_dirty_cases",
+    ],
+    [
+      "active despite historical label",
+      { activeProcesses: [{ pid: 123, role: "mlx", command: "private command omitted" }] },
+      "candidate_eval_dirty_cases",
+    ],
+    [
+      "unavailable process observation",
+      { activeProcessObservation: { status: "unavailable", processes: [] } },
+      "candidate_eval_dirty_cases",
+    ],
+    [
+      "independent module learning",
+      { decisions: [{ id: "module_learning_incomplete_evidence" }] },
+      "module_learning_incomplete_evidence",
+    ],
+    [
+      "independent skill failure",
+      { skillOpt: { staticGateOk: false } },
+      "skillopt_static_or_parse_gap",
+    ],
+  ] as const)(
+    "preserves native evidence and selects %s correctly",
+    async (_name, overrides, policyTriggerId) => {
+      const payload = {
+        latestCandidateEval: {
+          failedCaseIds: ["old-case"],
+          parseErrorCaseIds: [],
+          parseRecoveredCaseIds: [],
+        },
+        localModelLaneRelevance: historical,
+        activeProcessObservation: { status: "observed", processes: [] },
+        activeProcesses: [],
+        miniMaxTeacherRuntime: { enabled: false },
+        decisions: [],
+        ...overrides,
+      };
+      const source = await fs.readFile(
+        path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"),
+        "utf8",
+      );
+      const ast = ts.createSourceFile("autopilot.ts", source, ts.ScriptTarget.Latest, true);
+      const names = new Set([
+        "recordValue",
+        "arrayValue",
+        "stringArray",
+        "decisionIds",
+        "compactOwner",
+        "buildSelfRepairAutoSignal",
+      ]);
+      const functions = ast.statements.filter(
+        (statement) =>
+          ts.isFunctionDeclaration(statement) && statement.name && names.has(statement.name.text),
+      );
+      expect(functions).toHaveLength(names.size);
+      const trainingOwner =
+        (await import("../scripts/operator/local-brain-training-plan.js")) as Record<
+          string,
+          unknown
+        >;
+      const code = ts.transpileModule(
+        `${functions.map((statement) => statement.getText(ast)).join("\n")}
+const compact=compactOwner('trainingPlan',payload); ({ compact, signal:buildSelfRepairAutoSignal({trainingPlan:{compact},skillOptLite:{compact:skillOpt}}) });`,
+        { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+      ).outputText;
+      const result = vm.runInNewContext(code, {
+        payload,
+        skillOpt: "skillOpt" in overrides ? overrides.skillOpt : {},
+        isHistoricalLocalModelLaneSnapshot: trainingOwner.isHistoricalLocalModelLaneSnapshot,
+      }) as { compact: Record<string, unknown>; signal?: { policyTriggerId: string } };
+      expect(result.compact.latestCandidateEval).toMatchObject({ failedCaseIds: ["old-case"] });
+      expect(result.signal?.policyTriggerId).toBe(policyTriggerId);
+      expect(JSON.stringify(result.compact)).not.toContain("private command omitted");
+    },
+  );
+});
+
 describe("offline same-cycle central handoff", () => {
   type FixtureRun = {
     id: string;
@@ -308,7 +470,7 @@ describe("offline same-cycle central handoff", () => {
       .slice(first, last + 1)
       .map((statement) => statement.getText(ast))
       .join("\n");
-    const body = `const {reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
+    const body = `const {compactCommercialAcceptanceFailures,reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
       ${functions}
       ${commands.getText(ast)}
       const problemRadarCommand=OWNER_COMMANDS.find(command=>command.id==='problemRadar');
@@ -334,7 +496,9 @@ describe("offline same-cycle central handoff", () => {
           throw new Error("missing original handoff path");
         }
         inputPaths.push(inputPath);
-        expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+          expect((await fs.stat(inputPath)).mode & 0o777).toBe(0o600);
+        }
         inputs.push(JSON.parse(await fs.readFile(inputPath, "utf8")));
       } else {
         await options.beforeDirect?.();
@@ -357,6 +521,7 @@ describe("offline same-cycle central handoff", () => {
       handoff: (owners: FixtureRun[]) => Promise<FixtureRun>;
     };
     const harness = evaluate({
+      compactCommercialAcceptanceFailures,
       reviewCleanupBeforeDecision,
       ownerArtifactRecordingConfig: null,
       DEFAULT_WORKSPACE_DIR: os.tmpdir(),
@@ -1023,7 +1188,15 @@ describe("LCX governance autopilot", () => {
     expect(doctor).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
     if (localOperator) {
       expect(localOperator).toContain("governance_file");
-      expect(localOperator).toContain("governanceAutopilot");
+      if (localOperator.includes("lcx-local-operator-receipt-writer.cjs")) {
+        const writer = await fs.readFile(
+          path.join(repoRoot, "scripts/operator/lcx-local-operator-receipt-writer.cjs"),
+          "utf8",
+        );
+        expect(writer).toContain("governanceAutopilot");
+      } else {
+        expect(localOperator).toContain("governanceAutopilot");
+      }
       expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
     }
     expect(runbook).toContain("Governance Autopilot");

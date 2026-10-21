@@ -1025,6 +1025,30 @@ describe("resolveOutboundSessionRoute", () => {
         },
       },
       {
+        name: "External explicit direct prefix keeps the raw peer ID",
+        cfg: perChannelPeerCfg,
+        channel: "external",
+        target: "direct:oc_dm_chat",
+        expected: {
+          sessionKey: "agent:main:external:direct:oc_dm_chat",
+          from: "external:oc_dm_chat",
+          to: "oc_dm_chat",
+          chatType: "direct",
+        },
+      },
+      {
+        name: "External explicit kind leaves reserved-looking raw IDs intact",
+        cfg: perChannelPeerCfg,
+        channel: "external",
+        target: "direct:group:123",
+        expected: {
+          sessionKey: "agent:main:external:direct:group:123",
+          from: "external:group:123",
+          to: "group:123",
+          chatType: "direct",
+        },
+      },
+      {
         name: "External explicit dm prefix keeps direct routing",
         cfg: perChannelPeerCfg,
         channel: "external",

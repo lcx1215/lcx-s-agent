@@ -4,7 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { probeOriginalCleanupGovernance } from "./fixtures/lcx-waterflow-cleanup-governance-probe.js";
 const roots: string[] = [];
+const inFlight = new Set<Promise<unknown>>();
+const controllers: AbortController[] = [];
 afterEach(async () => {
+  for (const controller of controllers.splice(0)) {
+    controller.abort(new Error("private cleanup probe teardown"));
+  }
+  // A test timeout does not cancel its promise: settle every writer/child before removing its root.
+  await Promise.allSettled(inFlight);
   vi.unstubAllGlobals();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
@@ -15,7 +22,15 @@ describe("actual original predecision cleanup statement consumes and recaptures 
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network forbidden")));
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-cleanup-original-join-"));
       roots.push(root);
-      const result = await probeOriginalCleanupGovernance(root, fault);
+      const controller = new AbortController();
+      controllers.push(controller);
+      const pending = probeOriginalCleanupGovernance(
+        root,
+        fault,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(18_000)]),
+      );
+      inFlight.add(pending);
+      const result = await pending.finally(() => inFlight.delete(pending));
       expect(result.review.status).toBe(fault ? "blocked" : "reviewed");
       expect(result.received.runReceipt).toMatchObject({ status: fault ? "blocked" : "passed" });
       expect(result.received.payload).toMatchObject({
