@@ -693,6 +693,27 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
+  it("rejects an async lease check rather than publishing before its result", async () => {
+    await withTempRoot(async (root) => {
+      const { plan, receipts, requiredTargets } = await rawMigrationFixture(root);
+      await expect(
+        publishCompletion({
+          migrationPlan: plan,
+          requiredTargets,
+          writerReceipts: receipts,
+          withLegacyWritesQuiesced: async (_scope, publish) =>
+            publish({
+              owner: "offline-fixture",
+              assertHeld: (() => Promise.resolve()) as () => void,
+            }),
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_QUIESCENCE_REQUIRED" });
+      await expect(
+        fs.access(path.join(plan.canonicalStateDir, "identity-migration.complete.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
   it("holds this owner's cooperating writes until the marker is published", async () => {
     await withTempRoot(async (root) => {
       const { plan, receipts, requiredTargets } = await rawMigrationFixture(root);

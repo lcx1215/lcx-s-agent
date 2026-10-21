@@ -555,7 +555,16 @@ export async function writeLcxIdentityMigrationCompletionMarker(
               "LCX_IDENTITY_COMPLETION_QUIESCENCE_LOST",
             );
           }
-          lease.assertHeld();
+          const confirmation: unknown = lease.assertHeld();
+          if (confirmation !== undefined) {
+            // A Promise or boolean is not a synchronous held assertion. In
+            // particular, an async check must not race the publication below.
+            void Promise.resolve(confirmation).catch(() => undefined);
+            throw new LcxIdentityWriterContractError(
+              "Identity migration lease requires a synchronous held assertion",
+              "LCX_IDENTITY_COMPLETION_QUIESCENCE_REQUIRED",
+            );
+          }
         };
         completed = await withIdentityWriteExclusion(
           params.migrationPlan.canonicalStateDir,
