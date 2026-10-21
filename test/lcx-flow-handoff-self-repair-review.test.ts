@@ -99,6 +99,21 @@ describe("actual self-repair candidate content -> original quality owner -> boun
       new URL("../src/agents/self-repair-candidate-review.ts", import.meta.url),
       "utf8",
     );
+    const receiptStart = source.indexOf("const receiptRef = reference.parse(");
+    const receiptEnd = source.indexOf("const read =", receiptStart);
+    expect(receiptStart).toBeGreaterThan(0);
+    expect(receiptEnd).toBeGreaterThan(receiptStart);
+    const normalizeReceipt = (receiptPath: string, nativePath: typeof path.win32) =>
+      vm.runInNewContext(`${source.slice(receiptStart, receiptEnd)}; receiptRef.path`, {
+        path: nativePath,
+        reference: { parse: (value: unknown) => value },
+        options: { receipt: { path: receiptPath, sha256: "a".repeat(64) } },
+      }) as string;
+    expect(normalizeReceipt(String.raw`state\receipt.json`, path.win32)).toBe("state/receipt.json");
+    expect(normalizeReceipt("state/receipt.json", path.win32)).toBe("state/receipt.json");
+    expect(normalizeReceipt(String.raw`state\receipt.json`, path.posix)).toBe(
+      String.raw`state\receipt.json`,
+    );
     const first = source.indexOf("const relativePath =");
     const last = source.indexOf("const text = await read(relativePath)", first);
     expect(first).toBeGreaterThan(0);

@@ -84,7 +84,10 @@ export async function readSelfRepairCandidateReviewInput(options: {
     throw new Error("self_repair_review_host_scope_missing");
   }
   const expectedScope = scopeSchema.parse(options.scope);
-  const receiptRef = reference.parse(options.receipt);
+  const receiptRef = reference.parse({
+    ...options.receipt,
+    path: options.receipt.path.split(path.sep).join("/"),
+  });
   const read = async (relativePath: string) => {
     const { buffer } = await readFileWithinRoot({
       rootDir: options.workspaceDir,
@@ -369,6 +372,7 @@ export async function reviewSelfRepairCandidate(
     const input = await Promise.race([readSelfRepairCandidateReviewInput(options), aborted]);
     active();
     Object.assign(result, {
+      receipt: input.receipt,
       inputs: input.inputs,
       inputFingerprint: input.inputFingerprint,
       taskSha256: input.taskSha256,
