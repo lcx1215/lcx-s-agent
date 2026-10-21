@@ -90,6 +90,37 @@ describe("LCX identity migration writer contract", () => {
         }),
       );
       expect(resolveStateDir({}, () => root)).toBe(legacyStateDir);
+      // A complete family list must not hide another concrete object in that family.
+      const extraSource = path.join(legacyStateDir, "agents", "second", "sessions", "keep.jsonl");
+      await writeRaw(extraSource, "second agent history\n");
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: writerReceipts.map(({ pathContract }) =>
+            createLcxIdentityMigrationTarget(pathContract),
+          ),
+          writerReceipts,
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_SOURCE_UNCOVERED" });
+      expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(false);
+      expect(resolveStateDir({}, () => root)).toBe(legacyStateDir);
+      writerReceipts.push(
+        await writeLcxIdentityWriterRawWithReceipt(
+          createLcxIdentityWriterPathContract({
+            writer: "sessions",
+            migrationPlan: plan,
+            readPath: extraSource,
+            writePath: path.join(
+              plan.canonicalStateDir,
+              "agents",
+              "second",
+              "sessions",
+              "keep.jsonl",
+            ),
+          }),
+          "second agent history\n",
+        ),
+      );
       const marker = await writeLcxIdentityMigrationCompletionMarker({
         migrationPlan: plan,
         requiredTargets: writerReceipts.map(({ pathContract }) =>
@@ -97,7 +128,11 @@ describe("LCX identity migration writer contract", () => {
         ),
         writerReceipts,
       });
-      expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length);
+      expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length + 1);
+      expect(marker.sourceInventory?.sources).toContainEqual({
+        readPath: extraSource,
+        targetKey: "agents/second/sessions/keep.jsonl",
+      });
       expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(true);
       expect(resolveStateDir({}, () => root)).toBe(plan.canonicalStateDir);
     });
@@ -276,7 +311,7 @@ describe("LCX identity migration writer contract", () => {
           writePath: path.join(root, ".lcx", `${writer}.state`),
         });
         if (writer === "workspace") {
-          await writeRaw(pathContract.readPath, raw);
+          await writeRaw(path.join(pathContract.readPath, "original.txt"), raw);
           receipts.push(await moveLcxIdentityPathWithReceipt(pathContract));
           continue;
         }
@@ -324,6 +359,19 @@ describe("LCX identity migration writer contract", () => {
         receipts.push(await writeLcxIdentityWriterRawWithReceipt(pathContract, raw));
       }
 
+      const movedSource = receipts.find((receipt) => receipt.pathContract.writer === "workspace")!
+        .pathContract.readPath;
+      await writeRaw(path.join(movedSource, "new.txt"), "not covered by the old move\n");
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: receipts.map(({ pathContract }) =>
+            createLcxIdentityMigrationTarget(pathContract),
+          ),
+          writerReceipts: receipts,
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_SOURCE_UNCOVERED" });
+      await fs.rm(movedSource, { recursive: true });
       await expect(
         writeLcxIdentityMigrationCompletionMarker({
           migrationPlan: plan,

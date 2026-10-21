@@ -359,6 +359,69 @@ async function writeRawAtomically(filePath: string, raw: string): Promise<void> 
   }
 }
 
+async function observeMigrationSources(
+  plan: LcxIdentityMigrationPlan,
+): Promise<readonly Readonly<{ readPath: string; identity: string }>[]> {
+  const sources: { readPath: string; identity: string }[] = [];
+  let visited = 0;
+  const visit = async (readPath: string, depth: number): Promise<void> => {
+    if (++visited > 100_000 || depth > 128) {
+      throw new LcxIdentityWriterContractError(
+        "Identity migration source inventory exceeds its bounded scan",
+        "LCX_IDENTITY_COMPLETION_INVENTORY_LIMIT",
+      );
+    }
+    const stat = await fs.promises.lstat(readPath);
+    if (stat.isSymbolicLink()) {
+      throw new LcxIdentityWriterContractError(
+        "Identity migration source inventory cannot follow symbolic links",
+        "LCX_IDENTITY_COMPLETION_SOURCE_UNSUPPORTED",
+      );
+    }
+    if (stat.isDirectory()) {
+      const names = (await fs.promises.readdir(readPath)).toSorted();
+      if (names.length > 0) {
+        for (const name of names) {
+          await visit(path.join(readPath, name), depth + 1);
+        }
+      }
+      return;
+    }
+    if (!stat.isFile()) {
+      throw new LcxIdentityWriterContractError(
+        "Identity migration source inventory requires regular files",
+        "LCX_IDENTITY_COMPLETION_SOURCE_UNSUPPORTED",
+      );
+    }
+    const content = crypto.createHash("sha256");
+    for await (const chunk of fs.createReadStream(readPath)) {
+      content.update(chunk);
+    }
+    sources.push({
+      readPath,
+      identity: `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${content.digest("hex")}`,
+    });
+  };
+  const canonical = path.resolve(plan.canonicalStateDir);
+  for (const root of [
+    ...new Set(plan.readStateDirs.map((value) => path.resolve(value))),
+  ].toSorted()) {
+    if (root === canonical) {
+      continue;
+    }
+    try {
+      await fs.promises.lstat(root);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    await visit(root, 0);
+  }
+  return sources;
+}
+
 export async function writeLcxIdentityMigrationCompletionMarker(params: {
   migrationPlan: LcxIdentityMigrationPlan;
   requiredTargets: readonly LcxIdentityMigrationTarget[];
@@ -416,6 +479,7 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
     );
   }
 
+  const observedSources = await observeMigrationSources(migrationPlan);
   const receiptsByTarget = new Map<string, LcxIdentityMigrationWriterReceipt>();
   for (const receipt of params.writerReceipts) {
     const targetKey = receipt.pathContract.targetKey.trim();
@@ -473,12 +537,39 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_MIGRATION_UNPROVEN",
     );
   }
+  // Family presence is not object coverage. Derive the actual remaining source
+  // set from disk so a caller cannot omit a second agent, transcript or queue.
+  const sourceInventory = observedSources.map(({ readPath }) => {
+    const receipt = [...receiptsByTarget.values()].find(
+      (entry) =>
+        isRawMigrationReceipt(entry) &&
+        entry.source?.exists === true &&
+        path.resolve(entry.pathContract.readPath) === readPath,
+    );
+    if (!receipt) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration source has no concrete durable receipt: ${readPath}`,
+        "LCX_IDENTITY_COMPLETION_SOURCE_UNCOVERED",
+      );
+    }
+    return Object.freeze({ readPath, targetKey: receipt.pathContract.targetKey });
+  });
+  if (!isDeepStrictEqual(observedSources, await observeMigrationSources(migrationPlan))) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration source inventory changed during completion",
+      "LCX_IDENTITY_COMPLETION_SOURCE_CHANGED",
+    );
+  }
   const marker = Object.freeze({
     schemaVersion: 1 as const,
     canonicalStateDir: path.resolve(migrationPlan.canonicalStateDir),
     completedAt: (params.now ?? (() => new Date().toISOString()))(),
     inventory: LCX_IDENTITY_MIGRATION_INVENTORY,
     targetKeys: Object.freeze([...requiredTargetsByKey.keys()]),
+    sourceInventory: Object.freeze({
+      schemaVersion: 1 as const,
+      sources: Object.freeze(sourceInventory),
+    }),
   });
   await writeRawAtomically(
     resolveLcxIdentityMigrationCompletionPath(migrationPlan.canonicalStateDir),

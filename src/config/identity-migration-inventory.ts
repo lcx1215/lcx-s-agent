@@ -7,6 +7,10 @@ export type LcxIdentityMigrationCompletionMarker = Readonly<{
   completedAt: string;
   inventory: typeof LCX_IDENTITY_MIGRATION_INVENTORY;
   targetKeys: readonly string[];
+  sourceInventory?: Readonly<{
+    schemaVersion: 1;
+    sources: readonly Readonly<{ readPath: string; targetKey: string }>[];
+  }>;
 }>;
 
 export type LcxIdentityWriterName =
