@@ -79,7 +79,7 @@ export function trainingScopeOptions(root: string): TrainingChildOptions {
   };
 }
 
-export async function seedTrainingScopeHoldouts(root: string): Promise<void> {
+export async function seedTrainingScopeHoldouts(root: string) {
   // These private external sources are explicit deterministic fixture reviews, not teacher
   // labels relabeled as holdouts. The original dataset split decides their allocation.
   const candidates = [
@@ -105,6 +105,7 @@ export async function seedTrainingScopeHoldouts(root: string): Promise<void> {
   );
   await fs.mkdir(path.dirname(externalSourcePath), { recursive: true });
   await fs.writeFile(externalSourcePath, JSON.stringify(artifact) + "\n");
+  return { artifact, externalSourcePath };
 }
 
 // Load only original child functions. Importing this operator would start its guard loop.
@@ -701,7 +702,7 @@ async function runNativeTrainingProbe(
   context.batchSize = 2;
   context.currentConcurrency = 1;
   let quota: Awaited<ReturnType<typeof runOriginalPrivateQuotaLoop>> | undefined;
-  await seedTrainingScopeHoldouts(root);
+  const { artifact, externalSourcePath } = await seedTrainingScopeHoldouts(root);
   if (capture.guardRounds) {
     await evaluate("options.adapterPrefix=defaultAdapterPrefixForModel(options.model)");
     const stateNames = new Set([
