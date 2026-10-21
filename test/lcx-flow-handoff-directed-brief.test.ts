@@ -2,6 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return {
+    ...actual,
+    fetch: vi.fn(async () => {
+      throw new Error("external HTTP forbidden in synthetic handoff fixture");
+    }),
+  };
+});
 import {
   executeDirectedDailyResearchTask,
   readDirectedDailyCases,
@@ -198,14 +207,20 @@ describe("explicit native directed one-task caller", () => {
         expect(output.taskExecution.savedCase).toBeUndefined();
       } else {
         expect(probe.prepared.sourceCalls).toHaveLength(1);
-        // Native research may retain sufficient EOD coverage. A blocked optional
-        // job is disclosed; this caller does not install a new universal veto.
+        // Sufficient EOD history passes its source gate, while unfunded mandatory
+        // producers still prevent a candidate. Retain the native failure without
+        // fabricating a Caseflow receipt for the blocked optional job.
         expect(native.batch.budget.blockedJobs).toBe(1);
         expect(native.gates.find((gate) => gate.id === "source")?.passed).toBe(true);
+        expect(native.gates.find((gate) => gate.id === "committee")?.passed).toBe(false);
         expect(output.researchPacketStatus).toBe("held");
-        expect(output.packetCandidateSections[0].gaps).toContain(
-          "case_source_job:0:blocked:api_call_budget_exhausted",
+        expect(requireFailedExecution(output).gaps).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(/^directed_research_not_candidate:needs_review:/u),
+          ]),
         );
+        expect(output.packetCandidateSections[0].gaps).toEqual(requireFailedExecution(output).gaps);
+        expect(output.taskExecution.savedCase).toBeUndefined();
       }
       expect(fetch).not.toHaveBeenCalled();
     },
