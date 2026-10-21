@@ -86,7 +86,20 @@ export type LcxIdentityRemovalReceipt = Readonly<{
   audit: LcxIdentityAuditResult;
 }>;
 
+export type LcxIdentityPathContentInventory = Readonly<{
+  schemaVersion: 1;
+  entries: readonly Readonly<{
+    relativePath: string;
+    kind: "file" | "directory";
+    bytes: number | null;
+    contentHash: string | null;
+    dev: number;
+    ino: number;
+  }>[];
+}>;
+
 export type LcxIdentityPathMoveReceipt = Readonly<{
+  contentInventory?: LcxIdentityPathContentInventory;
   pathContract: LcxIdentityWriterPathContract;
   previous: Readonly<{
     exists: true;
@@ -334,7 +347,11 @@ async function readOptionalRaw(filePath: string): Promise<string | null> {
   }
 }
 
-async function writeRawAtomically(filePath: string, raw: string): Promise<void> {
+async function writeRawAtomically(
+  filePath: string,
+  raw: string,
+  assertPublishAllowed?: () => void,
+): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
   const tempPath = path.join(
@@ -344,12 +361,14 @@ async function writeRawAtomically(filePath: string, raw: string): Promise<void> 
   try {
     await fs.promises.writeFile(tempPath, raw, { encoding: "utf8", mode: 0o600 });
     try {
+      assertPublishAllowed?.();
       await fs.promises.rename(tempPath, filePath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code !== "EPERM" && code !== "EEXIST") {
         throw err;
       }
+      assertPublishAllowed?.();
       await fs.promises.copyFile(tempPath, filePath);
       await fs.promises.unlink(tempPath).catch(() => undefined);
     }
@@ -361,8 +380,10 @@ async function writeRawAtomically(filePath: string, raw: string): Promise<void> 
 
 async function observeMigrationSources(
   plan: LcxIdentityMigrationPlan,
-): Promise<readonly Readonly<{ readPath: string; identity: string }>[]> {
-  const sources: { readPath: string; identity: string }[] = [];
+): Promise<
+  readonly Readonly<{ readPath: string; identity: string; contentHash: string; bytes: number }>[]
+> {
+  const sources: { readPath: string; identity: string; contentHash: string; bytes: number }[] = [];
   let visited = 0;
   const visit = async (readPath: string, depth: number): Promise<void> => {
     if (++visited > 100_000 || depth > 128) {
@@ -397,9 +418,12 @@ async function observeMigrationSources(
     for await (const chunk of fs.createReadStream(readPath)) {
       content.update(chunk);
     }
+    const contentHash = content.digest("hex");
     sources.push({
       readPath,
-      identity: `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${content.digest("hex")}`,
+      contentHash,
+      bytes: stat.size,
+      identity: `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${contentHash}`,
     });
   };
   const canonical = path.resolve(plan.canonicalStateDir);
@@ -409,25 +433,156 @@ async function observeMigrationSources(
     if (root === canonical) {
       continue;
     }
-    try {
-      await fs.promises.lstat(root);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        continue;
+    const rootStat = await fs.promises.lstat(root).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return null;
       }
       throw error;
+    });
+    if (!rootStat) {
+      continue;
+    }
+    if (rootStat.isSymbolicLink()) {
+      const resolved = await Promise.all([
+        fs.promises.realpath(root),
+        fs.promises.realpath(canonical),
+      ]).catch(() => {
+        throw new LcxIdentityWriterContractError(
+          "Identity migration root link cannot be verified as a canonical mirror",
+          "LCX_IDENTITY_COMPLETION_SOURCE_UNSUPPORTED",
+        );
+      });
+      if (resolved[0] === resolved[1]) {
+        continue;
+      }
+      throw new LcxIdentityWriterContractError(
+        "Identity migration root link is not a verified canonical mirror",
+        "LCX_IDENTITY_COMPLETION_SOURCE_UNSUPPORTED",
+      );
     }
     await visit(root, 0);
   }
   return sources;
 }
 
-export async function writeLcxIdentityMigrationCompletionMarker(params: {
+export type LcxIdentityMigrationQuiescence = (
+  scope: Readonly<{ canonicalStateDir: string; legacyStateDirs: readonly string[] }>,
+  publish: (
+    lease: Readonly<{ owner: string; assertHeld: () => void }>,
+  ) => Promise<LcxIdentityMigrationCompletionMarker>,
+) => Promise<LcxIdentityMigrationCompletionMarker>;
+
+type CompletionParams = {
   migrationPlan: LcxIdentityMigrationPlan;
   requiredTargets: readonly LcxIdentityMigrationTarget[];
   writerReceipts: readonly LcxIdentityMigrationWriterReceipt[];
   now?: () => string;
-}): Promise<LcxIdentityMigrationCompletionMarker> {
+  withLegacyWritesQuiesced?: LcxIdentityMigrationQuiescence;
+};
+
+const identityWriteExclusions = new Map<string, Promise<void>>();
+
+async function withIdentityWriteExclusion<T>(root: string, run: () => Promise<T>): Promise<T> {
+  const key = path.resolve(root);
+  const previous = identityWriteExclusions.get(key) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  identityWriteExclusions.set(key, next);
+  await previous;
+  try {
+    return await run();
+  } finally {
+    release();
+    if (identityWriteExclusions.get(key) === next) {
+      identityWriteExclusions.delete(key);
+    }
+  }
+}
+
+function identityExclusionRoot(contract: LcxIdentityWriterPathContract): string {
+  return contract.migrationPlan?.canonicalStateDir ?? path.dirname(contract.writePath);
+}
+
+/**
+ * Maintenance-only activation. The caller's existing supervisory owner must stop
+ * all legacy writers (including other processes) before entering this callback,
+ * hold that quiescence through publication, and rebind writers before resuming.
+ * The local exclusion below covers only this owner's cooperating APIs; it cannot
+ * constrain cached legacy runtime writers or arbitrary third-party filesystem I/O.
+ * No production caller or host quiescence is inferred from a double scan.
+ */
+export async function writeLcxIdentityMigrationCompletionMarker(
+  params: CompletionParams,
+): Promise<LcxIdentityMigrationCompletionMarker> {
+  if (!params.withLegacyWritesQuiesced) {
+    throw new LcxIdentityWriterContractError(
+      "Identity completion requires a caller-held legacy-writer quiescence lease",
+      "LCX_IDENTITY_COMPLETION_QUIESCENCE_REQUIRED",
+    );
+  }
+  let active = true;
+  let entered = false;
+  let completed: LcxIdentityMigrationCompletionMarker | undefined;
+  try {
+    const result = await params.withLegacyWritesQuiesced(
+      {
+        canonicalStateDir: params.migrationPlan.canonicalStateDir,
+        legacyStateDirs: params.migrationPlan.readStateDirs.filter(
+          (root) => path.resolve(root) !== path.resolve(params.migrationPlan.canonicalStateDir),
+        ),
+      },
+      async (lease) => {
+        if (
+          entered ||
+          !active ||
+          !lease ||
+          typeof lease.owner !== "string" ||
+          !lease.owner.trim() ||
+          typeof lease.assertHeld !== "function"
+        ) {
+          throw new LcxIdentityWriterContractError(
+            "Invalid identity migration quiescence lease",
+            "LCX_IDENTITY_COMPLETION_QUIESCENCE_REQUIRED",
+          );
+        }
+        entered = true;
+        const assertHeld = () => {
+          if (!active) {
+            throw new LcxIdentityWriterContractError(
+              "Identity migration quiescence ended before publication",
+              "LCX_IDENTITY_COMPLETION_QUIESCENCE_LOST",
+            );
+          }
+          lease.assertHeld();
+        };
+        completed = await withIdentityWriteExclusion(
+          params.migrationPlan.canonicalStateDir,
+          async () => {
+            assertHeld();
+            return writeCompletionWithQuiescence(params, { owner: lease.owner, assertHeld });
+          },
+        );
+        return completed;
+      },
+    );
+    if (!completed || result !== completed) {
+      throw new LcxIdentityWriterContractError(
+        "Quiescence owner did not await verified marker publication",
+        "LCX_IDENTITY_COMPLETION_QUIESCENCE_LOST",
+      );
+    }
+    return result;
+  } finally {
+    active = false;
+  }
+}
+
+async function writeCompletionWithQuiescence(
+  params: CompletionParams,
+  lease: Readonly<{ owner: string; assertHeld: () => void }>,
+): Promise<LcxIdentityMigrationCompletionMarker> {
   const { migrationPlan } = params;
   if (
     migrationPlan.mode !== "canonical-default" ||
@@ -506,7 +661,7 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_RECEIPT_TARGET",
       );
     }
-    await assertDurableMigrationReceipt(receipt);
+    await assertDurableMigrationReceipt(receipt, params.writerReceipts);
     receiptsByTarget.set(targetKey, receipt);
   }
   const missingTargets = [...requiredTargetsByKey.keys()].filter(
@@ -539,7 +694,7 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
   }
   // Family presence is not object coverage. Derive the actual remaining source
   // set from disk so a caller cannot omit a second agent, transcript or queue.
-  const sourceInventory = observedSources.map(({ readPath }) => {
+  const sourceInventory = observedSources.map(({ readPath, identity, contentHash, bytes }) => {
     const receipt = [...receiptsByTarget.values()].find(
       (entry) =>
         isRawMigrationReceipt(entry) &&
@@ -552,7 +707,13 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_SOURCE_UNCOVERED",
       );
     }
-    return Object.freeze({ readPath, targetKey: receipt.pathContract.targetKey });
+    return Object.freeze({
+      readPath,
+      identity,
+      contentHash,
+      bytes,
+      targetKey: receipt.pathContract.targetKey,
+    });
   });
   if (!isDeepStrictEqual(observedSources, await observeMigrationSources(migrationPlan))) {
     throw new LcxIdentityWriterContractError(
@@ -560,11 +721,22 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_SOURCE_CHANGED",
     );
   }
+  // A later receipt check may read other files. Recheck moved trees at the
+  // completion boundary as their legacy source no longer exists to rescan.
+  for (const receipt of receiptsByTarget.values()) {
+    if (!isRawMigrationReceipt(receipt) && receipt.previous.kind === "directory") {
+      await assertDurableMigrationReceipt(receipt, params.writerReceipts);
+    }
+  }
   const marker = Object.freeze({
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     canonicalStateDir: path.resolve(migrationPlan.canonicalStateDir),
     completedAt: (params.now ?? (() => new Date().toISOString()))(),
     inventory: LCX_IDENTITY_MIGRATION_INVENTORY,
+    publication: Object.freeze({
+      kind: "caller-held-legacy-writer-quiescence" as const,
+      owner: lease.owner,
+    }),
     targetKeys: Object.freeze([...requiredTargetsByKey.keys()]),
     sourceInventory: Object.freeze({
       schemaVersion: 1 as const,
@@ -574,6 +746,7 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
   await writeRawAtomically(
     resolveLcxIdentityMigrationCompletionPath(migrationPlan.canonicalStateDir),
     `${JSON.stringify(marker)}\n`,
+    lease.assertHeld,
   );
   return marker;
 }
@@ -761,8 +934,130 @@ async function assertMigrationSourceReceipt(
   }
 }
 
+async function inventoryMovedPath(root: string): Promise<LcxIdentityPathContentInventory> {
+  const entries: LcxIdentityPathContentInventory["entries"][number][] = [];
+  const visit = async (filePath: string, depth: number): Promise<void> => {
+    if (entries.length >= 100_000 || depth > 128) {
+      throw new LcxIdentityWriterContractError(
+        "Identity path inventory exceeds its bounded scan",
+        "LCX_IDENTITY_MOVE_INVENTORY_LIMIT",
+      );
+    }
+    const before = await fs.promises.lstat(filePath);
+    if (!before.isDirectory() && !before.isFile()) {
+      throw new LcxIdentityWriterContractError(
+        "Identity path inventory requires directories and regular files without symlinks",
+        "LCX_IDENTITY_MOVE_INVENTORY_UNSUPPORTED",
+      );
+    }
+    let contentHash: string | null = null;
+    if (before.isFile()) {
+      const hash = crypto.createHash("sha256");
+      for await (const chunk of fs.createReadStream(filePath)) {
+        hash.update(chunk);
+      }
+      contentHash = hash.digest("hex");
+    }
+    const names = before.isDirectory() ? (await fs.promises.readdir(filePath)).toSorted() : [];
+    entries.push(
+      Object.freeze({
+        relativePath: path.relative(root, filePath).split(path.sep).join("/"),
+        kind: before.isDirectory() ? "directory" : "file",
+        bytes: before.isFile() ? before.size : null,
+        contentHash,
+        dev: before.dev,
+        ino: before.ino,
+      }),
+    );
+    for (const name of names) {
+      await visit(path.join(filePath, name), depth + 1);
+    }
+    const after = await fs.promises.lstat(filePath);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs ||
+      (before.isDirectory() &&
+        !isDeepStrictEqual(names, (await fs.promises.readdir(filePath)).toSorted()))
+    ) {
+      throw new LcxIdentityWriterContractError(
+        "Identity path contents changed during inventory",
+        "LCX_IDENTITY_MOVE_INVENTORY_CHANGED",
+      );
+    }
+  };
+  await visit(root, 0);
+  return Object.freeze({ schemaVersion: 1, entries: Object.freeze(entries) });
+}
+
+async function assertMovedDirectoryContents(
+  receipt: LcxIdentityPathMoveReceipt,
+  writerReceipts: readonly LcxIdentityMigrationWriterReceipt[],
+): Promise<void> {
+  const expected = receipt.contentInventory;
+  if (
+    expected?.schemaVersion !== 1 ||
+    !Array.isArray(expected.entries) ||
+    expected.entries.length === 0 ||
+    expected.entries[0]?.relativePath !== "" ||
+    expected.entries[0]?.kind !== "directory"
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity directory move receipt requires a versioned content inventory",
+      "LCX_IDENTITY_COMPLETION_RECEIPT_MALFORMED",
+    );
+  }
+  const current = await inventoryMovedPath(receipt.pathContract.writePath);
+  const actualByPath = new Map(current.entries.map((entry) => [entry.relativePath, entry]));
+  const expectedPaths = new Set<string>();
+  for (const entry of expected.entries) {
+    if (
+      expectedPaths.has(entry.relativePath) ||
+      !isDeepStrictEqual(actualByPath.get(entry.relativePath), entry)
+    ) {
+      throw new LcxIdentityWriterContractError(
+        "Identity moved directory contents no longer match their original inventory",
+        "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
+      );
+    }
+    expectedPaths.add(entry.relativePath);
+  }
+  const additions = current.entries.filter((entry) => !expectedPaths.has(entry.relativePath));
+  const verifiedFiles = additions.filter(
+    (entry) =>
+      entry.kind === "file" &&
+      writerReceipts.some(
+        (candidate) =>
+          isRawMigrationReceipt(candidate) &&
+          candidate.source?.exists === true &&
+          path.resolve(candidate.pathContract.readPath) !==
+            path.resolve(candidate.pathContract.writePath) &&
+          path.resolve(candidate.pathContract.writePath) ===
+            path.resolve(receipt.pathContract.writePath, entry.relativePath) &&
+          candidate.next.hash === entry.contentHash &&
+          candidate.next.bytes === entry.bytes,
+      ),
+  );
+  if (
+    additions.some((entry) =>
+      entry.kind === "file"
+        ? !verifiedFiles.includes(entry)
+        : !verifiedFiles.some((file) => file.relativePath.startsWith(`${entry.relativePath}/`)),
+    )
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity moved directory has additions without explicit preservation receipts",
+      "LCX_IDENTITY_COMPLETION_SOURCE_UNCOVERED",
+    );
+  }
+}
+
 async function assertDurableMigrationReceipt(
   receipt: LcxIdentityMigrationWriterReceipt,
+  writerReceipts: readonly LcxIdentityMigrationWriterReceipt[],
 ): Promise<void> {
   if ("audit" in receipt && receipt.audit.status !== "written") {
     throw new LcxIdentityWriterContractError(
@@ -824,6 +1119,9 @@ async function assertDurableMigrationReceipt(
       "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
     );
   }
+  if (expected.kind === "directory") {
+    await assertMovedDirectoryContents(receipt, writerReceipts);
+  }
 }
 
 async function appendIdentityAudit(
@@ -855,7 +1153,7 @@ export async function readLcxIdentityWriterRaw(
   return await readOptionalRaw(contract.readPath);
 }
 
-export async function writeLcxIdentityWriterRawWithReceipt(
+async function writeLcxIdentityWriterRawWithReceiptUnlocked(
   contract: LcxIdentityWriterPathContract,
   raw: string,
   options?: {
@@ -922,7 +1220,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
   return Object.freeze({ ...receipt, audit });
 }
 
-export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt): Promise<void> {
+async function rollbackLcxIdentityWriterUnlocked(receipt: LcxIdentityWriteReceipt): Promise<void> {
   const { pathContract } = receipt;
   const currentRaw = await readOptionalRaw(pathContract.writePath);
   if (currentRaw === null || hashRaw(currentRaw) !== receipt.next.hash) {
@@ -967,7 +1265,7 @@ export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt
   });
 }
 
-export async function removeLcxIdentityWriterWithReceipt(
+async function removeLcxIdentityWriterWithReceiptUnlocked(
   contract: LcxIdentityWriterPathContract,
   options?: { expectedReadPath?: string; expectedWritePath?: string },
 ): Promise<LcxIdentityRemovalReceipt> {
@@ -1012,7 +1310,7 @@ export async function removeLcxIdentityWriterWithReceipt(
   return Object.freeze({ ...receipt, audit });
 }
 
-export async function rollbackLcxIdentityRemoval(
+async function rollbackLcxIdentityRemovalUnlocked(
   receipt: LcxIdentityRemovalReceipt,
 ): Promise<void> {
   const { pathContract } = receipt;
@@ -1052,7 +1350,7 @@ export async function rollbackLcxIdentityRemoval(
   });
 }
 
-export async function moveLcxIdentityPathWithReceipt(
+async function moveLcxIdentityPathWithReceiptUnlocked(
   contract: LcxIdentityWriterPathContract,
 ): Promise<LcxIdentityPathMoveReceipt> {
   assertLcxIdentityWriterPathContract(contract);
@@ -1095,9 +1393,13 @@ export async function moveLcxIdentityPathWithReceipt(
   const sourceRaw = sourceStat.isFile()
     ? await fs.promises.readFile(contract.readPath, "utf8")
     : null;
+  const contentInventory = sourceStat.isDirectory()
+    ? await inventoryMovedPath(contract.readPath)
+    : undefined;
   await fs.promises.mkdir(path.dirname(contract.writePath), { recursive: true, mode: 0o700 });
   await fs.promises.rename(contract.readPath, contract.writePath);
   const receipt = Object.freeze({
+    contentInventory,
     pathContract: contract,
     previous: Object.freeze({
       exists: true as const,
@@ -1125,11 +1427,12 @@ export async function moveLcxIdentityPathWithReceipt(
     noSplitState: contract.noSplitState,
     previousKind: receipt.previous.kind,
     previousBytes: receipt.previous.bytes,
+    contentInventory: receipt.contentInventory,
   });
   return Object.freeze({ ...receipt, audit });
 }
 
-export async function rollbackLcxIdentityPathMove(
+async function rollbackLcxIdentityPathMoveUnlocked(
   receipt: LcxIdentityPathMoveReceipt,
 ): Promise<void> {
   const { pathContract } = receipt;
@@ -1179,4 +1482,52 @@ export async function rollbackLcxIdentityPathMove(
     result: "restored",
     restoredKind: receipt.previous.kind,
   });
+}
+
+export function writeLcxIdentityWriterRawWithReceipt(
+  ...args: Parameters<typeof writeLcxIdentityWriterRawWithReceiptUnlocked>
+): ReturnType<typeof writeLcxIdentityWriterRawWithReceiptUnlocked> {
+  return withIdentityWriteExclusion(identityExclusionRoot(args[0]), () =>
+    writeLcxIdentityWriterRawWithReceiptUnlocked(...args),
+  );
+}
+
+export function rollbackLcxIdentityWriter(
+  ...args: Parameters<typeof rollbackLcxIdentityWriterUnlocked>
+): ReturnType<typeof rollbackLcxIdentityWriterUnlocked> {
+  return withIdentityWriteExclusion(identityExclusionRoot(args[0].pathContract), () =>
+    rollbackLcxIdentityWriterUnlocked(...args),
+  );
+}
+
+export function removeLcxIdentityWriterWithReceipt(
+  ...args: Parameters<typeof removeLcxIdentityWriterWithReceiptUnlocked>
+): ReturnType<typeof removeLcxIdentityWriterWithReceiptUnlocked> {
+  return withIdentityWriteExclusion(identityExclusionRoot(args[0]), () =>
+    removeLcxIdentityWriterWithReceiptUnlocked(...args),
+  );
+}
+
+export function rollbackLcxIdentityRemoval(
+  ...args: Parameters<typeof rollbackLcxIdentityRemovalUnlocked>
+): ReturnType<typeof rollbackLcxIdentityRemovalUnlocked> {
+  return withIdentityWriteExclusion(identityExclusionRoot(args[0].pathContract), () =>
+    rollbackLcxIdentityRemovalUnlocked(...args),
+  );
+}
+
+export function moveLcxIdentityPathWithReceipt(
+  ...args: Parameters<typeof moveLcxIdentityPathWithReceiptUnlocked>
+): ReturnType<typeof moveLcxIdentityPathWithReceiptUnlocked> {
+  return withIdentityWriteExclusion(identityExclusionRoot(args[0]), () =>
+    moveLcxIdentityPathWithReceiptUnlocked(...args),
+  );
+}
+
+export function rollbackLcxIdentityPathMove(
+  ...args: Parameters<typeof rollbackLcxIdentityPathMoveUnlocked>
+): ReturnType<typeof rollbackLcxIdentityPathMoveUnlocked> {
+  return withIdentityWriteExclusion(identityExclusionRoot(args[0].pathContract), () =>
+    rollbackLcxIdentityPathMoveUnlocked(...args),
+  );
 }

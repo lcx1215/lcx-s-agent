@@ -3,7 +3,7 @@ import nodeFs from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createLcxIdentityCronStoreMigration,
   readCronStoreForIdentityMigration,
@@ -16,7 +16,8 @@ import {
   moveLcxIdentityPathWithReceipt,
   resolveLcxIdentityStateWriterPathContract,
   rollbackLcxIdentityWriter,
-  writeLcxIdentityMigrationCompletionMarker,
+  writeLcxIdentityMigrationCompletionMarker as publishCompletion,
+  type LcxIdentityMigrationQuiescence,
   writeLcxIdentityWriterRawWithReceipt,
 } from "./identity-migration.js";
 import { createLcxIdentityMigrationConfigIO } from "./io.js";
@@ -33,6 +34,28 @@ import {
   writeSessionStoreForIdentityMigration,
 } from "./sessions/identity-migration.js";
 import { saveSessionStore } from "./sessions/store.js";
+
+// This scope contains only temp fixture roots and no external writer/process.
+const offlineQuiescence: LcxIdentityMigrationQuiescence = async (_scope, publish) => {
+  let held = true;
+  try {
+    return await publish({
+      owner: "offline-fixture",
+      assertHeld: () => {
+        if (!held) {
+          throw new Error("fixture lease lost");
+        }
+      },
+    });
+  } finally {
+    held = false;
+  }
+};
+function writeLcxIdentityMigrationCompletionMarker(
+  params: Parameters<typeof publishCompletion>[0],
+) {
+  return publishCompletion({ withLegacyWritesQuiesced: offlineQuiescence, ...params });
+}
 
 async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-state-writer-"));
@@ -63,6 +86,29 @@ function migrationPlan(root: string) {
     homedir: () => root,
     existsSync: nodeFs.existsSync,
   });
+}
+
+async function rawMigrationFixture(root: string) {
+  const plan = migrationPlan(root);
+  const receipts = await Promise.all(
+    LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+      const contract = createLcxIdentityWriterPathContract({
+        writer,
+        migrationPlan: plan,
+        readPath: path.join(root, ".openclaw", `${writer}.state`),
+        writePath: path.join(root, ".lcx", `${writer}.state`),
+      });
+      await writeRaw(contract.readPath, `${writer}: source`);
+      return writeLcxIdentityWriterRawWithReceipt(contract, `${writer}: source`);
+    }),
+  );
+  return {
+    plan,
+    receipts,
+    requiredTargets: receipts.map(({ pathContract }) =>
+      createLcxIdentityMigrationTarget(pathContract),
+    ),
+  };
 }
 
 describe("LCX identity migration writer contract", () => {
@@ -129,10 +175,23 @@ describe("LCX identity migration writer contract", () => {
         writerReceipts,
       });
       expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length + 1);
-      expect(marker.sourceInventory?.sources).toContainEqual({
+      const covered = marker.sourceInventory.sources.find(
+        (entry) => entry.readPath === extraSource,
+      );
+      expect(covered).toMatchObject({
         readPath: extraSource,
         targetKey: "agents/second/sessions/keep.jsonl",
+        contentHash: crypto.createHash("sha256").update("second agent history\n").digest("hex"),
+        bytes: Buffer.byteLength("second agent history\n"),
       });
+      expect(covered?.identity).toMatch(new RegExp(`:${covered?.contentHash}$`));
+      const persisted = JSON.parse(
+        await fs.readFile(
+          path.join(plan.canonicalStateDir, "identity-migration.complete.json"),
+          "utf8",
+        ),
+      ) as typeof marker;
+      expect(persisted.sourceInventory.sources).toContainEqual(covered);
       expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(true);
       expect(resolveStateDir({}, () => root)).toBe(plan.canonicalStateDir);
     });
@@ -225,7 +284,7 @@ describe("LCX identity migration writer contract", () => {
             writerReceipts: receipts,
           });
         if (accepted) {
-          await expect(complete()).resolves.toMatchObject({ schemaVersion: 1 });
+          await expect(complete()).resolves.toMatchObject({ schemaVersion: 2 });
         } else {
           await expect(complete()).rejects.toMatchObject({
             code: "LCX_IDENTITY_COMPLETION_SOURCE_UNPRESERVED",
@@ -282,10 +341,10 @@ describe("LCX identity migration writer contract", () => {
       });
 
       expect(marker).toMatchObject({
-        schemaVersion: 1,
+        schemaVersion: 2,
         canonicalStateDir: path.join(root, ".lcx"),
         completedAt: "2026-09-06T00:00:00.000Z",
-        inventory: "lcx-identity-writer-inventory-v1",
+        inventory: "lcx-identity-writer-inventory-v2",
       });
       expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length);
       expect(
@@ -380,7 +439,296 @@ describe("LCX identity migration writer contract", () => {
           ),
           writerReceipts: receipts,
         }),
-      ).resolves.toMatchObject({ schemaVersion: 1 });
+      ).resolves.toMatchObject({ schemaVersion: 2 });
+    });
+  });
+
+  it.each([
+    "deleted",
+    "replaced",
+    "modified",
+    "extra-file",
+    "extra-directory",
+    "missing-inventory",
+  ] as const)(
+    "rejects %s moved-directory contents even after the legacy source disappears",
+    async (mutation) => {
+      await withTempRoot(async (root) => {
+        const plan = migrationPlan(root);
+        const receipts = await Promise.all(
+          LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+            const contract = createLcxIdentityWriterPathContract({
+              writer,
+              migrationPlan: plan,
+              readPath: path.join(root, ".openclaw", `${writer}.state`),
+              writePath: path.join(root, ".lcx", `${writer}.state`),
+            });
+            if (writer === "workspace") {
+              await writeRaw(
+                path.join(contract.readPath, "nested", "original.bin"),
+                "original contents",
+              );
+              await fs.mkdir(path.join(contract.readPath, "empty"));
+              return moveLcxIdentityPathWithReceipt(contract);
+            }
+            return writeLcxIdentityWriterRawWithReceipt(contract, `${writer} state`);
+          }),
+        );
+        const moved = receipts.find((receipt) => receipt.pathContract.writer === "workspace")!;
+        const target = path.join(moved.pathContract.writePath, "nested", "original.bin");
+        const auditRecords = (await fs.readFile(moved.pathContract.auditPath, "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+        expect(
+          auditRecords.find((record) => record.event === "identity.move")?.contentInventory,
+        ).toEqual("contentInventory" in moved ? moved.contentInventory : undefined);
+        await expect(fs.access(moved.pathContract.readPath)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        expect("contentInventory" in moved && moved.contentInventory?.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              relativePath: "nested/original.bin",
+              kind: "file",
+              contentHash: crypto.createHash("sha256").update("original contents").digest("hex"),
+            }),
+            expect.objectContaining({ relativePath: "empty", kind: "directory" }),
+          ]),
+        );
+        if (mutation === "deleted") {
+          await fs.unlink(target);
+        } else if (mutation === "replaced") {
+          // Allocate a different inode while the original still exists, retaining identical bytes.
+          await writeRaw(`${target}.replacement`, "original contents");
+          await fs.rename(`${target}.replacement`, target);
+        } else if (mutation === "modified") {
+          await fs.writeFile(target, "modified contents");
+        } else if (mutation === "extra-file") {
+          await writeRaw(path.join(moved.pathContract.writePath, "extra.txt"), "unverified");
+        } else if (mutation === "extra-directory") {
+          await fs.mkdir(path.join(moved.pathContract.writePath, "extra-empty"));
+        }
+        // Exercise the durable JSON receipt shape rather than process-local identity.
+        const durable = JSON.parse(JSON.stringify(receipts)) as typeof receipts;
+        if (mutation === "missing-inventory") {
+          const old = durable.find((receipt) => "contentInventory" in receipt)!;
+          delete (old as { contentInventory?: unknown }).contentInventory;
+        }
+        await expect(
+          writeLcxIdentityMigrationCompletionMarker({
+            migrationPlan: plan,
+            requiredTargets: durable.map(({ pathContract }) =>
+              createLcxIdentityMigrationTarget(pathContract),
+            ),
+            writerReceipts: durable,
+          }),
+        ).rejects.toMatchObject({
+          code: mutation.startsWith("extra-")
+            ? "LCX_IDENTITY_COMPLETION_SOURCE_UNCOVERED"
+            : mutation === "missing-inventory"
+              ? "LCX_IDENTITY_COMPLETION_RECEIPT_MALFORMED"
+              : "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
+        });
+        await expect(
+          fs.access(path.join(plan.canonicalStateDir, "identity-migration.complete.json")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+      });
+    },
+  );
+
+  it("allows only separately receipted preservation additions to an unchanged moved tree", async () => {
+    await withTempRoot(async (root) => {
+      const plan = migrationPlan(root);
+      const receipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const contract = createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          });
+          if (writer === "workspace") {
+            await writeRaw(path.join(contract.readPath, "original.txt"), "keep");
+            return moveLcxIdentityPathWithReceipt(contract);
+          }
+          return writeLcxIdentityWriterRawWithReceipt(contract, `${writer} state`);
+        }),
+      );
+      const move = receipts.find((receipt) => receipt.pathContract.writer === "workspace")!;
+      const addition = createLcxIdentityWriterPathContract({
+        writer: "workspace",
+        migrationPlan: plan,
+        readPath: path.join(root, ".openclaw", "preserved-addition.json"),
+        writePath: path.join(move.pathContract.writePath, "new-dir", "preserved-addition.json"),
+      });
+      await writeRaw(addition.readPath, '{"preserved":true}');
+      receipts.push(
+        await writeLcxIdentityWriterRawWithReceipt(addition, '{"preserved":true,"added":1}'),
+      );
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: receipts.map(({ pathContract }) =>
+            createLcxIdentityMigrationTarget(pathContract),
+          ),
+          writerReceipts: receipts,
+        }),
+      ).resolves.toMatchObject({ schemaVersion: 2 });
+      expect(
+        await fs.readFile(path.join(move.pathContract.writePath, "original.txt"), "utf8"),
+      ).toBe("keep");
+    });
+  });
+
+  it("rejects a symlink inside a move before renaming any source", async () => {
+    await withTempRoot(async (root) => {
+      const contract = createLcxIdentityWriterPathContract({
+        writer: "workspace",
+        migrationPlan: migrationPlan(root),
+        readPath: path.join(root, ".openclaw", "workspace"),
+        writePath: path.join(root, ".lcx", "workspace"),
+      });
+      await writeRaw(path.join(contract.readPath, "original.txt"), "keep");
+      await fs.mkdir(path.join(contract.readPath, "original-dir"));
+      await fs.symlink(
+        path.join(contract.readPath, "original-dir"),
+        path.join(contract.readPath, "link"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      await expect(moveLcxIdentityPathWithReceipt(contract)).rejects.toMatchObject({
+        code: "LCX_IDENTITY_MOVE_INVENTORY_UNSUPPORTED",
+      });
+      expect(await fs.readFile(path.join(contract.readPath, "original.txt"), "utf8")).toBe("keep");
+      await expect(fs.access(contract.writePath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it.each(["canonical-mirrors", "outside-root", "nested-link", "dangling-root"] as const)(
+    "validates legacy links: %s",
+    async (kind) => {
+      await withTempRoot(async (root) => {
+        const { plan, receipts, requiredTargets } = await rawMigrationFixture(root);
+        const linkType = process.platform === "win32" ? "junction" : "dir";
+        if (kind === "canonical-mirrors") {
+          for (const legacy of [".clawdbot", ".moltbot"]) {
+            await fs.symlink(plan.canonicalStateDir, path.join(root, legacy), linkType);
+          }
+        } else if (kind === "outside-root") {
+          const outside = path.join(root, "outside");
+          await fs.mkdir(outside);
+          await fs.symlink(outside, path.join(root, ".moltbot"), linkType);
+        } else {
+          await fs.symlink(
+            plan.canonicalStateDir,
+            path.join(root, ".openclaw", "nested-link"),
+            linkType,
+          );
+        }
+        const completion = writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets,
+          writerReceipts: receipts,
+        });
+        if (kind === "canonical-mirrors") {
+          await expect(completion).resolves.toMatchObject({ schemaVersion: 2 });
+        } else {
+          await expect(completion).rejects.toMatchObject({
+            code: "LCX_IDENTITY_COMPLETION_SOURCE_UNSUPPORTED",
+          });
+        }
+      });
+    },
+  );
+
+  it("fails closed without a maintenance quiescence owner", async () => {
+    await withTempRoot(async (root) => {
+      const { plan, receipts, requiredTargets } = await rawMigrationFixture(root);
+      await expect(
+        publishCompletion({ migrationPlan: plan, requiredTargets, writerReceipts: receipts }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_QUIESCENCE_REQUIRED" });
+      await expect(
+        fs.access(path.join(plan.canonicalStateDir, "identity-migration.complete.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("refuses publication if the held lease is revoked while the temporary marker is written", async () => {
+    await withTempRoot(async (root) => {
+      const { plan, receipts, requiredTargets } = await rawMigrationFixture(root);
+      let held = true;
+      const writeFile = fs.writeFile.bind(fs);
+      const spy = vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
+        await writeFile(...args);
+        if (typeof args[0] === "string" && args[0].includes("identity-migration.complete.json.")) {
+          held = false;
+        }
+      });
+      try {
+        await expect(
+          publishCompletion({
+            migrationPlan: plan,
+            requiredTargets,
+            writerReceipts: receipts,
+            withLegacyWritesQuiesced: async (scope, publish) => {
+              expect(scope.canonicalStateDir).toBe(plan.canonicalStateDir);
+              expect(scope.legacyStateDirs).toContain(path.join(root, ".openclaw"));
+              return publish({
+                owner: "offline-fixture",
+                assertHeld: () => {
+                  if (!held) {
+                    throw new Error("lease revoked");
+                  }
+                },
+              });
+            },
+          }),
+        ).rejects.toThrow("lease revoked");
+        await expect(
+          fs.access(path.join(plan.canonicalStateDir, "identity-migration.complete.json")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  it("holds this owner's cooperating writes until the marker is published", async () => {
+    await withTempRoot(async (root) => {
+      const { plan, receipts, requiredTargets } = await rawMigrationFixture(root);
+      const markerPath = path.join(plan.canonicalStateDir, "identity-migration.complete.json");
+      const latePath = path.join(plan.canonicalStateDir, "late-cooperating-write");
+      const contract = createLcxIdentityWriterPathContract({
+        writer: "sessions",
+        migrationPlan: plan,
+        readPath: latePath,
+        writePath: latePath,
+      });
+      let late: ReturnType<typeof writeLcxIdentityWriterRawWithReceipt> | undefined;
+      let markerVisible = false;
+      const writeFile = fs.writeFile.bind(fs);
+      const spy = vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
+        if (typeof args[0] === "string" && args[0].includes("identity-migration.complete.json.")) {
+          late = writeLcxIdentityWriterRawWithReceipt(contract, "new canonical write");
+          await expect(fs.access(latePath)).rejects.toMatchObject({ code: "ENOENT" });
+        } else if (typeof args[0] === "string" && args[0].includes(".late-cooperating-write.")) {
+          await fs.access(markerPath);
+          markerVisible = true;
+        }
+        await writeFile(...args);
+      });
+      try {
+        await writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets,
+          writerReceipts: receipts,
+        });
+        expect(late).toBeDefined();
+        await late;
+        expect(markerVisible).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
@@ -553,7 +901,7 @@ describe("LCX identity migration writer contract", () => {
           requiredTargets: contracts.map(createLcxIdentityMigrationTarget),
           writerReceipts: receipts,
         }),
-      ).resolves.toMatchObject({ schemaVersion: 1 });
+      ).resolves.toMatchObject({ schemaVersion: 2 });
     });
   });
 
