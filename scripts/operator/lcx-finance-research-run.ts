@@ -881,8 +881,8 @@ export async function financeResearchAdaptersWithFreshHealth(params: {
       params.observedAt,
     ).map((adapter) => ({
       ...adapter,
-      unavailableForRequest: async (request: FinanceRealtimeSourceRequest) =>
-        (await adapter.unavailableForRequest?.(request)) ??
+      unavailableForRequest: async (request: FinanceRealtimeSourceRequest, signal: AbortSignal) =>
+        (await adapter.unavailableForRequest?.(request, signal)) ??
         checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request)),
       collect: (request: FinanceRealtimeSourceRequest, signal: AbortSignal) => {
         const error = checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
@@ -898,8 +898,8 @@ export async function financeResearchAdaptersWithFreshHealth(params: {
       params.observedAt,
     ).map((adapter) => ({
       ...adapter,
-      unavailableForRequest: async (request: FinanceMarketCollectionRequest) =>
-        (await adapter.unavailableForRequest?.(request)) ??
+      unavailableForRequest: async (request: FinanceMarketCollectionRequest, signal: AbortSignal) =>
+        (await adapter.unavailableForRequest?.(request, signal)) ??
         checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request)),
       collect: (request: FinanceMarketCollectionRequest, signal: AbortSignal) => {
         const error = checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));

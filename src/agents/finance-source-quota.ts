@@ -52,6 +52,10 @@ const serial = new Map<string, Promise<void>>();
 const minute = 60_000;
 const day = 86_400_000;
 
+function providerQuotaRefusal(retryAfterMs?: number) {
+  return new ApiCallError("budget_exhausted", undefined, retryAfterMs, undefined, "provider_quota");
+}
+
 const laneContext = new AsyncLocalStorage<FinanceQuotaLane>();
 const stateDirectoryContext = new AsyncLocalStorage<string>();
 
@@ -183,7 +187,7 @@ function requestWeight(policy: FinanceQuotaPolicy, url: URL): number {
         url.pathname,
       )
     ) {
-      throw new ApiCallError("budget_exhausted");
+      throw providerQuotaRefusal();
     }
     return Math.max(1, (url.searchParams.get("symbol") ?? "").split(",").length);
   }
@@ -197,7 +201,7 @@ function requestWeight(policy: FinanceQuotaPolicy, url: URL): number {
     if (url.pathname === "/api/v3/exchangeInfo") {
       return 20;
     }
-    throw new ApiCallError("budget_exhausted");
+    throw providerQuotaRefusal();
   }
   return 1;
 }
@@ -303,7 +307,7 @@ export function createFinanceQuotaGuard(
       state = data;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new ApiCallError("budget_exhausted");
+        throw providerQuotaRefusal();
       }
     }
     // Bring this session's real measurements into the budget instead of resetting usage at rollout.
@@ -415,7 +419,7 @@ export function createFinanceQuotaGuard(
           const time = now();
           const lane = laneContext.getStore() ?? FINANCE_QUOTA_DEFAULT_LANE;
           if (state.blockedUntil > time) {
-            throw new ApiCallError("budget_exhausted", undefined, state.blockedUntil - time);
+            throw providerQuotaRefusal(state.blockedUntil - time);
           }
           let wait = Math.max(0, state.nextStartAt - time);
           if (
@@ -423,11 +427,7 @@ export function createFinanceQuotaGuard(
             state.serverBudget.resetAt > time &&
             state.serverBudget.remaining < weight
           ) {
-            throw new ApiCallError(
-              "budget_exhausted",
-              undefined,
-              state.serverBudget.resetAt - time,
-            );
+            throw providerQuotaRefusal(state.serverBudget.resetAt - time);
           }
           for (const window of policy.windows) {
             const cutoff =
@@ -437,7 +437,7 @@ export function createFinanceQuotaGuard(
             const events = state.events.filter((event) => event.at >= cutoff);
             const used = events.reduce((sum, event) => sum + event.weight, 0);
             if (weight > window.limit) {
-              throw new ApiCallError("budget_exhausted");
+              throw providerQuotaRefusal();
             }
             if (used + weight > window.limit) {
               let remaining = used;
@@ -451,7 +451,7 @@ export function createFinanceQuotaGuard(
                 }
               }
               if (window.durationMs >= day) {
-                throw new ApiCallError("budget_exhausted", undefined, resetAt - time);
+                throw providerQuotaRefusal(resetAt - time);
               }
               wait = Math.max(wait, resetAt - time);
             }
@@ -465,9 +465,7 @@ export function createFinanceQuotaGuard(
             const spend = spendByLane(state.events, cutoff);
             const allowance = assessLaneBudget(spend, dayWindow.limit, lane, weight);
             if (!allowance.allowed) {
-              const refusal = new ApiCallError(
-                "budget_exhausted",
-                undefined,
+              const refusal = providerQuotaRefusal(
                 laneRetryAfter(inDay, dayWindow, lane, weight, time),
               );
               refusal.message =

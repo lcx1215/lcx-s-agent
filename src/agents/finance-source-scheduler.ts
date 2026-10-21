@@ -68,7 +68,10 @@ export function financeSourceQuotaRejectedBeforeDispatch(attempt: {
   return (
     attempt.status === "failed" &&
     calls.some(
-      (call) => call.operation === "http_get" && call.transportError === "budget_exhausted",
+      (call) =>
+        call.operation === "http_get" &&
+        call.transportError === "budget_exhausted" &&
+        call.budgetOrigin === "provider_quota",
     ) &&
     !calls.some(
       (call) =>

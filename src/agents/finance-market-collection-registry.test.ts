@@ -263,6 +263,81 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
 }
 
 describe("finance market collection registry", () => {
+  it("cancels a stalled collection availability hook without entering collect", async () => {
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let aborted = false;
+    let collects = 0;
+    const source = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });
+    const pending = runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      signal: controller.signal,
+      adapters: [
+        {
+          ...source,
+          unavailableForRequest: async (_request, signal) =>
+            new Promise<ApiCallError | undefined>(() => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                },
+                { once: true },
+              );
+              entered();
+            }),
+          collect: async () => {
+            collects++;
+            return [];
+          },
+        },
+      ],
+    });
+    await started;
+    controller.abort();
+    const receipt = await pending;
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({ transportError: "cancelled" }),
+    );
+    expect(aborted).toBe(true);
+    expect(collects).toBe(0);
+  });
+  it("stops at the bounded set when the caller HTTP budget refuses dispatch", async () => {
+    let calls = 0;
+    const primary = createMassiveNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async (url) => {
+        calls++;
+        return fakeFetch(url);
+      },
+    });
+    const backup = createFinnhubNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async (url) => {
+        calls++;
+        return fakeFetch(url);
+      },
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      maxSources: 1,
+      adapters: [primary, backup],
+      beforeHttpDispatch: () => {
+        throw new ApiCallError("budget_exhausted");
+      },
+      retry: { attempts: 1 },
+    });
+    expect(receipt.sourceAttempts).toHaveLength(1);
+    expect(receipt.selectedSourceIds).toEqual([primary.id]);
+    expect(calls).toBe(0);
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({ operation: "http_get", transportError: "budget_exhausted" }),
+    );
+  });
   it("does not release a source slot after HTTP was dispatched", async () => {
     let dispatches = 0;
     let backupCalls = 0;
@@ -304,7 +379,7 @@ describe("finance market collection registry", () => {
       return fakeFetch("https://massive.com/v2/reference/news");
     };
     limited.prepare = async () => {
-      throw new ApiCallError("budget_exhausted", undefined, 60_000);
+      throw new ApiCallError("budget_exhausted", undefined, 60_000, undefined, "provider_quota");
     };
     const primary = createMassiveNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: limited });
     const backup = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });

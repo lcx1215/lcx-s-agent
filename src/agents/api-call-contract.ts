@@ -48,6 +48,8 @@ export type ApiCallReceipt = Readonly<{
   finishedAt: string;
   /** Set only after all quota/queue waits and caller budget approval, immediately before dispatch. */
   dispatchedAt?: string;
+  /** Identifies provider-owned quota refusals; an untagged budget refusal cannot permit backfill. */
+  budgetOrigin?: "provider_quota";
   /** Reuse is a data read, never a new HTTP dispatch or fresh source verification. */
   dataAccess?: { kind: "network" | "cache"; fetchedAt: string; ageMs: number };
   latencyMs: number;
@@ -224,6 +226,7 @@ export class ApiCallError extends Error {
     readonly httpStatus?: number,
     readonly retryAfterMs?: number,
     readonly networkCode?: ApiNetworkCode,
+    readonly budgetOrigin?: "provider_quota",
   ) {
     super(httpStatus === undefined ? `API ${kind}` : `API http status ${httpStatus}`);
     this.name = "ApiCallError";
@@ -480,6 +483,11 @@ async function boundedCall<T>(
       Number.isFinite(error.retryAfterMs) &&
       error.retryAfterMs >= 0
         ? { retryAfterMs: error.retryAfterMs }
+        : {}),
+      ...(error instanceof ApiCallError &&
+      kind === "budget_exhausted" &&
+      error.budgetOrigin === "provider_quota"
+        ? { budgetOrigin: error.budgetOrigin }
         : {}),
       ...(kind ? { transportError: kind } : {}),
       ...(kind === "rate_limited" ? { rateLimited: true } : {}),

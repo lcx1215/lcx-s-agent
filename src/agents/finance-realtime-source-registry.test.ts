@@ -86,6 +86,59 @@ function adapter(params: {
 }
 
 describe("finance realtime source registry", () => {
+  it("bounds a stalled availability hook inside the source timeout", async () => {
+    let aborted = false;
+    const collect = vi.fn();
+    const source = adapter({
+      id: "stalled",
+      providerRole: "primary_market_data",
+      priority: 0,
+      result: observation("stalled", "primary_market_data"),
+    });
+    const receipt = await runFinanceRealtimeRefresh({
+      request,
+      timeoutMs: 20,
+      adapters: [
+        {
+          ...source,
+          collect,
+          unavailableForRequest: async (_request, signal) =>
+            new Promise<ApiCallError | undefined>(() => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                },
+                { once: true },
+              );
+            }),
+        },
+      ],
+    });
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({ transportError: "timeout" }),
+    );
+    expect(aborted).toBe(true);
+    expect(collect).not.toHaveBeenCalled();
+  });
+  it("does not inspect an unused lower-priority adapter's stalled availability hook", async () => {
+    const hook = vi.fn(async () => new Promise<ApiCallError | undefined>(() => {}));
+    const good = adapter({
+      id: "good",
+      providerRole: "primary_market_data",
+      priority: 0,
+      result: observation("good", "primary_market_data"),
+    });
+    const receipt = await runFinanceRealtimeRefresh({
+      request: { ...request, requireOfficialReference: false },
+      maxSources: 1,
+      adapters: [good, { ...good, id: "unused", priority: 99, unavailableForRequest: hook }],
+    });
+    expect(receipt.selectedSourceIds).toEqual(["good"]);
+    expect(hook).not.toHaveBeenCalled();
+    expect(receipt.sourceAttempts[0].status).toBe("succeeded");
+  });
   it("replaces a quota-limited primary without losing cross-check or official gates", async () => {
     const blockedCollect = vi.fn();
     const source = (

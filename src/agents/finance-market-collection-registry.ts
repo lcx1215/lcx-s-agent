@@ -121,6 +121,7 @@ export type FinanceMarketCollectionAdapter = Readonly<{
   /** Read-only preflight; dispatch still rechecks the shared quota and access gates. */
   unavailableForRequest?: (
     request: FinanceMarketCollectionRequest,
+    signal: AbortSignal,
   ) => Promise<ApiCallError | undefined>;
   supports: (request: FinanceMarketCollectionRequest) => boolean;
   collect: (
@@ -1166,7 +1167,7 @@ async function collectWithTimeout(
   request: FinanceMarketCollectionRequest,
   options: ApiTransportOptions,
   onCollect: () => void,
-  unavailable?: ApiCallError,
+  onUnavailable: () => void,
 ): Promise<readonly FinanceMarketCollectionItem[]> {
   return runApiSourceCall(
     {
@@ -1175,8 +1176,10 @@ async function collectWithTimeout(
       source: adapter.id,
       operation: "collect",
     },
-    (signal) => {
+    async (signal) => {
+      const unavailable = await adapter.unavailableForRequest?.(request, signal);
       if (unavailable) {
+        onUnavailable();
         throw unavailable;
       }
       onCollect();
@@ -1211,16 +1214,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
   ) {
     throw new Error("maxSources must be a positive integer");
   }
-  const availability = await Promise.all(
-    candidates.map(async (adapter) => ({
-      id: adapter.id,
-      error: await adapter.unavailableForRequest?.(request),
-    })),
-  );
-  const unavailable = new Map(
-    availability.flatMap(({ id, error }) => (error ? [[id, error] as const] : [])),
-  );
-  const excluded = new Set(unavailable.keys());
+  const excluded = new Set<string>();
   const select = () => {
     const available = candidates.filter((adapter) => !excluded.has(adapter.id));
     return options.maxSources === undefined ? available : available.slice(0, options.maxSources);
@@ -1232,10 +1226,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
   const correlationId = options.correlationId ?? randomUUID();
   const attempted = new Set<string>();
   while (true) {
-    const pending = [
-      ...selected,
-      ...candidates.filter((adapter) => unavailable.has(adapter.id)),
-    ].filter((adapter) => !attempted.has(adapter.id));
+    const pending = selected.filter((adapter) => !attempted.has(adapter.id));
     if (!pending.length) {
       break;
     }
@@ -1247,6 +1238,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
         const records: FinanceMarketCollectionItem[] = [];
         const apiCalls: ApiCallReceipt[] = [];
         const startedAt = Date.now();
+        let preflightRejected = false;
         try {
           const collected = await collectWithTimeout(
             adapter,
@@ -1272,7 +1264,9 @@ export async function runFinanceMarketCollectionRefresh(options: {
             () => {
               adaptersCalled = true;
             },
-            unavailable.get(adapter.id),
+            () => {
+              preflightRejected = true;
+            },
           );
           const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
           records.push(
@@ -1320,7 +1314,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
             error: errorText(error),
           });
         }
-        return { sourceAttempts, records };
+        return { sourceAttempts, records, preflightRejected };
       },
       options.maxSourceConcurrency,
     );
@@ -1328,7 +1322,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
       sourceAttempts.push(...result.sourceAttempts);
       records.push(...result.records);
       for (const attempt of result.sourceAttempts) {
-        if (financeSourceQuotaRejectedBeforeDispatch(attempt)) {
+        if (result.preflightRejected || financeSourceQuotaRejectedBeforeDispatch(attempt)) {
           excluded.add(attempt.adapterId);
         }
       }

@@ -6,19 +6,30 @@ import {
   buildFinanceResearchRegistryOptions,
   financeResearchAdaptersWithFreshHealth,
 } from "../../scripts/operator/lcx-finance-research-run.js";
-import type { FetchImpl } from "../../src/agents/finance-live-market-source.js";
-import { createFinanceMarketCollectionRegistry } from "../../src/agents/finance-market-collection-registry.js";
+import { ApiCallError } from "../../src/agents/api-call-contract.js";
+import {
+  resolveFinanceFetch,
+  type FetchImpl,
+} from "../../src/agents/finance-live-market-source.js";
+import {
+  createFinanceMarketCollectionRegistry,
+  type FinanceMarketCollectionAdapter,
+} from "../../src/agents/finance-market-collection-registry.js";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.js";
+import { createFinanceResponseCache } from "../../src/agents/finance-response-cache.js";
 import {
   persistFinanceSourceHeartbeat,
   readFinanceSourceHeartbeat,
   type FinanceSourceHeartbeatRecord,
 } from "../../src/agents/finance-source-heartbeat-state.js";
 import { runFinanceSourceHeartbeat } from "../../src/agents/finance-source-heartbeat.js";
+import { governFinanceQuota } from "../../src/agents/finance-source-quota.js";
+import { financeQuotaStateDir } from "../../src/agents/finance-state-dir.js";
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
@@ -289,4 +300,91 @@ describe("original research entry consumes endpoint-bound access cooldown", () =
     expect(job.apiCalls.some((call) => call.httpStatus === 200)).toBe(true);
     expect(job.apiCalls.some((call) => call.httpStatus === 402)).toBe(false);
   });
+});
+
+async function quotaFixtureDirectory() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "research-quota-binding-"));
+  roots.push(directory);
+  return directory;
+}
+const request = {
+  instrument: "AAPL",
+  assetClass: "us_equity",
+  collection: "news" as const,
+  asOf: new Date().toISOString(),
+};
+async function quotaFixtureSource(
+  directory: string,
+  overrides: Partial<FinanceMarketCollectionAdapter> = {},
+) {
+  const network = vi.fn(async () => ({ ok: true, status: 200, text: async () => "[]" }));
+  const cache = createFinanceResponseCache();
+  const fetch = resolveFinanceFetch(cache.wrap(governFinanceQuota(network)), {
+    cacheMaxAgeMs: 60_000,
+  });
+  const adapter: FinanceMarketCollectionAdapter = {
+    id: "fmp_fixture",
+    providerName: "fmp-fixture",
+    providerRole: "primary_market_data",
+    priority: 0,
+    supports: () => true,
+    collect: async (_request, signal) => {
+      await fetch("https://financialmodelingprep.com/stable/profile?symbol=AAPL", { signal });
+      return [];
+    },
+    ...overrides,
+  };
+  const wrapped = await financeResearchAdaptersWithFreshHealth({
+    includeYahooPublicSources: false,
+    financeStateDir: directory,
+    workspaceDir: directory,
+    observedAt: request.asOf,
+    registryOptions: {
+      realtimeRegistryOptions: {},
+      collectionRegistryOptions: { additionalAdapters: [adapter] },
+    },
+  });
+  return { adapter: wrapped.collectionAdapters.find((entry) => entry.id === adapter.id)!, network };
+}
+async function exhaust(directory: string) {
+  await fs.mkdir(financeQuotaStateDir(directory), { recursive: true });
+  await fs.writeFile(
+    path.join(financeQuotaStateDir(directory), "fmp.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      events: [{ at: Date.now(), weight: 250, lane: "production" }],
+      nextStartAt: 0,
+      blockedUntil: 0,
+    }),
+  );
+}
+it("binds dispatch to the explicit book while a different ambient book has credits", async () => {
+  const directory = await quotaFixtureDirectory();
+  const ambient = await quotaFixtureDirectory();
+  vi.stubEnv("LCX_FINANCE_STATE_DIR", ambient);
+  await exhaust(directory);
+  const f = await quotaFixtureSource(directory);
+  await expect(f.adapter.collect(request, new AbortController().signal)).rejects.toMatchObject({
+    kind: "budget_exhausted",
+  });
+  expect(f.network).not.toHaveBeenCalled();
+});
+it("reuses exact fresh cached data even after the provider's book is exhausted", async () => {
+  const directory = await quotaFixtureDirectory();
+  const f = await quotaFixtureSource(directory);
+  await f.adapter.collect(request, new AbortController().signal);
+  await exhaust(directory);
+  expect(
+    await f.adapter.unavailableForRequest!(request, new AbortController().signal),
+  ).toBeUndefined();
+  await f.adapter.collect(request, new AbortController().signal);
+  expect(f.network).toHaveBeenCalledTimes(1);
+});
+it("preserves an additional adapter's own availability refusal", async () => {
+  const error = new ApiCallError("forbidden", 403, 60_000);
+  const f = await quotaFixtureSource(await quotaFixtureDirectory(), {
+    unavailableForRequest: async () => error,
+  });
+  expect(await f.adapter.unavailableForRequest!(request, new AbortController().signal)).toBe(error);
+  expect(f.network).not.toHaveBeenCalled();
 });
