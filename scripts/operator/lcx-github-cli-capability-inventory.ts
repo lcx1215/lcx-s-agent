@@ -156,14 +156,14 @@ export async function buildGithubCliCapabilityInventory() {
       "gh --version",
       "gh auth status --show-token-scopes",
       "gh extension list",
-      `gh repo view --repo ${verifiedRepoTarget} --json nameWithOwner,visibility,defaultBranchRef`,
+      `gh repo view ${verifiedRepoTarget} --json nameWithOwner,visibility,defaultBranchRef`,
       `gh issue list --repo ${verifiedRepoTarget} --limit <n>`,
       `gh pr list --repo ${verifiedRepoTarget} --limit <n>`,
     ],
     blockedRemoteWriteCommands: REMOTE_WRITE_BLOCKS,
     nextSafeLocalProbe: githubRepo
-      ? `Use read-only gh issue/pr/repo inventory with --repo ${githubRepo}, then create a JSON wrapper contract before any remote write or agent delegation.`
-      : "First verify and parse git remote origin as the target repository; then use read-only gh issue/pr/repo inventory with --repo <verified-origin-owner>/<verified-origin-repo> before any remote write or agent delegation.",
+      ? `Use read-only gh issue/pr inventory with --repo ${githubRepo} and gh repo view ${githubRepo}, then create a JSON wrapper contract before any remote write or agent delegation.`
+      : "First verify and parse git remote origin as the target repository; then use --repo <verified-origin-owner>/<verified-origin-repo> for read-only gh issue/pr inventory and pass that repository positionally to gh repo view before any remote write or agent delegation.",
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

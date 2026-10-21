@@ -76,7 +76,7 @@ describe("lcx-github-cli-capability-inventory", () => {
     if (payload.repo.githubRepo) {
       expect(payload.allowedByDefault).toEqual(
         expect.arrayContaining([
-          `gh repo view --repo ${payload.repo.githubRepo} --json nameWithOwner,visibility,defaultBranchRef`,
+          `gh repo view ${payload.repo.githubRepo} --json nameWithOwner,visibility,defaultBranchRef`,
           `gh issue list --repo ${payload.repo.githubRepo} --limit <n>`,
           `gh pr list --repo ${payload.repo.githubRepo} --limit <n>`,
         ]),

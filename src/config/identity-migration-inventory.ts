@@ -1,12 +1,23 @@
 // Shared migration inventory metadata; keep root activation and receipt writers aligned.
-export const LCX_IDENTITY_MIGRATION_INVENTORY = "lcx-identity-writer-inventory-v1" as const;
+export const LCX_IDENTITY_MIGRATION_INVENTORY = "lcx-identity-writer-inventory-v2" as const;
 
 export type LcxIdentityMigrationCompletionMarker = Readonly<{
-  schemaVersion: 1;
+  schemaVersion: 2;
   canonicalStateDir: string;
   completedAt: string;
   inventory: typeof LCX_IDENTITY_MIGRATION_INVENTORY;
   targetKeys: readonly string[];
+  publication: Readonly<{ kind: "caller-held-legacy-writer-quiescence"; owner: string }>;
+  sourceInventory: Readonly<{
+    schemaVersion: 1;
+    sources: readonly Readonly<{
+      readPath: string;
+      targetKey: string;
+      identity: string;
+      contentHash: string;
+      bytes: number;
+    }>[];
+  }>;
 }>;
 
 export type LcxIdentityWriterName =
