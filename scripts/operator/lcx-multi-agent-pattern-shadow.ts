@@ -1,9 +1,12 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { buildLocalModelProcessEnv } from "../../src/agents/local-model-process-env.js";
+import { killProcessTree } from "../../src/process/kill-tree.js";
 import {
   LCX_ONTOLOGY_AGENT_ROLES,
   LCX_ONTOLOGY_COMMUNICATION_KINDS,
@@ -1147,16 +1150,6 @@ type PatternExecutionOptions = {
   recoveryProbe?: boolean;
 };
 
-const FORBIDDEN_TOOLS = new Set([
-  "lark.send",
-  "external_channel.send",
-  "provider.config.write",
-  "protected_memory.write",
-  "training.start",
-  "trade.execute",
-  "wallet.order",
-]);
-
 const EXTERNAL_SIDE_EFFECT_KINDS = new Set([
   "lark_send",
   "external_channel_send",
@@ -1812,7 +1805,21 @@ type ExecutorInvocation = {
   durationMs: number;
 };
 
-async function invokeExecutor(
+/** ESRCH is the only portable proof that our detached POSIX process group is gone. */
+export function isShadowProcessGroupGone(pid: number, platform = process.platform): boolean {
+  if (platform === "win32") {
+    // A parent exit/taskkill launch cannot prove that Windows descendants exited.
+    return false;
+  }
+  try {
+    process.kill(-pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+export async function invokeExecutor(
   command: string,
   request: ShadowExecutorRequest,
   timeoutMs: number,
@@ -1833,7 +1840,8 @@ async function invokeExecutor(
   return new Promise((resolve) => {
     const child = spawn(tokens[0], tokens.slice(1), {
       cwd: repoRoot,
-      env: { ...process.env, LCX_MULTI_AGENT_SHADOW: "1" },
+      env: buildLocalModelProcessEnv(process.env, { LCX_MULTI_AGENT_SHADOW: "1" }),
+      detached: process.platform !== "win32",
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -1847,22 +1855,53 @@ async function invokeExecutor(
       settled = true;
       resolve({ ...result, durationMs: Date.now() - startedAt });
     };
+    let terminationError: ExecutorInvocation["error"];
+    let closed = false;
+    const terminate = (error: NonNullable<ExecutorInvocation["error"]>) => {
+      if (terminationError || settled) {
+        return;
+      }
+      terminationError = error;
+      clearTimeout(timer);
+      const terminatedAt = Date.now();
+      if (child.pid) {
+        killProcessTree(child.pid, { graceMs: 750 });
+      }
+      const confirmCleanup = () => {
+        const elapsed = Date.now() - terminatedAt;
+        // Wait until the original owner's escalation has run, then require an
+        // actual closed child and absent group. Elapsed time alone proves nothing.
+        if (elapsed >= 750 && closed && child.pid && isShadowProcessGroupGone(child.pid)) {
+          finish({ error, durationMs: 0 });
+          return;
+        }
+        if (elapsed >= 1500) {
+          child.stdin.destroy();
+          child.stdout.destroy();
+          child.stderr.destroy();
+          finish({
+            error: {
+              code: "executor_cleanup_unconfirmed",
+              message: `${error.code}: executor tree cleanup could not be confirmed; further execution is blocked`,
+            },
+            durationMs: 0,
+          });
+          return;
+        }
+        setTimeout(confirmCleanup, 25);
+      };
+      confirmCleanup();
+    };
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish({
-        error: { code: "executor_timeout", message: `executor exceeded ${timeoutMs}ms` },
-        durationMs: timeoutMs,
-      });
+      terminate({ code: "executor_timeout", message: `executor exceeded ${timeoutMs}ms` });
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer | string) => {
+      if (terminationError) {
+        return;
+      }
       stdout += String(chunk);
       if (stdout.length > 2 * 1024 * 1024) {
-        child.kill("SIGTERM");
-        clearTimeout(timer);
-        finish({
-          error: { code: "executor_output_too_large", message: "executor stdout exceeded limit" },
-          durationMs: 0,
-        });
+        terminate({ code: "executor_output_too_large", message: "executor stdout exceeded limit" });
       }
     });
     child.stderr.on("data", (chunk: Buffer | string) => {
@@ -1872,10 +1911,17 @@ async function invokeExecutor(
       }
     });
     child.on("error", (error) => {
+      if (terminationError) {
+        return;
+      }
       clearTimeout(timer);
       finish({ error: { code: "executor_spawn_failed", message: error.message }, durationMs: 0 });
     });
     child.on("close", (code) => {
+      closed = true;
+      if (terminationError) {
+        return;
+      }
       clearTimeout(timer);
       if (settled) {
         return;
@@ -1937,7 +1983,7 @@ function responseCapabilities(responses: readonly ShadowExecutorResponse[]): Sha
   ) as ShadowCapabilities;
 }
 
-function mergeResponseParts(
+export function mergeResponseParts(
   responses: readonly ShadowExecutorResponse[],
   durations: readonly number[],
   pattern: ShadowPattern,
@@ -1956,33 +2002,55 @@ function mergeResponseParts(
   const usages = responses
     .map((response) => response.usage)
     .filter((usage): usage is ShadowUsage => usage !== undefined);
+  const sumUsageField = (
+    field: "promptTokens" | "completionTokens" | "totalTokens" | "billedAmount",
+  ) => {
+    if (
+      usages.length !== responses.length ||
+      usages.length === 0 ||
+      !usages.every((item) => typeof item[field] === "number" && Number.isFinite(item[field]))
+    ) {
+      return undefined;
+    }
+    const total = usages.reduce((sum, item) => sum + (item[field] ?? 0), 0);
+    return Number.isFinite(total) ? total : undefined;
+  };
+  const currency = usages[0]?.currency;
+  const sameCurrency =
+    Boolean(currency?.trim()) && usages.every((item) => item.currency === currency);
+  const billedAmount = sameCurrency ? sumUsageField("billedAmount") : undefined;
   const usage =
-    usages.length > 0
+    usages.length === responses.length && usages.length > 0
       ? {
-          promptTokens: usages.reduce((sum, item) => sum + (item.promptTokens ?? 0), 0),
-          completionTokens: usages.reduce((sum, item) => sum + (item.completionTokens ?? 0), 0),
-          totalTokens: usages.reduce((sum, item) => sum + (item.totalTokens ?? 0), 0),
-          billedAmount: usages.reduce((sum, item) => sum + (item.billedAmount ?? 0), 0),
-          currency: usages.find((item) => item.currency)?.currency,
+          promptTokens: sumUsageField("promptTokens"),
+          completionTokens: sumUsageField("completionTokens"),
+          totalTokens: sumUsageField("totalTokens"),
+          billedAmount,
+          currency: billedAmount === undefined ? undefined : currency,
           estimated: usages.some((item) => item.estimated === true),
         }
       : undefined;
+  const cleanupUnconfirmed = responses.some(
+    (response) => response.error?.code === "executor_cleanup_unconfirmed",
+  );
   const timedOut = responses.some((response) => response.status === "timed_out");
   const failed = responses.some((response) => response.status === "failed");
   const blocked = responses.some((response) => response.status === "blocked");
   const resumed = responses.some((response) => response.status === "resumed");
   const interrupted = responses.some((response) => response.status === "interrupted");
-  const status: ShadowStatus = timedOut
-    ? "timed_out"
-    : failed
-      ? "failed"
-      : blocked
-        ? "blocked"
-        : resumed
-          ? "resumed"
-          : interrupted
-            ? "interrupted"
-            : "completed";
+  const status: ShadowStatus = cleanupUnconfirmed
+    ? "blocked"
+    : timedOut
+      ? "timed_out"
+      : failed
+        ? "failed"
+        : blocked
+          ? "blocked"
+          : resumed
+            ? "resumed"
+            : interrupted
+              ? "interrupted"
+              : "completed";
   return {
     schemaVersion: EXECUTOR_SCHEMA_VERSION,
     status,
@@ -1993,7 +2061,9 @@ function mergeResponseParts(
     usage,
     capabilities: responseCapabilities(responses),
     report: { childCount: responses.length, durationMs: durations },
-    error: responses.find((response) => response.error)?.error,
+    error:
+      responses.find((response) => response.error?.code === "executor_cleanup_unconfirmed")
+        ?.error ?? responses.find((response) => response.error)?.error,
   };
 }
 
@@ -2110,12 +2180,16 @@ function permissionAudit(
       evidence: "unverified",
     };
   }
+  const allowedTools: ReadonlySet<string> = new Set(SHADOW_CASE.allowedTools);
   const blockedViolationAttempts = toolEvents.filter(
-    (event) => FORBIDDEN_TOOLS.has(event.toolName) && ["blocked", "failed"].includes(event.status),
+    (event) =>
+      (!allowedTools.has(event.toolName) || event.allowed === false) &&
+      ["blocked", "failed"].includes(event.status),
   ).length;
   const escapedToolViolations = toolEvents.filter(
     (event) =>
-      FORBIDDEN_TOOLS.has(event.toolName) && ["completed", "escaped"].includes(event.status),
+      (!allowedTools.has(event.toolName) || event.allowed === false) &&
+      ["completed", "escaped"].includes(event.status),
   ).length;
   const escapedSideEffects = sideEffects.filter(
     (effect) =>
@@ -2919,8 +2993,50 @@ function summarizeExperiment(
   };
 }
 
-function executorFingerprint(command: string | undefined, mode: ShadowMode): string {
-  return hashText(command ?? `${mode}:replay-builtin`).slice(0, 16);
+export function executorFingerprint(
+  command: string | undefined,
+  mode: ShadowMode,
+  identityFiles: readonly string[] = [],
+): string {
+  if (!command) {
+    return hashText(`${mode}:replay-builtin`).slice(0, 16);
+  }
+  const tokens = parseCommand(command);
+  const executable = tokens[0];
+  const executablePaths =
+    executable.includes(path.sep) || path.isAbsolute(executable)
+      ? [path.resolve(repoRoot, executable)]
+      : (process.env.PATH ?? "")
+          .split(path.delimiter)
+          .map((dir) => path.resolve(repoRoot, dir, executable));
+  const resolvedExecutable = executablePaths.find((file) => {
+    try {
+      return statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (!resolvedExecutable) {
+    throw new Error("executor implementation cannot be resolved");
+  }
+  const files = new Set([
+    resolvedExecutable,
+    ...identityFiles.map((file) => path.resolve(repoRoot, file)),
+  ]);
+  for (const token of tokens.slice(1)) {
+    const file = path.resolve(repoRoot, token);
+    try {
+      if (statSync(file).isFile()) {
+        files.add(file);
+      }
+    } catch {
+      /* non-file argument */
+    }
+  }
+  const implementation = [...files]
+    .toSorted()
+    .map((file) => [file, createHash("sha256").update(readFileSync(file)).digest("hex")]);
+  return hashText(JSON.stringify({ command, implementation })).slice(0, 16);
 }
 
 function assertSafeExperimentId(experimentId: string): void {
@@ -2986,7 +3102,7 @@ export function buildReplayExperiment(
   return receipt;
 }
 
-async function isolatedExecutorPattern(
+export async function isolatedExecutorPattern(
   params: PatternExecutionOptions,
   fingerprint: string,
 ): Promise<ShadowRunReceipt> {
@@ -3057,7 +3173,12 @@ async function isolatedExecutorPattern(
     } else {
       const failed: ShadowExecutorResponse = {
         schemaVersion: EXECUTOR_SCHEMA_VERSION,
-        status: invocation.error?.code === "executor_timeout" ? "timed_out" : "failed",
+        status:
+          invocation.error?.code === "executor_cleanup_unconfirmed"
+            ? "blocked"
+            : invocation.error?.code === "executor_timeout"
+              ? "timed_out"
+              : "failed",
         capabilities: unknownCapabilities(),
         error: invocation.error,
       };
@@ -3110,7 +3231,12 @@ async function isolatedExecutorPattern(
       interrupted?.capabilities.faultInjection === "supported" &&
       interrupted?.capabilities.resume === "supported";
     let resumed: ShadowExecutorResponse | undefined;
-    if (task && interrupted?.status === "interrupted" && resumeEventId) {
+    if (
+      task &&
+      interrupted?.status === "interrupted" &&
+      resumeEventId &&
+      !responses.some((response) => response.error?.code === "executor_cleanup_unconfirmed")
+    ) {
       resumed = await invoke(task, { resumeFromEventId: resumeEventId });
       if (
         (resumed.status === "completed" || resumed.status === "resumed") &&
@@ -3210,6 +3336,7 @@ type CliOptions = {
   caseId: string;
   repetitions: number;
   executorCommand?: string;
+  executorIdentityFiles?: readonly string[];
   experimentId: string;
   childTimeoutMs: number;
   rootTimeoutMs: number;
@@ -3239,6 +3366,7 @@ function parseArgs(args: readonly string[]): CliOptions {
   let experimentId: string | undefined;
   let childTimeoutMs = DEFAULT_CHILD_TIMEOUT_MS;
   let rootTimeoutMs = DEFAULT_ROOT_TIMEOUT_MS;
+  const executorIdentityFiles: string[] = [];
   let retry = false;
   let retryReason: string | undefined;
   let json = false;
@@ -3273,6 +3401,9 @@ function parseArgs(args: readonly string[]): CliOptions {
     } else if (arg === "--root-timeout-ms") {
       rootTimeoutMs = parsePositiveInteger(readArgValue(args, index, arg), arg);
       index += 1;
+    } else if (arg === "--executor-identity-file") {
+      executorIdentityFiles.push(readArgValue(args, index, arg));
+      index += 1;
     } else if (arg === "--retry") {
       retry = true;
     } else if (arg === "--retry-reason") {
@@ -3303,6 +3434,7 @@ function parseArgs(args: readonly string[]): CliOptions {
     caseId,
     repetitions,
     executorCommand,
+    executorIdentityFiles,
     experimentId: experimentId ?? getDefaultShadowExperimentId(mode),
     childTimeoutMs,
     rootTimeoutMs,
@@ -3343,6 +3475,13 @@ async function checkTrainingGuard(): Promise<TrainingGuardResult> {
   }
 }
 
+export function preserveShadowRetryHistory(
+  parsed: ShadowRunReceipt,
+  previous?: ShadowRunReceipt,
+): ShadowRunReceipt {
+  return { ...parsed, retry: parsed.retry ?? previous?.retry };
+}
+
 async function readExistingReceipts(): Promise<Map<string, ShadowRunReceipt>> {
   const result = new Map<string, ShadowRunReceipt>();
   try {
@@ -3351,7 +3490,8 @@ async function readExistingReceipts(): Promise<Map<string, ShadowRunReceipt>> {
       try {
         const parsed = JSON.parse(line) as ShadowRunReceipt;
         if (parsed.idempotencyKey && parsed.receiptSchemaVersion === RECEIPT_SCHEMA_VERSION) {
-          result.set(parsed.idempotencyKey, parsed);
+          const previous = result.get(parsed.idempotencyKey);
+          result.set(parsed.idempotencyKey, preserveShadowRetryHistory(parsed, previous));
         }
       } catch {
         // Append-only logs may contain an interrupted final line; do not invent a receipt.
@@ -3612,6 +3752,7 @@ export async function buildIsolatedExecutorExperiment(
     patterns?: readonly ShadowPattern[];
     repetitions?: number;
     executorCommand?: string;
+    executorIdentityFiles?: readonly string[];
     childTimeoutMs?: number;
     rootTimeoutMs?: number;
     retry?: boolean;
@@ -3635,7 +3776,11 @@ export async function buildIsolatedExecutorExperiment(
   if (!Number.isInteger(rootTimeoutMs) || rootTimeoutMs <= 0) {
     throw new Error("rootTimeoutMs must be a positive integer");
   }
-  const fingerprint = executorFingerprint(params.executorCommand, "live");
+  const fingerprint = executorFingerprint(
+    params.executorCommand,
+    "live",
+    params.executorIdentityFiles,
+  );
   observeShadow(params.observer, {
     stage: "intake",
     experimentId,
@@ -3701,7 +3846,8 @@ export async function buildIsolatedExecutorExperiment(
   const existing = await readExistingReceipts();
   const appendRuns: ShadowRunReceipt[] = [];
   const runs: ShadowRunReceipt[] = [];
-  for (const pattern of patterns) {
+  let cleanupUnconfirmed = false;
+  normalRuns: for (const pattern of patterns) {
     for (let repetition = 1; repetition <= repetitions; repetition += 1) {
       const key = idempotencyKey({
         experimentId,
@@ -3712,6 +3858,9 @@ export async function buildIsolatedExecutorExperiment(
       const prior = existing.get(key);
       if (
         prior &&
+        // Operator must list imported implementation/model configuration dependencies.
+        // Without that declaration, an opaque executor cannot safely reuse evidence.
+        (params.executorIdentityFiles?.length ?? 0) > 0 &&
         canReuseCompletedIsolatedShadowReceipt(prior, {
           experimentId,
           pattern,
@@ -3772,6 +3921,7 @@ export async function buildIsolatedExecutorExperiment(
             },
           },
           executorFingerprint: fingerprint,
+          retry: prior.retry,
         });
         runs.push(blocked);
         appendRuns.push(blocked);
@@ -3791,11 +3941,18 @@ export async function buildIsolatedExecutorExperiment(
           : result;
       runs.push(withRetry);
       appendRuns.push(withRetry);
+      if (withRetry.error?.code === "executor_cleanup_unconfirmed") {
+        cleanupUnconfirmed = true;
+        break normalRuns;
+      }
     }
   }
   observeShadow(params.observer, { stage: "isolated", experimentId, input: replay, output: runs });
   const recoveryRuns: ShadowRunReceipt[] = [];
   for (const pattern of patterns) {
+    if (cleanupUnconfirmed) {
+      break;
+    }
     const faultInjectionSupported = runs.some(
       (run) => run.pattern === pattern && run.capabilities.faultInjection === "supported",
     );
@@ -3812,6 +3969,7 @@ export async function buildIsolatedExecutorExperiment(
     const priorRecovery = existing.get(recoveryKey);
     if (
       priorRecovery &&
+      (params.executorIdentityFiles?.length ?? 0) > 0 &&
       canReuseCompletedIsolatedShadowReceipt(priorRecovery, {
         experimentId,
         pattern,
@@ -3854,6 +4012,7 @@ export async function buildIsolatedExecutorExperiment(
           },
         },
         executorFingerprint: fingerprint,
+        retry: priorRecovery.retry,
       });
       recoveryRuns.push({ ...blocked, fixture: "interruption" });
       appendRuns.push({ ...blocked, fixture: "interruption" });
@@ -3881,6 +4040,7 @@ export async function buildIsolatedExecutorExperiment(
       continue;
     }
     const probe = await isolatedExecutorPattern(recoveryExecution, fingerprint);
+    cleanupUnconfirmed = probe.error?.code === "executor_cleanup_unconfirmed";
     const recoveryReceipt = {
       ...probe,
       fixture: "interruption" as const,
@@ -4060,7 +4220,7 @@ async function main(): Promise<void> {
       experimentId: options.experimentId,
       patterns: options.patterns,
       repetitions: options.repetitions,
-      fingerprint: executorFingerprint(options.executorCommand, "live"),
+      fingerprint: hashText(`unverified:${options.executorCommand ?? "missing"}`).slice(0, 16),
       code: "shadow_lock_held",
       message,
     });
@@ -4073,6 +4233,7 @@ async function main(): Promise<void> {
       patterns: options.patterns,
       repetitions: options.repetitions,
       executorCommand: options.executorCommand,
+      executorIdentityFiles: options.executorIdentityFiles,
       childTimeoutMs: options.childTimeoutMs,
       rootTimeoutMs: options.rootTimeoutMs,
       retry: options.retry,
@@ -4090,7 +4251,7 @@ async function main(): Promise<void> {
       experimentId: options.experimentId,
       patterns: options.patterns,
       repetitions: options.repetitions,
-      fingerprint: executorFingerprint(options.executorCommand, "live"),
+      fingerprint: hashText(`unverified:${options.executorCommand ?? "missing"}`).slice(0, 16),
       code: "shadow_execution_blocked",
       message,
     });

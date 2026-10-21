@@ -137,18 +137,17 @@ jobs:
 
             let isMaintainer = false;
             try {
-              const membership = await github.rest.teams.getMembershipForUserInOrg({
-                org: context.repo.owner,
-                team_slug: "maintainer",
+              const membership = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
                 username: login,
               });
-              isMaintainer = membership?.data?.state === "active";
+              isMaintainer = ["admin", "maintain", "write"].includes(membership?.data?.permission);
             } catch (error) {
               if (error?.status !== 404 && error?.status !== 403) {
                 throw error;
               }
               if (error?.status === 403) {
-                core.warning(`Skipping maintainer membership check for ${login}; treating as not a maintainer.`);
+                core.warning(`Skipping repository collaborator permission check for ${login}; treating as not a maintainer.`);
               }
             }
 
@@ -192,6 +191,33 @@ jobs:
                 labels: [trustedLabel],
               });
             }
+
+      - name: Apply noisy PR guard after repository-token labeling
+        if: github.event.pull_request != null
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            // GITHUB_TOKEN label writes do not fan out labeled workflow events.
+            const labels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const names = new Set(labels.map((label) => label.name));
+            if (!names.has("dirty") && names.size <= 20) {
+              return;
+            }
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              body: "Closing this PR because it looks dirty (too many unrelated or unexpected changes). Please recreate the PR from a clean branch.",
+            });
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              state: "closed",
+            });
 
   backfill-pr-labels:
     if: github.event_name == 'workflow_dispatch'
@@ -256,18 +282,18 @@ jobs:
 
               let isMaintainer = false;
               try {
-                const membership = await github.rest.teams.getMembershipForUserInOrg({
-                  org: owner,
-                  team_slug: "maintainer",
+                const membership = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner,
+                  repo,
                   username: login,
                 });
-                isMaintainer = membership?.data?.state === "active";
+                isMaintainer = ["admin", "maintain", "write"].includes(membership?.data?.permission);
               } catch (error) {
                 if (error?.status !== 404 && error?.status !== 403) {
                   throw error;
                 }
                 if (error?.status === 403) {
-                  core.warning(`Skipping maintainer membership check for ${login}; treating as not a maintainer.`);
+                  core.warning(`Skipping repository collaborator permission check for ${login}; treating as not a maintainer.`);
                 }
               }
 
@@ -456,18 +482,17 @@ jobs:
 
             let isMaintainer = false;
             try {
-              const membership = await github.rest.teams.getMembershipForUserInOrg({
-                org: context.repo.owner,
-                team_slug: "maintainer",
+              const membership = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
                 username: login,
               });
-              isMaintainer = membership?.data?.state === "active";
+              isMaintainer = ["admin", "maintain", "write"].includes(membership?.data?.permission);
             } catch (error) {
               if (error?.status !== 404 && error?.status !== 403) {
                 throw error;
               }
               if (error?.status === 403) {
-                core.warning(`Skipping maintainer membership check for ${login}; treating as not a maintainer.`);
+                core.warning(`Skipping repository collaborator permission check for ${login}; treating as not a maintainer.`);
               }
             }
 

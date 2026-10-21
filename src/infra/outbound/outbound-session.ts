@@ -824,7 +824,7 @@ function resolveExternalSession(
     accountId: params.accountId,
     peer,
   });
-  const threadId = normalizeThreadId(params.replyToId ?? params.threadId);
+  const threadId = normalizeThreadId(params.threadId ?? params.replyToId);
   const threadKeys = resolveThreadSessionKeys({ baseSessionKey, threadId });
   return {
     sessionKey: threadKeys.sessionKey,

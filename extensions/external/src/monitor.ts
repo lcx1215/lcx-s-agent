@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   beginWebhookRequestPipelineOrReject,
   createReplyPrefixOptions,
+  chunkTextForOutbound,
   createWebhookInFlightLimiter,
   formatExternalTarget,
   isNormalizedSenderAllowed,
@@ -16,6 +18,7 @@ import {
   type ChannelLogSink,
   type OpenClawConfig,
 } from "lcx-agent/plugin-sdk";
+import { appendExternalMessageFlow, type ExternalMessageFlowRecord } from "./message-flow.js";
 import { normalizeExternalInboundMessage } from "./protocol.js";
 import {
   createExternalReplayGuard,
@@ -113,10 +116,14 @@ export function createExternalWebhookRequestHandler(params: {
     }
 
     try {
+      const accountHeader = req.headers["x-external-account-id"];
+      const accountId = typeof accountHeader === "string" ? accountHeader.trim() : undefined;
       const target = resolveWebhookTargetWithAuthOrRejectSync({
         targets,
         res,
-        isMatch: (candidate) => isExternalWebhookAuthorized(req, candidate.account),
+        isMatch: (candidate) =>
+          (accountHeader === undefined || accountId === candidate.account.accountId) &&
+          isExternalWebhookAuthorized(req, candidate.account),
         unauthorizedMessage: "unauthorized",
         ambiguousMessage: "ambiguous external webhook target",
       });
@@ -289,6 +296,24 @@ async function processExternalMessageInner(
     throw new Error("external channel runtime is unavailable");
   }
 
+  const correlationId = randomUUID();
+  const recordFlow = async (
+    record: Pick<ExternalMessageFlowRecord, "stage" | "deliveryStatus" | "outboundMessageId">,
+  ) => {
+    try {
+      await appendExternalMessageFlow({
+        ...record,
+        accountId: target.account.accountId,
+        messageId: message.messageId,
+        conversationId: message.conversationId,
+        correlationId,
+      });
+    } catch {
+      // Observability failure cannot turn a delivered message into a retryable send.
+      target.runtime.error(`[${target.account.accountId}] external reply-flow receipt unavailable`);
+    }
+  };
+
   const { route, buildEnvelope } = resolveInboundRouteEnvelopeBuilderWithRuntime({
     cfg: target.config,
     channel: "external",
@@ -356,6 +381,7 @@ async function processExternalMessageInner(
     accountId: target.account.accountId,
   });
   let replyFailed = false;
+  await recordFlow({ stage: "inbound" });
   enterDispatch();
   await core.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: context,
@@ -368,15 +394,28 @@ async function processExternalMessageInner(
         if (!text.trim() && mediaUrls.length === 0) {
           return;
         }
-        await sendExternalMessage({
-          account: target.account,
-          target: message.conversationId,
-          text,
-          mediaUrls,
-          replyToId: payload.replyToId ?? message.replyToId,
-          threadId: message.threadId,
-        });
-        target.statusSink?.({ lastOutboundAt: Date.now() });
+        const chunks = text ? chunkTextForOutbound(text, target.account.textChunkLimit) : [""];
+        for (const [index, chunk] of chunks.entries()) {
+          try {
+            const result = await sendExternalMessage({
+              account: target.account,
+              target: message.conversationId,
+              text: chunk,
+              mediaUrls: index === 0 ? mediaUrls : undefined,
+              replyToId: payload.replyToId ?? message.messageId,
+              threadId: message.threadId,
+            });
+            await recordFlow({
+              stage: "outbound_result",
+              deliveryStatus: "success",
+              outboundMessageId: result.messageId,
+            });
+            target.statusSink?.({ lastOutboundAt: Date.now() });
+          } catch (error) {
+            await recordFlow({ stage: "outbound_result", deliveryStatus: "failed" });
+            throw error;
+          }
+        }
       },
       onError: (error, info) => {
         replyFailed = true;

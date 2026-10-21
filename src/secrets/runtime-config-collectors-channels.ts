@@ -777,16 +777,47 @@ function collectExternalAssignments(params: {
   }
   const surface = resolveChannelAccountSurface(external);
   for (const field of ["inboundToken", "outboundToken"] as const) {
-    collectSimpleChannelFieldAssignments({
-      channelKey: "external",
-      field,
-      channel: external,
-      surface,
+    const authField = field === "inboundToken" ? "inboundAuth" : "outboundAuth";
+    const defaultAuth = field === "inboundToken" ? "token" : "none";
+    const usesToken = (account: Record<string, unknown>) =>
+      (account[authField] ?? external[authField] ?? defaultAuth) !== "none";
+    collectSecretInputAssignment({
+      value: external[field],
+      path: `channels.external.${field}`,
+      expected: "string",
       defaults: params.defaults,
       context: params.context,
-      topInactiveReason: `no enabled account inherits this top-level external ${field}.`,
-      accountInactiveReason: "External channel account is disabled.",
+      active: surface.accounts.some(
+        ({ account, enabled }) =>
+          enabled &&
+          usesToken(account) &&
+          (!surface.hasExplicitAccounts || !hasOwnProperty(account, field)),
+      ),
+      inactiveReason: `no enabled External account uses this inherited ${field}.`,
+      apply: (value) => {
+        external[field] = value;
+      },
     });
+    if (!surface.hasExplicitAccounts) {
+      continue;
+    }
+    for (const { accountId, account, enabled } of surface.accounts) {
+      if (!hasOwnProperty(account, field)) {
+        continue;
+      }
+      collectSecretInputAssignment({
+        value: account[field],
+        path: `channels.external.accounts.${accountId}.${field}`,
+        expected: "string",
+        defaults: params.defaults,
+        context: params.context,
+        active: enabled && usesToken(account),
+        inactiveReason: "External account is disabled or its auth mode does not use this token.",
+        apply: (value) => {
+          account[field] = value;
+        },
+      });
+    }
   }
 }
 

@@ -50,7 +50,7 @@ import {
   CENTRAL_AGENT_LATEST_PATH,
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   CONTROL_ROOM_LATEST_PATH,
-  DEFAULT_WORKSPACE_DIR,
+  GOVERNANCE_AUTOPILOT_WORKSPACE_DIR,
   EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
   LOCAL_FAILURE_TRACE_JSONL_PATH,
@@ -1093,7 +1093,7 @@ async function captureOwnerRun(run: OwnerRun, payload: Record<string, unknown>):
       ? await recordAgentArtifact({
           config: ownerArtifactRecordingConfig,
           agentId: "main",
-          workspaceDir: DEFAULT_WORKSPACE_DIR,
+          workspaceDir: GOVERNANCE_AUTOPILOT_WORKSPACE_DIR,
           owner: run.id,
           runId: run.runReceipt.runId,
           observedAt: sourceObservedAt,
@@ -2106,7 +2106,7 @@ const impactRun = directOwners[changeImpactIndex];
 if (impactRun?.payload) {
   const cleanup = await reviewCleanupBeforeDecision(directOwners, {
     config: ownerArtifactRecordingConfig ?? null,
-    rootDir: DEFAULT_WORKSPACE_DIR,
+    rootDir: GOVERNANCE_AUTOPILOT_WORKSPACE_DIR,
     repoRoot,
     parentRunId: governanceRunId,
     snapshot: governanceSnapshot,
@@ -2359,7 +2359,7 @@ const receipt = {
   snapshot: governanceSnapshot,
   runId: governanceRunId,
   runReceipt: governanceRunReceipt,
-  workspaceDir: DEFAULT_WORKSPACE_DIR,
+  workspaceDir: GOVERNANCE_AUTOPILOT_WORKSPACE_DIR,
   latestStatePath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
   universeIndexLatestPath: UNIVERSE_INDEX_LATEST_PATH,
   evolutionPromotionDigestPath: EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
@@ -2751,7 +2751,7 @@ const evolutionPromotionDigest = {
 const localFailureTrace = buildLocalFailureTraceReceipt({
   checkedAt: receipt.checkedAt,
   snapshot: governanceSnapshot,
-  workspaceDir: DEFAULT_WORKSPACE_DIR,
+  workspaceDir: GOVERNANCE_AUTOPILOT_WORKSPACE_DIR,
   repo: {
     cwd: repoRoot,
     statusShortBranch: gitStatusLines[0] ?? "",

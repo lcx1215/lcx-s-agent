@@ -1,6 +1,10 @@
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  resolveCanonicalGlobalEvidenceProjectionSnapshotPath,
+  resolveCanonicalGlobalEvidenceProjectionWorkspaceDir,
+} from "../../src/shared/global-evidence-projection-source.ts";
 
 // Resolve the owner's real home independently of a temporary HOME used by
 // isolated checks; callers can still override it explicitly for a sandbox.
@@ -50,11 +54,10 @@ export function resolveLocalOperatorLatestPath(workspaceDir: string): string {
   const scoped = localOperatorLatestPathForWorkspace(workspaceDir);
   return fsSync.existsSync(scoped) ? scoped : LOCAL_OPERATOR_LATEST_PATH;
 }
-export const GOVERNANCE_AUTOPILOT_LATEST_PATH = path.join(
-  DEFAULT_WORKSPACE_DIR,
-  "state",
-  "lcx-governance-autopilot-latest.json",
-);
+export const GOVERNANCE_AUTOPILOT_WORKSPACE_DIR =
+  resolveCanonicalGlobalEvidenceProjectionWorkspaceDir();
+export const GOVERNANCE_AUTOPILOT_LATEST_PATH =
+  resolveCanonicalGlobalEvidenceProjectionSnapshotPath();
 export const CONTROL_ROOM_LATEST_PATH = path.join(
   DEFAULT_WORKSPACE_DIR,
   "state",

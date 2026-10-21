@@ -17,6 +17,7 @@ import {
   LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
   type LogicalAgentExecutionResult,
   type LogicalAgentTask,
+  type LogicalAgentTaskResult,
   LogicalAgentPool,
   runLogicalAgentPlan,
 } from "./logical-agent-pool.js";
@@ -1237,6 +1238,202 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.capabilityViolation).toContain("provider_call");
+  });
+
+  it("isolates nested shared inputs before scheduling concurrent roles", async () => {
+    const input = { ask: "original", metadata: { values: [1], bytes: new Uint8Array([7]) } };
+    const pool = new LogicalAgentPool<typeof input, number>({ maxConcurrency: 2 });
+    const seen: number[] = [];
+    const pending = runLogicalAgentPlan({
+      pool,
+      tasks: [
+        { id: "one", agentId: "data_cleaning", input },
+        { id: "two", agentId: "news_classification", input },
+        { id: "child", agentId: "formatting", input, dependsOn: ["one", "two"] },
+      ],
+      executor: async ({ input: isolated }) => {
+        expect(() => isolated.metadata.values.push(2)).toThrow();
+        seen.push(isolated.metadata.bytes[0]);
+        isolated.metadata.bytes[0] = 9;
+        await Promise.resolve();
+        return { output: isolated.metadata.values[0], sideEffects: [] };
+      },
+    });
+    input.metadata.values[0] = 42;
+    const result = await pending;
+    expect(result.status).toBe("completed");
+    expect(result.tasks.map((task) => task.output)).toEqual([1, 1, 1]);
+    expect(seen).toEqual([7, 7, 7]);
+    expect(input.metadata.bytes[0]).toBe(7);
+  });
+
+  it("rejects input that cannot be isolated before invoking the executor", async () => {
+    const executor = vi.fn(() => ({ output: "unexpected", sideEffects: [] }));
+    for (const input of [
+      { callback: () => {} },
+      { bytes: new Uint8Array(new SharedArrayBuffer(1)) },
+      { values: new Map([["shared", new SharedArrayBuffer(1)]]) },
+    ]) {
+      await expect(
+        runLogicalAgentPlan({
+          tasks: [{ id: "unsupported", agentId: "data_cleaning", input }],
+          executor,
+        }),
+      ).rejects.toThrow();
+    }
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("retains every failed prerequisite in blocked receipts regardless of completion order", async () => {
+    const result = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({ maxConcurrency: 2 }),
+      tasks: [
+        { id: "fast", agentId: "data_cleaning", input: {} },
+        { id: "slow", agentId: "news_classification", input: {} },
+        { id: "child", agentId: "formatting", input: {}, dependsOn: ["fast", "slow"] },
+      ],
+      executor: async ({ task }) => {
+        if (task.id === "slow") {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        throw new Error(task.id);
+      },
+    });
+    expect(result.tasks[2]?.status).toBe("blocked");
+    expect(result.tasks[2]?.error).toBe("blocked by dependency: fast, slow");
+    expect(
+      result.events.find((event) => event.kind === "task_blocked")?.payload?.dependencies,
+    ).toEqual(["fast", "slow"]);
+  });
+
+  it("validates dependency identity and completion in public submit", async () => {
+    const pool = new LogicalAgentPool<object, string>();
+    const executor = vi.fn(() => ({ output: "child", sideEffects: [] }));
+    const task = { id: "child", agentId: "formatting", input: {}, dependsOn: ["root"] } as const;
+    const root = {
+      taskId: "root",
+      agentId: "data_cleaning",
+      status: "completed",
+      modelId: "fixture",
+      completedAt: 1,
+      output: "root",
+      sideEffects: [],
+    } as const;
+    const rejectedDependencies: Readonly<Record<string, LogicalAgentTaskResult<string>>>[] = [
+      {},
+      { root: { ...root, taskId: "other" } },
+      { root: { ...root, status: "failed" } },
+      { root: { ...root, status: "blocked" } },
+    ];
+    for (const dependencies of rejectedDependencies) {
+      expect((await pool.submit(task, executor, dependencies)).status).toBe("blocked");
+    }
+    expect(executor).not.toHaveBeenCalled();
+    expect((await pool.submit(task, executor, { root })).status).toBe("completed");
+    expect(executor).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    new Uint8Array([1, 2]),
+    Buffer.from([1, 2]),
+    new DataView(new Uint8Array([1, 2]).buffer),
+  ])("preserves array-buffer view output and isolates dependency bytes (%s)", async (output) => {
+    const result = await runLogicalAgentPlan<object, Uint8Array | DataView>({
+      tasks: [
+        { id: "root", agentId: "data_cleaning", input: {} },
+        { id: "child", agentId: "formatting", input: {}, dependsOn: ["root"] },
+      ],
+      executor: ({ task, dependencyResults }) => {
+        if (task.id === "child") {
+          const dependency = dependencyResults.root.output!;
+          new Uint8Array(dependency.buffer, dependency.byteOffset, dependency.byteLength)[0] = 9;
+        }
+        return { output, sideEffects: [] };
+      },
+    });
+    expect(result.status).toBe("completed");
+    for (const task of result.tasks) {
+      const bytes = task.output!;
+      expect(Buffer.isBuffer(bytes)).toBe(Buffer.isBuffer(output));
+      expect([...new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)]).toEqual([1, 2]);
+    }
+    new Uint8Array(output.buffer, output.byteOffset, output.byteLength)[0] = 8;
+    const snapshot = result.tasks[0].output!;
+    expect(new Uint8Array(snapshot.buffer, snapshot.byteOffset, snapshot.byteLength)[0]).toBe(1);
+  });
+
+  it("reports trusted executor and requested model limits without claiming physical isolation", () => {
+    const status = new LogicalAgentPool().status;
+    expect(status.executorIsolation).toBe("trusted_in_process");
+    expect(status.loadedModelLimitEvidence).toBe("requested_limit");
+    expect(status.observedLoadedModels).toBeNull();
+    expect(status.memoryBudgetAttribution).toBe("process_delta_nonoverlapping_pool_calls");
+  });
+
+  it("does not attribute overlapping provider memory deltas to either invocation", async () => {
+    const baseline = process.memoryUsage();
+    let retainedBytes = 0;
+    let active = 0;
+    let releaseBoth: () => void = () => {};
+    const bothStarted = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    const memory = vi.spyOn(process, "memoryUsage").mockImplementation(() => ({
+      ...baseline,
+      external: baseline.external + retainedBytes,
+    }));
+    try {
+      const pool = new LogicalAgentPool({
+        maxConcurrency: 2,
+        memoryBudgetMb: 1,
+        allowProviderCalls: true,
+        modelRouting: {
+          revision: "memory-overlap-fixture",
+          adapters: [
+            {
+              id: "remote",
+              provider: "fixture",
+              modelId: "remote",
+              mode: "adapter",
+              capabilities: [],
+              requiredTools: [],
+              requiredSideEffects: ["provider_call"],
+              invoke: async () => {
+                active += 1;
+                if (active === 2) {
+                  retainedBytes = 5 * 1024 * 1024;
+                  releaseBoth();
+                }
+                await bothStarted;
+                return "small result";
+              },
+            },
+          ],
+          defaultPolicy: {
+            primary: "remote",
+            requiredCapabilities: [],
+            maxInputBytes: 1000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [
+          { id: "one", agentId: "data_cleaning", input: {} },
+          { id: "two", agentId: "news_classification", input: {} },
+        ],
+        executor: async ({ modelSlot, signal }) => ({
+          output: await modelSlot.invoke({}, signal),
+          sideEffects: [],
+        }),
+      });
+      expect(result.status).toBe("completed");
+      expect(result.pool.maxObservedModelConcurrency).toBe(2);
+      expect(result.pool.unattributedMemoryChecks).toBe(2);
+    } finally {
+      memory.mockRestore();
+    }
   });
 
   it("keeps dependency result fields immutable for downstream executors", async () => {

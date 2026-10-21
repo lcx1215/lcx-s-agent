@@ -45,7 +45,7 @@ function normalizeChatType(value: unknown): ExternalChatType {
   return "direct";
 }
 
-function normalizeTimestamp(value: unknown): number {
+function normalizeTimestamp(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.abs(value) < 1_000_000_000_000 ? Math.round(value * 1000) : Math.round(value);
   }
@@ -55,7 +55,7 @@ function normalizeTimestamp(value: unknown): number {
       return parsed;
     }
   }
-  return Date.now();
+  return undefined;
 }
 
 function fallbackMessageId(params: {
@@ -126,7 +126,7 @@ export function normalizeExternalInboundMessage(raw: unknown): ExternalProtocolP
   );
   const messageId =
     firstString(record.messageId, record.id, record.eventId, record.event_id) ??
-    fallbackMessageId({ senderId, conversationId, timestamp, text });
+    fallbackMessageId({ senderId, conversationId, timestamp: timestamp ?? 0, text });
   const metadata = asRecord(record.metadata);
   const replyToId = firstString(record.replyToId, record.reply_to_id, record.replyTo);
   const threadId = firstString(record.threadId, record.thread_id, conversation?.threadId);
@@ -150,7 +150,7 @@ export function normalizeExternalInboundMessage(raw: unknown): ExternalProtocolP
       conversationId,
       conversationLabel,
       chatType: normalizeChatType(conversation?.type ?? record.chatType ?? record.type),
-      timestamp,
+      timestamp: timestamp ?? Date.now(),
       replyToId,
       threadId,
       wasMentioned: typeof record.wasMentioned === "boolean" ? record.wasMentioned : undefined,

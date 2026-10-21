@@ -13,11 +13,13 @@ export type CanonicalGlobalEvidenceProjectionCandidate = {
 
 type ReadFile = (filePath: string) => Promise<string>;
 
-function resolveWorkspaceDir(params: {
-  workspaceDir?: string;
-  stateDir?: string;
-  env?: NodeJS.ProcessEnv;
-}): string {
+export function resolveCanonicalGlobalEvidenceProjectionWorkspaceDir(
+  params: {
+    workspaceDir?: string;
+    stateDir?: string;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): string {
   const env = params.env ?? process.env;
   const explicitWorkspace = params.workspaceDir?.trim() || env.OPENCLAW_WORKSPACE_DIR?.trim();
   if (explicitWorkspace) {
@@ -35,7 +37,7 @@ export function resolveCanonicalGlobalEvidenceProjectionSnapshotPath(
   } = {},
 ): string {
   return path.join(
-    resolveWorkspaceDir(params),
+    resolveCanonicalGlobalEvidenceProjectionWorkspaceDir(params),
     "state",
     GLOBAL_EVIDENCE_PROJECTION_SNAPSHOT_FILENAME,
   );

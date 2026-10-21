@@ -43,7 +43,7 @@ function resolveAccountOverride(
 function mergeAccountConfig(cfg: OpenClawConfig, accountId: string): ExternalAccountConfig {
   const channel = getChannelConfig(cfg) ?? {};
   const { accounts: _accounts, defaultAccount: _defaultAccount, ...base } = channel;
-  return { ...base, ...(resolveAccountOverride(cfg, accountId) ?? {}) };
+  return { ...base, ...resolveAccountOverride(cfg, accountId) };
 }
 
 function resolveSecret(value: unknown, path: string): { value: string; source: "config" | "none" } {
@@ -81,16 +81,16 @@ export function resolveExternalAccount(params: {
   const accountId = normalizeAccountId(params.accountId);
   const channel = getChannelConfig(params.cfg) ?? {};
   const merged = mergeAccountConfig(params.cfg, accountId);
+  const inboundAuth = merged.inboundAuth ?? "token";
+  const outboundAuth = merged.outboundAuth ?? "none";
   const inbound = resolveSecret(
-    merged.inboundToken,
+    inboundAuth === "none" ? undefined : merged.inboundToken,
     `channels.${CHANNEL_KEY}.accounts.${accountId}.inboundToken`,
   );
   const outbound = resolveSecret(
-    merged.outboundToken,
+    outboundAuth === "none" ? undefined : merged.outboundToken,
     `channels.${CHANNEL_KEY}.accounts.${accountId}.outboundToken`,
   );
-  const inboundAuth = merged.inboundAuth ?? "token";
-  const outboundAuth = merged.outboundAuth ?? "none";
   const outboundUrl = merged.outboundUrl?.trim() ?? "";
   const configured =
     (inboundAuth === "none" || Boolean(inbound.value)) &&

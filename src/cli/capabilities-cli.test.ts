@@ -43,6 +43,21 @@ describe("capabilities cli", () => {
     expect(program.commands.find((command) => command.name() === "capabilities")).toBeTruthy();
   });
 
+  it("does not advertise an ignored agent selector for L5 commands", () => {
+    const program = new Command();
+    registerCapabilitiesCli(program);
+    const commands = program.commands.find(
+      (command) => command.name() === "capabilities",
+    )!.commands;
+    for (const name of ["l5-baseline-doctor", "l5-system-eval"]) {
+      expect(
+        commands
+          .find((command) => command.name() === name)!
+          .options.some((option) => option.long === "--agent"),
+      ).toBe(false);
+    }
+  });
+
   it("passes --json through to the command", async () => {
     await runRegisteredCli({
       register: registerCapabilitiesCli as (program: Command) => void,

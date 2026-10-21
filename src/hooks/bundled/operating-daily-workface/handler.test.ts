@@ -111,6 +111,50 @@ describe("operating-daily-workface hook", () => {
     expect(repairQueue).toContain("No repair-minded work receipts are queued right now.");
   });
 
+  it("retains legacy receipt adoption while canonical copies win without double counting", async () => {
+    const workspace = await createCaseWorkspace("legacy-receipts");
+    const stateDir = await createCaseWorkspace("legacy-state");
+    const memoryDir = path.join(workspace, "memory");
+    const filename = buildExternalWorkReceiptFilename({
+      handledAt: "2026-03-25T11:00:00.000Z",
+      surface: "control_room",
+      messageId: "legacy-message",
+    });
+    const content = renderExternalWorkReceiptArtifact({
+      handledAt: "2026-03-25T11:00:00.000Z",
+      surface: "control_room",
+      chatId: "legacy-chat",
+      sessionKey: "agent:main:external:dm:legacy-chat",
+      messageId: "legacy-message",
+      userMessage: "retained legacy question",
+      requestedAction: "analyze_or_summarize",
+      scope: "control_room_general",
+      timeframe: "next_6_months",
+      outputShape: "shortlist_with_reasons",
+      repairDisposition: "none",
+      readPathLines: [],
+      finalReplySummary: "legacy answer",
+    });
+    const legacyDir = path.join(memoryDir, "feishu-work-receipts");
+    await fs.mkdir(legacyDir, { recursive: true });
+    const legacyPath = path.join(legacyDir, filename.replace("-external-", "-feishu-"));
+    await fs.writeFile(legacyPath, content);
+    await runReset(workspace, stateDir);
+    const workfacePath = path.join(memoryDir, "2026-03-25-lobster-workface.md");
+    const legacyWorkface = await fs.readFile(workfacePath, "utf8");
+    expect(legacyWorkface).toContain("retained legacy question");
+    await fs.writeFile(
+      path.join(memoryDir, "external-work-receipts", filename),
+      content.replace("legacy answer", "canonical answer"),
+    );
+    await runReset(workspace, stateDir);
+    const canonicalWorkface = await fs.readFile(workfacePath, "utf8");
+    expect(canonicalWorkface).toContain("canonical answer");
+    expect(canonicalWorkface).not.toContain("reply: legacy answer");
+    expect(canonicalWorkface.match(/retained legacy question/gu)).toHaveLength(1);
+    expect(await fs.readFile(legacyPath, "utf8")).toBe(content);
+  });
+
   it("writes one daily workface artifact with learning, corrections, anomalies, and token usage", async () => {
     const tempDir = await createCaseWorkspace("workspace");
     const stateDir = await createCaseWorkspace("state");

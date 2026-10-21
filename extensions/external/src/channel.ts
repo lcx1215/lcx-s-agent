@@ -8,7 +8,6 @@ import {
   setAccountEnabledInConfigSection,
   type ChannelAccountSnapshot,
   type ChannelPlugin,
-  type OpenClawConfig,
 } from "lcx-agent/plugin-sdk";
 import {
   listExternalAccountIds,
@@ -19,7 +18,7 @@ import { ExternalConfigSchema } from "./config-schema.js";
 import { processExternalMessage, registerExternalWebhookTarget } from "./monitor.js";
 import { normalizeExternalTarget } from "./protocol.js";
 import { sendExternalMessage } from "./send.js";
-import type { ExternalInboundMessage, ResolvedExternalAccount } from "./types.js";
+import type { ResolvedExternalAccount } from "./types.js";
 
 const CHANNEL_ID = "external";
 const DEFAULT_WEBHOOK_PATH = "/external/messages";
@@ -64,7 +63,6 @@ function describeAccount(account: ResolvedExternalAccount): ChannelAccountSnapsh
     configured: account.configured,
     running: false,
     webhookPath: account.webhookPath,
-    webhookUrl: account.outboundUrl || undefined,
     mode: "webhook-http",
     dmPolicy: account.dmPolicy,
     allowFrom: account.allowFrom.map(String),
@@ -246,7 +244,7 @@ export const externalChannelPlugin: ChannelPlugin<ResolvedExternalAccount> = {
       running: snapshot.running ?? false,
       mode: "webhook-http",
       webhookPath: snapshot.webhookPath ?? DEFAULT_WEBHOOK_PATH,
-      outboundUrl: snapshot.webhookUrl ?? null,
+      outboundUrl: null,
       lastStartAt: snapshot.lastStartAt ?? null,
       lastStopAt: snapshot.lastStopAt ?? null,
       lastError: snapshot.lastError ?? null,

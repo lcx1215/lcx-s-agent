@@ -186,18 +186,17 @@ jobs:
               }
               let isMember = false;
               try {
-                const membership = await github.rest.teams.getMembershipForUserInOrg({
-                  org: context.repo.owner,
-                  team_slug: maintainerTeam,
+                const membership = await github.rest.repos.getCollaboratorPermissionLevel({
+                  ...context.repo,
                   username: normalized,
                 });
-                isMember = membership?.data?.state === "active";
+                isMember = ["admin", "maintain", "write"].includes(membership?.data?.permission);
               } catch (error) {
                 if (error?.status !== 404 && error?.status !== 403) {
                   throw error;
                 }
                 if (error?.status === 403) {
-                  core.warning(`Skipping maintainer membership check for ${normalized}; treating as not a maintainer.`);
+                  core.warning(`Skipping repository collaborator permission check for ${normalized}; treating as not a maintainer.`);
                 }
               }
               maintainerCache.set(normalized, isMember);

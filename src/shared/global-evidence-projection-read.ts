@@ -219,6 +219,25 @@ function readProjectionPayload(
       projection,
     };
   }
+  const proof = projection.delivery.proof;
+  if (proof) {
+    const proofAgeMs = Date.parse(checkedAt) - Date.parse(proof.checkedAt);
+    const selfDeclared = proof.owner.trim() === base.sourceOwner;
+    if (selfDeclared || !Number.isFinite(proofAgeMs) || proofAgeMs < 0 || proofAgeMs > maxAgeMs) {
+      return {
+        ...base,
+        readStatus: selfDeclared ? "invalid" : "stale",
+        blocked: true,
+        generatedAt: projection.generatedAt,
+        reason: selfDeclared
+          ? "delivery_proof_not_independent"
+          : proofAgeMs < 0
+            ? "delivery_proof_time_ahead"
+            : "delivery_proof_stale",
+        projection,
+      };
+    }
+  }
   return {
     ...base,
     readStatus: "current",

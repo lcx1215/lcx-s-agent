@@ -82,7 +82,9 @@ describe("external outbound protocol", () => {
         to: routed,
         mode: "explicit",
       });
-      if (!resolved.ok) throw new Error("fixture target resolution failed");
+      if (!resolved.ok) {
+        throw new Error("fixture target resolution failed");
+      }
       const request = buildExternalOutboundRequest({ account, target: resolved.to, text: "hello" });
       expect(JSON.parse(String(request.init.body)).target).toBe(expected);
     }
@@ -115,4 +117,17 @@ describe("external outbound protocol", () => {
     expect(new Headers(request.init.headers).get("authorization")).toBeNull();
     expect(new Headers(request.init.headers).get("x-api-key")).toBeNull();
   });
+});
+
+it("omits endpoint credentials and query secrets from account status and summaries", async () => {
+  const secretAccount = {
+    ...account,
+    outboundUrl: "https://user:password@receiver.example/private?token=secret#fragment",
+  };
+  const snapshot = externalChannelPlugin.config.describeAccount!(secretAccount, {} as never);
+  expect(JSON.stringify(snapshot)).not.toContain("receiver.example");
+  const summary = await externalChannelPlugin.status!.buildChannelSummary!({
+    snapshot: { ...snapshot, webhookUrl: secretAccount.outboundUrl },
+  } as never);
+  expect(summary).toMatchObject({ outboundUrl: null });
 });

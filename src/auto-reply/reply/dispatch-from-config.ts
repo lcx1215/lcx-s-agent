@@ -103,6 +103,7 @@ const resolveSessionStoreEntry = (
 export type DispatchFromConfigResult = {
   queuedFinal: boolean;
   counts: Record<ReplyDispatchKind, number>;
+  globalEvidenceProjectionRead?: GlobalEvidenceProjectionAdapterRead;
 };
 
 export type GlobalEvidenceProjectionAnswerBoundaryInput = {
@@ -130,37 +131,47 @@ export async function dispatchReplyFromConfig(params: {
    * or rewrite the ordinary reply flow.
    */
   globalEvidenceProjectionInput?: GlobalEvidenceProjectionAnswerBoundaryInput;
-  onGlobalEvidenceProjectionRead?: (reader: GlobalEvidenceProjectionAdapterRead) => void;
+  onGlobalEvidenceProjectionRead?: (
+    reader: GlobalEvidenceProjectionAdapterRead,
+  ) => void | Promise<void>;
 }): Promise<DispatchFromConfigResult> {
   const { ctx, cfg, dispatcher } = params;
   const projectionInput = params.globalEvidenceProjectionInput;
-  const hasExplicitCandidate = Boolean(
-    projectionInput && Object.prototype.hasOwnProperty.call(projectionInput, "candidate"),
-  );
-  const canonicalCandidate = hasExplicitCandidate
-    ? null
-    : await readCanonicalGlobalEvidenceProjectionCandidate();
-  const candidate = hasExplicitCandidate
-    ? projectionInput?.candidate
-    : canonicalCandidate?.candidate;
-  const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
-    candidate,
-    projectionInput?.checkedAt ?? new Date().toISOString(),
-    {
-      adapterId: resolveGlobalEvidenceProjectionAdapterId({
-        adapterId: projectionInput?.adapterId,
-        surface: ctx.Surface,
-        provider: ctx.Provider,
-        fallback: "neutral-answer-boundary",
-      }),
-      sourceOwner:
-        projectionInput?.sourceOwner ?? canonicalCandidate?.sourceOwner ?? "dispatch-from-config",
-      ...(projectionInput?.maxAgeMs !== undefined ? { maxAgeMs: projectionInput.maxAgeMs } : {}),
-    },
-  );
-  // Observation only: no projection state is authored here and blocked reads
-  // must not be upgraded into delivery, provider, training, or owner authority.
-  params.onGlobalEvidenceProjectionRead?.(globalEvidenceProjectionReader);
+  let globalEvidenceProjectionRead: GlobalEvidenceProjectionAdapterRead | undefined;
+  if (projectionInput || params.onGlobalEvidenceProjectionRead) {
+    const hasExplicitCandidate = Boolean(
+      projectionInput && Object.prototype.hasOwnProperty.call(projectionInput, "candidate"),
+    );
+    const canonicalCandidate = hasExplicitCandidate
+      ? null
+      : await readCanonicalGlobalEvidenceProjectionCandidate();
+    globalEvidenceProjectionRead = readGlobalEvidenceProjectionForAdapter(
+      hasExplicitCandidate ? projectionInput?.candidate : canonicalCandidate?.candidate,
+      projectionInput?.checkedAt ?? new Date().toISOString(),
+      {
+        adapterId: resolveGlobalEvidenceProjectionAdapterId({
+          adapterId: projectionInput?.adapterId,
+          surface: ctx.Surface,
+          provider: ctx.Provider,
+          fallback: "neutral-answer-boundary",
+        }),
+        sourceOwner:
+          projectionInput?.sourceOwner ?? canonicalCandidate?.sourceOwner ?? "dispatch-from-config",
+        ...(projectionInput?.maxAgeMs !== undefined ? { maxAgeMs: projectionInput.maxAgeMs } : {}),
+      },
+    );
+    // Optional observation must never suppress the ordinary reply.
+    try {
+      void Promise.resolve(
+        params.onGlobalEvidenceProjectionRead?.(globalEvidenceProjectionRead),
+      ).catch(() => {
+        logVerbose("Global evidence projection observer failed");
+      });
+    } catch {
+      logVerbose("Global evidence projection observer failed");
+    }
+  }
+  const projectionResult = globalEvidenceProjectionRead ? { globalEvidenceProjectionRead } : {};
   const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
   const channel = String(ctx.Surface ?? ctx.Provider ?? "unknown").toLowerCase();
   const chatId = ctx.To ?? ctx.From;
@@ -216,7 +227,7 @@ export async function dispatchReplyFromConfig(params: {
 
   if (shouldSkipDuplicateInbound(ctx)) {
     recordProcessed("skipped", { reason: "duplicate" });
-    return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+    return { queuedFinal: false, counts: dispatcher.getQueuedCounts(), ...projectionResult };
   }
 
   const sessionStoreEntry = resolveSessionStoreEntry(ctx, cfg);
@@ -354,7 +365,7 @@ export async function dispatchReplyFromConfig(params: {
       counts.final += routedFinalCount;
       recordProcessed("completed", { reason: "fast_abort" });
       markIdle("message_completed");
-      return { queuedFinal, counts };
+      return { queuedFinal, counts, ...projectionResult };
     }
 
     const bypassAcpForCommand = shouldBypassAcpDispatchForCommand(ctx, cfg);
@@ -378,7 +389,7 @@ export async function dispatchReplyFromConfig(params: {
       const counts = dispatcher.getQueuedCounts();
       recordProcessed("completed", { reason: "send_policy_deny" });
       markIdle("message_completed");
-      return { queuedFinal: false, counts };
+      return { queuedFinal: false, counts, ...projectionResult };
     }
 
     const shouldSendToolSummaries = ctx.ChatType !== "group" && ctx.CommandSource !== "native";
@@ -600,7 +611,7 @@ export async function dispatchReplyFromConfig(params: {
     counts.final += routedFinalCount;
     recordProcessed("completed");
     markIdle("message_completed");
-    return { queuedFinal, counts };
+    return { queuedFinal, counts, ...projectionResult };
   } catch (err) {
     recordProcessed("error", { error: String(err) });
     markIdle("message_error");

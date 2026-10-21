@@ -55,7 +55,9 @@ function gate(id: string, pass: boolean, evidence: string): L5BaselineGate {
   return { id, status: pass ? "pass" : "fail", evidence };
 }
 
-function buildPayload(loop: LanguageBrainLoopSmokePayload): L5BaselineDoctorPayload {
+export function buildL5BaselineDoctorPayload(
+  loop: LanguageBrainLoopSmokePayload,
+): L5BaselineDoctorPayload {
   const primaryModules = stringArray(loop.orchestration.primaryModules);
   const requiredTools = stringArray(loop.orchestration.requiredTools);
   const boundaries = stringArray(loop.orchestration.boundaries);
@@ -155,7 +157,7 @@ function formatText(payload: L5BaselineDoctorPayload): string {
 export async function runL5BaselineDoctor(
   opts: L5BaselineDoctorCommandOptions,
 ): Promise<L5BaselineDoctorPayload> {
-  return buildPayload(await runLanguageBrainLoopSmoke(opts));
+  return buildL5BaselineDoctorPayload(await runLanguageBrainLoopSmoke(opts));
 }
 
 export async function l5BaselineDoctorCommand(

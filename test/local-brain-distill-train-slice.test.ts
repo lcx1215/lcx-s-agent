@@ -272,3 +272,44 @@ describe("local brain distill train slice", () => {
     ).toHaveLength(1);
   });
 });
+
+it.each(["train", "valid", "test"])(
+  "rejects an empty %s split before training can be accepted",
+  async (emptySplit) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-empty-slice-"));
+    try {
+      const data = path.join(root, "data");
+      const out = path.join(root, "out");
+      await fs.mkdir(data);
+      await fs.mkdir(out);
+      await fs.writeFile(path.join(out, "manifest.json"), '{"ok":true}');
+      for (const split of ["train", "valid", "test"]) {
+        await fs.writeFile(
+          path.join(data, `${split}.jsonl`),
+          split === emptySplit ? "" : line("curated_seed", split),
+        );
+      }
+      await expect(
+        execFileAsync(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "scripts/operator/local-brain-distill-train-slice.ts",
+            "--data",
+            data,
+            "--out",
+            out,
+            "--json",
+          ],
+          { cwd: repoRoot },
+        ),
+      ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("requires nonempty") });
+      await expect(fs.stat(path.join(out, "manifest.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  },
+);

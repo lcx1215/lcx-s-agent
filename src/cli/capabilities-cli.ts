@@ -89,7 +89,6 @@ export function registerCapabilitiesCli(program: Command) {
     .description(
       "Run a read-only L5 baseline doctor across language, brain, finance, math, and safety gates",
     )
-    .option("--agent <id>", "Agent id whose workspace should be checked")
     .option("--workspace <dir>", "Workspace for local loop receipts and artifacts")
     .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
     .option("--json", "Output JSON", false)
@@ -125,7 +124,6 @@ export function registerCapabilitiesCli(program: Command) {
     .description(
       "Run a fixed L5 eval across language, learning, finance, math, memory, and review arbitration",
     )
-    .option("--agent <id>", "Agent id whose workspace should be checked")
     .option("--workspace <dir>", "Workspace for local loop receipts and artifacts")
     .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
     .option("--write-receipt", "Write an L5 eval receipt into memory/l5-system-eval-receipts")

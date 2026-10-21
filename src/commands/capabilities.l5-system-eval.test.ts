@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { l5SystemEvalCommand } from "./capabilities/l5-system-eval.js";
+import * as languageLoop from "./capabilities/language-brain-loop-smoke.js";
 import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 describe("l5SystemEvalCommand", () => {
@@ -10,7 +11,10 @@ describe("l5SystemEvalCommand", () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-l5-eval-"));
     const runtime = createTestRuntime();
 
+    const loopSpy = vi.spyOn(languageLoop, "runLanguageBrainLoopSmoke");
     await l5SystemEvalCommand({ workspaceDir: workspace, json: true }, runtime);
+    expect(loopSpy).toHaveBeenCalledTimes(1);
+    loopSpy.mockRestore();
 
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0])) as {
       ok: boolean;

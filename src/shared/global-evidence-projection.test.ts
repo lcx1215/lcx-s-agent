@@ -7,7 +7,10 @@ import {
   resolveGlobalEvidenceProjectionAdapterId,
   summarizeGlobalEvidenceProjectionRead,
 } from "./global-evidence-projection-read.js";
-import { readCanonicalGlobalEvidenceProjectionCandidate } from "./global-evidence-projection-source.js";
+import {
+  readCanonicalGlobalEvidenceProjectionCandidate,
+  resolveCanonicalGlobalEvidenceProjectionSnapshotPath,
+} from "./global-evidence-projection-source.js";
 import {
   buildGlobalEvidenceProjection,
   GLOBAL_EVIDENCE_PROJECTION_MODE,
@@ -281,6 +284,72 @@ describe("Global Evidence Projection", () => {
     });
     expect(projection.mode).toBe("read_only_shadow");
     expect(projection.delivery.adapterId).toBe("external-v2");
+  });
+
+  it("rejects malformed capability coverage and stale or self-declared delivery proof", () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:10:00.000Z",
+      sourceOwners: ["publisher"],
+      lanes: [
+        {
+          id: "test",
+          masterLane: "global_doctrine_and_runbook",
+          objective: "test",
+          ok: true,
+          missing: [],
+          evidence: ["head=fixture", "workflow=fixture", "proof=fixture", "boundary=read_only"],
+          nextAction: "none",
+        },
+      ],
+      invariants: [],
+      delivery: {
+        adapterId: "external",
+        state: "observed",
+        evidenceRefs: ["receipt"],
+        proof: {
+          owner: "delivery-owner",
+          receiptId: "receipt",
+          checkedAt: "2026-08-31T00:00:00.000Z",
+          visibility: "user_visible",
+        },
+      },
+    });
+    expect(
+      readGlobalEvidenceProjection(projection, "2026-08-31T00:10:01.000Z", {
+        sourceOwner: "publisher",
+      }),
+    ).toMatchObject({ blocked: true, reason: "delivery_proof_stale" });
+    projection.delivery.proof!.checkedAt = projection.generatedAt;
+    projection.delivery.proof!.owner = "publisher ";
+    expect(
+      readGlobalEvidenceProjection(projection, "2026-08-31T00:10:01.000Z", {
+        sourceOwner: "publisher",
+      }),
+    ).toMatchObject({ blocked: true, reason: "delivery_proof_not_independent" });
+    const malformed = {
+      ...projection,
+      capabilities: projection.capabilities.map((capability) => ({
+        ...capability,
+        coverage: "invented",
+      })),
+    };
+    expect(readGlobalEvidenceProjection(malformed, "2026-08-31T00:10:01.000Z")).toMatchObject({
+      blocked: true,
+      readStatus: "invalid",
+    });
+  });
+
+  it("resolves the canonical snapshot under explicit workspace and state overrides", () => {
+    expect(
+      resolveCanonicalGlobalEvidenceProjectionSnapshotPath({
+        env: { OPENCLAW_WORKSPACE_DIR: "/custom/workspace", OPENCLAW_STATE_DIR: "/other/state" },
+      }),
+    ).toBe(path.resolve("/custom/workspace/state/lcx-governance-autopilot-latest.json"));
+    expect(
+      resolveCanonicalGlobalEvidenceProjectionSnapshotPath({
+        env: { OPENCLAW_STATE_DIR: "/custom/state" },
+      }),
+    ).toBe(path.resolve("/custom/state/workspace/state/lcx-governance-autopilot-latest.json"));
   });
 
   it("blocks stale, missing, and invalid consumer reads", () => {
