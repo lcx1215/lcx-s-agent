@@ -55,7 +55,8 @@ vi.mock("node:dns/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:dns/promises")>()),
   lookup: async () => [{ address: "93.184.216.34", family: 4 }],
 }));
-vi.mock("../src/shared/global-evidence-projection-source.js", () => ({
+vi.mock("../src/shared/global-evidence-projection-source.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/shared/global-evidence-projection-source.js")>()),
   readCanonicalGlobalEvidenceProjectionCandidate: async () => null,
 }));
 const roots: string[] = [];

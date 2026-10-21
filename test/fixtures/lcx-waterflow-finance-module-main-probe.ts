@@ -520,6 +520,8 @@ export async function probeOriginalFinanceModuleMain(
       executeInput: FinanceResearchRunInput;
     }>;
     checkpointDirectory?: string;
+    /** Healthy offline producer setup budget; deliberate timeout faults keep their own deadline. */
+    healthyRunTimeoutMs?: number;
   },
 ) {
   const preparation = params.preparation ?? (await prepareOriginalFinanceModuleMain(params));
@@ -578,7 +580,8 @@ export async function probeOriginalFinanceModuleMain(
         },
         {
           directory: checkpointRoot,
-          runTimeoutMs: params.fault === "run_timeout" ? 60 : 10_000,
+          runTimeoutMs:
+            params.fault === "run_timeout" ? 60 : (params.healthyRunTimeoutMs ?? 10_000),
           maxModelCalls: 64,
         },
         async (options) => {
