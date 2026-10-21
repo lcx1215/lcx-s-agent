@@ -115,6 +115,10 @@ export type FinanceMarketCollectionAdapter = Readonly<{
   >;
   /** Opaque identity of the actual read endpoint, query and authorization; no raw material. */
   accessScopeForRequest?: (request: FinanceMarketCollectionRequest) => string;
+  /** Read-only preflight; dispatch still rechecks the shared quota and access gates. */
+  unavailableForRequest?: (
+    request: FinanceMarketCollectionRequest,
+  ) => Promise<ApiCallError | undefined>;
   supports: (request: FinanceMarketCollectionRequest) => boolean;
   collect: (
     request: FinanceMarketCollectionRequest,
@@ -1159,6 +1163,7 @@ async function collectWithTimeout(
   request: FinanceMarketCollectionRequest,
   options: ApiTransportOptions,
   onCollect: () => void,
+  unavailable?: ApiCallError,
 ): Promise<readonly FinanceMarketCollectionItem[]> {
   return runApiSourceCall(
     {
@@ -1168,6 +1173,9 @@ async function collectWithTimeout(
       operation: "collect",
     },
     (signal) => {
+      if (unavailable) {
+        throw unavailable;
+      }
       onCollect();
       return adapter.collect(request, signal);
     },
@@ -1200,14 +1208,24 @@ export async function runFinanceMarketCollectionRefresh(options: {
   ) {
     throw new Error("maxSources must be a positive integer");
   }
+  const availability = await Promise.all(
+    candidates.map(async (adapter) => ({
+      id: adapter.id,
+      error: await adapter.unavailableForRequest?.(request),
+    })),
+  );
+  const unavailable = new Map(
+    availability.flatMap(({ id, error }) => (error ? [[id, error] as const] : [])),
+  );
+  const available = candidates.filter((adapter) => !unavailable.has(adapter.id));
   const selected =
-    options.maxSources === undefined ? candidates : candidates.slice(0, options.maxSources);
+    options.maxSources === undefined ? available : available.slice(0, options.maxSources);
   const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
   const records: FinanceMarketCollectionItem[] = [];
   let adaptersCalled = false;
   const correlationId = options.correlationId ?? randomUUID();
   const results = await mapFinanceSourceLanes(
-    selected,
+    [...selected, ...candidates.filter((adapter) => unavailable.has(adapter.id))],
     async (adapter) => {
       const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
       const records: FinanceMarketCollectionItem[] = [];
@@ -1238,6 +1256,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
           () => {
             adaptersCalled = true;
           },
+          unavailable.get(adapter.id),
         );
         const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
         records.push(

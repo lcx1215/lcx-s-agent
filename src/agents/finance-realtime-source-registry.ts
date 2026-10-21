@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  type ApiCallError,
   apiSourceErrorText,
   runApiSourceCall,
   type ApiSourceGovernanceRegistry,
@@ -71,6 +72,10 @@ export type FinanceRealtimeSourceAdapter = Readonly<{
   sampleRequest?: Pick<FinanceRealtimeSourceRequest, "instrument" | "assetClass">;
   /** Opaque identity of the actual read endpoint, query and authorization; no raw material. */
   accessScopeForRequest?: (request: FinanceRealtimeSourceRequest) => string;
+  /** Read-only preflight; dispatch still rechecks the shared quota and access gates. */
+  unavailableForRequest?: (
+    request: FinanceRealtimeSourceRequest,
+  ) => Promise<ApiCallError | undefined>;
   supports: (request: FinanceRealtimeSourceRequest) => boolean;
   collect: (
     request: FinanceRealtimeSourceRequest,
@@ -319,6 +324,7 @@ async function collectWithTimeout(
   request: FinanceRealtimeSourceRequest,
   options: ApiTransportOptions,
   onCollect: () => void,
+  unavailable?: ApiCallError,
 ): Promise<FinanceDataGatewayObservationInput> {
   return runApiSourceCall(
     {
@@ -328,6 +334,9 @@ async function collectWithTimeout(
       operation: "collect",
     },
     (signal) => {
+      if (unavailable) {
+        throw unavailable;
+      }
       onCollect();
       return adapter.collect(request, signal);
     },
@@ -358,14 +367,24 @@ export async function runFinanceRealtimeRefresh(options: {
   if (!Number.isInteger(maxSources) || maxSources <= 0) {
     throw new Error("maxSources must be a positive integer");
   }
-  const selected = selectAdapters(candidates, maxSources, request.requireOfficialReference);
+  const availability = await Promise.all(
+    candidates.map(async (adapter) => ({
+      id: adapter.id,
+      error: await adapter.unavailableForRequest?.(request),
+    })),
+  );
+  const unavailable = new Map(
+    availability.flatMap(({ id, error }) => (error ? [[id, error] as const] : [])),
+  );
+  const available = candidates.filter((adapter) => !unavailable.has(adapter.id));
+  const selected = selectAdapters(available, maxSources, request.requireOfficialReference);
   const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
   const observations: FinanceDataGatewayObservationInput[] = [];
 
   let adaptersCalled = false;
   const correlationId = options.correlationId ?? randomUUID();
   const results = await mapFinanceSourceLanes(
-    selected,
+    [...selected, ...candidates.filter((adapter) => unavailable.has(adapter.id))],
     async (adapter) => {
       const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
       const observations: FinanceDataGatewayObservationInput[] = [];
@@ -399,6 +418,7 @@ export async function runFinanceRealtimeRefresh(options: {
           () => {
             adaptersCalled = true;
           },
+          unavailable.get(adapter.id),
         );
         const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
         const timestampedObservation = validateObservationTimestamps(

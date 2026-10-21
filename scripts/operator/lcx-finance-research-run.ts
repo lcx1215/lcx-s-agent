@@ -62,6 +62,9 @@ import {
   readFinanceSourceHeartbeat,
   type FinanceSourceHeartbeatRecord,
 } from "../../src/agents/finance-source-heartbeat.ts";
+import { FINANCE_SOURCE_QUOTA_POLICIES } from "../../src/agents/finance-source-quota-policy.ts";
+import { createFinanceQuotaGuard } from "../../src/agents/finance-source-quota.ts";
+import { financeQuotaGroupId } from "../../src/agents/finance-source-scheduler.ts";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.ts";
 import {
   createLocalQualityHarnessAdapter,
@@ -866,10 +869,41 @@ export async function financeResearchAdaptersWithFreshHealth(params: {
     }
     if (fingerprint === record.accessScope.fingerprint) {
       // The original collect owner records this failure without reserving or dispatching HTTP.
-      throw new ApiCallError(
+      return new ApiCallError(
         record.httpStatus === 403 ? "forbidden" : "http_error",
         record.httpStatus,
         nextCheckAt - now,
+      );
+    }
+  };
+  const unavailable = async (adapterId: string, scope: () => string | undefined) => {
+    const accessError = checkAccess(adapterId, scope);
+    if (accessError) {
+      return accessError;
+    }
+    // Re-read the canonical local book for each selection, including spend by earlier jobs.
+    // This is advisory only: dispatch still reserves its own weighted, lane-specific credit.
+    const policies = FINANCE_SOURCE_QUOTA_POLICIES.filter(
+      (policy) => policy.id === financeQuotaGroupId(adapterId),
+    );
+    const [quota] = await createFinanceQuotaGuard({ stateDir: stateDirectory, policies }).inspect();
+    if (!quota) {
+      return;
+    }
+    const nextAllowed = "nextAllowedAt" in quota ? Date.parse(quota.nextAllowedAt) : NaN;
+    if (quota.state === "quota_state_unreadable") {
+      return new ApiCallError("budget_exhausted");
+    }
+    const now = Date.now();
+    const production = quota.lanes.find((lane) => lane.lane === "production");
+    if (
+      (["quota_exhausted", "cooldown"].includes(quota.state) && nextAllowed > now) ||
+      (production && production.remaining < 1)
+    ) {
+      return new ApiCallError(
+        "budget_exhausted",
+        undefined,
+        nextAllowed > now ? nextAllowed - now : undefined,
       );
     }
   };
@@ -880,8 +914,13 @@ export async function financeResearchAdaptersWithFreshHealth(params: {
       params.observedAt,
     ).map((adapter) => ({
       ...adapter,
+      unavailableForRequest: (request: FinanceRealtimeSourceRequest) =>
+        unavailable(adapter.id, () => adapter.accessScopeForRequest?.(request)),
       collect: (request: FinanceRealtimeSourceRequest, signal: AbortSignal) => {
-        checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        const error = checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        if (error) {
+          throw error;
+        }
         return adapter.collect(request, signal);
       },
     })),
@@ -891,8 +930,13 @@ export async function financeResearchAdaptersWithFreshHealth(params: {
       params.observedAt,
     ).map((adapter) => ({
       ...adapter,
+      unavailableForRequest: (request: FinanceMarketCollectionRequest) =>
+        unavailable(adapter.id, () => adapter.accessScopeForRequest?.(request)),
       collect: (request: FinanceMarketCollectionRequest, signal: AbortSignal) => {
-        checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        const error = checkAccess(adapter.id, () => adapter.accessScopeForRequest?.(request));
+        if (error) {
+          throw error;
+        }
         return adapter.collect(request, signal);
       },
     })),

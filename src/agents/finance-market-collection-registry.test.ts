@@ -263,6 +263,41 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
 }
 
 describe("finance market collection registry", () => {
+  it("uses the bounded slot for an eligible backup and retains the pre-dispatch quota failure", async () => {
+    let blockedCalls = 0;
+    const backup = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });
+    const blocked = {
+      ...backup,
+      id: "limited-primary",
+      providerRole: "primary_market_data" as const,
+      priority: 0,
+      unavailableForRequest: async () => new ApiCallError("budget_exhausted", undefined, 60_000),
+      collect: async () => {
+        blockedCalls++;
+        return [];
+      },
+    };
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [blocked, backup],
+      maxSources: 1,
+    });
+    expect(receipt.selectedSourceIds).toEqual([backup.id]);
+    expect(receipt.status).toBe("ready");
+    expect(blockedCalls).toBe(0);
+    expect(
+      receipt.sourceAttempts.find((attempt) => attempt.adapterId === blocked.id),
+    ).toMatchObject({
+      status: "failed",
+      apiCalls: [
+        expect.objectContaining({
+          operation: "collect",
+          transportError: "budget_exhausted",
+          retryAfterMs: 60_000,
+        }),
+      ],
+    });
+  });
   it("collects US equity news, options, dividends, and splits with source timestamps", async () => {
     const adapters = [
       createMassiveNewsCollectionAdapter({ apiKey: "massive-secret", fetchImpl: fakeFetch }),

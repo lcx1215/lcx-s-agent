@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ApiCallError } from "./api-call-contract.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import {
   createFinanceRealtimeSourceRegistry,
@@ -85,6 +86,36 @@ function adapter(params: {
 }
 
 describe("finance realtime source registry", () => {
+  it("replaces a quota-limited primary without losing cross-check or official gates", async () => {
+    const blockedCollect = vi.fn();
+    const source = (
+      id: string,
+      role: FinanceRealtimeSourceAdapter["providerRole"],
+      priority: number,
+    ) => adapter({ id, providerRole: role, priority, result: observation(id, role) });
+    const receipt = await runFinanceRealtimeRefresh({
+      request,
+      maxSources: 3,
+      adapters: [
+        {
+          ...source("limited", "primary_market_data", 0),
+          unavailableForRequest: async () => new ApiCallError("http_error", 402, 60_000),
+          collect: blockedCollect,
+        },
+        source("backup", "primary_market_data", 1),
+        source("cross", "cross_check_market_data", 2),
+        source("official", "official_or_issuer_reference", 3),
+      ],
+    });
+    expect(receipt.selectedSourceIds).toEqual(["backup", "cross", "official"]);
+    expect(blockedCollect).not.toHaveBeenCalled();
+    expect(receipt.sourceAttempts.find((attempt) => attempt.adapterId === "limited")).toMatchObject(
+      {
+        status: "failed",
+        apiCalls: [expect.objectContaining({ httpStatus: 402, retryAfterMs: 60_000 })],
+      },
+    );
+  });
   it("inspects preferred and fallback adapters without calling the network", () => {
     let calls = 0;
     const source: FinanceRealtimeSourceAdapter = {

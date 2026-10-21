@@ -15,6 +15,7 @@ import {
   type FinanceSourceHeartbeatRecord,
 } from "../../src/agents/finance-source-heartbeat-state.js";
 import { runFinanceSourceHeartbeat } from "../../src/agents/finance-source-heartbeat.js";
+import { financeQuotaStateDir } from "../../src/agents/finance-state-dir.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -289,4 +290,46 @@ describe("original research entry consumes endpoint-bound access cooldown", () =
     expect(job.apiCalls.some((call) => call.httpStatus === 200)).toBe(true);
     expect(job.apiCalls.some((call) => call.httpStatus === 402)).toBe(false);
   });
+});
+
+it("re-reads persisted quota before selection and releases the source after its deadline", async () => {
+  const f = await fixture();
+  const quotaDirectory = financeQuotaStateDir(f.directory);
+  await fs.mkdir(quotaDirectory, { recursive: true });
+  const file = path.join(quotaDirectory, "fmp.json");
+  const state = { schemaVersion: 1, events: [], nextStartAt: 0, blockedUntil: Date.now() + 60_000 };
+  await fs.writeFile(file, JSON.stringify(state));
+  const adapters = await financeResearchAdaptersWithFreshHealth({
+    includeYahooPublicSources: false,
+    financeStateDir: f.directory,
+    workspaceDir: f.directory,
+    observedAt: f.asOf,
+    registryOptions: buildFinanceResearchRegistryOptions(false, { FMP_API_KEY: "fixture" }),
+  });
+  const source = adapters.collectionAdapters.find(
+    (adapter) => adapter.id === "fmp_free_basic_eod_history",
+  )!;
+  const request = {
+    instrument: "AAPL",
+    assetClass: "us_equity",
+    collection: "eod_history" as const,
+    asOf: f.asOf,
+  };
+  expect(await source.unavailableForRequest!(request)).toMatchObject({ kind: "budget_exhausted" });
+  await fs.writeFile(file, JSON.stringify({ ...state, blockedUntil: Date.now() - 1 }));
+  expect(await source.unavailableForRequest!(request)).toBeUndefined();
+  // The vendor still has credits, but production has spent its protected share and reserve.
+  await fs.writeFile(
+    file,
+    JSON.stringify({
+      ...state,
+      blockedUntil: 0,
+      events: [
+        { at: Date.now(), weight: 175, lane: "production" },
+        { at: Date.now(), weight: 1, lane: "diagnostics" },
+      ],
+    }),
+  );
+  expect(await source.unavailableForRequest!(request)).toMatchObject({ kind: "budget_exhausted" });
+  expect(f.calls).toHaveLength(0);
 });
