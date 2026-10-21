@@ -263,6 +263,66 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
 }
 
 describe("finance market collection registry", () => {
+  it("does not release a source slot after HTTP was dispatched", async () => {
+    let dispatches = 0;
+    let backupCalls = 0;
+    const primary = createMassiveNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async () => {
+        dispatches++;
+        throw new ApiCallError("budget_exhausted");
+      },
+    });
+    const backup = createFinnhubNewsCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async (url) => {
+        backupCalls++;
+        return fakeFetch(url);
+      },
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [primary, backup],
+      maxSources: 1,
+      retry: { attempts: 1 },
+    });
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.selectedSourceIds).toEqual([primary.id]);
+    expect(dispatches).toBe(1);
+    expect(backupCalls).toBe(0);
+    expect(receipt.sourceAttempts[0].apiCalls).toContainEqual(
+      expect.objectContaining({
+        operation: "http_get",
+        dispatchedAt: expect.any(String),
+      }),
+    );
+  });
+  it("backfills a collection source rejected by transport preparation before HTTP", async () => {
+    let dispatches = 0;
+    const limited: FetchImpl = async () => {
+      dispatches++;
+      return fakeFetch("https://massive.com/v2/reference/news");
+    };
+    limited.prepare = async () => {
+      throw new ApiCallError("budget_exhausted", undefined, 60_000);
+    };
+    const primary = createMassiveNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: limited });
+    const backup = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [primary, backup],
+      maxSources: 1,
+      retry: { attempts: 1 },
+    });
+    expect(receipt.status).toBe("ready");
+    expect(receipt.selectedSourceIds).toEqual([backup.id]);
+    expect(dispatches).toBe(0);
+    expect(
+      receipt.sourceAttempts.find((attempt) => attempt.adapterId === primary.id)?.apiCalls,
+    ).toContainEqual(
+      expect.objectContaining({ operation: "http_get", transportError: "budget_exhausted" }),
+    );
+  });
   it("uses the bounded slot for an eligible backup and retains the pre-dispatch quota failure", async () => {
     let blockedCalls = 0;
     const backup = createFinnhubNewsCollectionAdapter({ apiKey: "fixture", fetchImpl: fakeFetch });

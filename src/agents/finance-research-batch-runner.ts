@@ -774,7 +774,11 @@ export async function runFinanceResearchBatch(
           assessment.freshnessWarnings.length > 0 ||
           assessment.conflicts.length > 0 ||
           (job.kind === "realtime" &&
-            receipt.sourceAttempts.some((attempt) => attempt.status === "failed"));
+            receipt.sourceAttempts.some(
+              (attempt) =>
+                attempt.status === "failed" &&
+                receipt.selectedSourceIds.includes(attempt.adapterId),
+            ));
         jobs[index] = {
           ...base,
           receipt,

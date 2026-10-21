@@ -1,3 +1,4 @@
+import type { ApiCallReceipt } from "./api-call-contract.js";
 import { FINANCE_SOURCE_QUOTA_POLICIES } from "./finance-source-quota-policy.js";
 
 /** Adapter aliases share a provider lane; independent providers can make progress concurrently. */
@@ -56,4 +57,25 @@ export async function mapFinanceSourceLanes<T extends { id: string }, R>(
     throw failure.reason;
   }
   return results;
+}
+
+/** Only an observed rejection before any HTTP dispatch can release a bounded source slot. */
+export function financeSourceQuotaRejectedBeforeDispatch(attempt: {
+  status: string;
+  apiCalls?: readonly ApiCallReceipt[];
+}): boolean {
+  const calls = attempt.apiCalls ?? [];
+  return (
+    attempt.status === "failed" &&
+    calls.some(
+      (call) => call.operation === "http_get" && call.transportError === "budget_exhausted",
+    ) &&
+    !calls.some(
+      (call) =>
+        call.dispatchedAt ||
+        (call.operation === "http_get" &&
+          call.httpStatus !== undefined &&
+          call.dataAccess?.kind !== "cache"),
+    )
+  );
 }

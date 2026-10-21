@@ -53,6 +53,12 @@ const minute = 60_000;
 const day = 86_400_000;
 
 const laneContext = new AsyncLocalStorage<FinanceQuotaLane>();
+const stateDirectoryContext = new AsyncLocalStorage<string>();
+
+/** Bind a research invocation's transport to its resolved book without changing process env. */
+export function withFinanceQuotaStateDir<T>(directory: string, operation: () => Promise<T>) {
+  return stateDirectoryContext.run(directory, operation);
+}
 
 /**
  * Declare which purpose the calls inside `operation` serve.
@@ -760,7 +766,11 @@ export function createFinanceQuotaGuard(
 
 /** Created lazily so a fresh process uses its current configured state directory. */
 export function governFinanceQuota(fetch: ApiFetch): ApiFetch {
-  const wrapped: ApiFetch = async (url, init) => createFinanceQuotaGuard().wrap(fetch)(url, init);
-  wrapped.prepare = async (url, init) => createFinanceQuotaGuard().wrap(fetch).prepare(url, init);
+  const wrapped: ApiFetch = async (url, init) =>
+    createFinanceQuotaGuard({ stateDir: stateDirectoryContext.getStore() }).wrap(fetch)(url, init);
+  wrapped.prepare = async (url, init) =>
+    createFinanceQuotaGuard({ stateDir: stateDirectoryContext.getStore() })
+      .wrap(fetch)
+      .prepare(url, init);
   return wrapped;
 }
