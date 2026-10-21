@@ -86,7 +86,17 @@ it("uses native recovery in comparison, refuses incompatible cached completion, 
     });
     expect(result.missingSource.actionableClusters).toContain("multi_agent_pattern_shadow_cluster");
     expect(result.missingSource.ownerNextAction).toContain("local replay owner");
-    expect(result.timeout.runs.some((run) => run.status === "timed_out")).toBe(true);
+    if (process.platform === "win32") {
+      // The Windows process owner cannot establish descendant cleanup from a
+      // parent exit. Its explicit refusal is required, never a successful timeout.
+      expect(
+        result.timeout.runs.some(
+          (run) => run.status === "blocked" && run.error?.code === "executor_cleanup_unconfirmed",
+        ),
+      ).toBe(true);
+    } else {
+      expect(result.timeout.runs.some((run) => run.status === "timed_out")).toBe(true);
+    }
     expect(result.timeout.summary.trialDecision).not.toBe("pass");
     expect(result.retainedLatestUnchanged).toBe(true);
     expect(result.timeoutExecutorReleased).toBe(true);

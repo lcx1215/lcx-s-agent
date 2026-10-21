@@ -73,9 +73,11 @@ async function runPrivateProbe(directory: string): Promise<ShadowProbe> {
   const paths = await import("../../scripts/operator/lcx-local-paths.js");
   const counter = path.join(directory, "executor-invocations.jsonl");
   const wrapper = path.join(directory, "executor.mjs");
-  const fixture = pathToFileURL(
-    path.join(repository, "test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts"),
-  ).href;
+  const fixturePath = path.join(
+    repository,
+    "test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts",
+  );
+  const fixture = pathToFileURL(fixturePath).href;
   await fs.writeFile(
     wrapper,
     `import fs from 'node:fs'; import {buildFixtureResponse} from ${JSON.stringify(fixture)};\n` +
@@ -85,7 +87,16 @@ async function runPrivateProbe(directory: string): Promise<ShadowProbe> {
   );
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const command = `${quote(process.execPath)} --import tsx ${quote(wrapper)}`;
+  // The controlled local fixture explicitly binds its wrapper and the source
+  // owners that define its protocol/response. This is not a provider identity.
+  const executorIdentityFiles = [
+    wrapper,
+    fixturePath,
+    path.join(repository, "scripts/operator/lcx-multi-agent-pattern-shadow.ts"),
+    path.join(repository, "src/shared/lcx-ontology.ts"),
+  ];
   const options = {
+    executorIdentityFiles,
     experimentId: "offline-original-shadow-handoff",
     patterns: ["manager" as const],
     repetitions: 1,
@@ -110,6 +121,7 @@ async function runPrivateProbe(directory: string): Promise<ShadowProbe> {
       options.experimentId,
       "--executor-command",
       command,
+      ...executorIdentityFiles.flatMap((file) => ["--executor-identity-file", file]),
       "--child-timeout-ms",
       "3000",
       "--root-timeout-ms",

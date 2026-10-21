@@ -79,6 +79,34 @@ export function trainingScopeOptions(root: string): TrainingChildOptions {
   };
 }
 
+export async function seedTrainingScopeHoldouts(root: string): Promise<void> {
+  // These private external sources are explicit deterministic fixture reviews, not teacher
+  // labels relabeled as holdouts. The original dataset split decides their allocation.
+  const candidates = [
+    "Review ETF liquidity",
+    "Review company valuation",
+    "Review commodity evidence",
+  ].map((userMessage) =>
+    buildExternalBrainDistillationCandidate({
+      source: "external_visible_reply",
+      userMessage,
+      payload: `${userMessage}: source registry, finance evidence, portfolio risk and review panel; research-only.`,
+      review: {
+        accepted: true,
+        reviewer: "deterministic_smoke",
+        reason: "Private structural input fixture, not semantic acceptance",
+      },
+    }),
+  );
+  const artifact = buildExternalBrainDistillationCandidateArtifact({ candidates });
+  const externalSourcePath = path.join(
+    root,
+    "memory/external-brain-distillation-candidates/private-holdout.json",
+  );
+  await fs.mkdir(path.dirname(externalSourcePath), { recursive: true });
+  await fs.writeFile(externalSourcePath, JSON.stringify(artifact) + "\n");
+}
+
 // Load only original child functions. Importing this operator would start its guard loop.
 // No owner function is replaced: the adapter is its lowest spawn call, never the trainer.
 export async function loadOriginalTrainingChildOwners(sourcePath: string, privateRoot: string) {
@@ -673,31 +701,7 @@ async function runNativeTrainingProbe(
   context.batchSize = 2;
   context.currentConcurrency = 1;
   let quota: Awaited<ReturnType<typeof runOriginalPrivateQuotaLoop>> | undefined;
-  // These private external sources are explicit deterministic fixture reviews, not teacher
-  // labels relabeled as holdouts. The original dataset split decides their allocation.
-  const candidates = [
-    "Review ETF liquidity",
-    "Review company valuation",
-    "Review commodity evidence",
-  ].map((userMessage) =>
-    buildExternalBrainDistillationCandidate({
-      source: "external_visible_reply",
-      userMessage,
-      payload: `${userMessage}: source registry, finance evidence, portfolio risk and review panel; research-only.`,
-      review: {
-        accepted: true,
-        reviewer: "deterministic_smoke",
-        reason: "Private structural input fixture, not semantic acceptance",
-      },
-    }),
-  );
-  const artifact = buildExternalBrainDistillationCandidateArtifact({ candidates });
-  const externalSourcePath = path.join(
-    root,
-    "memory/external-brain-distillation-candidates/private-holdout.json",
-  );
-  await fs.mkdir(path.dirname(externalSourcePath), { recursive: true });
-  await fs.writeFile(externalSourcePath, JSON.stringify(artifact) + "\n");
+  await seedTrainingScopeHoldouts(root);
   if (capture.guardRounds) {
     await evaluate("options.adapterPrefix=defaultAdapterPrefixForModel(options.model)");
     const stateNames = new Set([
