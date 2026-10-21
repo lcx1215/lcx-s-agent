@@ -369,13 +369,38 @@ function buildFinanceDoctrinePromotionCandidates(
   return candidates;
 }
 
+// Read the compatibility directory without moving or rewriting historical artifacts.
+// A canonical filename wins over its legacy spelling when both copies exist.
+async function listCompatibleExternalReceipts(memoryDir: string) {
+  const receipts = new Map<string, { name: string; fullPath: string; isFile: () => boolean }>();
+  for (const directory of ["external-work-receipts", "feishu-work-receipts"]) {
+    const root = path.join(memoryDir, directory);
+    const entries = await fs.readdir(root, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      log.warn("Receipt directory is unreadable; retaining other available receipt sources");
+      return [];
+    });
+    for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      const name = entry.name.replace(/^(\d{4}-\d{2}-\d{2})-feishu-/u, "$1-external-");
+      if (!receipts.has(name)) {
+        receipts.set(name, { name, fullPath: path.join(root, entry.name), isFile: () => true });
+      }
+    }
+  }
+  return [...receipts.values()];
+}
+
 async function loadExistingFinanceDoctrinePromotionCandidates(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<FinanceDoctrinePromotionCandidateArtifactView | undefined> {
-  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
-    const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
+    const entries = await listCompatibleExternalReceipts(params.memoryDir);
     const matching = entries.find(
       (entry) =>
         entry.isFile() &&
@@ -386,7 +411,7 @@ async function loadExistingFinanceDoctrinePromotionCandidates(params: {
       return undefined;
     }
     const parsed = parseExternalFinanceDoctrinePromotionCandidateArtifact(
-      await fs.readFile(path.join(receiptsDir, matching.name), "utf-8"),
+      await fs.readFile(matching.fullPath, "utf-8"),
     );
     if (!parsed) {
       return undefined;
@@ -418,9 +443,8 @@ async function loadExistingFinanceDoctrinePromotionReview(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<FinanceDoctrinePromotionReview | undefined> {
-  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
-    const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
+    const entries = await listCompatibleExternalReceipts(params.memoryDir);
     const matching = entries.find(
       (entry) =>
         entry.isFile() &&
@@ -431,7 +455,7 @@ async function loadExistingFinanceDoctrinePromotionReview(params: {
       return undefined;
     }
     const parsed = parseExternalFinanceDoctrinePromotionReviewArtifact(
-      await fs.readFile(path.join(receiptsDir, matching.name), "utf-8"),
+      await fs.readFile(matching.fullPath, "utf-8"),
     );
     if (!parsed) {
       return undefined;
@@ -795,14 +819,13 @@ async function loadYesterdayExternalWorkReceipts(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<ExternalWorkReceipt[]> {
-  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
-    const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
+    const entries = await listCompatibleExternalReceipts(params.memoryDir);
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && isExternalWorkReceiptFilename(entry.name))
         .map(async (entry): Promise<ExternalWorkReceipt | undefined> => {
-          const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
+          const content = await fs.readFile(entry.fullPath, "utf-8");
           const parsedReceipt = parseExternalWorkReceiptArtifact(content);
           if (
             !parsedReceipt ||
@@ -841,16 +864,15 @@ async function loadYesterdayFinanceDoctrineCalibrations(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<FinanceDoctrineCalibration[]> {
-  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
-    const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
+    const entries = await listCompatibleExternalReceipts(params.memoryDir);
     const parsed = await Promise.all(
       entries
         .filter(
           (entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name),
         )
         .map(async (entry) => {
-          const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
+          const content = await fs.readFile(entry.fullPath, "utf-8");
           const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(content);
           if (
             !parsedCalibration ||
@@ -884,7 +906,6 @@ async function loadRecentFinanceDoctrineCalibrationSummary(params: {
   targetDateKey: string;
   windowDays: number;
 }): Promise<FinanceDoctrineCalibrationRollingSummary | undefined> {
-  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   const targetDate = parseUtcDateKey(params.targetDateKey);
   if (!targetDate) {
     return undefined;
@@ -894,14 +915,14 @@ async function loadRecentFinanceDoctrineCalibrationSummary(params: {
     allowedDateKeys.add(toUtcDateKey(shiftUtcDays(targetDate, -offset)));
   }
   try {
-    const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
+    const entries = await listCompatibleExternalReceipts(params.memoryDir);
     const parsed = await Promise.all(
       entries
         .filter(
           (entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name),
         )
         .map(async (entry) => {
-          const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
+          const content = await fs.readFile(entry.fullPath, "utf-8");
           const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(content);
           if (
             !parsedCalibration ||

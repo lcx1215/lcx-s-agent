@@ -3,7 +3,7 @@ import path from "node:path";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
 import { resolveUserPath } from "../../utils.js";
 import {
-  runL5BaselineDoctor,
+  buildL5BaselineDoctorPayload,
   type L5BaselineDoctorCommandOptions,
   type L5BaselineDoctorPayload,
 } from "./l5-baseline-doctor.js";
@@ -376,11 +376,11 @@ function formatText(payload: L5SystemEvalPayload): string {
 export async function runL5SystemEval(
   opts: L5SystemEvalCommandOptions,
 ): Promise<L5SystemEvalPayload> {
-  const baseline = await runL5BaselineDoctor(opts);
   const loop = await runLanguageBrainLoopSmoke({
     fixtureDir: opts.fixtureDir,
     json: true,
   });
+  const baseline = buildL5BaselineDoctorPayload(loop);
   return buildPayload({ baseline, loop });
 }
 

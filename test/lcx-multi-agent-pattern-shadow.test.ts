@@ -1,4 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
+import { killProcessTree } from "../src/process/kill-tree.js";
+
+vi.mock("node:child_process", { spy: true });
+vi.mock("../src/process/kill-tree.js", () => ({ killProcessTree: vi.fn() }));
 import {
   DEFAULT_LIVE_EXPERIMENT_ID,
   DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID,
@@ -11,6 +21,12 @@ import {
   SHADOW_EXECUTION_PHASES,
   SHADOW_PATTERNS,
   auditShadowPermissions,
+  executorFingerprint,
+  invokeExecutor,
+  isolatedExecutorPattern,
+  isShadowProcessGroupGone,
+  mergeResponseParts,
+  preserveShadowRetryHistory,
   buildIsolatedExecutorExperiment,
   buildLiveExperiment,
   canonicalShadowExecutionPhase,
@@ -515,4 +531,291 @@ describe("LCX multi-agent pattern shadow", () => {
     expect(resumed).toMatchObject({ status: "resumed", answer: expect.any(String) });
     expect(normalizeExecutorResponse(resumed)).toMatchObject({ ok: true });
   });
+});
+
+describe("shadow recovery and evidence boundaries", () => {
+  it("binds the actual binary, script and declared configuration bytes", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "shadow-identity-"));
+    try {
+      const script = path.join(dir, "executor.js");
+      const config = path.join(dir, "model.json");
+      await fs.writeFile(script, "version one");
+      await fs.writeFile(config, "config one");
+      const command = `"${process.execPath}" "${script}"`;
+      const first = executorFingerprint(command, "live", [config]);
+      expect(executorFingerprint(command, "live", [config])).toBe(first);
+      await fs.writeFile(script, "version two");
+      const second = executorFingerprint(command, "live", [config]);
+      expect(second).not.toBe(first);
+      await fs.writeFile(config, "config two");
+      expect(executorFingerprint(command, "live", [config])).not.toBe(second);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts undeclared completed tools and explicit permission denials", () => {
+    const audit = auditShadowPermissions(
+      [
+        { toolName: "network.fetch", status: "completed", allowed: true },
+        { toolName: "read_case", status: "completed", allowed: false },
+        { toolName: "unknown.tool", status: "blocked", allowed: false },
+        { toolName: "read_case", status: "completed", allowed: true },
+      ],
+      [],
+    );
+    expect(audit.escapedViolations).toBe(2);
+    expect(audit.blockedViolationAttempts).toBe(1);
+  });
+
+  it("does not turn missing child usage into an exact aggregate", () => {
+    const base = {
+      schemaVersion: EXECUTOR_SCHEMA_VERSION,
+      status: "completed" as const,
+      capabilities: {
+        eventReceipt: "unknown" as const,
+        toolEventReceipt: "unknown" as const,
+        sideEffectReceipt: "unknown" as const,
+        faultInjection: "unknown" as const,
+        resume: "unknown" as const,
+      },
+    };
+    expect(
+      mergeResponseParts([{ ...base, usage: { totalTokens: 8 } }, base], [1, 1], "manager").usage,
+    ).toBeUndefined();
+    expect(
+      mergeResponseParts(
+        [
+          { ...base, usage: { totalTokens: 8 } },
+          { ...base, usage: { totalTokens: 3 } },
+        ],
+        [1, 1],
+        "manager",
+      ).usage?.totalTokens,
+    ).toBe(11);
+  });
+
+  it("preserves complete token fields while omitting partial fields and mixed-currency fees", () => {
+    const normalized = normalizeExecutorResponse({
+      schemaVersion: EXECUTOR_SCHEMA_VERSION,
+      status: "completed",
+    });
+    if (!normalized.ok) {
+      throw new Error("fixture normalization failed");
+    }
+    const base = normalized.response;
+    const partial = mergeResponseParts(
+      [
+        { ...base, usage: { totalTokens: 8 } },
+        { ...base, usage: { promptTokens: 3 } },
+      ],
+      [1, 1],
+      "manager",
+    );
+    expect(partial.usage?.totalTokens).toBeUndefined();
+    expect(partial.usage?.promptTokens).toBeUndefined();
+    expect(partial.usage?.billedAmount).toBeUndefined();
+    const tokens = mergeResponseParts(
+      [
+        { ...base, usage: { totalTokens: 8, billedAmount: 1, currency: "USD" } },
+        { ...base, usage: { totalTokens: 3, promptTokens: 3, billedAmount: 2, currency: "CNY" } },
+      ],
+      [1, 1],
+      "manager",
+    );
+    expect(tokens.usage).toMatchObject({ totalTokens: 11, estimated: false });
+    expect(tokens.usage?.promptTokens).toBeUndefined();
+    expect(tokens.usage?.billedAmount).toBeUndefined();
+    expect(tokens.usage?.currency).toBeUndefined();
+    const fees = mergeResponseParts(
+      [
+        { ...base, usage: { billedAmount: 1, currency: "USD" } },
+        { ...base, usage: { billedAmount: 2, currency: "USD" } },
+      ],
+      [1, 1],
+      "manager",
+    );
+    expect(fees.usage).toMatchObject({ billedAmount: 3, currency: "USD" });
+    expect(fees.usage?.totalTokens).toBeUndefined();
+    const cleanup = mergeResponseParts(
+      [
+        { ...base, status: "timed_out", error: { code: "executor_timeout", message: "timeout" } },
+        {
+          ...base,
+          status: "blocked",
+          error: { code: "executor_cleanup_unconfirmed", message: "unconfirmed" },
+        },
+      ],
+      [1, 1],
+      "parallel_worker",
+    );
+    expect(cleanup.status).toBe("blocked");
+    expect(cleanup.error?.code).toBe("executor_cleanup_unconfirmed");
+  });
+
+  it.each(["alive", "EPERM", "open-child"])(
+    "blocks bounded cleanup when %s prevents confirmation",
+    async (scenario) => {
+      vi.useFakeTimers();
+      const fake = Object.assign(new EventEmitter(), {
+        pid: 424242,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      vi.mocked(spawn).mockReturnValueOnce(fake as unknown as ChildProcessWithoutNullStreams);
+      const probe = vi.spyOn(process, "kill").mockImplementation(() => {
+        if (scenario === "alive") {
+          return true;
+        }
+        throw Object.assign(new Error("fixture"), {
+          code: scenario === "EPERM" ? "EPERM" : "ESRCH",
+        });
+      });
+      try {
+        const pending = invokeExecutor('"node" fixture.js', {} as ShadowExecutorRequest, 10);
+        let finished = false;
+        void pending.then(() => {
+          finished = true;
+        });
+        await vi.advanceTimersByTimeAsync(10);
+        if (scenario !== "open-child") {
+          fake.emit("close", null);
+        }
+        await vi.advanceTimersByTimeAsync(1499);
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect((await pending).error?.code).toBe("executor_cleanup_unconfirmed");
+      } finally {
+        probe.mockRestore();
+        vi.useRealTimers();
+        vi.mocked(spawn).mockRestore();
+      }
+    },
+  );
+
+  it("does not resume an interrupted parallel worker after a sibling cleanup is unconfirmed", async () => {
+    vi.useFakeTimers();
+    const requests: ShadowExecutorRequest[] = [];
+    let spawned = 0;
+    const mkdir = vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+    const probe = vi.spyOn(process, "kill").mockReturnValue(true);
+    vi.mocked(spawn).mockImplementation(() => {
+      const index = spawned++;
+      const fake = Object.assign(new EventEmitter(), {
+        pid: 424242 + index,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      let input = "";
+      fake.stdin.on("data", (chunk: Buffer) => {
+        input += String(chunk);
+      });
+      fake.stdin.on("finish", () => {
+        const request = JSON.parse(input) as ShadowExecutorRequest;
+        requests.push(request);
+        if (index === 1) {
+          setTimeout(() => fake.emit("close", null), 20);
+          return;
+        }
+        fake.stdout.emit("data", JSON.stringify(buildFixtureResponse(request)));
+        fake.emit("close", 0);
+      });
+      return fake as unknown as ChildProcessWithoutNullStreams;
+    });
+    try {
+      const pending = isolatedExecutorPattern(
+        {
+          experimentId: "parallel-cleanup-fixture",
+          runId: "parallel-cleanup-fixture:recovery",
+          pattern: "parallel_worker",
+          repetition: 1,
+          mode: "live",
+          workspaceDir: "/unused-mocked-workspace",
+          executorCommand: "node fixture.js",
+          childTimeoutMs: 10,
+          rootTimeoutMs: 10000,
+          recoveryProbe: true,
+        },
+        "fixture-identity",
+      );
+      await vi.advanceTimersByTimeAsync(1600);
+      const result = await pending;
+      expect(result.status).toBe("blocked");
+      expect(result.error?.code).toBe("executor_cleanup_unconfirmed");
+      expect(result.childStatuses).toContain("interrupted");
+      expect(requests).toHaveLength(3);
+      expect(requests.some((request) => request.resumeFromEventId)).toBe(false);
+      expect(result.recovery.passed).toBe(false);
+    } finally {
+      mkdir.mockRestore();
+      probe.mockRestore();
+      vi.mocked(spawn).mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not mistake a Windows parent exit for confirmed descendant cleanup", () => {
+    const probe = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw new Error("not a group proof");
+    });
+    try {
+      expect(isShadowProcessGroupGone(424242, "win32")).toBe(false);
+      expect(probe).not.toHaveBeenCalled();
+    } finally {
+      probe.mockRestore();
+    }
+  });
+
+  it("retains a failed retry across a later retry-required receipt", () => {
+    const prior = buildReplayExperiment().runs[0];
+    const retried = {
+      ...prior,
+      retry: { reason: "fixture", attempt: 1, retryOfRunId: prior.runId },
+    };
+    const blocked = { ...prior, status: "blocked" as const, retry: undefined };
+    expect(preserveShadowRetryHistory(blocked, retried).retry).toEqual(retried.retry);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "waits for child close and canonical tree escalation without inheriting secrets",
+    async () => {
+      vi.useFakeTimers();
+      const fake = Object.assign(new EventEmitter(), {
+        pid: 424242,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      vi.mocked(spawn).mockReturnValueOnce(fake as unknown as ChildProcessWithoutNullStreams);
+      vi.stubEnv("OPENAI_API_KEY", "private-fixture");
+      const probe = vi.spyOn(process, "kill").mockImplementation(() => {
+        throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      });
+      try {
+        const pending = invokeExecutor('"node" fixture.js', {} as ShadowExecutorRequest, 10);
+        let finished = false;
+        void pending.then(() => {
+          finished = true;
+        });
+        await vi.advanceTimersByTimeAsync(10);
+        expect(killProcessTree).toHaveBeenCalledWith(424242, { graceMs: 750 });
+        expect(finished).toBe(false);
+        const options = vi.mocked(spawn).mock.calls.at(-1)?.[2];
+        expect(options?.env?.OPENAI_API_KEY).toBeUndefined();
+        expect(options?.env?.LCX_MULTI_AGENT_SHADOW).toBe("1");
+        fake.emit("close", null);
+        await vi.advanceTimersByTimeAsync(749);
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect((await pending).error?.code).toBe("executor_timeout");
+      } finally {
+        probe.mockRestore();
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+        vi.mocked(spawn).mockRestore();
+      }
+    },
+  );
 });

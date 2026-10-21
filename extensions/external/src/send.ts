@@ -6,7 +6,7 @@ export type ExternalFetch = (input: RequestInfo | URL, init?: RequestInit) => Pr
 
 export type ExternalOutboundRequest = {
   url: string;
-  init: RequestInit;
+  init: RequestInit & { body: string };
   messageId: string;
 };
 

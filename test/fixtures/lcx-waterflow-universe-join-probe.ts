@@ -768,7 +768,7 @@ export async function probeUniverseJoin(root: string, fault?: UniverseJoinFault)
       .compactFlowGraphOwner,
     process: { execPath: process.execPath, env },
     repoRoot: repo,
-    DEFAULT_WORKSPACE_DIR: workspace,
+    GOVERNANCE_AUTOPILOT_WORKSPACE_DIR: workspace,
     EXEC_MAX_BUFFER: 64 * 1024 * 1024,
     ownerArtifactRecordingConfig: config,
     OWNER_COMMANDS: commands,

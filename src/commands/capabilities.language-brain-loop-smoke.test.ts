@@ -145,7 +145,7 @@ describe("languageBrainLoopSmokeCommand", () => {
       expect.arrayContaining([
         "macro_rates_inflation",
         "credit_liquidity",
-        "fx_dollar",
+        "fx_currency_liquidity",
         "etf_regime",
         "company_fundamentals_value",
         "portfolio_risk_gates",

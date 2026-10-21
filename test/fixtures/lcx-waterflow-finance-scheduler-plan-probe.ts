@@ -438,6 +438,8 @@ export async function probeOriginalFinanceSchedulerPlan(params: {
     ? undefined
     : await probeOriginalFinanceModuleMain({
         directory: path.join(params.directory, "native-producer"),
+        // This real offline producer precedes the separately controlled scheduler fault.
+        healthyRunTimeoutMs: 30_000,
         allocation: params.allocation,
         dailyExecutableRule: params.dailyExecutableRule,
       });

@@ -119,7 +119,7 @@ async function loadOwners(
     performance,
     process,
     repoRoot: repo,
-    DEFAULT_WORKSPACE_DIR: workspace,
+    GOVERNANCE_AUTOPILOT_WORKSPACE_DIR: workspace,
     privateConfig: config,
     execFileAsync: transport,
     recordAgentArtifact,

@@ -58,6 +58,16 @@ function buildConfigForOpenClawTarget(entry: SecretRegistryEntry, envId: string)
   if (entry.id === "channels.slack.accounts.*.signingSecret") {
     setPathCreateStrict(config, ["channels", "slack", "accounts", "sample", "mode"], "http");
   }
+  if (entry.id === "channels.external.outboundToken") {
+    setPathCreateStrict(config, ["channels", "external", "outboundAuth"], "bearer");
+  }
+  if (entry.id === "channels.external.accounts.*.outboundToken") {
+    setPathCreateStrict(
+      config,
+      ["channels", "external", "accounts", "sample", "outboundAuth"],
+      "bearer",
+    );
+  }
   if (entry.id === "channels.zalo.webhookSecret") {
     setPathCreateStrict(config, ["channels", "zalo", "webhookUrl"], "https://example.com/hook");
   }

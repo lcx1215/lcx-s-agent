@@ -46,3 +46,66 @@ describe("external account configuration", () => {
     ).not.toThrow();
   });
 });
+
+it("validates named accounts after root inheritance without child defaults masking it", () => {
+  const external = ExternalConfigSchema.parse({
+    inboundAuth: "none",
+    outboundAuth: "bearer",
+    outboundToken: "shared-token",
+    textChunkLimit: 12,
+    accounts: { primary: { outboundUrl: "https://receiver.example/messages" } },
+  });
+  expect(external.accounts?.primary?.inboundAuth).toBeUndefined();
+  expect(
+    resolveExternalAccount({ cfg: { channels: { external } } as never, accountId: "primary" }),
+  ).toMatchObject({
+    inboundAuth: "none",
+    outboundAuth: "bearer",
+    outboundToken: "shared-token",
+    textChunkLimit: 12,
+    configured: true,
+  });
+  expect(() =>
+    ExternalConfigSchema.parse({
+      inboundToken: "shared-inbound",
+      accounts: { primary: { outboundUrl: "https://receiver.example/messages" } },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    ExternalConfigSchema.parse({
+      inboundAuth: "none",
+      accounts: { primary: { inboundAuth: "token" } },
+    }),
+  ).toThrow(/inboundToken/);
+});
+
+it("rejects non-HTTP and malformed outbound URLs", () => {
+  for (const outboundUrl of [
+    "ftp://receiver.example/messages",
+    "file:///tmp/receiver",
+    "not a URL",
+  ]) {
+    expect(ExternalConfigSchema.safeParse({ inboundAuth: "none", outboundUrl }).success).toBe(
+      false,
+    );
+  }
+});
+
+it("does not resolve unused token refs when effective auth is none", () => {
+  const ref = { source: "env", provider: "default", id: "UNUSED_EXTERNAL_TOKEN" };
+  expect(
+    resolveExternalAccount({
+      cfg: {
+        channels: {
+          external: {
+            inboundAuth: "none",
+            outboundAuth: "none",
+            inboundToken: ref,
+            outboundToken: ref,
+            outboundUrl: "https://receiver.example",
+          },
+        },
+      } as never,
+    }),
+  ).toMatchObject({ inboundToken: "", outboundToken: "", configured: true });
+});

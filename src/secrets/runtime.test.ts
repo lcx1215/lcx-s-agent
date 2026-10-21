@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureAuthProfileStore, type AuthProfileStore } from "../agents/auth-profiles.js";
 import { loadConfig, type OpenClawConfig } from "../config/config.js";
+import { collectChannelConfigAssignments } from "./runtime-config-collectors-channels.js";
+import { createResolverContext } from "./runtime-shared.js";
 import {
   activateSecretsRuntimeSnapshot,
   clearSecretsRuntimeSnapshot,
@@ -1879,4 +1881,66 @@ describe("secrets runtime snapshot", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+});
+
+it("resolves External token refs only for enabled surfaces using the effective auth mode", async () => {
+  const ref = { source: "env", provider: "default", id: "UNUSED_EXTERNAL_TOKEN" };
+  const config = asConfig({
+    channels: {
+      external: {
+        inboundAuth: "none",
+        outboundAuth: "none",
+        inboundToken: ref,
+        outboundToken: ref,
+        accounts: {
+          inherited: {},
+          explicit: {
+            inboundAuth: "none",
+            outboundAuth: "none",
+            inboundToken: ref,
+            outboundToken: ref,
+          },
+        },
+      },
+    },
+  });
+  const snapshot = await prepareSecretsRuntimeSnapshot({
+    config,
+    env: {},
+    agentDirs: ["/tmp/openclaw-agent-main"],
+    loadAuthStore: () => ({ version: 1, profiles: {} }),
+  });
+  expect(
+    snapshot.warnings.filter((warning) => warning.code === "SECRETS_REF_IGNORED_INACTIVE_SURFACE"),
+  ).toHaveLength(4);
+
+  const inherited = asConfig({
+    channels: {
+      external: {
+        inboundAuth: "token",
+        outboundAuth: "bearer",
+        inboundToken: ref,
+        outboundToken: ref,
+        accounts: {
+          bypass: { inboundAuth: "none", outboundAuth: "none" },
+          inherited: {},
+          token: { outboundToken: ref },
+          disabled: { enabled: false, inboundToken: ref },
+        },
+      },
+    },
+  });
+  const context = createResolverContext({ sourceConfig: inherited, env: {} });
+  collectChannelConfigAssignments({ config: inherited, defaults: undefined, context });
+  expect(context.assignments.map((assignment) => assignment.path)).toEqual([
+    "channels.external.inboundToken",
+    "channels.external.outboundToken",
+    "channels.external.accounts.token.outboundToken",
+  ]);
+  const noInheritor = asConfig({
+    channels: { external: { inboundToken: ref, accounts: { bypass: { inboundAuth: "none" } } } },
+  });
+  const inactive = createResolverContext({ sourceConfig: noInheritor, env: {} });
+  collectChannelConfigAssignments({ config: noInheritor, defaults: undefined, context: inactive });
+  expect(inactive.assignments).toEqual([]);
 });

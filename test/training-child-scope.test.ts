@@ -8,6 +8,7 @@ import {
   preserveTrainingScope,
   trainingScopeOptions,
   trainingScopeRepo,
+  seedTrainingScopeHoldouts,
   probeOriginalTrainingTail,
 } from "./fixtures/lcx-waterflow-training-child-scope-probe.js";
 import { originalTeacherReadFailure } from "./fixtures/lcx-waterflow-training-feedback-probe.js";
@@ -445,11 +446,14 @@ describe("original training guard child scope", () => {
         root,
       );
       const teacher = (await owners.runTeacherStep(options, 1)) as Record<string, unknown>;
+      // Holdouts are independent deterministic external fixture inputs. Never
+      // relabel this round's teacher reviews or curated seeds as validation data.
+      await seedTrainingScopeHoldouts(options.workspaceDir);
       const dataset = (await owners.runDatasetStep(options, 1)) as Record<string, unknown>;
-      // Teacher reviews and curated seeds are train-only. The unmodified smoke
-      // rejects their absent holdouts. Standalone slice conversion below is not
-      // continuation of a guard past this gate, and never invokes a trainer.
-      await expect(owners.runSmokeStep(options, 1)).rejects.toThrow("valid split empty");
+      // The original splitter, smoke and slice owners must all accept these
+      // independent nonempty splits; no trainer or model is invoked here.
+      const smoke = await owners.runSmokeStep(options, 1);
+      expect(smoke).toMatchObject({ ok: true });
       const slicePath = await owners.buildTrainSlice(options, 1);
       expect(teacher).toMatchObject({ mock: true, workspaceDir: options.workspaceDir });
       expect(dataset).toMatchObject({
@@ -457,8 +461,8 @@ describe("original training guard child scope", () => {
         outDir: options.dataDir,
       });
       expect(invocations[2].args).toEqual(expect.arrayContaining(["--data", options.dataDir]));
-      expect(invocations[2].stderr).toContain("valid split empty");
-      expect((dataset.counts as Record<string, unknown>).valid).toBe(0);
+      expect((dataset.counts as Record<string, number>).valid).toBeGreaterThan(0);
+      expect((dataset.counts as Record<string, number>).test).toBeGreaterThan(0);
       expect(slicePath).toBe(options.trainSliceDir);
       const reviewPath = String(teacher.reviewPath);
       const review = JSON.parse(
@@ -500,6 +504,7 @@ describe("original training guard child scope", () => {
       expect(receipts.map((row) => row.name)).toEqual([
         "minimax_teacher_batch",
         "dataset",
+        "smoke",
         "train_slice",
       ]);
       await saveProof(name, {
@@ -510,7 +515,8 @@ describe("original training guard child scope", () => {
         teacher,
         review,
         dataset,
-        smoke: { status: "normal_block", reason: "valid split empty", guardContinuation: false },
+        smoke,
+        guardContinuation: false,
         slicePath,
         producerRows,
         consumedRows,

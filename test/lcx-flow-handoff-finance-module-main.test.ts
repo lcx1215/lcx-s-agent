@@ -174,7 +174,10 @@ describe("original finance rule to module to reviewed plan handoff", () => {
   });
 
   it("writes the original deadline failure and no actionable plan", async () => {
-    const result = await probe("run_timeout", { fault: "run_timeout" });
+    const result = await probe("run_timeout", {
+      fault: "run_timeout",
+      healthyRunTimeoutMs: 30_000,
+    });
     expect(result.receipt).toBeUndefined();
     expect(result.checkpoint).toMatchObject({
       status: "aborted",

@@ -11,6 +11,7 @@ import { buildTestCtx } from "./test-ctx.js";
 type AbortResult = { handled: boolean; aborted: boolean; stoppedSubagents?: number };
 
 const mocks = vi.hoisted(() => ({
+  readProjection: vi.fn(async () => null),
   routeReply: vi.fn(async (_params: unknown) => ({ ok: true, messageId: "mock" })),
   tryFastAbortFromMessage: vi.fn<() => Promise<AbortResult>>(async () => ({
     handled: false,
@@ -72,6 +73,10 @@ const ttsMocks = vi.hoisted(() => {
     resolveTtsConfig: vi.fn((_cfg: OpenClawConfig) => ({ mode: "final" })),
   };
 });
+
+vi.mock("../../shared/global-evidence-projection-source.js", () => ({
+  readCanonicalGlobalEvidenceProjectionCandidate: mocks.readProjection,
+}));
 
 vi.mock("./route-reply.js", () => ({
   isRoutableChannel: (channel: string | undefined) =>
@@ -235,6 +240,45 @@ describe("dispatchReplyFromConfig", () => {
     ttsMocks.resolveTtsConfig.mockReturnValue({
       mode: "final",
     });
+  });
+
+  it("does not read a projection without a consumer", async () => {
+    mocks.readProjection.mockClear();
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({ Body: "hello" }),
+      cfg: emptyConfig,
+      dispatcher: createDispatcher(),
+      replyResolver: async () => ({ text: "reply" }),
+    });
+    expect(mocks.readProjection).not.toHaveBeenCalled();
+    expect(result.globalEvidenceProjectionRead).toBeUndefined();
+  });
+
+  it("returns requested projection observations even when the observer throws", async () => {
+    const dispatcher = createDispatcher();
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({ Body: "hello" }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async () => ({ text: "reply" }),
+      globalEvidenceProjectionInput: { candidate: null },
+      onGlobalEvidenceProjectionRead: () => {
+        throw new Error("observer failed");
+      },
+    });
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "reply" });
+    expect(result.globalEvidenceProjectionRead?.read).toMatchObject({
+      blocked: true,
+      readStatus: "missing",
+    });
+    const withoutObserver = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({ Body: "hello" }),
+      cfg: emptyConfig,
+      dispatcher: createDispatcher(),
+      replyResolver: async () => ({ text: "reply" }),
+      globalEvidenceProjectionInput: { candidate: null },
+    });
+    expect(withoutObserver.globalEvidenceProjectionRead?.read.readStatus).toBe("missing");
   });
 
   it("keeps a blocked projection read observational and still delivers the reply", async () => {

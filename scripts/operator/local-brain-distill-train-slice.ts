@@ -694,6 +694,14 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     aligner,
   );
 
+  if (trainWritten === 0 || validCopied === 0 || testCopied === 0) {
+    // Clear a previous success marker so a failed rebuild cannot launch training.
+    await fs.rm(path.join(options.outDir, "manifest.json"), { force: true });
+    throw new Error(
+      `training slice requires nonempty train/valid/test splits (${trainWritten}/${validCopied}/${testCopied})`,
+    );
+  }
+
   const [sourceTrainSha256, trainSha256, validSha256, testSha256, evalSourceSha256] =
     await Promise.all([
       sha256File(trainPath),

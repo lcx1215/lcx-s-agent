@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  readExternalCandidateCapture,
   resolveExternalChannelTruth,
   selectBindingOwnerPayload,
 } from "../scripts/operator/lcx-external-channel-status.js";
@@ -201,5 +204,186 @@ describe("lcx-external-channel-status", () => {
         visibleProof: expect.any(Object),
       }),
     );
+  });
+});
+
+describe("offline capture artifacts", () => {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+  });
+  const capturePath = "memory/external-brain-distillation-candidates/capture.json";
+  const candidate = (
+    id: number,
+    status = "pending_brain_review",
+    source = "external_user_utterance",
+  ) => ({
+    id: `candidate-${id}`,
+    source,
+    status,
+    boundary: "brain_distillation_candidate",
+    createdAt: "2026-10-21T00:00:00Z",
+  });
+  const review = (
+    accepted: ReturnType<typeof candidate>[],
+    rejected: ReturnType<typeof candidate>[],
+    sourceArtifacts = [capturePath],
+  ) => ({
+    schemaVersion: 1,
+    boundary: "brain_distillation_review",
+    reviewedAt: "2026-10-21T01:00:00Z",
+    sourceArtifacts,
+    acceptedCandidates: accepted.map((entry) => ({ ...entry, status: "accepted_brain_plan" })),
+    rejectedCandidates: rejected.map(({ id, source }) => ({
+      id,
+      source,
+      reason: "fixture rejection",
+    })),
+  });
+  async function workspace(files: Record<string, unknown>) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-capture-status-"));
+    roots.push(root);
+    for (const [file, value] of Object.entries(files)) {
+      const fullPath = path.join(root, file);
+      await fs.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.writeFile(fullPath, JSON.stringify(value));
+    }
+    return root;
+  }
+  const artifact = (candidates: ReturnType<typeof candidate>[]) => ({
+    schemaVersion: 1,
+    boundary: "brain_distillation_candidate",
+    generatedAt: "2026-10-21T00:00:00Z",
+    candidates,
+  });
+
+  it("joins reviewed arrays to original capture identity/source and deduplicates receipts", async () => {
+    const candidates = Array.from({ length: 10 }, (_, id) => candidate(id));
+    const reviewed = review(candidates.slice(0, 8), candidates.slice(8));
+    const root = await workspace({
+      [capturePath]: artifact(candidates),
+      "memory/external-brain-distillation-candidates/duplicate.json": artifact(candidates),
+      "memory/external-brain-distillation-reviews/review.json": reviewed,
+      "memory/external-brain-distillation-reviews/duplicate.json": reviewed,
+    });
+    const status = await readExternalCandidateCapture(root);
+    expect(status).toMatchObject({
+      candidateCount: 10,
+      acceptedCandidateCount: 8,
+      rejectedCandidateCount: 2,
+      reviewedCandidateCount: 10,
+      pendingCandidateCount: 0,
+      reviewArtifactCount: 2,
+      invalidArtifactCount: 0,
+    });
+    expect(status.currentReplay.rejectedRate).toBe(0.2);
+    expect(status.replayLoop.status).toBe("ready_for_reviewed_batch_absorption");
+  });
+
+  it.each(["pending_brain_review", "discarded"])(
+    "does not inflate reviewed threshold with %s",
+    async (status) => {
+      const candidates = [
+        candidate(0, "accepted_brain_plan"),
+        ...Array.from({ length: 99 }, (_, id) => candidate(id + 1, status)),
+      ];
+      const root = await workspace({ [capturePath]: artifact(candidates) });
+      const result = await readExternalCandidateCapture(root);
+      expect(result.candidateCount).toBe(100);
+      expect(result.reviewedCandidateCount).toBe(1);
+      expect(result.replayLoop.status).toBe("needs_review_promotion");
+    },
+  );
+
+  it("keeps pending out of ready even after ten accepted dispositions", async () => {
+    const root = await workspace({
+      [capturePath]: artifact([
+        ...Array.from({ length: 10 }, (_, id) => candidate(id, "accepted_brain_plan")),
+        candidate(10),
+      ]),
+    });
+    const status = await readExternalCandidateCapture(root);
+    expect(status.reviewedCandidateCount).toBe(10);
+    expect(status.pendingCandidateCount).toBe(1);
+    expect(status.replayLoop.status).toBe("needs_review_promotion");
+  });
+
+  it("does not dilute reviewed rejection rate with discarded candidates", async () => {
+    const root = await workspace({
+      [capturePath]: artifact([
+        candidate(0, "accepted_brain_plan"),
+        candidate(1, "rejected_brain_plan"),
+        ...Array.from({ length: 100 }, (_, id) => candidate(id + 2, "discarded")),
+      ]),
+    });
+    const status = await readExternalCandidateCapture(root);
+    expect(status.currentReplay.rejectedRate).toBe(0.5);
+    expect(status.reviewedCandidateCount).toBe(2);
+    expect(status.replayLoop.status).toBe("needs_route_family_hardening");
+  });
+
+  it("reports teacher review separately without inventing natural capture", async () => {
+    const teachers = Array.from({ length: 12 }, (_, id) =>
+      candidate(id, "accepted_brain_plan", "teacher_review"),
+    );
+    const root = await workspace({
+      "memory/external-brain-distillation-reviews/teacher.json": review(
+        teachers,
+        [candidate(99, "rejected_brain_plan", "teacher_review")],
+        ["minimax_teacher_batch:fixture"],
+      ),
+    });
+    const status = await readExternalCandidateCapture(root);
+    expect(status).toMatchObject({
+      candidateCount: 0,
+      reviewArtifactCount: 1,
+      teacherReviewAcceptedCount: 12,
+      teacherReviewRejectedCount: 1,
+      acceptedCandidateCount: 0,
+      rejectedCandidateCount: 0,
+      invalidArtifactCount: 0,
+    });
+    expect(status.replayLoop.status).toBe("needs_candidate_capture");
+    expect(status.currentReplay.source).toBe("none");
+  });
+
+  it("does not join reviews with wrong origin or same IDs from teacher source", async () => {
+    const candidates = Array.from({ length: 10 }, (_, id) => candidate(id));
+    const root = await workspace({
+      [capturePath]: artifact(candidates),
+      "memory/external-brain-distillation-reviews/wrong-origin.json": review(
+        candidates,
+        [],
+        ["memory/external-brain-distillation-candidates/other.json"],
+      ),
+      "memory/external-brain-distillation-reviews/teacher.json": review(
+        candidates.map((entry) => ({ ...entry, source: "teacher_review" })),
+        [],
+      ),
+    });
+    const status = await readExternalCandidateCapture(root);
+    expect(status).toMatchObject({
+      candidateCount: 10,
+      reviewedCandidateCount: 0,
+      pendingCandidateCount: 10,
+      unmatchedReviewCandidateCount: 10,
+      teacherReviewAcceptedCount: 10,
+    });
+    expect(status.replayLoop.status).toBe("needs_review_promotion");
+  });
+
+  it("retains conflicting reviews as pending instead of depending on file order", async () => {
+    const candidates = [candidate(0)];
+    const root = await workspace({
+      [capturePath]: artifact(candidates),
+      "memory/external-brain-distillation-reviews/accept.json": review(candidates, []),
+      "memory/external-brain-distillation-reviews/reject.json": review([], candidates),
+    });
+    const status = await readExternalCandidateCapture(root);
+    expect(status).toMatchObject({
+      candidateCount: 1,
+      reviewedCandidateCount: 0,
+      pendingCandidateCount: 1,
+    });
   });
 });

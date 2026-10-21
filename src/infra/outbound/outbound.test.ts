@@ -1013,6 +1013,18 @@ describe("resolveOutboundSessionRoute", () => {
         },
       },
       {
+        name: "External explicit thread wins over replied-to message",
+        cfg: baseConfig,
+        channel: "external",
+        target: "group:oc_group_chat",
+        replyToId: "message-previous",
+        threadId: "thread-actual",
+        expected: {
+          sessionKey: "agent:main:external:group:oc_group_chat:thread:thread-actual",
+          threadId: "thread-actual",
+        },
+      },
+      {
         name: "External explicit group prefix keeps group routing",
         cfg: baseConfig,
         channel: "external",

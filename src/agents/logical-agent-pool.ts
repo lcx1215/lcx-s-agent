@@ -161,10 +161,10 @@ export type LogicalAgentGuardrails<TInput, TResult> = Readonly<{
  * needs a smaller surface passes its own `LogicalAgentCapabilities`, and
  * `normalizeExecutionResult` still enforces exactly the set it was handed.
  *
- * An open default grants no side effect by itself. A side effect only happens when a
- * caller both declares it and supplies an executor that performs it; the pool merely
- * stops refusing the declaration up front. `provider_call` stays additionally gated per
- * run by the pool's `allowProviderCalls` option, which is what actually admits it.
+ * Grants govern declarations and mediated adapter calls. Trusted executors must
+ * declare their effects truthfully: this pool cannot intercept arbitrary JS that
+ * performs an undeclared effect. `provider_call` is additionally gated per run by
+ * `allowProviderCalls` for these declarations and mediated routes.
  */
 export const LOGICAL_AGENT_LOCAL_CAPABILITIES: LogicalAgentCapabilities = Object.freeze({
   allowedTools: Object.freeze([LOGICAL_AGENT_ANY_TOOL] as const),
@@ -296,9 +296,14 @@ for (const definition of LOGICAL_AGENT_DEFINITIONS) {
 
 export type LocalModelPoolConfig = Readonly<{
   modelId: string;
+  /** Requested adapter limit, not an observed count of resident models. */
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
-  /** Node invocation delta; the same caller limit is forwarded to local process adapters. */
+  /**
+   * Process-wide Node delta sampled around nonoverlapping modelSlot calls. This is a
+   * best-effort guard, not attribution of arbitrary executor/host allocations.
+   * The same caller limit is forwarded to local process adapters.
+   */
   memoryBudgetMb: number;
   memoryBudgetEnforcement: "node_invocation_delta";
   taskTimeoutMs: number;
@@ -308,13 +313,13 @@ export type LocalModelPoolOptions<
   TInput = unknown,
   TResult = unknown,
 > = Partial<LocalModelPoolConfig> & {
-  /** Explicitly admits `provider_call`; false/omitted forbids it even in an open grant. */
+  /** Admits declared/routed `provider_call`; false/omitted rejects it even in an open grant. */
   allowProviderCalls?: boolean;
   /**
    * Capability grant applied to every task in this pool. Defaults to the open
-   * `LOGICAL_AGENT_LOCAL_CAPABILITIES`. Pass a narrower set to keep a boundary
-   * enforceable: `normalizeExecutionResult` then rejects any declared side effect
-   * outside it, and the router rejects an adapter requiring a tool outside it.
+   * `LOGICAL_AGENT_LOCAL_CAPABILITIES`. A narrower set rejects declared effects
+   * and routed adapter requirements outside the grant. It does not sandbox the
+   * trusted executor's own host access.
    */
   capabilities?: LogicalAgentCapabilities;
   modelInvoker?: LogicalAgentModelInvoker;
@@ -346,6 +351,7 @@ export type LogicalAgentSharedContext = Readonly<Record<string, unknown>>;
 export type LogicalAgentTask<TInput = LogicalAgentRequest> = {
   id: string;
   agentId: LogicalAgentId;
+  /** Structured-cloneable task data; shared-memory inputs are not accepted. */
   input: TInput;
   dependsOn?: readonly string[];
 };
@@ -383,6 +389,14 @@ export type LogicalAgentExecutionResult<TResult> = Readonly<{
   sideEffects: readonly LogicalAgentSideEffect[];
 }>;
 
+/**
+ * Trusted, in-process application code (the same trust boundary as installed
+ * plugins in SECURITY.md). The pool cannot intercept arbitrary JS side effects,
+ * model loading, or allocations. Use modelSlot for mediated model calls and
+ * declare side effects truthfully; capability checks validate those declarations
+ * and routed adapter requirements, not host-level isolation. Untrusted code
+ * requires an external sandbox supplied by its owner.
+ */
 export type LogicalAgentExecutor<TInput, TResult> = (
   context: LogicalAgentExecutionContext<TInput, TResult>,
 ) => LogicalAgentExecutionResult<TResult> | Promise<LogicalAgentExecutionResult<TResult>>;
@@ -392,7 +406,13 @@ export type LogicalAgentPoolStatus = {
   sharedModel: boolean;
   modelRoutingMode?: "shared_invoker" | "role_policy";
   configuredModelIds?: readonly string[];
+  /** Compatibility field: requested adapter limit, never an observed count. */
   maxLoadedModels: 1;
+  loadedModelLimitEvidence: "requested_limit";
+  observedLoadedModels: null;
+  executorIsolation: "trusted_in_process";
+  memoryBudgetAttribution: "process_delta_nonoverlapping_pool_calls";
+  unattributedMemoryChecks: number;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
   memoryBudgetEnforcement: "node_invocation_delta";
@@ -460,7 +480,9 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
   }
   const maxLoadedModels = config?.maxLoadedModels ?? DEFAULT_LOCAL_MODEL_POOL.maxLoadedModels;
   if (maxLoadedModels !== 1) {
-    throw new Error("local logical-agent pool permits exactly one loaded model");
+    throw new Error(
+      "local logical-agent pool requires the requested maxLoadedModels limit to be 1",
+    );
   }
   const memoryBudgetMb = config?.memoryBudgetMb ?? DEFAULT_LOCAL_MODEL_POOL.memoryBudgetMb;
   if (!Number.isFinite(memoryBudgetMb) || memoryBudgetMb <= 0) {
@@ -500,6 +522,8 @@ export class LogicalAgentPool<TInput, TResult> {
   #maxObservedConcurrency = 0;
   #activeModelInvocations = 0;
   #maxObservedModelConcurrency = 0;
+  #memoryMeasurements = new Set<{ overlapped: boolean }>();
+  #unattributedMemoryChecks = 0;
 
   constructor(options?: LocalModelPoolOptions<TInput, TResult>) {
     this.#allowProviderCalls = options?.allowProviderCalls === true;
@@ -546,6 +570,11 @@ export class LogicalAgentPool<TInput, TResult> {
           : [this.#config.modelId],
       ),
       maxLoadedModels: 1,
+      loadedModelLimitEvidence: "requested_limit",
+      observedLoadedModels: null,
+      executorIsolation: "trusted_in_process",
+      memoryBudgetAttribution: "process_delta_nonoverlapping_pool_calls",
+      unattributedMemoryChecks: this.#unattributedMemoryChecks,
       maxConcurrency: this.#config.maxConcurrency,
       memoryBudgetMb: this.#config.memoryBudgetMb,
       memoryBudgetEnforcement: this.#config.memoryBudgetEnforcement,
@@ -581,6 +610,21 @@ export class LogicalAgentPool<TInput, TResult> {
     getLogicalAgentDefinition(task.agentId);
     const taskSnapshot = snapshotTask(task);
     const dependencySnapshot = snapshotDependencyResults(dependencyResults);
+    const unavailableDependencies = (taskSnapshot.dependsOn ?? []).filter((dependency) => {
+      const result = Object.hasOwn(dependencySnapshot, dependency)
+        ? dependencySnapshot[dependency]
+        : undefined;
+      return (
+        dependency === taskSnapshot.id ||
+        result?.taskId !== dependency ||
+        result.status !== "completed"
+      );
+    });
+    if (unavailableDependencies.length > 0) {
+      return Promise.resolve(
+        blockedResult<TResult>(taskSnapshot, "not-executed", unavailableDependencies),
+      );
+    }
     return new Promise((resolve) => {
       let queued = true;
       let cancelQueued: () => void = () => {};
@@ -982,6 +1026,11 @@ export class LogicalAgentPool<TInput, TResult> {
     if (job.signal.aborted) {
       throw new Error("logical-agent model invocation aborted before adapter dispatch");
     }
+    const measurement = { overlapped: this.#memoryMeasurements.size > 0 };
+    for (const active of this.#memoryMeasurements) {
+      active.overlapped = true;
+    }
+    this.#memoryMeasurements.add(measurement);
     const beforeBytes = measuredProcessMemoryBytes();
     let result: unknown;
     let invocationError: unknown;
@@ -993,8 +1042,14 @@ export class LogicalAgentPool<TInput, TResult> {
       invocationError = error;
     }
     const observedDeltaBytes = Math.max(0, measuredProcessMemoryBytes() - beforeBytes);
+    this.#memoryMeasurements.delete(measurement);
     const budgetBytes = this.#config.memoryBudgetMb * 1024 * 1024;
-    if (observedDeltaBytes > budgetBytes) {
+    if (measurement.overlapped) {
+      // A process-wide delta cannot identify either concurrent call's usage.
+      // Keep bounded provider concurrency and report the missing attribution;
+      // never reject one call for allocations possibly made by another.
+      this.#unattributedMemoryChecks += 1;
+    } else if (observedDeltaBytes > budgetBytes) {
       throw new LogicalAgentMemoryBudgetError(this.#config.memoryBudgetMb, observedDeltaBytes);
     }
     if (!succeeded) {
@@ -1007,6 +1062,7 @@ export class LogicalAgentPool<TInput, TResult> {
 function snapshotTask<TInput>(task: LogicalAgentTask<TInput>): LogicalAgentTask<TInput> {
   return Object.freeze({
     ...task,
+    input: deepFreeze(structuredClone(task.input)),
     dependsOn: task.dependsOn === undefined ? undefined : Object.freeze([...task.dependsOn]),
   });
 }
@@ -1054,6 +1110,9 @@ function cloneAndFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object") {
     return value;
   }
+  if (Buffer.isBuffer(value)) {
+    return Buffer.from(value) as T;
+  }
   try {
     return deepFreeze(structuredClone(value));
   } catch {
@@ -1066,6 +1125,28 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
     return value;
   }
   seen.add(value);
+  if (
+    value instanceof SharedArrayBuffer ||
+    (ArrayBuffer.isView(value) && value.buffer instanceof SharedArrayBuffer)
+  ) {
+    throw new Error("logical-agent snapshots cannot isolate shared memory");
+  }
+  // Structured clone preserves Map/Set entries outside own properties.
+  if (value instanceof Map) {
+    for (const [key, entry] of value) {
+      deepFreeze(key, seen);
+      deepFreeze(entry, seen);
+    }
+  } else if (value instanceof Set) {
+    for (const entry of value) {
+      deepFreeze(entry, seen);
+    }
+  }
+  // V8 cannot freeze non-empty typed arrays. The view already belongs to this
+  // snapshot; each consumer gets another copy, so its mutable bytes stay local.
+  if (ArrayBuffer.isView(value)) {
+    return value;
+  }
   Object.freeze(value);
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -1867,6 +1948,14 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
             continue;
           }
           const dependencies = task.dependsOn ?? [];
+          if (
+            !dependencies.every((dependency) => {
+              const status = state.get(dependency);
+              return status === "completed" || status === "failed" || status === "blocked";
+            })
+          ) {
+            continue;
+          }
           const failedDependencies = dependencies.filter((dependency) => {
             const dependencyStatus = state.get(dependency);
             return dependencyStatus === "failed" || dependencyStatus === "blocked";

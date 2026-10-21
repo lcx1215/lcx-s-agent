@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { normalizeExternalInboundMessage, normalizeExternalTarget } from "./protocol.js";
 
 describe("external message protocol", () => {
@@ -74,4 +74,22 @@ describe("external message protocol", () => {
     expect(normalizeExternalTarget("external:group: ")).toBeUndefined();
     expect(normalizeExternalTarget(" ")).toBeUndefined();
   });
+});
+
+it("uses a stable fallback ID when a timestamp is absent or invalid across retries", () => {
+  const now = vi.spyOn(Date, "now");
+  try {
+    for (const timestamp of [undefined, "invalid"]) {
+      const input = { text: "hello", senderId: "user-1", conversationId: "chat-1", timestamp };
+      now.mockReturnValue(1000);
+      const first = normalizeExternalInboundMessage(input);
+      now.mockReturnValue(2000);
+      const retry = normalizeExternalInboundMessage(input);
+      expect(first.ok && first.value.messageId).toBe(retry.ok && retry.value.messageId);
+      expect(first.ok && first.value.timestamp).toBe(1000);
+      expect(retry.ok && retry.value.timestamp).toBe(2000);
+    }
+  } finally {
+    now.mockRestore();
+  }
 });

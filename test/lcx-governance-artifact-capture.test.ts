@@ -126,7 +126,7 @@ function harness(
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   const factory = vm.runInThisContext(
-    `(function(dependencies) { const { compactCommercialAcceptanceFailures, readCommercialAcceptanceFeedback, GOVERNANCE_AUTOPILOT_LATEST_PATH, recordAgentArtifact, loadConfig, DEFAULT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
+    `(function(dependencies) { const { compactCommercialAcceptanceFailures, readCommercialAcceptanceFeedback, GOVERNANCE_AUTOPILOT_LATEST_PATH, recordAgentArtifact, loadConfig, GOVERNANCE_AUTOPILOT_WORKSPACE_DIR, execFileAsync, repoRoot, EXEC_MAX_BUFFER, buildLcxRunReceipt, createLcxRunId, boundaryFromFlags, snapshot } = dependencies; ${compiled} })`,
   ) as (dependencies: Record<string, unknown>) => Harness;
   return factory({
     compactCommercialAcceptanceFailures,
@@ -134,7 +134,7 @@ function harness(
     GOVERNANCE_AUTOPILOT_LATEST_PATH: path.join(workspace, "prior-governance.json"),
     recordAgentArtifact: options.recorder ?? recordAgentArtifact,
     loadConfig: options.load ?? (() => config),
-    DEFAULT_WORKSPACE_DIR: workspace,
+    GOVERNANCE_AUTOPILOT_WORKSPACE_DIR: workspace,
     execFileAsync:
       options.exec ??
       (async () => {

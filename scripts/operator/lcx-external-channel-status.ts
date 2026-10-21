@@ -20,6 +20,7 @@ const EXTERNAL_CANDIDATE_ROOTS = [
   "memory/external-message-intent-candidates",
   "memory/external-brain-distillation-candidates",
 ] as const;
+const EXTERNAL_REVIEW_ROOT = "memory/external-brain-distillation-reviews";
 const EXTERNAL_HANDOFF_ROOT = "memory/external-message-handoff-receipts";
 
 type CliOptions = {
@@ -226,6 +227,14 @@ type ExternalCandidateCaptureStatus = {
   handoffRoot: string;
   handoffReceiptCount: number;
   candidateArtifactCount: number;
+  reviewRoot: string;
+  reviewArtifactCount: number;
+  unmatchedReviewCandidateCount: number;
+  excludedCandidateCount: number;
+  teacherReviewAcceptedCount: number;
+  teacherReviewRejectedCount: number;
+  reviewedCandidateCount: number;
+  pendingCandidateCount: number;
   invalidArtifactCount: number;
   candidateCount: number;
   acceptedCandidateCount: number;
@@ -286,52 +295,81 @@ function candidateEntries(value: Record<string, unknown>): Record<string, unknow
   return typeof value.id === "string" && value.id.trim().length > 0 ? [value] : [];
 }
 
-function candidateStatusCounts(candidates: readonly Record<string, unknown>[]) {
-  let accepted = 0;
-  let rejected = 0;
-  let discarded = 0;
-  for (const candidate of candidates) {
-    const status = typeof candidate.status === "string" ? candidate.status : "";
-    if (status === "accepted_brain_plan" || status === "accepted") {
-      accepted += 1;
-    } else if (status === "rejected_brain_plan" || status === "rejected") {
-      rejected += 1;
-    } else if (status === "discarded") {
-      discarded += 1;
-    }
+function captureDisposition(
+  candidate: Record<string, unknown>,
+): "accepted" | "rejected" | "discarded" | "pending" {
+  if (candidate.status === "accepted_brain_plan" || candidate.status === "accepted") {
+    return "accepted";
   }
-  return { accepted, rejected, discarded };
+  if (candidate.status === "rejected_brain_plan" || candidate.status === "rejected") {
+    return "rejected";
+  }
+  return candidate.status === "discarded" ? "discarded" : "pending";
 }
 
-async function readExternalCandidateCapture(): Promise<ExternalCandidateCaptureStatus> {
+function candidateIdentity(candidate: Record<string, unknown>): string | undefined {
+  return typeof candidate.id === "string" &&
+    candidate.id.trim() &&
+    typeof candidate.source === "string"
+    ? JSON.stringify([candidate.source, candidate.id])
+    : undefined;
+}
+
+/** Reads only supplied workspace artifacts; does not invoke channel/probe owners. */
+export async function readExternalCandidateCapture(
+  workspaceDir = WORKSPACE_DIR,
+): Promise<ExternalCandidateCaptureStatus> {
   const candidateFiles = (
     await Promise.all(
       EXTERNAL_CANDIDATE_ROOTS.map((relativeRoot) =>
-        listJsonFiles(path.join(WORKSPACE_DIR, relativeRoot)),
+        listJsonFiles(path.join(workspaceDir, relativeRoot)),
       ),
     )
   ).flat();
-  const handoffFiles = await listJsonFiles(path.join(WORKSPACE_DIR, EXTERNAL_HANDOFF_ROOT));
+  const reviewFiles = await listJsonFiles(path.join(workspaceDir, EXTERNAL_REVIEW_ROOT));
+  const handoffFiles = await listJsonFiles(path.join(workspaceDir, EXTERNAL_HANDOFF_ROOT));
+  const captures = new Map<
+    string,
+    {
+      paths: Set<string>;
+      dispositions: Set<ReturnType<typeof captureDisposition>>;
+      reviews: Set<"accepted" | "rejected">;
+    }
+  >();
   let candidateArtifactCount = 0;
+  let reviewArtifactCount = 0;
   let invalidArtifactCount = 0;
-  let candidateCount = 0;
-  let acceptedCandidateCount = 0;
-  let rejectedCandidateCount = 0;
-  let discardedCandidateCount = 0;
+  let unmatchedReviewCandidateCount = 0;
+  let excludedCandidateCount = 0;
   let latestCandidatePath: string | null = null;
   let latestCandidateGeneratedAt: string | null = null;
-  for (const file of candidateFiles) {
-    let parsed: Record<string, unknown>;
+  const relativeArtifactPath = (file: string) =>
+    path.relative(workspaceDir, file).split(path.sep).join("/");
+  const artifacts = new Map<string, Record<string, unknown> | undefined>();
+  const readArtifact = async (file: string) => {
+    if (artifacts.has(file)) {
+      return artifacts.get(file);
+    }
     try {
-      const value = JSON.parse(await fs.readFile(file, "utf8")) as unknown;
-      const record = recordValue(value);
-      if (!record) {
-        invalidArtifactCount += 1;
-        continue;
+      const parsed = recordValue(JSON.parse(await fs.readFile(file, "utf8")) as unknown);
+      if (parsed) {
+        artifacts.set(file, parsed);
+        return parsed;
       }
-      parsed = record;
     } catch {
-      invalidArtifactCount += 1;
+      // Retain an invalid count without inventing a candidate from unreadable data.
+    }
+    invalidArtifactCount += 1;
+    artifacts.set(file, undefined);
+    return undefined;
+  };
+  for (const file of candidateFiles) {
+    const parsed = await readArtifact(file);
+    if (!parsed) {
+      continue;
+    }
+    // A misplaced review is still read in the review pass, never as capture.
+    if (parsed.boundary === "brain_distillation_review") {
       continue;
     }
     const candidates = candidateEntries(parsed);
@@ -339,27 +377,124 @@ async function readExternalCandidateCapture(): Promise<ExternalCandidateCaptureS
       invalidArtifactCount += 1;
       continue;
     }
+    let naturalEntries = 0;
+    for (const candidate of candidates) {
+      const identity = candidateIdentity(candidate);
+      if (
+        !identity ||
+        !["api_reply", "external_visible_reply", "external_user_utterance"].includes(
+          String(candidate.source),
+        )
+      ) {
+        excludedCandidateCount += 1;
+        continue;
+      }
+      naturalEntries += 1;
+      const capture = captures.get(identity) ?? {
+        paths: new Set<string>(),
+        dispositions: new Set<ReturnType<typeof captureDisposition>>(),
+        reviews: new Set<"accepted" | "rejected">(),
+      };
+      capture.paths.add(relativeArtifactPath(file));
+      capture.dispositions.add(captureDisposition(candidate));
+      captures.set(identity, capture);
+    }
+    if (naturalEntries === 0) {
+      continue;
+    }
     candidateArtifactCount += 1;
-    candidateCount += candidates.length;
-    const counts = candidateStatusCounts(candidates);
-    acceptedCandidateCount += counts.accepted;
-    rejectedCandidateCount += counts.rejected;
-    discardedCandidateCount += counts.discarded;
     const generatedAt = typeof parsed.generatedAt === "string" ? parsed.generatedAt : null;
     if (generatedAt && (!latestCandidateGeneratedAt || generatedAt > latestCandidateGeneratedAt)) {
       latestCandidateGeneratedAt = generatedAt;
-      latestCandidatePath = path.relative(WORKSPACE_DIR, file).replaceAll(path.sep, "/");
+      latestCandidatePath = relativeArtifactPath(file);
     }
   }
+  const teacherReviews = new Map<string, Set<"accepted" | "rejected">>();
+  for (const file of [...reviewFiles, ...candidateFiles]) {
+    const parsed = await readArtifact(file);
+    if (!parsed || parsed.boundary !== "brain_distillation_review") {
+      continue;
+    }
+    if (
+      parsed.schemaVersion !== 1 ||
+      !Array.isArray(parsed.sourceArtifacts) ||
+      !Array.isArray(parsed.acceptedCandidates) ||
+      !Array.isArray(parsed.rejectedCandidates)
+    ) {
+      invalidArtifactCount += 1;
+      continue;
+    }
+    reviewArtifactCount += 1;
+    const sources = new Set(
+      parsed.sourceArtifacts
+        .filter((source): source is string => typeof source === "string")
+        .map((source) => relativeArtifactPath(path.resolve(workspaceDir, source))),
+    );
+    for (const [entries, verdict] of [
+      [parsed.acceptedCandidates, "accepted"],
+      [parsed.rejectedCandidates, "rejected"],
+    ] as const) {
+      for (const entry of entries) {
+        const candidate = recordValue(entry);
+        const identity = candidate && candidateIdentity(candidate);
+        if (!identity || !candidate) {
+          unmatchedReviewCandidateCount += 1;
+          continue;
+        }
+        if (candidate.source === "teacher_review") {
+          const verdicts = teacherReviews.get(identity) ?? new Set<"accepted" | "rejected">();
+          verdicts.add(verdict);
+          teacherReviews.set(identity, verdicts);
+          continue;
+        }
+        const capture = captures.get(identity);
+        if (!capture || ![...capture.paths].some((source) => sources.has(source))) {
+          unmatchedReviewCandidateCount += 1;
+          continue;
+        }
+        capture.reviews.add(verdict);
+      }
+    }
+  }
+  let acceptedCandidateCount = 0;
+  let rejectedCandidateCount = 0;
+  let discardedCandidateCount = 0;
+  let pendingCandidateCount = 0;
+  for (const capture of captures.values()) {
+    const terminal = new Set([...capture.dispositions].filter((value) => value !== "pending"));
+    for (const review of capture.reviews) {
+      terminal.add(review);
+    }
+    // Conflicting dispositions fail closed instead of depending on directory order.
+    if (terminal.size !== 1) {
+      pendingCandidateCount += 1;
+    } else if (terminal.has("accepted")) {
+      acceptedCandidateCount += 1;
+    } else if (terminal.has("rejected")) {
+      rejectedCandidateCount += 1;
+    } else {
+      discardedCandidateCount += 1;
+    }
+  }
+  const candidateCount = captures.size;
+  const reviewedCandidateCount = acceptedCandidateCount + rejectedCandidateCount;
+  const teacherReviewAcceptedCount = [...teacherReviews.values()].filter(
+    (values) => values.size === 1 && values.has("accepted"),
+  ).length;
+  const teacherReviewRejectedCount = [...teacherReviews.values()].filter(
+    (values) => values.size === 1 && values.has("rejected"),
+  ).length;
   let latestHandoffPath: string | null = null;
   if (handoffFiles.length > 0) {
     const latestHandoffFile = handoffFiles.toSorted().at(-1);
     if (latestHandoffFile) {
-      latestHandoffPath = path.relative(WORKSPACE_DIR, latestHandoffFile).replaceAll(path.sep, "/");
+      latestHandoffPath = path.relative(workspaceDir, latestHandoffFile).replaceAll(path.sep, "/");
     }
   }
   const rejectedRate =
-    candidateCount > 0 ? Number((rejectedCandidateCount / candidateCount).toFixed(4)) : 0;
+    reviewedCandidateCount > 0
+      ? Number((rejectedCandidateCount / reviewedCandidateCount).toFixed(4))
+      : 0;
   const source =
     candidateArtifactCount > 0
       ? "candidate_artifacts"
@@ -368,12 +503,12 @@ async function readExternalCandidateCapture(): Promise<ExternalCandidateCaptureS
         : "none";
   const status =
     candidateArtifactCount === 0
-      ? handoffFiles.length > 0
+      ? handoffFiles.length > 0 || reviewArtifactCount > 0
         ? "needs_candidate_capture"
         : "not_observed"
       : rejectedRate >= 0.3
         ? "needs_route_family_hardening"
-        : candidateArtifactCount > 0 && (acceptedCandidateCount === 0 || candidateCount < 10)
+        : acceptedCandidateCount === 0 || reviewedCandidateCount < 10 || pendingCandidateCount > 0
           ? "needs_review_promotion"
           : "ready_for_reviewed_batch_absorption";
   return {
@@ -381,6 +516,14 @@ async function readExternalCandidateCapture(): Promise<ExternalCandidateCaptureS
     handoffRoot: EXTERNAL_HANDOFF_ROOT,
     handoffReceiptCount: handoffFiles.length,
     candidateArtifactCount,
+    reviewRoot: EXTERNAL_REVIEW_ROOT,
+    reviewArtifactCount,
+    unmatchedReviewCandidateCount,
+    excludedCandidateCount,
+    teacherReviewAcceptedCount,
+    teacherReviewRejectedCount,
+    reviewedCandidateCount,
+    pendingCandidateCount,
     invalidArtifactCount,
     candidateCount,
     acceptedCandidateCount,

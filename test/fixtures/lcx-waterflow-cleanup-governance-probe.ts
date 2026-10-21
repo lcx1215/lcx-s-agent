@@ -119,7 +119,7 @@ export async function probeOriginalCleanupGovernance(
     boundaryFromFlags,
     buildLcxRunReceipt,
     createLcxRunId,
-    DEFAULT_WORKSPACE_DIR: root,
+    GOVERNANCE_AUTOPILOT_WORKSPACE_DIR: root,
     ownerArtifactRecordingConfig: config,
     SAME_CYCLE_OWNER_PAYLOAD_IDS: new Set(["changeImpact"]),
     governanceRunId: fixture.host.parentRunId,

@@ -26,7 +26,7 @@ jobs:
           stale-pr-label: stale
           exempt-issue-labels: enhancement,maintainer,pinned,security,no-stale
           exempt-pr-labels: maintainer,no-stale
-          operations-per-run: 10000
+          operations-per-run: 400
           exempt-all-assignees: true
           remove-stale-when-updated: true
           stale-issue-message: |
@@ -65,7 +65,10 @@ jobs:
             let inspected = 0;
 
             let page = 1;
-            while (true) {
+            let requests = 0;
+            const maxRequests = 200;
+            while (requests < maxRequests) {
+              requests += 1;
               const { data: issues } = await github.rest.issues.listForRepo({
                 owner,
                 repo,
@@ -100,28 +103,18 @@ jobs:
                   continue;
                 }
 
-                let lastCommentMs = 0;
-                if (issue.comments > 0) {
-                  const { data: comments } = await github.rest.issues.listComments({
-                    owner,
-                    repo,
-                    issue_number: issue.number,
-                    per_page: 1,
-                    page: 1,
-                    sort: "created",
-                    direction: "desc",
-                  });
-
-                  if (comments.length > 0) {
-                    lastCommentMs = Date.parse(comments[0].created_at);
-                  }
-                }
-
-                const lastActivityMs = Math.max(closedAtMs, lastCommentMs || 0);
+                // updated_at includes comments and other activity; using it is
+                // conservative and avoids one extra request per commented issue.
+                const updatedAtMs = Date.parse(issue.updated_at);
+                const lastActivityMs = Math.max(closedAtMs, updatedAtMs || 0);
                 if (lastActivityMs > cutoffMs) {
                   continue;
                 }
 
+                if (requests >= maxRequests) {
+                  break;
+                }
+                requests += 1;
                 await github.rest.issues.lock({
                   owner,
                   repo,

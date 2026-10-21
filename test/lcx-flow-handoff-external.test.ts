@@ -11,7 +11,8 @@ vi.mock("node:dns/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:dns/promises")>()),
   lookup: async () => [{ address: "93.184.216.34", family: 4 }],
 }));
-vi.mock("../src/shared/global-evidence-projection-source.js", () => ({
+vi.mock("../src/shared/global-evidence-projection-source.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/shared/global-evidence-projection-source.js")>()),
   readCanonicalGlobalEvidenceProjectionCandidate: async () => null,
 }));
 const roots: string[] = [];
@@ -23,6 +24,8 @@ afterEach(async () => {
 async function probe(fault?: Parameters<typeof probeOriginalExternalTransport>[1]) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-external-native-"));
   roots.push(root);
+  // Native transport receipts belong to this offline probe's disposable root.
+  vi.stubEnv("LCX_REPLY_FLOW_LOG", path.join(root, "external-message-flow.jsonl"));
   return probeOriginalExternalTransport(root, fault);
 }
 describe("original external webhook to buffered dispatcher and sender", () => {
@@ -56,7 +59,7 @@ describe("original external webhook to buffered dispatcher and sender", () => {
         target: run.message.conversationId,
         text: "100 的 10% 是 10。",
         threadId: run.message.threadId,
-        replyToId: run.message.replyToId,
+        replyToId: run.message.id,
       }),
     ]);
     expect(fetch).toHaveBeenCalledTimes(1);

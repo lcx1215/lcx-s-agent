@@ -355,6 +355,9 @@ export function validateGlobalEvidenceProjection(projection: GlobalEvidenceProje
     errors.push("actions must have unique ids");
   }
   for (const capability of projection.capabilities) {
+    if (!isLcxOntologyValue("capabilityCoverage", capability.coverage)) {
+      errors.push(`capability ${capability.id} has invalid coverage`);
+    }
     if (capability.role !== undefined && !CAPABILITY_ROLES.includes(capability.role)) {
       errors.push(`capability ${capability.id} has an invalid role`);
     }

@@ -470,7 +470,7 @@ describe("offline same-cycle central handoff", () => {
       .slice(first, last + 1)
       .map((statement) => statement.getText(ast))
       .join("\n");
-    const body = `const {compactCommercialAcceptanceFailures,reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,DEFAULT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
+    const body = `const {compactCommercialAcceptanceFailures,reviewCleanupBeforeDecision,ownerArtifactRecordingConfig,GOVERNANCE_AUTOPILOT_WORKSPACE_DIR,repoRoot,fs,os,path,runOwner,ownerRunFromPayload,captureOwnerRun,collectProblemRadarExclusiveSnapshots,collectCommercialAcceptanceExclusiveSnapshots,buildProblemClusterRadarFromSnapshots,buildCommercialAcceptanceHarness,combineCommercialAcceptanceSnapshots,buildLcxRunReceipt,createLcxRunId,boundaryFromFlags,governanceSnapshot,governanceRunId,buildCentralGovernanceInput}=deps;
       ${functions}
       ${commands.getText(ast)}
       const problemRadarCommand=OWNER_COMMANDS.find(command=>command.id==='problemRadar');
@@ -524,7 +524,7 @@ describe("offline same-cycle central handoff", () => {
       compactCommercialAcceptanceFailures,
       reviewCleanupBeforeDecision,
       ownerArtifactRecordingConfig: null,
-      DEFAULT_WORKSPACE_DIR: os.tmpdir(),
+      GOVERNANCE_AUTOPILOT_WORKSPACE_DIR: os.tmpdir(),
       repoRoot,
       fs: {
         ...fs,
