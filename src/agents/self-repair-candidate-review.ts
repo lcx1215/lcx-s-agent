@@ -335,7 +335,10 @@ export async function reviewSelfRepairCandidate(
     schemaVersion: "lcx_self_repair_candidate_review_v1",
     checkedAt: new Date().toISOString(),
     status: "failed",
-    receipt: options.receipt,
+    receipt: {
+      ...options.receipt,
+      path: options.receipt.path.split(path.sep).join("/"),
+    },
     scope: options.scope,
     gaps: [],
     cleanup: "not_started",

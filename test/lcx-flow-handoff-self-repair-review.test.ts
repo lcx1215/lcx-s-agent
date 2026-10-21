@@ -21,6 +21,9 @@ async function probe(name: string, fault?: SelfRepairContentReviewFault) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-self-repair-review-"));
   roots.push(directory);
   const result = await probeOriginalSelfRepairContentReview({ directory, fault });
+  expect(result.reviewed.receipt.path).toBe(
+    result.produced.receiptRef.path.split(path.sep).join("/"),
+  );
   const retained = process.env.LCX_SELF_REPAIR_CONTENT_REVIEW_PROOF_DIR;
   if (retained) {
     await fs.mkdir(retained, { recursive: true });
@@ -54,7 +57,10 @@ describe("actual self-repair candidate content -> original quality owner -> boun
         inputFingerprint: result.reviewed.inputFingerprint,
         selfRepairReviewScope: {
           scope: result.produced.scope,
-          receipt: result.produced.receiptRef,
+          receipt: {
+            ...result.produced.receiptRef,
+            path: result.produced.receiptRef.path.split(path.sep).join("/"),
+          },
         },
       });
     }
