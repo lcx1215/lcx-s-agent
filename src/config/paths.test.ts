@@ -126,10 +126,12 @@ describe("state + config path candidates", () => {
       await fs.writeFile(
         path.join(canonicalStateDir, "identity-migration.complete.json"),
         `${JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           canonicalStateDir,
           completedAt: "2026-09-07T00:00:00.000Z",
-          inventory: "lcx-identity-writer-inventory-v1",
+          inventory: "lcx-identity-writer-inventory-v2",
+          publication: { kind: "caller-held-legacy-writer-quiescence", owner: "offline-fixture" },
+          sourceInventory: { schemaVersion: 1, sources: [] },
           targetKeys: completeTargetKeys,
         })}\n`,
         "utf8",
@@ -151,13 +153,62 @@ describe("state + config path candidates", () => {
       await fs.writeFile(
         resolveLcxIdentityMigrationCompletionPath(canonicalStateDir),
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           canonicalStateDir,
           completedAt: "2026-09-07T00:00:00.000Z",
-          inventory: "lcx-identity-writer-inventory-v1",
+          inventory: "lcx-identity-writer-inventory-v2",
+          publication: { kind: "caller-held-legacy-writer-quiescence", owner: "offline-fixture" },
+          sourceInventory: { schemaVersion: 1, sources: [] },
           targetKeys,
         }),
         "utf8",
+      );
+      expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(false);
+    });
+  });
+
+  it.each([
+    "old-version",
+    "missing-source-inventory",
+    "invalid-source-target",
+    "missing-source-digest",
+    "missing-publication",
+  ])("rejects activation for %s markers", async (kind) => {
+    await withTempRoot("lcx-marker-object-coverage-", async (root) => {
+      const canonicalStateDir = path.join(root, ".lcx");
+      const marker = {
+        schemaVersion: kind === "old-version" ? 1 : 2,
+        canonicalStateDir,
+        completedAt: "2026-10-21T00:00:00Z",
+        inventory:
+          kind === "old-version"
+            ? "lcx-identity-writer-inventory-v1"
+            : "lcx-identity-writer-inventory-v2",
+        targetKeys: completeTargetKeys,
+        publication:
+          kind === "missing-publication"
+            ? undefined
+            : { kind: "caller-held-legacy-writer-quiescence", owner: "offline-fixture" },
+        sourceInventory:
+          kind === "missing-source-inventory"
+            ? undefined
+            : {
+                schemaVersion: 1,
+                sources: ["invalid-source-target", "missing-source-digest"].includes(kind)
+                  ? [
+                      {
+                        readPath: path.join(root, ".openclaw", "missed"),
+                        targetKey:
+                          kind === "invalid-source-target" ? "not-covered" : completeTargetKeys[0],
+                      },
+                    ]
+                  : [],
+              },
+      };
+      await fs.mkdir(canonicalStateDir);
+      await fs.writeFile(
+        resolveLcxIdentityMigrationCompletionPath(canonicalStateDir),
+        JSON.stringify(marker),
       );
       expect(isLcxIdentityMigrationComplete({ env: {}, homedir: () => root })).toBe(false);
     });
@@ -393,10 +444,12 @@ describe("LCX identity migration plan", () => {
       await fs.writeFile(
         resolveLcxIdentityMigrationCompletionPath(path.join(root, ".lcx")),
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           canonicalStateDir: path.join(root, ".lcx"),
           completedAt: "2026-09-06T00:00:00.000Z",
-          inventory: "lcx-identity-writer-inventory-v1",
+          inventory: "lcx-identity-writer-inventory-v2",
+          publication: { kind: "caller-held-legacy-writer-quiescence", owner: "offline-fixture" },
+          sourceInventory: { schemaVersion: 1, sources: [] },
           targetKeys: completeTargetKeys,
         }),
         "utf8",

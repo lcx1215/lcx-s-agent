@@ -274,9 +274,11 @@ export function isLcxIdentityMigrationComplete(
       completedAt?: unknown;
       inventory?: unknown;
       targetKeys?: unknown;
+      publication?: { kind?: unknown; owner?: unknown };
+      sourceInventory?: { schemaVersion?: unknown; sources?: unknown };
     };
     return (
-      marker.schemaVersion === 1 &&
+      marker.schemaVersion === 2 &&
       typeof marker.canonicalStateDir === "string" &&
       path.resolve(marker.canonicalStateDir) === path.resolve(canonicalStateDir) &&
       typeof marker.completedAt === "string" &&
@@ -289,7 +291,37 @@ export function isLcxIdentityMigrationComplete(
       marker.targetKeys.every(
         (targetKey) => typeof targetKey === "string" && targetKey.length > 0,
       ) &&
-      new Set(marker.targetKeys).size === marker.targetKeys.length
+      new Set(marker.targetKeys).size === marker.targetKeys.length &&
+      marker.publication?.kind === "caller-held-legacy-writer-quiescence" &&
+      typeof marker.publication.owner === "string" &&
+      marker.publication.owner.trim().length > 0 &&
+      marker.sourceInventory?.schemaVersion === 1 &&
+      Array.isArray(marker.sourceInventory.sources) &&
+      marker.sourceInventory.sources.every((source: unknown) => {
+        if (!source || typeof source !== "object") {
+          return false;
+        }
+        const entry = source as {
+          readPath?: unknown;
+          targetKey?: unknown;
+          identity?: unknown;
+          contentHash?: unknown;
+          bytes?: unknown;
+        };
+        return (
+          typeof entry.readPath === "string" &&
+          path.isAbsolute(entry.readPath) &&
+          typeof entry.targetKey === "string" &&
+          (marker.targetKeys as unknown[]).includes(entry.targetKey) &&
+          typeof entry.contentHash === "string" &&
+          /^[a-f0-9]{64}$/i.test(entry.contentHash) &&
+          typeof entry.identity === "string" &&
+          entry.identity.endsWith(`:${entry.contentHash}`) &&
+          typeof entry.bytes === "number" &&
+          Number.isSafeInteger(entry.bytes) &&
+          entry.bytes >= 0
+        );
+      })
     );
   } catch {
     return false;
